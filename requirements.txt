@@ -27,3 +27,9 @@ pytz
 streamlit
 plotly
 streamlit-aggrid
+
+# Machine Learning
+scikit-learn
+
+# Web Automation
+selenium

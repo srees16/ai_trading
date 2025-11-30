@@ -1,22 +1,91 @@
 """
-Finviz news scraper.
+Finviz news scraper with Elite authentication support.
 """
 
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Optional
 from scrapers import BaseNewsScraper
 from models import NewsItem
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
+import time
 
 
 class FinvizScraper(BaseNewsScraper):
-    """Scraper for Finviz news."""
+    """Scraper for Finviz news with Elite authentication."""
     
-    def __init__(self):
+    # Elite credentials (optional - only needed for Elite features)
+    FINVIZ_USERNAME = "s.srees@live.com"
+    FINVIZ_PASSWORD = "Imbest1!"
+    
+    def __init__(self, use_elite: bool = False):
         super().__init__("Finviz", "https://finviz.com/quote.ashx?t={}")
+        self.use_elite = use_elite
+        self.driver: Optional[webdriver.Chrome] = None
+        self._authenticated = False
+    
+    def _init_selenium_driver(self):
+        """Initialize Selenium driver for Elite access."""
+        if self.driver is not None:
+            return
+        
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--no-sandbox")
+        
+        self.driver = webdriver.Chrome(options=chrome_options)
+    
+    def _authenticate_elite(self):
+        """Authenticate with Finviz Elite."""
+        if self._authenticated or not self.use_elite:
+            return True
+        
+        try:
+            self._init_selenium_driver()
+            self.driver.get("https://elite.finviz.com/login.ashx")
+            time.sleep(3)
+            
+            wait = WebDriverWait(self.driver, 15)
+            email_input = wait.until(EC.presence_of_element_located((By.NAME, "email")))
+            password_input = wait.until(EC.presence_of_element_located((By.NAME, "password")))
+            
+            email_input.send_keys(self.FINVIZ_USERNAME)
+            password_input.send_keys(self.FINVIZ_PASSWORD)
+            password_input.submit()
+            
+            wait.until(EC.presence_of_element_located((By.ID, "screener-content")))
+            self._authenticated = True
+            print("✅ Finviz Elite authenticated successfully.")
+            return True
+            
+        except TimeoutException as e:
+            print(f"❌ Finviz Elite authentication failed: {e}")
+            return False
+        except Exception as e:
+            print(f"❌ Finviz authentication error: {e}")
+            return False
+    
+    def __del__(self):
+        """Cleanup Selenium driver."""
+        if self.driver:
+            try:
+                self.driver.quit()
+            except:
+                pass
     
     async def fetch_news(self, ticker: str) -> List[NewsItem]:
-        """Fetch news from Finviz."""
+        """Fetch news from Finviz (with optional Elite authentication)."""
         news_items = []
+        
+        # Authenticate if Elite is enabled
+        if self.use_elite and not self._authenticated:
+            self._authenticate_elite()
+        
         url = self.base_url.format(ticker)
         
         html = await self._fetch_html(url)
