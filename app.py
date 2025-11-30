@@ -193,9 +193,8 @@ def render_sidebar():
         st.markdown("---")
         
         # Run Analysis Button
-        st.subheader("🚀 Execute")
         run_button = st.button(
-            "▶️ Run Analysis",
+            "Run Analysis",
             type="primary",
             use_container_width=True,
             disabled=len(tickers) == 0
