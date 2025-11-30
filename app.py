@@ -205,13 +205,8 @@ def render_sidebar():
             st.session_state.signals = []
             st.session_state.progress_messages = []
             return True
-        
+
         st.markdown("---")
-        
-        # Info
-        st.caption("📚 About")
-        st.caption("AI-powered trading alert system combining news sentiment, fundamentals, and technicals.")
-        
         return False
 
 
@@ -494,7 +489,7 @@ async def run_analysis_async(tickers):
     progress_placeholder = st.empty()
     status_placeholder = st.empty()
     
-    with st.spinner('🔄 Running analysis...'):
+    with st.spinner('🔄 Analyzing...'):
         # Fetch news
         status_placeholder.info("📰 Scraping news from multiple sources...")
         all_news = await system.news_aggregator.fetch_news_for_tickers(tickers)
