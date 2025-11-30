@@ -14,17 +14,18 @@ This guide covers deploying the AI Trading Alert System to cloud platforms using
 
 **Windows:**
 ```powershell
-.\deploy.ps1
+.\deployment\deploy.ps1
 ```
 
 **Linux/Mac:**
 ```bash
-chmod +x deploy.sh
-./deploy.sh
+chmod +x deployment/deploy.sh
+./deployment/deploy.sh
 ```
 
 **Using Docker Compose:**
 ```bash
+cd deployment
 docker-compose up -d
 ```
 
@@ -44,12 +45,12 @@ docker stop algo-trading-system
 ### 2. Deploy to Azure Container Instances
 
 ```powershell
-.\deploy-azure.ps1
+.\deployment\deploy-azure.ps1
 ```
 
 **Manual Steps:**
 
-1. **Update variables** in `deploy-azure.ps1`:
+1. **Update variables** in `deployment/deploy-azure.ps1`:
    - `$RESOURCE_GROUP`: Your resource group name
    - `$ACR_NAME`: Your Azure Container Registry name (globally unique)
    - `$DNS_NAME`: Your DNS label (globally unique)
@@ -77,12 +78,12 @@ az group delete --name algo-trading-rg --yes
 ### 2. Deploy to Cloud Run
 
 ```powershell
-.\deploy-gcp.ps1
+.\deployment\deploy-gcp.ps1
 ```
 
 **Manual Steps:**
 
-1. **Update variables** in `deploy-gcp.ps1`:
+1. **Update variables** in `deployment/deploy-gcp.ps1`:
    - `$PROJECT_ID`: Your GCP project ID
 
 2. **Run deployment script**
@@ -143,7 +144,7 @@ gcloud run services describe algo-trading-system --region us-central1
 
 ```bash
 # Build image
-docker build -t algo-trading-system:latest .
+docker build -f deployment/Dockerfile -t algo-trading-system:latest .
 
 # Run container
 docker run -d -p 8501:8501 --name algo-trading-system algo-trading-system:latest

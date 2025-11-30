@@ -4,19 +4,20 @@
 
 ### Option 1: Quick Deploy (Recommended)
 ```powershell
-.\deploy.ps1
+.\deployment\deploy.ps1
 ```
 Access at: http://localhost:8501
 
 ### Option 2: Docker Compose
 ```bash
+cd deployment
 docker-compose up -d
 ```
 
 ### Option 3: Manual Docker Commands
 ```bash
 # Build
-docker build -t algo-trading-system:latest .
+docker build -f deployment/Dockerfile -t algo-trading-system:latest .
 
 # Run
 docker run -d -p 8501:8501 --name algo-trading-system algo-trading-system:latest
@@ -29,14 +30,14 @@ docker logs -f algo-trading-system
 
 ### Azure
 ```powershell
-# Update variables in deploy-azure.ps1 first
-.\deploy-azure.ps1
+# Update variables in deployment/deploy-azure.ps1 first
+.\deployment\deploy-azure.ps1
 ```
 
 ### Google Cloud
 ```powershell
-# Update PROJECT_ID in deploy-gcp.ps1 first
-.\deploy-gcp.ps1
+# Update PROJECT_ID in deployment/deploy-gcp.ps1 first
+.\deployment\deploy-gcp.ps1
 ```
 
 ## 📊 Verify Deployment

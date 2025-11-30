@@ -10,6 +10,10 @@ Write-Host "==================================================" -ForegroundColor
 Write-Host "Deploying to Google Cloud Run" -ForegroundColor Cyan
 Write-Host "==================================================" -ForegroundColor Cyan
 
+# Change to parent directory for build context
+$parentDir = Split-Path -Parent $PSScriptRoot
+Set-Location $parentDir
+
 # Set the project
 Write-Host "`nSetting GCP project..." -ForegroundColor Yellow
 gcloud config set project $PROJECT_ID
@@ -22,7 +26,7 @@ gcloud services enable containerregistry.googleapis.com
 
 # Build the container image
 Write-Host "`nBuilding container image..." -ForegroundColor Yellow
-gcloud builds submit --tag $IMAGE_NAME
+gcloud builds submit --tag $IMAGE_NAME --file deployment/Dockerfile .
 
 # Deploy to Cloud Run
 Write-Host "`nDeploying to Cloud Run..." -ForegroundColor Yellow

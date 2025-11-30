@@ -6,9 +6,14 @@ echo "=================================================="
 echo "AI Trading Alert System - Docker Deployment"
 echo "=================================================="
 
+# Get the parent directory (project root)
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+PARENT_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
+cd "$PARENT_DIR"
+
 # Build the Docker image
 echo "Building Docker image..."
-docker build -t algo-trading-system:latest .
+docker build -f deployment/Dockerfile -t algo-trading-system:latest .
 
 # Check if build was successful
 if [ $? -eq 0 ]; then
@@ -24,7 +29,7 @@ if [ $? -eq 0 ]; then
     docker run -d \
         --name algo-trading-system \
         -p 8501:8501 \
-        -v $(pwd)/data:/app/data \
+        -v "$PARENT_DIR/data:/app/data" \
         algo-trading-system:latest
     
     if [ $? -eq 0 ]; then

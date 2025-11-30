@@ -4,9 +4,13 @@ Write-Host "==================================================" -ForegroundColor
 Write-Host "AI Trading Alert System - Docker Deployment" -ForegroundColor Cyan
 Write-Host "==================================================" -ForegroundColor Cyan
 
+# Change to parent directory for build context
+$parentDir = Split-Path -Parent $PSScriptRoot
+Set-Location $parentDir
+
 # Build the Docker image
 Write-Host "`nBuilding Docker image..." -ForegroundColor Yellow
-docker build -t algo-trading-system:latest .
+docker build -f deployment/Dockerfile -t algo-trading-system:latest .
 
 if ($LASTEXITCODE -eq 0) {
     Write-Host "✓ Docker image built successfully!" -ForegroundColor Green
@@ -21,7 +25,7 @@ if ($LASTEXITCODE -eq 0) {
     docker run -d `
         --name algo-trading-system `
         -p 8501:8501 `
-        -v "${PWD}/data:/app/data" `
+        -v "${parentDir}/data:/app/data" `
         algo-trading-system:latest
     
     if ($LASTEXITCODE -eq 0) {

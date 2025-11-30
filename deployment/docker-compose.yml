@@ -2,7 +2,9 @@ version: '3.8'
 
 services:
   algo-trading:
-    build: .
+    build:
+      context: ..
+      dockerfile: deployment/Dockerfile
     container_name: algo-trading-system
     ports:
       - "8501:8501"
@@ -10,7 +12,7 @@ services:
       - PYTHONUNBUFFERED=1
     volumes:
       # Mount a volume to persist output files
-      - ./data:/app/data
+      - ../data:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]

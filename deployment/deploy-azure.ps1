@@ -11,6 +11,10 @@ Write-Host "==================================================" -ForegroundColor
 Write-Host "Deploying to Azure Container Instances" -ForegroundColor Cyan
 Write-Host "==================================================" -ForegroundColor Cyan
 
+# Change to parent directory for build context
+$parentDir = Split-Path -Parent $PSScriptRoot
+Set-Location $parentDir
+
 # Login to Azure
 Write-Host "`nLogging in to Azure..." -ForegroundColor Yellow
 az login
@@ -29,7 +33,7 @@ $ACR_PASSWORD = az acr credential show --name $ACR_NAME --query "passwords[0].va
 
 # Build and push image to ACR
 Write-Host "`nBuilding and pushing image to ACR..." -ForegroundColor Yellow
-az acr build --registry $ACR_NAME --image algo-trading-system:latest .
+az acr build --registry $ACR_NAME --file deployment/Dockerfile --image algo-trading-system:latest .
 
 # Deploy to Azure Container Instances
 Write-Host "`nDeploying to Azure Container Instances..." -ForegroundColor Yellow
