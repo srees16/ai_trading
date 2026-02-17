@@ -1,20 +1,26 @@
 """
-Data models and interfaces for the algo-trading alert system.
+Data Models Module for Centurion Capital LLC.
+
+Defines core data structures and interfaces for the algorithmic trading
+alert system including news items, stock metrics, and trading signals.
 """
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict
 from enum import Enum
 
 
 class NewsCategory(Enum):
-    """News category types."""
+    """News category classification types."""
     BREAKING = "breaking"
     DEALS_MA = "deals_ma"
     MACRO_ECONOMIC = "macro_economic"
     EARNINGS = "earnings"
     GENERAL = "general"
+
+    def __str__(self) -> str:
+        return self.value
 
 
 class SentimentLabel(Enum):
@@ -25,17 +31,30 @@ class SentimentLabel(Enum):
 
 
 class DecisionTag(Enum):
-    """Trading decision tags."""
+    """Trading decision tags with severity ordering."""
     STRONG_BUY = "STRONG_BUY"
     BUY = "BUY"
     HOLD = "HOLD"
     SELL = "SELL"
     STRONG_SELL = "STRONG_SELL"
 
+    @property
+    def is_bullish(self) -> bool:
+        """Check if decision is bullish."""
+        return self in (DecisionTag.STRONG_BUY, DecisionTag.BUY)
+
+    @property
+    def is_bearish(self) -> bool:
+        """Check if decision is bearish."""
+        return self in (DecisionTag.STRONG_SELL, DecisionTag.SELL)
+
+    def __str__(self) -> str:
+        return self.value
+
 
 @dataclass
 class NewsItem:
-    """Represents a single news item."""
+    """Represents a single news item with optional sentiment analysis."""
     title: str
     summary: str
     url: str
@@ -46,6 +65,12 @@ class NewsItem:
     sentiment_score: Optional[float] = None
     sentiment_label: Optional[SentimentLabel] = None
     sentiment_confidence: Optional[float] = None
+    
+    def __repr__(self) -> str:
+        return (
+            f"NewsItem(ticker={self.ticker!r}, source={self.source!r}, "
+            f"sentiment={self.sentiment_label}, title={self.title[:40]!r}...)"
+        )
     
     def is_highly_positive(self) -> bool:
         """Check if news is highly positive (confidence > 0.85)."""
@@ -66,7 +91,7 @@ class NewsItem:
 
 @dataclass
 class StockMetrics:
-    """Stock fundamental and technical metrics."""
+    """Stock fundamental and technical metrics container."""
     ticker: str
     timestamp: datetime
     
@@ -79,9 +104,9 @@ class StockMetrics:
     intrinsic_value: Optional[float] = None
     
     # Advanced Fundamental Metrics
-    altman_z_score: Optional[float] = None  # Bankruptcy risk (>2.99 safe, <1.81 distress)
-    beneish_m_score: Optional[float] = None  # Earnings manipulation (>-2.22 likely manipulator)
-    piotroski_f_score: Optional[int] = None  # Financial health (0-9, higher is better)
+    altman_z_score: Optional[float] = None
+    beneish_m_score: Optional[float] = None
+    piotroski_f_score: Optional[int] = None
     
     # Technicals
     rsi: Optional[float] = None
@@ -95,6 +120,13 @@ class StockMetrics:
     max_drawdown: Optional[float] = None
     current_price: Optional[float] = None
 
+    def __repr__(self) -> str:
+        return (
+            f"StockMetrics(ticker={self.ticker!r}, "
+            f"price={self.current_price}, rsi={self.rsi}, "
+            f"z_score={self.altman_z_score}, f_score={self.piotroski_f_score})"
+        )
+
 
 @dataclass
 class TradingSignal:
@@ -105,6 +137,12 @@ class TradingSignal:
     decision_score: float
     reasoning: str
     timestamp: datetime = field(default_factory=datetime.now)
+    
+    def __repr__(self) -> str:
+        return (
+            f"TradingSignal(ticker={self.news_item.ticker!r}, "
+            f"decision={self.decision.value}, score={self.decision_score:.2f})"
+        )
     
     def to_dict(self) -> dict:
         """Convert to dictionary for storage."""

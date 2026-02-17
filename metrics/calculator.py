@@ -1,14 +1,22 @@
 """
-Stock metrics calculator - fundamentals and technicals.
+Stock Metrics Calculator Module.
+
+Calculates fundamental and technical metrics for stocks
+using Yahoo Finance data and standard financial formulas.
 """
+
+import logging
 
 import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from typing import Optional, Dict
+
 from models import StockMetrics
 from config import Config
+
+logger = logging.getLogger(__name__)
 
 
 class MetricsCalculator:
@@ -40,7 +48,7 @@ class MetricsCalculator:
             hist = stock.history(start=start_date, end=end_date)
             
             if hist.empty:
-                print(f"No historical data for {ticker}")
+                logger.warning("No historical data for %s", ticker)
                 return None
             
             # Calculate fundamentals
@@ -77,7 +85,7 @@ class MetricsCalculator:
             return metrics
         
         except Exception as e:
-            print(f"Error calculating metrics for {ticker}: {e}")
+            logger.error("Error calculating metrics for %s: %s", ticker, e)
             return None
     
     def _calculate_fundamentals(
@@ -128,7 +136,7 @@ class MetricsCalculator:
             fundamentals['piotroski_f_score'] = piotroski_f
         
         except Exception as e:
-            print(f"Error calculating fundamentals: {e}")
+            logger.error("Error calculating fundamentals: %s", e)
         
         return fundamentals
     
@@ -227,7 +235,7 @@ class MetricsCalculator:
             technicals['max_drawdown'] = max_dd
         
         except Exception as e:
-            print(f"Error calculating technicals: {e}")
+            logger.error("Error calculating technicals: %s", e)
         
         return technicals
     
@@ -389,7 +397,7 @@ class MetricsCalculator:
             return round(float(z_score), 2)
         
         except Exception as e:
-            print(f"Error calculating Altman Z-Score: {e}")
+            logger.error("Error calculating Altman Z-Score: %s", e)
             return None
 
     def _calculate_beneish_m_score(self, stock: yf.Ticker) -> Optional[float]:
@@ -496,7 +504,7 @@ class MetricsCalculator:
             return round(float(m_score), 2)
         
         except Exception as e:
-            print(f"Error calculating Beneish M-Score: {e}")
+            logger.error("Error calculating Beneish M-Score: %s", e)
             return None
 
     def _calculate_piotroski_f_score(self, stock: yf.Ticker, info: dict) -> Optional[int]:
@@ -608,5 +616,5 @@ class MetricsCalculator:
             return int(score)
         
         except Exception as e:
-            print(f"Error calculating Piotroski F-Score: {e}")
+            logger.error("Error calculating Piotroski F-Score: %s", e)
             return None
