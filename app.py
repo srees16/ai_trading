@@ -40,7 +40,7 @@ st.set_page_config(
     page_title="Algo Trading Alert System",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # Custom CSS
@@ -66,19 +66,52 @@ st.markdown("""
         margin: 0.5rem 0;
     }
     .stAlert {
-        margin-top: 1rem;
+        margin-top: 0.5rem;
+    }
+    /* Reduce default spacing */
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 1rem;
+    }
+    .stMarkdown {
+        margin-bottom: 0;
+    }
+    h1, h2, h3 {
+        margin-top: 0.5rem;
+        margin-bottom: 0.5rem;
+    }
+    .stSubheader {
+        margin-top: 0.5rem;
+    }
+    hr {
+        margin: 0.75rem 0;
     }
     /* Green Run Analysis button */
-    [data-testid="stSidebar"] button[kind="primary"],
     .stButton > button[kind="primary"] {
         background-color: #00cc44 !important;
         border-color: #00cc44 !important;
         color: white !important;
     }
-    [data-testid="stSidebar"] button[kind="primary"]:hover,
     .stButton > button[kind="primary"]:hover {
         background-color: #00aa33 !important;
         border-color: #00aa33 !important;
+    }
+    /* Hide sidebar completely */
+    [data-testid="stSidebar"] {
+        display: none;
+    }
+    /* Footer styles */
+    .footer {
+        text-align: center;
+        color: #888;
+        font-size: 0.85rem;
+        padding: 1.5rem 0 1rem 0;
+        margin-top: 2rem;
+        border-top: 1px solid #e0e0e0;
+    }
+    .footer a {
+        color: #666;
+        text-decoration: none;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -106,26 +139,23 @@ def initialize_session_state():
         st.session_state.current_page = 'main'
 
 
-def render_sidebar():
-    """Render the sidebar with options and controls."""
-    with st.sidebar:
-        # Load centurion logo for sidebar
-        logo_path = Path(__file__).parent / "centurion_logo.png"
-        if logo_path.exists():
-            st.image(str(logo_path), width=40)
-        st.title("Command Center")
-        
-        st.markdown("---")
-        
-        # Ticker Selection Mode
-        st.subheader("📊 Select Stocks")
+def render_control_panel():
+    """Render the control panel on the main page."""
+    st.subheader("📊 Stock Selection & Settings")
+    
+    # Create three columns for controls
+    col1, col2, col3 = st.columns([1, 1, 1])
+    
+    tickers = []
+    
+    with col1:
+        st.markdown("**Select Stocks**")
         ticker_mode = st.radio(
-            "Choose input method:",
+            "Input method:",
             ["Default Tickers", "Manual Entry", "Upload CSV"],
-            help="Select how you want to specify the stocks to analyze"
+            help="Select how you want to specify the stocks to analyze",
+            horizontal=True
         )
-        
-        tickers = []
         
         if ticker_mode == "Default Tickers":
             st.info(f"Using {len(Config.DEFAULT_TICKERS)} default tickers")
@@ -137,20 +167,15 @@ def render_sidebar():
             ticker_input = st.text_area(
                 "Enter tickers (comma-separated):",
                 value="GOOGL, TSLA",
-                height=100,
+                height=80,
                 help="Enter stock ticker symbols separated by commas"
             )
             tickers = [t.strip().upper() for t in ticker_input.split(',') if t.strip()]
             st.success(f"✓ {len(tickers)} ticker(s) entered")
         
         elif ticker_mode == "Upload CSV":
-            st.info("Upload a CSV file with ticker symbols")
-            
-            # Show sample format
             with st.expander("📄 View CSV format example"):
                 st.code(create_sample_csv(), language="csv")
-                
-                # Download sample CSV
                 st.download_button(
                     label="⬇️ Download Sample CSV",
                     data=create_sample_csv(),
@@ -171,7 +196,6 @@ def render_sidebar():
                     
                     if parsed_tickers:
                         valid_tickers, invalid_tickers = validate_tickers(parsed_tickers)
-                        
                         st.success(f"✓ Found {len(valid_tickers)} valid ticker(s)")
                         
                         if invalid_tickers:
@@ -188,22 +212,15 @@ def render_sidebar():
                 except Exception as e:
                     logger.error(f"Error parsing CSV: {e}")
                     st.error(f"❌ Error parsing CSV: {e}")
-        
-        st.session_state.tickers = tickers
-        st.session_state.ticker_mode = ticker_mode
-        
-        st.markdown("---")
-        
-        # Analysis Settings
-        st.subheader("⚙️ Settings")
-        
+    
+    with col2:
+        st.markdown("**Output Settings**")
         output_format = st.selectbox(
             "Output format:",
             ["Excel (.xlsx)", "CSV (.csv)"],
             help="Choose the output file format"
         )
         
-        # Save location settings
         use_custom_path = st.checkbox(
             "Use custom save location",
             value=False,
@@ -224,12 +241,12 @@ def render_sidebar():
             extension = ".xlsx" if output_format == "Excel (.xlsx)" else ".csv"
             full_path = Path(custom_path) / f"{filename}{extension}"
             Config.OUTPUT_FILE = str(full_path)
-            st.info(f"📁 File will be saved to: `{full_path}`")
+            st.caption(f"📁 Save to: `{full_path}`")
         else:
             default_filename = "daily_stock_news.xlsx" if output_format == "Excel (.xlsx)" else "daily_stock_news.csv"
             Config.OUTPUT_FILE = default_filename
             default_path = Path.cwd() / default_filename
-            st.info(f"📁 File will be saved to: `{default_path}`")
+            st.caption(f"📁 Save to: `{default_path}`")
         
         append_mode = st.checkbox(
             "Append to existing file",
@@ -237,25 +254,46 @@ def render_sidebar():
             help="Append results to existing file instead of overwriting"
         )
         Config.APPEND_MODE = append_mode
+    
+    with col3:
+        st.markdown("**Run Analysis**")
+        st.write("")  # Spacer
         
-        st.markdown("---")
+        # Show ticker count
+        if tickers:
+            st.success(f"📈 {len(tickers)} stock(s) ready")
+        else:
+            st.warning("⚠️ No tickers selected")
         
-        # Run Analysis Button
         run_button = st.button(
-            "Run Analysis",
+            "🚀 Run Analysis",
             type="primary",
             use_container_width=True,
             disabled=len(tickers) == 0
         )
         
-        if run_button and len(tickers) > 0:
-            st.session_state.analysis_complete = False
-            st.session_state.signals = []
-            st.session_state.progress_messages = []
-            return True
-
-        st.markdown("---")
-        return False
+        # Navigation buttons
+        st.write("")  # Spacer
+        nav_col1, nav_col2 = st.columns(2)
+        with nav_col1:
+            if st.button("📊 Fundamental", key="nav_fundamental", use_container_width=True):
+                st.session_state.current_page = 'fundamental'
+                st.rerun()
+        with nav_col2:
+            if st.button("🔬 Backtest", key="nav_backtest", use_container_width=True):
+                st.session_state.current_page = 'backtesting'
+                st.rerun()
+    
+    st.session_state.tickers = tickers
+    st.session_state.ticker_mode = ticker_mode
+    
+    if run_button and len(tickers) > 0:
+        st.session_state.analysis_complete = False
+        st.session_state.signals = []
+        st.session_state.progress_messages = []
+        return True
+    
+    return False
 
 
 def render_header():
@@ -272,7 +310,20 @@ def render_header():
     
     st.markdown(
         f'<div class="main-header">{logo_html}Centurion Capital LLC</div>'
-        f'<p class="main-subtitle">Enterprise AI Platform for Event-Driven Alpha Signal Extraction</p>',
+        f'<p class="main-subtitle">Enterprise AI Engine for Event-Driven Alpha</p>',
+        unsafe_allow_html=True
+    )
+
+
+def render_footer():
+    """Render the footer on all pages."""
+    st.markdown(
+        """
+        <div class="footer">
+            Copyright © 2026 Sreekanth S & Co. Ltd. All rights reserved.<br>
+            For reprint rights: <strong>Centurion Capital LLC</strong>
+        </div>
+        """,
         unsafe_allow_html=True
     )
 
@@ -877,11 +928,31 @@ async def run_analysis_async(tickers):
         save_path = system.storage_manager.save_signals(signals, append=Config.APPEND_MODE)
         progress_placeholder.progress(100)
         
-        # Show save location
+        # Clear progress indicators
+        progress_placeholder.empty()
+        status_placeholder.empty()
+        
+        # Show completion banner
+        st.markdown(
+            """
+            <div style="
+                background: linear-gradient(90deg, #00cc44, #00aa33);
+                color: white;
+                padding: 0.6rem 1rem;
+                border-radius: 6px;
+                text-align: center;
+                margin: 0.5rem 0;
+            ">
+                <span style="font-weight: 600;">✅ Analysis Complete</span>
+                <span style="margin-left: 1rem;">Analyzed <strong>{}</strong> stocks • <strong>{}</strong> signals generated</span>
+            </div>
+            """.format(len(tickers), len(signals)),
+            unsafe_allow_html=True
+        )
+        
+        # Show save location if available
         if save_path:
-            status_placeholder.success(f"✅ Analysis complete! Results saved to: `{save_path}`")
-        else:
-            status_placeholder.success("✅ Analysis complete!")
+            st.caption(f"💾 Results saved to: {save_path}")
         
         return signals
 
@@ -1068,6 +1139,8 @@ def render_fundamental_page():
         st.metric("💪 Strong (F-Score)", f"{strong_count}/{len(stock_metrics)}")
     with col3:
         st.metric("✅ Clean (M-Score)", f"{clean_count}/{len(stock_metrics)}")
+    
+    render_footer()
 
 
 def render_backtesting_page():
@@ -1311,14 +1384,13 @@ def render_backtesting_page():
                     st.dataframe(signals_df.style.map(highlight_signals, subset=['signal']), use_container_width=True)
                 else:
                     st.dataframe(signals_df, use_container_width=True)
+    
+    render_footer()
 
 
 def main():
     """Main Streamlit application."""
     initialize_session_state()
-    
-    # Render sidebar and check if analysis should run
-    should_run = render_sidebar()
     
     # Check current page and render accordingly
     current_page = st.session_state.get('current_page', 'main')
@@ -1334,29 +1406,12 @@ def main():
     # Main page
     render_header()
     
-    # Main content area
-    if should_run and st.session_state.tickers:
-        # Run analysis
-        st.session_state.signals = asyncio.run(run_analysis_async(st.session_state.tickers))
-        st.session_state.analysis_complete = True
+    st.markdown("---")
     
     # Display results if analysis is complete
     if st.session_state.analysis_complete and st.session_state.signals:
-        st.markdown("---")
-        
         # Show stocks that were analyzed
         render_stocks_being_analyzed()
-        
-        # Navigation buttons to other pages
-        btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1])
-        with btn_col1:
-            if st.button("📊 Fundamental Analysis", key="results_fundamental", use_container_width=True, type="secondary"):
-                st.session_state.current_page = 'fundamental'
-                st.rerun()
-        with btn_col2:
-            if st.button("🔬 Backtest Strategy", key="results_backtest", use_container_width=True, type="secondary"):
-                st.session_state.current_page = 'backtesting'
-                st.rerun()
         
         st.markdown("---")
         
@@ -1388,17 +1443,18 @@ def main():
         
         with tab4:
             render_sentiment_chart(st.session_state.signals)
-    
-    elif not st.session_state.analysis_complete:
-        # Welcome screen
+        
         st.markdown("---")
         
-        st.info("👈 Configure your settings in the sidebar and click **Run Analysis** to start")
-        
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.image("https://img.icons8.com/clouds/400/000000/stocks.png", width=300)
-        
+        # Control panel at the bottom for re-running
+        should_run = render_control_panel()
+        if should_run and st.session_state.tickers:
+            st.session_state.signals = asyncio.run(run_analysis_async(st.session_state.tickers))
+            st.session_state.analysis_complete = True
+            st.rerun()
+    
+    else:
+        # Welcome screen - features section
         st.markdown("### 🎯 Features")
         
         col1, col2, col3 = st.columns(3)
@@ -1423,6 +1479,21 @@ def main():
         4. **Review Results**: Explore charts, tables, and detailed signal information
         5. **Download Data**: Export results for further analysis
         """)
+        
+        st.markdown("---")
+        
+        # Render control panel below features and how to use
+        should_run = render_control_panel()
+        
+        # Main content area
+        if should_run and st.session_state.tickers:
+            # Run analysis
+            st.session_state.signals = asyncio.run(run_analysis_async(st.session_state.tickers))
+            st.session_state.analysis_complete = True
+            st.rerun()
+    
+    # Footer on all main page states
+    render_footer()
 
 
 if __name__ == "__main__":
