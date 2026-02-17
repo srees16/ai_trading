@@ -2,11 +2,14 @@
 Finviz news scraper with Elite authentication support.
 """
 
+import logging
 from datetime import datetime, timedelta
 from typing import List, Optional
 from scrapers import BaseNewsScraper
 from models import NewsItem
 from selenium import webdriver
+
+logger = logging.getLogger(__name__)
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -60,14 +63,14 @@ class FinvizScraper(BaseNewsScraper):
             
             wait.until(EC.presence_of_element_located((By.ID, "screener-content")))
             self._authenticated = True
-            print("✅ Finviz Elite authenticated successfully.")
+            # Finviz Elite authenticated successfully
             return True
             
-        except TimeoutException as e:
-            print(f"❌ Finviz Elite authentication failed: {e}")
+        except TimeoutException:
+            # Elite authentication timed out
             return False
-        except Exception as e:
-            print(f"❌ Finviz authentication error: {e}")
+        except Exception:
+            # Elite authentication failed
             return False
     
     def __del__(self):
@@ -88,13 +91,16 @@ class FinvizScraper(BaseNewsScraper):
         
         url = self.base_url.format(ticker)
         
+        logger.info(f"Finviz: Fetching news for {ticker}...")
         html = await self._fetch_html(url)
         if not html:
+            logger.warning(f"Finviz: Could not fetch data for {ticker}")
             return news_items
         
         soup = self._parse_html(html)
         news_table = soup.find('table', class_='fullview-news-outer')
         if not news_table:
+            logger.info(f"Finviz: No news table found for {ticker}")
             return news_items
         
         rows = news_table.find_all('tr')
@@ -127,9 +133,14 @@ class FinvizScraper(BaseNewsScraper):
                     category=category
                 )
                 news_items.append(news_item)
-            except Exception as e:
-                print(f"Error parsing Finviz article: {e}")
+            except Exception:
+                # Skip articles that fail to parse
                 continue
+        
+        if news_items:
+            logger.info(f"Finviz: Fetched {len(news_items)} articles for {ticker}")
+        else:
+            logger.info(f"Finviz: No articles parsed for {ticker}")
         
         return news_items
     

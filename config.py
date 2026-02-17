@@ -4,7 +4,6 @@ Configuration settings for the algo-trading alert system.
 
 from typing import List
 
-
 class Config:
     """Global configuration."""
     

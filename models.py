@@ -78,6 +78,11 @@ class StockMetrics:
     dcf_value: Optional[float] = None
     intrinsic_value: Optional[float] = None
     
+    # Advanced Fundamental Metrics
+    altman_z_score: Optional[float] = None  # Bankruptcy risk (>2.99 safe, <1.81 distress)
+    beneish_m_score: Optional[float] = None  # Earnings manipulation (>-2.22 likely manipulator)
+    piotroski_f_score: Optional[int] = None  # Financial health (0-9, higher is better)
+    
     # Technicals
     rsi: Optional[float] = None
     macd: Optional[float] = None
@@ -122,4 +127,7 @@ class TradingSignal:
             'peg_ratio': self.metrics.peg_ratio if self.metrics else None,
             'roe': self.metrics.roe if self.metrics else None,
             'eps': self.metrics.eps if self.metrics else None,
+            'altman_z_score': self.metrics.altman_z_score if self.metrics else None,
+            'beneish_m_score': self.metrics.beneish_m_score if self.metrics else None,
+            'piotroski_f_score': self.metrics.piotroski_f_score if self.metrics else None,
         }

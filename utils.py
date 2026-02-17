@@ -2,9 +2,14 @@
 Utility functions for CSV processing and data handling.
 """
 
+import logging
 import pandas as pd
 from typing import List, Optional
 from io import StringIO
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[logging.StreamHandler()])
+logger = logging.getLogger(__name__)
 
 
 def parse_ticker_csv(file_content: str) -> List[str]:
@@ -49,7 +54,7 @@ def parse_ticker_csv(file_content: str) -> List[str]:
         return tickers
     
     except Exception as e:
-        print(f"Error parsing CSV: {e}")
+        logger.error(f"Error parsing CSV: {e}")
         # Try simple line-by-line parsing as fallback
         try:
             lines = file_content.strip().split('\n')

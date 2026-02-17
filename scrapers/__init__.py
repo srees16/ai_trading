@@ -2,6 +2,7 @@
 News scraper modules.
 """
 
+import logging
 from abc import ABC, abstractmethod
 from typing import List, Optional
 import aiohttp
@@ -9,6 +10,9 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from models import NewsItem, NewsCategory
 from config import Config
+
+# Configure logger for scrapers
+logger = logging.getLogger(__name__)
 
 
 class BaseNewsScraper(ABC):
@@ -46,11 +50,10 @@ class BaseNewsScraper(ABC):
             headers = {"User-Agent": Config.USER_AGENT}
         
         try:
-            # Configure connector with increased header size limits for sites like Yahoo Finance
-            connector = aiohttp.TCPConnector(limit=100)
+            # Configure connector with increased limits
+            connector = aiohttp.TCPConnector(limit=100, force_close=True)
             timeout = aiohttp.ClientTimeout(total=Config.REQUEST_TIMEOUT)
             
-            # Increase max_line_size and max_field_size to handle large headers
             async with aiohttp.ClientSession(
                 connector=connector,
                 timeout=timeout,
@@ -59,16 +62,26 @@ class BaseNewsScraper(ABC):
                 async with session.get(
                     url, 
                     headers=headers,
-                    max_field_size=65536,  # Increase from default 8190 to 64KB
-                    max_line_size=65536    # Increase from default 8190 to 64KB
+                    ssl=False  # Disable SSL verification for problematic sites
                 ) as response:
                     if response.status == 200:
                         return await response.text()
                     else:
-                        print(f"{self.source_name} returned status {response.status} for URL: {url}")
+                        # Only log non-200 status codes at debug level
                         return None
+        except aiohttp.ClientConnectorError as e:
+            # Connection errors (DNS, refused, etc.) - common for blocked sites
+            return None
+        except aiohttp.ServerTimeoutError:
+            # Timeout - site too slow
+            return None
+        except aiohttp.ClientResponseError as e:
+            # HTTP errors
+            return None
         except Exception as e:
-            print(f"Error fetching from {self.source_name}: {e}")
+            # Only log unexpected errors
+            if str(e):
+                logger.warning(f"Unexpected error fetching from {self.source_name}: {type(e).__name__}: {e}")
             return None
     
     def _parse_html(self, html: str, parser: str = 'lxml') -> BeautifulSoup:

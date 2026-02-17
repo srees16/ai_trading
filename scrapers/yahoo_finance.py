@@ -1,117 +1,110 @@
 """
-Yahoo Finance news scraper.
+Yahoo Finance news scraper using yfinance library.
 """
 
+import logging
 from datetime import datetime
 from typing import List
+import yfinance as yf
 from scrapers import BaseNewsScraper
 from models import NewsItem
 
+logger = logging.getLogger(__name__)
+
 
 class YahooFinanceScraper(BaseNewsScraper):
-    """Scraper for Yahoo Finance news."""
+    """Scraper for Yahoo Finance news using yfinance library."""
     
     def __init__(self):
-        # Updated URL format - Yahoo Finance changed their structure
         super().__init__("Yahoo Finance", "https://finance.yahoo.com/quote/{}")
     
     async def fetch_news(self, ticker: str) -> List[NewsItem]:
-        """Fetch news from Yahoo Finance."""
+        """Fetch news from Yahoo Finance using yfinance library."""
         news_items = []
-        url = self.base_url.format(ticker)
         
-        # Enhanced headers to better mimic browser behavior
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Accept-Encoding": "gzip, deflate, br",
-            "Connection": "keep-alive",
-            "Upgrade-Insecure-Requests": "1",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Cache-Control": "max-age=0"
-        }
-        
-        html = await self._fetch_html(url, headers)
-        if not html:
-            return news_items
-        
-        soup = self._parse_html(html)
-        
-        # Try multiple selectors as Yahoo Finance structure varies
-        # Look for news sections with different possible class names
-        articles = (
-            soup.find_all('li', class_='js-stream-content') or
-            soup.find_all('div', class_='Ov(h)') or
-            soup.find_all('section', {'data-test': 'news-stream'}) or
-            soup.find_all('div', class_='news-stream')
-        )
-        
-        # If no articles found with specific classes, try finding all article/h3 combinations
-        if not articles:
-            # Look for any h3 tags that might contain news titles
-            articles = soup.find_all('h3')[:10]
-        
-        for article in articles[:10]:
-            try:
-                # Try different title extraction methods
-                if article.name == 'h3':
-                    title_elem = article
-                else:
-                    title_elem = article.find('h3') or article.find('a') or article.find('div', class_='title')
-                
-                if not title_elem:
+        logger.info(f"Yahoo Finance: Fetching news for {ticker}...")
+        try:
+            # Use yfinance to get news - this uses Yahoo's official API
+            yf_ticker = yf.Ticker(ticker)
+            news_data = yf_ticker.news
+            
+            if not news_data:
+                logger.info(f"Yahoo Finance: No news found for {ticker}")
+                return news_items
+            
+            for article in news_data[:10]:
+                try:
+                    # Extract from yfinance news structure
+                    content = article.get('content', article)
+                    
+                    # Get title
+                    title = content.get('title', '') if isinstance(content, dict) else article.get('title', '')
+                    if not title:
+                        continue
+                    
+                    # Get summary/description
+                    summary = ''
+                    if isinstance(content, dict):
+                        summary = content.get('summary', '') or content.get('description', '')
+                    if not summary:
+                        summary = article.get('summary', '') or article.get('description', title)
+                    
+                    # Get URL
+                    article_url = ''
+                    if isinstance(content, dict):
+                        canonical = content.get('canonicalUrl', {})
+                        if isinstance(canonical, dict):
+                            article_url = canonical.get('url', '')
+                        click_through = content.get('clickThroughUrl', {})
+                        if not article_url and isinstance(click_through, dict):
+                            article_url = click_through.get('url', '')
+                    if not article_url:
+                        article_url = article.get('link', '') or article.get('url', '')
+                    
+                    # Get timestamp
+                    timestamp = datetime.now()
+                    pub_date = None
+                    if isinstance(content, dict):
+                        pub_date = content.get('pubDate')
+                    if not pub_date:
+                        pub_date = article.get('providerPublishTime')
+                    
+                    if pub_date:
+                        if isinstance(pub_date, str):
+                            try:
+                                timestamp = datetime.fromisoformat(pub_date.replace('Z', '+00:00'))
+                            except:
+                                pass
+                        elif isinstance(pub_date, (int, float)):
+                            try:
+                                timestamp = datetime.fromtimestamp(pub_date)
+                            except:
+                                pass
+                    
+                    # Categorize
+                    category = self._categorize_news(title + " " + summary)
+                    
+                    news_item = NewsItem(
+                        title=title,
+                        summary=summary[:500] if summary else title,  # Limit summary length
+                        url=article_url,
+                        timestamp=timestamp,
+                        source=self.source_name,
+                        ticker=ticker,
+                        category=category
+                    )
+                    news_items.append(news_item)
+                    
+                except Exception as e:
+                    # Skip articles that fail to parse
                     continue
-                
-                title = self._extract_text(title_elem)
-                if not title or len(title) < 10:  # Skip very short titles
-                    continue
-                
-                # Extract link
-                link_elem = title_elem.find('a') if article.name != 'a' else title_elem
-                article_url = ""
-                if link_elem and 'href' in link_elem.attrs:
-                    href = link_elem['href']
-                    if href.startswith('http'):
-                        article_url = href
-                    elif href.startswith('/'):
-                        article_url = f"https://finance.yahoo.com{href}"
-                
-                # Extract summary
-                summary_elem = article.find('p') or article.find('div', class_='summary')
-                summary = self._extract_text(summary_elem) if summary_elem else title
-                
-                timestamp = datetime.now()
-                category = self._categorize_news(title + " " + summary)
-                
-                news_item = NewsItem(
-                    title=title,
-                    summary=summary,
-                    url=article_url,
-                    timestamp=timestamp,
-                    source=self.source_name,
-                    ticker=ticker,
-                    category=category
-                )
-                news_items.append(news_item)
-            except Exception as e:
-                print(f"Error parsing Yahoo article: {e}")
-                continue
-        
-        # If still no news found, create a fallback entry
-        if not news_items:
-            print(f"Yahoo Finance: No news articles found for {ticker} (website structure may have changed)")
-            # Create a minimal news item to indicate attempt was made
-            news_items.append(NewsItem(
-                title=f"No recent news found for {ticker}",
-                summary="Yahoo Finance scraping completed but no articles were parsed",
-                url=url,
-                timestamp=datetime.now(),
-                source=self.source_name,
-                ticker=ticker,
-                category=self._categorize_news("")
-            ))
+            
+            if news_items:
+                logger.info(f"Yahoo Finance: Fetched {len(news_items)} articles for {ticker}")
+            else:
+                logger.info(f"Yahoo Finance: No articles parsed for {ticker}")
+            
+        except Exception as e:
+            logger.warning(f"Yahoo Finance: Error fetching news for {ticker}: {type(e).__name__}")
         
         return news_items

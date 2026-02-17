@@ -31,5 +31,9 @@ streamlit-aggrid
 # Machine Learning
 scikit-learn
 
+# Trading Strategy Analysis
+matplotlib
+statsmodels
+
 # Web Automation
 selenium
