@@ -5,7 +5,7 @@ Repository for analysis run tracking and audit trail.
 
 import logging
 from typing import List, Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -67,7 +67,7 @@ class AnalysisRepository(BaseRepository[AnalysisRun]):
         run = self.get_by_id(run_id)
         if run:
             run.status = AnalysisStatus.RUNNING
-            run.started_at = datetime.utcnow()
+            run.started_at = datetime.now(timezone.utc)
             self.session.flush()
         return run
     
@@ -91,7 +91,7 @@ class AnalysisRepository(BaseRepository[AnalysisRun]):
         run = self.get_by_id(run_id)
         if run:
             run.status = AnalysisStatus.COMPLETED
-            run.completed_at = datetime.utcnow()
+            run.completed_at = datetime.now(timezone.utc)
             run.total_signals = total_signals
             run.total_news_items = total_news_items
             if run.started_at:
@@ -119,7 +119,7 @@ class AnalysisRepository(BaseRepository[AnalysisRun]):
         run = self.get_by_id(run_id)
         if run:
             run.status = AnalysisStatus.FAILED
-            run.completed_at = datetime.utcnow()
+            run.completed_at = datetime.now(timezone.utc)
             run.error_message = error_message
             run.error_traceback = error_traceback
             if run.started_at:

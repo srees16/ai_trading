@@ -282,45 +282,12 @@ class MACDOscillatorStrategy(BaseStrategy):
         signals: pd.DataFrame,
         sentiment: dict
     ) -> pd.DataFrame:
-        """Apply sentiment-based adjustments to trading signals."""
-        sentiment_score = sentiment.get('score', 0)
-        
-        # Boost or reduce signal strength based on sentiment
-        if abs(sentiment_score) > 0.5:
-            # Strong sentiment - adjust oscillator magnitude
-            multiplier = 1 + (sentiment_score * 0.2)
-            signals['oscillator'] = signals['oscillator'] * multiplier
-        
-        return signals
+        """Scale MACD oscillator magnitude based on sentiment strength."""
+        return self._sentiment_scale_indicator(
+            signals, 'oscillator', sentiment
+        )
     
-    def _calculate_portfolio(
-        self,
-        signals: pd.DataFrame,
-        capital: float,
-        risk: RiskParams
-    ) -> pd.DataFrame:
-        """Calculate portfolio value over time."""
-        portfolio = pd.DataFrame(index=signals.index)
-        
-        # Calculate position sizes (shares we can buy)
-        max_position_value = capital * risk.max_position_size
-        shares = int(max_position_value / signals['Close'].max()) if signals['Close'].max() > 0 else 0
-        
-        # Calculate holdings
-        portfolio['positions'] = signals['positions']
-        portfolio['Close'] = signals['Close']
-        portfolio['holdings'] = signals['positions'] * signals['Close'] * shares
-        
-        # Calculate cash
-        portfolio['cash'] = capital - (signals['signals'] * signals['Close'] * shares).cumsum()
-        
-        # Total portfolio value
-        portfolio['total_value'] = portfolio['holdings'] + portfolio['cash']
-        
-        # Calculate returns
-        portfolio['returns'] = portfolio['total_value'].pct_change().fillna(0)
-        
-        return portfolio
+    # _calculate_portfolio inherited from BaseStrategy
     
     def _create_charts(
         self,
@@ -357,7 +324,8 @@ class MACDOscillatorStrategy(BaseStrategy):
             title=f"{ticker} Price & Signals",
             data=matplotlib_to_base64(fig1),
             chart_type="matplotlib",
-            description="Price chart with buy/sell signals"
+            description="Price chart with buy/sell signals",
+            ticker=ticker
         ))
         
         # Chart 2: MACD Oscillator
@@ -384,7 +352,8 @@ class MACDOscillatorStrategy(BaseStrategy):
             title=f"{ticker} MACD Analysis",
             data=matplotlib_to_base64(fig2),
             chart_type="matplotlib",
-            description="Moving averages and MACD oscillator"
+            description="Moving averages and MACD oscillator",
+            ticker=ticker
         ))
         
         return charts

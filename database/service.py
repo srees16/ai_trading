@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from database.connection import DatabaseManager
 from database.models import (
     AnalysisRun, NewsItem, StockSignal, FundamentalMetric,
-    BacktestResult, AnalysisStatus
+    BacktestResult, AnalysisStatus, SentimentType
 )
 from database.repositories import (
     AnalysisRepository, SignalRepository, NewsRepository,
@@ -63,7 +63,8 @@ class DatabaseService:
     @property
     def is_available(self) -> bool:
         """Check if database is available."""
-        return self._db_manager.health_check()
+        result = self._db_manager.health_check()
+        return result.get('healthy', False) if isinstance(result, dict) else bool(result)
     
     @contextmanager
     def session_scope(self):
@@ -74,16 +75,8 @@ class DatabaseService:
             with service.session_scope() as session:
                 # do work
         """
-        session = self._db_manager.get_session()
-        try:
+        with self._db_manager.get_session() as session:
             yield session
-            session.commit()
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Database transaction failed: {e}")
-            raise
-        finally:
-            session.close()
     
     # =================================================================
     # Analysis Run Operations
@@ -306,13 +299,26 @@ class DatabaseService:
                 for item in news_items:
                     # Deduplication check
                     headline = item.get('headline', item.get('title', ''))
+                    summary = item.get('summary', item.get('content', ''))
                     if repo.check_duplicate(
-                        ticker=item.get('ticker', ''),
-                        headline=headline,
-                        url=item.get('url', '')
+                        title=headline,
+                        content=summary,
+                        ticker=item.get('ticker', '')
                     ):
                         continue
                     
+                    # Convert sentiment label string to enum
+                    sentiment_raw = item.get('sentiment_label')
+                    sentiment_enum = None
+                    if sentiment_raw:
+                        if isinstance(sentiment_raw, str):
+                            try:
+                                sentiment_enum = SentimentType(sentiment_raw.lower())
+                            except ValueError:
+                                sentiment_enum = SentimentType.NEUTRAL
+                        else:
+                            sentiment_enum = sentiment_raw
+
                     news = NewsItem(
                         analysis_run_id=analysis_run_id,
                         ticker=item.get('ticker', '').upper(),
@@ -321,7 +327,7 @@ class DatabaseService:
                         source=item.get('source', 'unknown'),
                         url=item.get('url', ''),
                         published_at=item.get('published_at'),
-                        sentiment_label=item.get('sentiment_label'),
+                        sentiment_label=sentiment_enum,
                         sentiment_confidence=item.get('sentiment_score'),
                         entities=item.get('entities', {}),
                     )

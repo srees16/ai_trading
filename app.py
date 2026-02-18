@@ -11,6 +11,16 @@ Manual stock tickers example: RGTI, QUBT, QBTS, IONQ
 
 import streamlit as st
 import logging
+from ui.styles import apply_custom_styles
+from ui.pages import (
+    render_main_page,
+    render_analysis_page,
+    render_fundamental_page,
+    render_backtesting_page,
+    render_history_page,
+)
+from services.session import initialize_session_state
+from auth import check_authentication, render_user_menu
 
 # Configure logging
 logging.basicConfig(
@@ -20,26 +30,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Page configuration (must be first Streamlit command)
 st.set_page_config(
     page_title="Centurion Capital LLC",
     page_icon="📈",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
-
-# Import UI modules
-from ui.styles import apply_custom_styles
-from ui.pages import (
-    render_main_page,
-    render_analysis_page,
-    render_fundamental_page,
-    render_backtesting_page,
-)
-from services.session import initialize_session_state
-
-# Import authentication
-from auth import check_authentication, render_user_menu
 
 
 def main():
@@ -65,6 +61,7 @@ def main():
         'analysis': render_analysis_page,
         'fundamental': render_fundamental_page,
         'backtesting': render_backtesting_page,
+        'history': render_history_page,
     }
     
     # Get the page renderer and execute

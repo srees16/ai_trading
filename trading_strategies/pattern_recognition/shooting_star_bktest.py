@@ -9,6 +9,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import yfinance
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from backtest_utils import candlestick
+
 def shooting_star(data,lower_bound,body_size):
 
     df=data.copy()
@@ -105,64 +110,7 @@ plus we dont wanna install mpl_finance
 we implement our own version
 simply use fill_between to construct the bar
 use line plot to construct high and low'''
-def candlestick(df,ax=None,highlight=None,titlename='',
-                highcol='High',lowcol='Low',
-                opencol='Open',closecol='Close',xcol='Date',
-                colorup='r',colordown='g',highlightcolor='y',
-                **kwargs):  
-    
-    #bar width
-    #use 0.6 by default
-    dif=[(-3+i)/10 for i in range(7)]
-    
-    if not ax:
-        ax=plt.figure(figsize=(10,5)).add_subplot(111)
-    
-    #construct the bars one by one
-    for i in range(len(df)):
-        
-        #width is 0.6 by default
-        #so 7 data points required for each bar
-        x=[i+j for j in dif]
-        y1=[df[opencol].iloc[i]]*7
-        y2=[df[closecol].iloc[i]]*7
-
-        barcolor=colorup if y1[0]>y2[0] else colordown
-        
-        #no high line plot if open/close is high
-        if df[highcol].iloc[i]!=max(df[opencol].iloc[i],df[closecol].iloc[i]):
-            
-            #use generic plot to viz high and low
-            #use 1.001 as a scaling factor
-            #to prevent high line from crossing into the bar
-            plt.plot([i,i],
-                     [df[highcol].iloc[i],
-                      max(df[opencol].iloc[i],
-                          df[closecol].iloc[i])*1.001],c='k',**kwargs)
-    
-        #same as high
-        if df[lowcol].iloc[i]!=min(df[opencol].iloc[i],df[closecol].iloc[i]):             
-            
-            plt.plot([i,i],
-                     [df[lowcol].iloc[i],
-                      min(df[opencol].iloc[i],
-                          df[closecol].iloc[i])*0.999],c='k',**kwargs)
-        
-        #treat the bar as fill between
-        plt.fill_between(x,y1,y2,
-                         edgecolor='k',
-                         facecolor=barcolor,**kwargs)
-        
-        if highlight:
-            if df[highlight].iloc[i]==-1:
-                plt.fill_between(x,y1,y2,
-                         edgecolor='k',
-                         facecolor=highlightcolor,**kwargs)
-
-    #only show 5 xticks
-    plt.xticks([])
-    plt.grid(True)
-    plt.title(titlename)
+# candlestick is now imported from backtest_utils
 
 #plotting the backtesting result
 def plot(data,name):   

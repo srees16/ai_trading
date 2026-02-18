@@ -22,15 +22,15 @@ class DatabaseConfig:
     """Database configuration from environment variables."""
     
     def __init__(self):
-        self.host = os.getenv('DB_HOST', 'localhost')
-        self.port = int(os.getenv('DB_PORT', '5432'))
-        self.database = os.getenv('DB_NAME', 'centurion_db')
-        self.username = os.getenv('DB_USER', 'centurion')
-        self.password = os.getenv('DB_PASSWORD', '')
-        self.pool_size = int(os.getenv('DB_POOL_SIZE', '10'))
-        self.max_overflow = int(os.getenv('DB_MAX_OVERFLOW', '20'))
-        self.pool_timeout = int(os.getenv('DB_POOL_TIMEOUT', '30'))
-        self.pool_recycle = int(os.getenv('DB_POOL_RECYCLE', '3600'))
+        self.host = os.getenv('CENTURION_DB_HOST', os.getenv('DB_HOST', 'localhost'))
+        self.port = int(os.getenv('CENTURION_DB_PORT', os.getenv('DB_PORT', '5432')))
+        self.database = os.getenv('CENTURION_DB_NAME', os.getenv('DB_NAME', 'centurion_trading'))
+        self.username = os.getenv('CENTURION_DB_USER', os.getenv('DB_USER', 'centurion'))
+        self.password = os.getenv('CENTURION_DB_PASSWORD', os.getenv('DB_PASSWORD', ''))
+        self.pool_size = int(os.getenv('CENTURION_DB_POOL_SIZE', os.getenv('DB_POOL_SIZE', '10')))
+        self.max_overflow = int(os.getenv('CENTURION_DB_MAX_OVERFLOW', os.getenv('DB_MAX_OVERFLOW', '20')))
+        self.pool_timeout = int(os.getenv('CENTURION_DB_POOL_TIMEOUT', os.getenv('DB_POOL_TIMEOUT', '30')))
+        self.pool_recycle = int(os.getenv('CENTURION_DB_POOL_RECYCLE', os.getenv('DB_POOL_RECYCLE', '3600')))
         self.echo_sql = os.getenv('DB_ECHO_SQL', 'false').lower() == 'true'
         self.ssl_mode = os.getenv('DB_SSL_MODE', 'prefer')
         

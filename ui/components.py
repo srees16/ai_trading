@@ -96,6 +96,7 @@ def render_navigation_buttons(
     show_back: bool = True,
     show_fundamental: bool = True,
     show_backtest: bool = True,
+    show_history: bool = True,
     back_key_suffix: str = ""
 ):
     """
@@ -106,47 +107,64 @@ def render_navigation_buttons(
         show_back: Show back to main button
         show_fundamental: Show fundamental analysis button
         show_backtest: Show backtesting button
+        show_history: Show history button
         back_key_suffix: Suffix for button keys to avoid duplicates
     """
-    _, nav_col1, nav_col2, nav_col3, _ = st.columns([1, 1.2, 0.5, 1.2, 1])
+    has_results = st.session_state.get('analysis_complete', False) and st.session_state.get('signals')
     
-    with nav_col1:
-        if show_back:
-            if st.button("← Back to Main", key=f"back_{back_key_suffix}", use_container_width=True):
-                st.session_state.current_page = 'main'
-                st.rerun()
+    # Build list of buttons to show
+    buttons = []
+    if show_back:
+        buttons.append(('main', '🏠 Main'))
+    if has_results and current_page != 'analysis':
+        buttons.append(('analysis', '📈 Analysis Results'))
+    if show_history and current_page != 'history':
+        buttons.append(('history', '📋 History'))
+    if current_page == 'fundamental' and show_backtest:
+        buttons.append(('backtesting', '🔬 Backtest A Strategy'))
+    elif current_page == 'backtesting' and show_fundamental:
+        buttons.append(('fundamental', '📊 Fundamental Analysis'))
+    elif current_page == 'history' and show_backtest:
+        buttons.append(('backtesting', '🔬 Backtest A Strategy'))
+    elif current_page == 'history' and show_fundamental:
+        buttons.append(('fundamental', '📊 Fundamental Analysis'))
     
-    with nav_col2:
-        pass  # Spacer column
+    n = len(buttons)
+    if n == 0:
+        return
     
-    with nav_col3:
-        if current_page == 'fundamental' and show_backtest:
-            if st.button("🔬 Backtesting", key=f"nav_backtest_{back_key_suffix}", use_container_width=True):
-                st.session_state.current_page = 'backtesting'
-                st.rerun()
-        elif current_page == 'backtesting' and show_fundamental:
-            if st.button("📊 Fundamentals", key=f"nav_fundamental_{back_key_suffix}", use_container_width=True):
-                st.session_state.current_page = 'fundamental'
+    col_spec = [1] + [1.2] * n + [1]
+    cols = st.columns(col_spec)
+    
+    for i, (page_id, label) in enumerate(buttons):
+        with cols[i + 1]:
+            if st.button(label, key=f"nav_{page_id}_{back_key_suffix}", use_container_width=True):
+                st.session_state.current_page = page_id
                 st.rerun()
 
 
 def render_analysis_navigation_buttons():
     """Render navigation buttons for analysis results page."""
-    _, nav_col1, nav_col2, nav_col3, _ = st.columns([0.5, 1.2, 1.2, 1.2, 0.5])
+    _, nav_col1, nav_col2, nav_col3, nav_col4, _ = st.columns([0.3, 1.2, 1.2, 1.2, 1.2, 0.3])
     
     with nav_col1:
-        if st.button("← Back to Main", key="back_from_analysis", use_container_width=True):
+        if st.button("🏠 Main", key="back_from_analysis", use_container_width=True):
             st.session_state.current_page = 'main'
             st.rerun()
     
     with nav_col2:
-        if st.button("📊 Fundamentals", key="nav_fundamental_from_analysis", use_container_width=True):
+        if st.button("📊 Fundamental Analysis", key="nav_fundamental_from_analysis", use_container_width=True):
             st.session_state.current_page = 'fundamental'
             st.rerun()
     
     with nav_col3:
-        if st.button("🔬 Backtesting", key="nav_backtest_from_analysis", use_container_width=True):
+        if st.button("🔬 Backtest Strategy", key="nav_backtest_from_analysis", use_container_width=True):
             st.session_state.current_page = 'backtesting'
+            st.rerun()
+    
+    with nav_col4:
+        if st.button("📋 History", key="nav_history_from_analysis", use_container_width=True):
+            st.session_state.current_page = 'history'
             st.rerun()
 
 

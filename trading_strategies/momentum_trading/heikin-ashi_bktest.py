@@ -12,6 +12,11 @@ import numpy as np
 import scipy.integrate
 import scipy.stats
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from backtest_utils import mdd, candlestick, portfolio, profit
+
 '''Heikin Ashi has a unique method to filter out the noise
 its open, close, high, low require a different approach
 please refer to the website mentioned above'''
@@ -94,61 +99,8 @@ def signal_generation(df,method,stls):
                 
     return data
 
-'''since matplotlib remove the candlestick
-plus we dont wanna install mpl_finance
-we implement our own version
-simply use fill_between to construct the bar
-use line plot to construct high and low'''
-def candlestick(df,ax=None,titlename='',highcol='High',lowcol='Low',
-                opencol='Open',closecol='Close',xcol='Date',
-                colorup='r',colordown='g',**kwargs):  
-    
-    #bar width
-    #use 0.6 by default
-    dif=[(-3+i)/10 for i in range(7)]
-    
-    if not ax:
-        ax=plt.figure(figsize=(10,5)).add_subplot(111)
-    
-    #construct the bars one by one
-    for i in range(len(df)):
-        
-        #width is 0.6 by default
-        #so 7 data points required for each bar
-        x=[i+j for j in dif]
-        y1=[df[opencol].iloc[i]]*7
-        y2=[df[closecol].iloc[i]]*7
+# candlestick is now imported from backtest_utils
 
-        barcolor=colorup if y1[0]>y2[0] else colordown
-        
-        #no high line plot if open/close is high
-        if df[highcol].iloc[i]!=max(df[opencol].iloc[i],df[closecol].iloc[i]):
-            
-            #use generic plot to viz high and low
-            #use 1.001 as a scaling factor
-            #to prevent high line from crossing into the bar
-            plt.plot([i,i],
-                     [df[highcol].iloc[i],
-                      max(df[opencol].iloc[i],
-                          df[closecol].iloc[i])*1.001],c='k',**kwargs)
-    
-        #same as high
-        if df[lowcol].iloc[i]!=min(df[opencol].iloc[i],df[closecol].iloc[i]):             
-            
-            plt.plot([i,i],
-                     [df[lowcol].iloc[i],
-                      min(df[opencol].iloc[i],
-                          df[closecol].iloc[i])*0.999],c='k',**kwargs)
-        
-        #treat the bar as fill between
-        plt.fill_between(x,y1,y2,
-                         edgecolor='k',
-                         facecolor=barcolor,**kwargs)
-
-    #only show 5 xticks
-    plt.xticks(range(0,len(df),len(df)//5),df[xcol][0::len(df)//5].dt.date)
-    plt.title(titlename)
-    
     
 '''plotting the backtesting result'''
 def plot(df,ticker):    
@@ -179,45 +131,7 @@ def plot(df,ticker):
     plt.legend(loc='best')
     plt.show()
 
-'''backtesting
-initial capital 10k to calculate the actual pnl  
-100 shares to buy of every position'''
-def portfolio(data,capital0=10000,positions=100):   
-        
-    #cumsum column is created to check the holding of the position
-    data['cumsum']=data['signals'].cumsum()
-
-    portfolio=pd.DataFrame()
-    portfolio['holdings']=data['cumsum']*data['Close']*positions
-    portfolio['cash']=capital0-(data['signals']*data['Close']*positions).cumsum()
-    portfolio['total asset']=portfolio['holdings']+portfolio['cash']
-    portfolio['return']=portfolio['total asset'].pct_change()
-    portfolio['signals']=data['signals']
-    portfolio['date']=data['Date']
-    portfolio.set_index('date',inplace=True)
-
-    return portfolio
-
-'''plotting the asset value change of the portfolio'''
-def profit(portfolio):
-        
-    fig=plt.figure()
-    bx=fig.add_subplot(111)
-    
-    portfolio['total asset'].plot(label='Total Asset')
-    
-    #long/short position markers related to the portfolio
-    #the same mechanism as the previous one
-    #replace close price with total asset value
-    bx.plot(portfolio['signals'].loc[portfolio['signals']==1].index,portfolio['total asset'][portfolio['signals']==1],lw=0,marker='^',c='g',label='long')
-    bx.plot(portfolio['signals'].loc[portfolio['signals']<0].index,portfolio['total asset'][portfolio['signals']<0],lw=0,marker='v',c='r',label='short')
-    
-    plt.legend(loc='best')
-    plt.grid(True)
-    plt.xlabel('Date')
-    plt.ylabel('Asset Value')
-    plt.title('Total Asset')
-    plt.show()
+# portfolio, profit, and mdd are now imported from backtest_utils
 
 '''omega ratio is a variation of sharpe ratio
 the risk free return is replaced by a given threshold
@@ -252,28 +166,6 @@ def sortino(risk_free,degree_of_freedom,growth_rate,minimum):
     s=(growth_rate-risk_free)/v[0]
 
     return s
-
-'''i use a function to calculate maximum drawdown
-the idea is simple
-for every day, we take the current asset value marked to market
-to compare with the previous highest asset value
-we get our daily drawdown
-it is supposed to be negative if the current one is not the highest
-we implement a temporary variable to store the minimum negative value
-which is called maximum drawdown
-for each daily drawdown that is smaller than our temporary value
-we update the temp until we finish our traversal
-in the end we return the maximum drawdown'''
-def mdd(series):
-
-    minimum=0
-    for i in range(1,len(series)):
-        if minimum>(series.iloc[i]/max(series.iloc[:i])-1):
-            minimum=(series.iloc[i]/max(series.iloc[:i])-1)
-
-    return minimum
-
-    
 
 '''stats calculation'''
 def stats(portfolio,trading_signals,stdate,eddate,capital0=10000):

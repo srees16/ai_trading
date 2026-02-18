@@ -19,6 +19,11 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from backtest_utils import mdd
+
 '''used ewma function to apply exponential smoothing technique'''
 def ewmacd(signals,ma1,ma2):
     
@@ -225,25 +230,7 @@ def profit(portfolio):
     plt.title('Awesome VS MACD')
     plt.show()
 
-'''i use a function to calculate maximum drawdown
-the idea is simple
-for every day, we take the current asset value
-to compare with the previous highest asset value
-we get our daily drawdown
-it is supposed to be negative if it is not the maximum for this period so far
-we implement a temporary variable to store the minimum value
-which is called maximum drawdown
-for each daily drawdown that is smaller than our temporary value
-we update the temp until we finish our traversal
-in the end we return the maximum drawdown'''
-def mdd(series):
-
-    temp=0
-    for i in range(1,len(series)):
-        if temp>(series.iloc[i]/max(series.iloc[:i])-1):
-            temp=(series.iloc[i]/max(series.iloc[:i])-1)
-
-    return temp
+# mdd is now imported from backtest_utils
 
 def stats(portfolio):
     

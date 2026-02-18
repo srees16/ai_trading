@@ -65,7 +65,7 @@ def render_simple_summary_table(signals: List[Any]):
     df = pd.DataFrame(summary_data)
     df = df.sort_values(['Stock', 'Avg Score'], ascending=[True, False])
     
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df.astype(str), use_container_width=True, hide_index=True)
     
     # Also show aggregated view per stock
     _render_overall_stock_signals(signals)
@@ -111,7 +111,7 @@ def _render_overall_stock_signals(signals: List[Any]):
     stock_df = pd.DataFrame(stock_data)
     stock_df = stock_df.sort_values('Avg Score', ascending=False)
     
-    st.dataframe(stock_df, use_container_width=True, hide_index=True)
+    st.dataframe(stock_df.astype(str), use_container_width=True, hide_index=True)
 
 
 def render_signals_table(signals: List[Any]):
@@ -153,7 +153,7 @@ def render_signals_table(signals: List[Any]):
                 if signal.metrics and signal.metrics.altman_z_score else 'N/A'
             ),
             'F-Score': (
-                signal.metrics.piotroski_f_score
+                str(signal.metrics.piotroski_f_score)
                 if signal.metrics and signal.metrics.piotroski_f_score is not None else 'N/A'
             ),
             'Source': signal.news_item.source,
@@ -164,6 +164,9 @@ def render_signals_table(signals: List[Any]):
         })
     
     df = pd.DataFrame(data)
+    
+    # Force all columns to string to prevent Arrow serialization issues
+    df = df.astype(str)
     
     def highlight_decision(val):
         return get_decision_style(val)
@@ -295,7 +298,7 @@ def render_fundamental_table(stock_metrics: Dict[str, Any]) -> pd.DataFrame:
         })
     
     df = pd.DataFrame(health_data)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    st.dataframe(df.astype(str), use_container_width=True, hide_index=True)
     
     return df
 

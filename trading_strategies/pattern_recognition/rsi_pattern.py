@@ -35,7 +35,8 @@ from strategies.data_service import DataService
 from strategies.utils import (
     matplotlib_to_base64,
     dataframe_to_table,
-    create_metrics_summary
+    create_metrics_summary,
+    calculate_rsi
 )
 
 
@@ -247,32 +248,8 @@ class RSIPatternStrategy(BaseStrategy):
         )
     
     def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> pd.Series:
-        """
-        Calculate RSI using Smoothed Moving Average (authentic method).
-        
-        Args:
-            prices: Price series
-            period: RSI calculation period
-        
-        Returns:
-            RSI values as pandas Series
-        """
-        delta = prices.diff()
-        
-        # Separate gains and losses
-        gains = delta.where(delta > 0, 0)
-        losses = (-delta).where(delta < 0, 0)
-        
-        # Use smoothed moving average (Wilder's method)
-        avg_gains = gains.ewm(com=period-1, min_periods=period).mean()
-        avg_losses = losses.ewm(com=period-1, min_periods=period).mean()
-        
-        # Calculate RS and RSI
-        rs = avg_gains / avg_losses
-        rs = rs.replace([np.inf, -np.inf], 0)
-        rsi = 100 - (100 / (1 + rs))
-        
-        return rsi.fillna(50)  # Neutral RSI for insufficient data
+        """Calculate RSI — delegates to shared utility."""
+        return calculate_rsi(prices, period)
     
     def _generate_signals(
         self,
@@ -305,21 +282,8 @@ class RSIPatternStrategy(BaseStrategy):
         signals: pd.DataFrame,
         sentiment: dict
     ) -> pd.DataFrame:
-        """Apply sentiment-based adjustments to trading signals."""
-        sentiment_score = sentiment.get('score', 0)
-        
-        # Use sentiment to filter signals
-        # Don't go long if sentiment is very negative
-        if sentiment_score < -0.7:
-            signals.loc[signals['positions'] == 1, 'positions'] = 0
-            signals['signals'] = signals['positions'].diff().fillna(0)
-        
-        # Don't go short if sentiment is very positive
-        if sentiment_score > 0.7:
-            signals.loc[signals['positions'] == -1, 'positions'] = 0
-            signals['signals'] = signals['positions'].diff().fillna(0)
-        
-        return signals
+        """Filter long/short positions based on sentiment direction."""
+        return self._sentiment_filter_positions(signals, sentiment)
     
     def _calculate_portfolio(
         self,
@@ -327,32 +291,8 @@ class RSIPatternStrategy(BaseStrategy):
         capital: float,
         risk: RiskParams
     ) -> pd.DataFrame:
-        """Calculate portfolio value over time."""
-        portfolio = pd.DataFrame(index=signals.index)
-        
-        # Long-only version for simplicity
-        long_positions = signals['positions'].apply(lambda x: max(0, x))
-        
-        # Calculate position sizes (shares we can buy)
-        max_position_value = capital * risk.max_position_size
-        shares = int(max_position_value / signals['Close'].max()) if signals['Close'].max() > 0 else 0
-        
-        # Calculate holdings
-        portfolio['positions'] = long_positions
-        portfolio['Close'] = signals['Close']
-        portfolio['holdings'] = long_positions * signals['Close'] * shares
-        
-        # Calculate cash (only accounting for long trades)
-        long_signals = signals['signals'].apply(lambda x: max(0, x))
-        portfolio['cash'] = capital - (long_signals * signals['Close'] * shares).cumsum()
-        
-        # Total portfolio value
-        portfolio['total_value'] = portfolio['holdings'] + portfolio['cash']
-        
-        # Calculate returns
-        portfolio['returns'] = portfolio['total_value'].pct_change().fillna(0)
-        
-        return portfolio
+        """Long-only portfolio calculation for RSI mean-reversion."""
+        return self._calculate_portfolio_long_only(signals, capital, risk)
     
     def _create_charts(
         self,
@@ -407,7 +347,8 @@ class RSIPatternStrategy(BaseStrategy):
             title=f"{ticker} Price & RSI",
             data=matplotlib_to_base64(fig1),
             chart_type="matplotlib",
-            description="Price chart with RSI indicator and signals"
+            description="Price chart with RSI indicator and signals",
+            ticker=ticker
         ))
         
         # Chart 2: RSI histogram/distribution
@@ -430,7 +371,8 @@ class RSIPatternStrategy(BaseStrategy):
             title=f"{ticker} RSI Distribution",
             data=matplotlib_to_base64(fig2),
             chart_type="matplotlib",
-            description="Distribution of RSI values over the period"
+            description="Distribution of RSI values over the period",
+            ticker=ticker
         ))
         
         return charts

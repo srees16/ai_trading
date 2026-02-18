@@ -1,6 +1,6 @@
-# Algo Trading Alert System
+# Centurion Capital LLC — Enterprise AI Trading Platform
 
-A comprehensive Python-based news-driven algorithmic trading alert system that combines web scraping, sentiment analysis, fundamental analysis, and technical analysis to generate trading signals. Features an interactive Streamlit web interface with CSV upload capabilities.
+A comprehensive Python-based enterprise trading platform combining multi-source news scraping, AI-powered sentiment analysis, fundamental & technical analysis, strategy backtesting, and persistent data storage. Features an interactive Streamlit web interface, PostgreSQL database persistence, and MinIO object storage for backtest chart images.
 
 ## 🚀 Key Features
 
@@ -10,130 +10,340 @@ A comprehensive Python-based news-driven algorithmic trading alert system that c
 - **Comprehensive Stock Metrics**:
   - Fundamentals: PEG ratio, ROE, EPS, Free Cash Flow, DCF value, Intrinsic value
   - Technicals: RSI, MACD, Fibonacci retracement, Bollinger Bands, Maximum drawdown
-- **Intelligent Decision Engine**: Combines sentiment, fundamentals, and technicals to generate trading decisions (STRONG_BUY, BUY, HOLD, SELL, STRONG_SELL)
+  - Scoring: Altman Z-Score, Beneish M-Score, Piotroski F-Score
+- **Intelligent Decision Engine**: Weighted combination of sentiment, fundamentals, and technicals to generate trading decisions (STRONG_BUY, BUY, HOLD, SELL, STRONG_SELL)
 - **Real-Time Alerts**: Desktop popup notifications for high-confidence trading signals
-- **Data Persistence**: Automatic logging to Excel/CSV with daily append functionality
 - **Async Architecture**: Concurrent scraping for optimal performance
 
+### Strategy Backtesting
+- **9 Built-in Strategies** across three categories:
+  - **Momentum**: MACD Oscillator, Parabolic SAR, Heikin-Ashi, Awesome Oscillator
+  - **Pattern Recognition**: RSI Pattern, Bollinger Band Pattern, Shooting Star, Support & Resistance
+  - **Statistical Arbitrage**: Pairs Trading
+- **Multi-Ticker Support**: Run backtests across multiple tickers simultaneously
+- **Per-Ticker Performance Tabs**: Detailed metrics breakdown per ticker
+- **Strategy Caching**: Pre-computes and caches results for instant strategy switching
+- **Configurable Parameters**: Adjust capital, date range, and strategy-specific settings
+
+### Database Persistence (PostgreSQL)
+- **Automatic Logging**: All analysis runs, signals, news items, and backtest results are persisted
+- **7 Database Tables**: `analysis_runs`, `stock_signals`, `news_items`, `fundamental_metrics`, `backtest_results`, `trading_signals`, `strategy_parameters`
+- **Repository Pattern**: Clean data access layer via SQLAlchemy ORM
+- **History Page**: Browse past analyses, signals, and backtests filtered by date range
+
+### Object Storage (MinIO)
+- **Chart Image Persistence**: All backtest charts (matplotlib & plotly) saved to S3-compatible MinIO
+- **Organised by Run**: Images stored under `<run_id>/<ticker>/<strategy>/<filename>` paths
+- **History Integration**: Browse and view stored charts from the History page
+- **Metadata Tags**: Each image carries strategy name, chart type, and title as S3 metadata
+
 ### Interactive Web Interface
-- **Streamlit Dashboard**: Modern, interactive web UI with real-time updates
+- **Enterprise Branding**: Centurion Capital LLC logo and styling throughout
+- **Modular UI Architecture**: Separate page modules for main, analysis, fundamental, backtesting, and history
+- **Consistent Navigation**: Uniform button labels across all pages (🏠 Main, 📊 Fundamental Analysis, 🔬 Backtest Strategy, 📋 History)
 - **CSV Upload**: Upload custom ticker lists in various formats
 - **Visual Analytics**: Interactive charts, pie charts, scatter plots, and bar graphs
-- **Color-Coded Results**: Easy-to-read decision indicators
-- **Export Capabilities**: Download results as CSV for further analysis
-- **Multiple Input Methods**: Default tickers, manual entry, or CSV upload
-- **Progress Tracking**: Live updates during analysis execution
+- **Authentication**: YAML-based credential management
 
 ## 📁 Project Structure
 
 ```
-algo_trade/
-├── main.py                      # Main orchestration script
-├── config.py                    # Configuration settings
-├── models.py                    # Data models and interfaces
-├── requirements.txt             # Python dependencies
-├── scrapers/                    # News scraping modules
-│   ├── __init__.py
+centurion_core/
+├── app.py                        # Streamlit application router
+├── main.py                       # Core orchestration script
+├── config.py                     # Configuration settings
+├── models.py                     # Data models and interfaces
+├── utils.py                      # CSV parsing and utilities
+├── setup_database.py             # Database schema initialization
+├── requirements.txt              # Python dependencies
+├── .env                          # Environment variables (DB + MinIO)
+├── .streamlit/
+│   └── config.toml               # Streamlit server config (port 9090)
+├── sample_tickers.csv            # Example ticker list
+├── run_streamlit.bat             # Windows quick-launch script
+│
+├── ui/                           # Modular UI layer
+│   ├── components.py             # Reusable components (header, footer, nav)
+│   ├── charts.py                 # Chart rendering utilities
+│   ├── tables.py                 # Table rendering utilities
+│   ├── styles.py                 # CSS styling
+│   └── pages/
+│       ├── main_page.py          # Dashboard & control panel
+│       ├── analysis_page.py      # Analysis results display
+│       ├── fundamental_page.py   # Fundamental analysis drill-down
+│       ├── backtesting_page.py   # Strategy backtesting with MinIO integration
+│       └── history_page.py       # Historical results browser (DB + MinIO)
+│
+├── auth/                         # Authentication
+│   ├── authenticator.py          # Login/session management
+│   └── credentials.yaml          # User credentials
+│
+├── database/                     # PostgreSQL persistence layer
+│   ├── connection.py             # SQLAlchemy engine & session management
+│   ├── models.py                 # ORM models (7 tables)
+│   ├── service.py                # High-level database service (singleton)
+│   └── repositories/
+│       ├── base.py               # Base repository class
+│       ├── analysis.py           # AnalysisRepository
+│       ├── signals.py            # SignalRepository
+│       ├── news.py               # NewsRepository
+│       ├── fundamentals.py       # FundamentalsRepository
+│       └── backtests.py          # BacktestRepository
+│
+├── storage/                      # Object storage
+│   ├── manager.py                # Excel/CSV file export
+│   └── minio_service.py          # MinIO S3 client (singleton)
+│
+├── scrapers/                     # News scraping modules
 │   ├── yahoo_finance.py
 │   ├── finviz.py
 │   ├── investing.py
 │   ├── tradingview.py
-│   └── aggregator.py
-├── sentiment/                   # Sentiment analysis
-│   ├── __init__.py
-│   └── analyzer.py
-├── metrics/                     # Stock metrics calculation
-│   ├── __init__.py
-│   └── calculator.py
-├── decision_engine/             # Trading decision logic
-│   ├── __init__.py
-│   └── engine.py
-├── notifications/               # Alert system
-│   ├── __init__.py
+│   └── aggregator.py             # Concurrent scraping coordinator
+│
+├── sentiment/                    # AI sentiment analysis
+│   └── analyzer.py               # DistilBERT implementation
+│
+├── metrics/                      # Financial metrics
+│   └── calculator.py             # Fundamentals & technicals
+│
+├── decision_engine/              # Trading logic
+│   └── engine.py                 # Weighted scoring algorithm
+│
+├── strategies/                   # Strategy framework
+│   ├── base_strategy.py          # BaseStrategy, StrategyResult, ChartData
+│   ├── registry.py               # Strategy auto-discovery
+│   ├── loader.py                 # Dynamic loading
+│   ├── data_service.py           # Market data service
+│   └── utils.py                  # Chart conversion utilities (base64, plotly JSON)
+│
+├── trading_strategies/           # Strategy implementations
+│   ├── momentum_trading/
+│   │   ├── macd_oscillator.py          # + macd_oscillator_bktest.py
+│   │   ├── parabolic_sar.py            # + parabolic_sar_bktest.py
+│   │   ├── heikin_ashi.py              # + heikin-ashi_bktest.py
+│   │   └── awesome_oscillator.py       # + awesome_oscillator_bktest.py
+│   ├── pattern_recognition/
+│   │   ├── rsi_pattern.py              # + rsi_pattern_recognize_bktest.py
+│   │   ├── bollinger_pattern.py
+│   │   ├── shooting_star.py            # + shooting_star_bktest.py
+│   │   └── support_resistance.py       # + support_resistance_bktest.py
+│   └── statistical_arbitrage/
+│       └── pairs_trading.py            # + pairs_trading_bktest.py
+│
+├── notifications/                # Desktop alerts
 │   └── manager.py
-└── storage/                     # Data persistence
-    ├── __init__.py
-    └── manager.py
+│
+├── services/                     # Business logic services
+│   ├── analysis.py               # Analysis orchestration
+│   └── session.py                # Session state management
+│
+└── deployment/                   # Deployment configs
+    ├── docker-compose.yml        # App + MinIO containers
+    ├── Dockerfile
+    ├── deploy.ps1 / deploy.sh
+    └── DEPLOYMENT.md
 ```
 
 ## 🛠️ Installation
 
 ### Prerequisites
 
-- Python 3.8 or higher
-- pip package manager
-- Windows, macOS, or Linux
+| Requirement | Version | Purpose |
+|---|---|---|
+| Python | 3.10+ | Runtime |
+| PostgreSQL | 14+ | Analysis & backtest persistence |
+| Docker | 20+ | MinIO object storage |
+| pip | Latest | Package management |
 
-### Setup Steps
+### 1. Clone & Install Dependencies
 
-1. **Navigate to the project directory**:
-   ```powershell
-   cd "c:\Users\suraboyi\Videos\Python pet Pdrive\algo_trade"
-   ```
+```powershell
+cd centurion_core
+pip install -r requirements.txt
+```
 
-2. **Create a virtual environment (recommended)**:
-   ```powershell
-   python -m venv myenv
-   .\myenv\Scripts\Activate.ps1
-   ```
+> **Note**: First run downloads the DistilBERT model (~250 MB).
 
-3. **Install dependencies**:
-   ```powershell
-   pip install -r requirements.txt
-   ```
+### 2. Configure Environment Variables
 
-   **Note**: The first run will download the DistilBERT model (~250MB), which may take a few minutes.
+Copy the example and edit:
 
-### Dependencies Installed
-- **Web Framework**: streamlit, plotly, streamlit-aggrid
-- **Data Processing**: pandas, numpy, openpyxl
-- **Financial Data**: yfinance
-- **Web Scraping**: aiohttp, beautifulsoup4, lxml
-- **AI/ML**: transformers, torch
-- **Notifications**: plyer
+```powershell
+copy .env.example .env
+```
 
-## 📊 Usage
+Or create `.env` in the project root with the following:
 
-### 🎯 Quick Start - Streamlit Web UI (Recommended)
+```ini
+# ─── PostgreSQL ───────────────────────────────────────────
+CENTURION_DB_HOST=localhost
+CENTURION_DB_PORT=5432
+CENTURION_DB_NAME=centurion_trading
+CENTURION_DB_USER=admin
+CENTURION_DB_PASSWORD=admin123
+CENTURION_DB_ENABLED=true
 
-Launch the interactive web interface:
+# ─── MinIO Object Storage ────────────────────────────────
+MINIO_ENDPOINT=localhost:9000
+MINIO_ACCESS_KEY=minioadmin
+MINIO_SECRET_KEY=minioadmin123
+MINIO_SECURE=false
+MINIO_BUCKET=centurion-backtests
+MINIO_ENABLED=true
+```
+
+### 3. Set Up PostgreSQL
+
+#### Option A — Fresh Install (Windows)
+
+1. Download and install [PostgreSQL](https://www.postgresql.org/download/windows/).
+2. During installation, set a superuser password (e.g., `superadmin1`).
+
+#### Create the Database & User
+
+Open a terminal and run:
+
+```powershell
+# Connect as superuser (adjust path to match your PostgreSQL version)
+& "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U postgres
+
+# Inside psql:
+CREATE USER admin WITH PASSWORD 'admin123';
+CREATE DATABASE centurion_trading OWNER admin;
+GRANT ALL PRIVILEGES ON DATABASE centurion_trading TO admin;
+\q
+```
+
+#### Verify Connection
+
+```powershell
+& "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U admin -d centurion_trading -c "SELECT version();"
+```
+
+#### Initialize Tables
+
+```powershell
+python setup_database.py
+```
+
+This creates all 7 tables:
+
+| Table | Purpose |
+|---|---|
+| `analysis_runs` | Tracks each analysis execution (status, timing, parameters) |
+| `stock_signals` | Trading signals with decision, score, and reasoning |
+| `news_items` | Scraped news with sentiment labels and confidence |
+| `fundamental_metrics` | Per-ticker fundamental data snapshots |
+| `backtest_results` | Strategy backtest outcomes (return, Sharpe, drawdown) |
+| `trading_signals` | Real-time strategy signals |
+| `strategy_parameters` | Saved strategy configurations |
+
+> **TimescaleDB** (optional): If the extension is available, hypertables are created automatically for time-series queries. It is not required — standard PostgreSQL works fine.
+
+### 4. Set Up MinIO (Object Storage for Charts)
+
+MinIO stores chart images generated during backtesting so you can browse them later from the History page.
+
+#### Start MinIO via Docker Compose
+
+```powershell
+cd deployment
+docker compose up -d minio
+```
+
+This pulls the `minio/minio:latest` image and starts a container exposing:
+
+| Port | Purpose |
+|---|---|
+| `9000` | S3-compatible API |
+| `9001` | Web Console |
+
+#### Verify MinIO Is Running
+
+```powershell
+docker ps --filter name=centurion-minio
+```
+
+#### Access the Web Console
+
+Open **http://localhost:9001** in your browser.
+
+| Field | Value |
+|---|---|
+| Username | `minioadmin` |
+| Password | `minioadmin123` |
+
+The `centurion-backtests` bucket is created automatically on first use.
+
+#### Test From Python
+
+```python
+from storage.minio_service import get_minio_service
+svc = get_minio_service()
+print("Available:", svc.is_available)  # True
+```
+
+### 5. Launch the Application
 
 ```powershell
 streamlit run app.py
 ```
 
-The application will open in your default browser at `http://localhost:8501`
+Opens at **http://localhost:9090** (port configured in `.streamlit/config.toml`).
 
-**Alternative launch methods:**
-```powershell
-# Using batch script (Windows)
-.\run_streamlit.bat
-```
+## 📊 Usage Guide
 
-### 🎨 Streamlit Interface Features
+### Quick Start
 
-#### 1. **Three Input Methods**
+1. Launch the app → you land on the **Main** page.
+2. Select tickers (default list, manual entry, or CSV upload).
+3. Click **🚀 Run Analysis** → results appear on the **Analysis** page.
+4. Navigate to **📊 Fundamental Analysis** for detailed fundamental drill-down.
+5. Navigate to **🔬 Backtest Strategy** to test any of the 9 strategies.
+6. Navigate to **📋 History** to review past runs, signals, and stored charts.
 
-**Option A: Default Tickers**
-- Pre-configured list of popular stocks
-- No setup required
-- Good for quick testing
+### Strategy Backtesting
 
-**Option B: Manual Entry**
-- Type ticker symbols separated by commas
-- Example: `AAPL, MSFT, GOOGL, TSLA`
-- Best for small custom lists
+1. From the main page (or any sub-page), click **🔬 Backtest Strategy**.
+2. Select a strategy from the dropdown.
+3. Enter tickers (comma-separated) or use pre-filled tickers from analysis.
+4. Adjust period and initial capital.
+5. Click **Run Backtest**.
+6. Results include:
+   - Per-ticker performance tabs with key metrics.
+   - Interactive charts (matplotlib & plotly).
+   - Results auto-saved to **PostgreSQL** (`backtest_results` table).
+   - Charts auto-saved to **MinIO** (`centurion-backtests` bucket).
+7. Switch strategies instantly — cached results load without re-computation.
 
-**Option C: Upload CSV File** ⭐ **Recommended**
-- Click "Choose a CSV file" in sidebar
-- Upload your prepared CSV
-- Download the sample CSV format if needed
+### History Page
 
-#### 2. **CSV File Format**
+The **📋 History** page has three tabs:
 
-Your CSV file can be in any of these formats:
+| Tab | Content |
+|---|---|
+| **Analysis Runs** | All past analysis executions with drill-down to signals and news |
+| **Trading Signals** | Signal history filterable by ticker |
+| **Backtest Results** | Past backtest outcomes with strategy comparison chart + stored chart images from MinIO |
 
-**Simple single column:**
+Use the date range filter at the top to narrow results.
+
+### Navigation
+
+All pages share consistent navigation buttons:
+
+| Button | Action |
+|---|---|
+| 🏠 **Main** | Return to the main dashboard |
+| 📊 **Fundamental Analysis** | Open fundamental metrics page |
+| 🔬 **Backtest Strategy** | Open the backtesting page |
+| 📋 **History** | Open historical results browser |
+
+### CSV Upload Format
+
+Your CSV file can use any of these formats:
+
 ```csv
 Ticker
 AAPL
@@ -141,796 +351,221 @@ MSFT
 GOOGL
 ```
 
-**With company names:**
 ```csv
 Ticker,Company
 AAPL,Apple Inc.
 MSFT,Microsoft Corporation
-GOOGL,Alphabet Inc.
 ```
 
-**No header (first column used):**
-```csv
-AAPL
-MSFT
-GOOGL
-```
-
-**Alternative column names:**
-- Recognized headers: `Ticker`, `Symbol`, `Stock`, `Tickers`, `Symbols`, `Stocks`
-- System auto-detects and uses first appropriate column
-
-**Validation:**
-- ✅ Valid: 1-5 characters, alphanumeric with dots/dashes (e.g., `AAPL`, `BRK.B`)
-- ❌ Invalid: More than 5 characters, special characters, empty values
-- Auto-filters invalid tickers and removes duplicates
-
-#### 3. **Dashboard Components**
-
-**Sidebar Controls:**
-- 🔘 Input method selection
-- 📁 CSV file uploader  
-- ⬇️ Download sample CSV template
-- ⚙️ Output format (Excel/CSV)
-- 🔄 Append mode toggle
-- ▶️ Run Analysis button
-- ℹ️ System information
-
-**Main Dashboard Tabs:**
-
-**Tab 1: 📊 Overview**
-- 5 metric cards showing signal counts (STRONG_BUY, BUY, HOLD, SELL, STRONG_SELL)
-- Decision distribution pie chart
-- Score distribution scatter plot
-- Visual summary of all results
-
-**Tab 2: 📋 Detailed Table**
-- Complete data table with all columns
-- Color-coded decisions (🟢 Buy, 🟡 Hold, 🔴 Sell)
-- Sortable and filterable columns
-- Download results as CSV button
-
-**Tab 3: 🔝 Top Signals**
-- Top 5 buy opportunities with detailed reasoning
-- Top 5 sell warnings with detailed reasoning
-- Expandable details for each signal
-- Direct links to news articles
-
-**Tab 4: 📈 Charts**
-- Sentiment confidence visualization
-- Interactive bar charts
-- Hover for detailed information
-
-#### 4. **Running Analysis**
-
-1. Select your input method in sidebar
-2. Configure output settings (format, append mode)
-3. Click **"▶️ Run Analysis"** button
-4. Watch real-time progress:
-   - 📰 Scraping news (20%)
-   - 🧠 Analyzing sentiment (40%)
-   - 📊 Calculating metrics (90%)
-   - 💾 Saving results (100%)
-5. Explore results across all tabs
-
-#### 5. **Color Coding**
-
-| Decision | Color | Badge | Meaning |
-|----------|-------|-------|---------|
-| STRONG_BUY | 🟢 Bright Green | High confidence | Strong buy signal |
-| BUY | 🟢 Light Green | Positive | Buy signal |
-| HOLD | 🟡 Yellow | Neutral | Hold position |
-| SELL | 🟠 Orange | Negative | Sell signal |
-| STRONG_SELL | 🔴 Red | High confidence | Strong sell signal |
-
-### 💻 Command Line Usage (Alternative)
-
-Run the system directly with Python:
-
-```powershell
-python main.py
-```
-
-This will:
-1. Scrape news for default tickers (AAPL, MSFT, GOOGL, AMZN, META, TSLA, NVDA, JPM, V, WMT)
-2. Analyze sentiment using AI
-3. Calculate fundamental and technical metrics
-4. Generate trading signals
-5. Send popup alerts for strong signals
-6. Save results to `daily_stock_news.xlsx`
-
-**Custom Tickers via Code:**
-
-Edit `main.py` to monitor specific stocks:
-
-```python
-# In main.py, modify the main() function:
-async def main():
-    tickers = ["AAPL", "TSLA", "NVDA", "AMD", "INTC"]
-    system = AlgoTradingSystem(tickers=tickers)
-    await system.run()
-```
-
-### 📝 Example Workflows
-
-#### Workflow 1: Tech Sector Analysis
-
-1. Create `tech_stocks.csv`:
-```csv
-Ticker
-AAPL
-MSFT
-GOOGL
-AMZN
-META
-NVDA
-AMD
-INTC
-ORCL
-CSCO
-```
-
-2. Run Streamlit: `streamlit run app.py`
-3. Upload the CSV file
-4. Review results in "Top Signals" tab
-5. Download results for Excel analysis
-
-#### Workflow 2: Daily Portfolio Monitoring
-
-1. Export your portfolio to CSV format
-2. Upload to Streamlit app
-3. Enable "Append to existing file"
-4. Run daily analysis
-5. Build historical dataset over time
-
-#### Workflow 3: Sector Comparison
-
-1. Create separate CSV files for each sector (tech, finance, energy)
-2. Run analysis for each sector
-3. Compare decision distributions
-4. Identify best-performing sectors
-
-#### Workflow 4: Single Stock Deep Dive
-
-1. Create CSV with single ticker:
-```csv
-Ticker
-TSLA
-```
-2. Run detailed analysis
-3. Review all metrics and news sentiment
-4. Check technical indicators and fundamentals
-
-## 📈 Output & Results
-
-### 📊 Streamlit Dashboard Output
-
-The web interface provides comprehensive visual analytics:
-
-**Metrics Cards (Top of Page):**
-- 🚀 STRONG_BUY count with green badge
-- 📈 BUY count with light green badge
-- ⏸️ HOLD count with yellow badge
-- 📉 SELL count with orange badge
-- ⚠️ STRONG_SELL count with red badge
-
-**Overview Tab:**
-- Pie chart showing decision distribution across all stocks
-- Scatter plot of decision scores by ticker
-- Visual summary of portfolio analysis
-
-**Detailed Table Tab:**
-- Full data table with columns: Ticker, Decision, Score, Sentiment, Confidence, Price, RSI, MACD, PEG, ROE, Source, Title
-- Color-coded decision badges for quick scanning
-- Sortable columns for custom analysis
-- CSV download button for Excel export
-- Comprehensive metrics in one view
-
-**Top Signals Tab:**
-- **Top 5 Buy Signals**: Best opportunities with full reasoning
-- **Top 5 Sell Signals**: Strongest warnings with detailed analysis
-- Expandable sections showing:
-  - News title and source
-  - Sentiment analysis results
-  - Fundamental metrics (PEG, ROE, EPS)
-  - Technical indicators (RSI, MACD)
-  - Combined decision score
-  - Direct link to news article
-
-**Charts Tab:**
-- Sentiment confidence bar chart by stock
-- Interactive hover details
-- Color-coded by sentiment (positive/neutral/negative)
-- Visual pattern recognition
-
-### 💻 Console Output
-
-When running via command line, the system provides real-time progress updates:
-   tickers = df['Ticker'].tolist()
-   
-   system = AlgoTradingSystem(tickers=tickers)
-   await system.run()
-   ```
-
-### Configuration
-
-Customize settings in `config.py`:
-
-```python
-# Decision weights
-SENTIMENT_WEIGHT = 0.4
-FUNDAMENTAL_WEIGHT = 0.3
-TECHNICAL_WEIGHT = 0.3
-
-# Output file
-OUTPUT_FILE = "daily_stock_news.xlsx"
-
-# Tickers to monitor
-DEFAULT_TICKERS = ["AAPL", "MSFT", "GOOGL", ...]
-```
-
-## 📈 Output
-
-### Console Output
-
-The system provides real-time progress updates:
-
-```
-======================================================================
-Starting analysis at 2025-11-29 10:30:45
-======================================================================
-
-📰 Step 1: Scraping news from multiple sources...
-✓ Collected 47 news items
-
-🧠 Step 2: Analyzing sentiment...
-✓ Analyzed sentiment for 47 items
-
-🔔 Step 3: Checking for high-confidence alerts...
-Found 3 high-confidence news items.
-
-📊 Step 4: Calculating metrics and generating trading signals...
-  Analyzing AAPL... ✓ Decision: BUY
-  Analyzing MSFT... ✓ Decision: HOLD
-  ...
-
-💾 Step 5: Saving results to file...
-✓ Appended 47 signals to existing file.
-
-📈 Summary of Trading Signals:
-----------------------------------------------------------------------
-  BUY: 12
-  HOLD: 28
-  SELL: 5
-  STRONG_BUY: 2
-----------------------------------------------------------------------
-```
-
-### 📁 File Output
-
-Results are automatically saved to `daily_stock_news.xlsx` (or `.csv`) with comprehensive columns:
-
-**Timestamp & Identification:**
-- timestamp: Analysis date/time
-- ticker: Stock symbol
-- source: News source website
-
-**News Details:**
-- title: News headline
-- url: Link to full article
-- category: BREAKING, EARNINGS, DEALS_MA, MACRO_ECONOMIC, or GENERAL
-
-**Sentiment Analysis:**
-- sentiment_label: POSITIVE, NEUTRAL, or NEGATIVE
-- sentiment_score: Numerical score (-1 to +1)
-- sentiment_confidence: Model confidence (0-100%)
-
-**Trading Decision:**
-- decision: STRONG_BUY, BUY, HOLD, SELL, or STRONG_SELL
-- decision_score: Combined score (-1 to +1)
-- reasoning: Detailed explanation of decision
-
-**Financial Metrics:**
-- current_price: Current stock price
-- rsi: Relative Strength Index
-- macd: Moving Average Convergence Divergence
-- bollinger_upper/lower: Bollinger Band values
-- peg_ratio: Price/Earnings to Growth ratio
-- roe: Return on Equity
-- eps: Earnings Per Share
-- fcf: Free Cash Flow
-- intrinsic_value: Calculated fair value
-
-**File Management:**
-- **Append Mode**: Add new results to existing file
-- **Overwrite Mode**: Create fresh file each run
-- **Deduplication**: Automatically removes duplicate entries
-- **Excel/CSV Support**: Choose your preferred format
-
-### 🔔 Popup Alerts
-
-Desktop notifications appear automatically for:
-- **High Confidence News**: Sentiment confidence > 85%
-- **Strong Signals**: STRONG_BUY or STRONG_SELL decisions
-- **Breaking News**: Categorized as BREAKING
-
-**Alert Content:**
-- Stock ticker and signal type
-- News headline
-- Sentiment and confidence
-- Quick action recommendation
-
-## 🧩 System Architecture
-
-### Component Overview
-
-1. **Web Interface (`app.py`, `utils.py`)**
-   - Streamlit-based interactive dashboard
-   - CSV parsing and validation utilities
-   - Real-time progress tracking
-   - Interactive visualizations with Plotly
-
-2. **News Scrapers (`scrapers/`)**
-   - BaseNewsScraper: Extensible abstract class with common methods
-   - YahooFinanceScraper: Yahoo Finance news
-   - FinvizScraper: Finviz market news
-   - InvestingScraper: Investing.com articles
-   - TradingViewScraper: TradingView market analysis
-   - NewsAggregator: Concurrent scraping coordinator
-   - Async architecture for optimal performance
-
-3. **Sentiment Analyzer (`sentiment/analyzer.py`)**
-   - DistilBERT transformer model for NLP
-   - Contextual sentiment classification
-   - Confidence scoring (0-100%)
-   - GPU acceleration support
-
-4. **Metrics Calculator (`metrics/calculator.py`)**
-   - **Fundamentals via yfinance**:
-     - PEG ratio (Price/Earnings to Growth)
-     - ROE (Return on Equity)
-     - EPS (Earnings Per Share)
-     - FCF (Free Cash Flow)
-     - DCF & Intrinsic Value calculation
-   - **Technical Indicators** (native pandas/numpy):
-     - RSI (Relative Strength Index)
-     - MACD (Moving Average Convergence Divergence)
-     - Bollinger Bands (upper/lower)
-     - Fibonacci Retracement levels
-     - Maximum Drawdown analysis
-
-5. **Decision Engine (`decision_engine/engine.py`)**
-   - Weighted scoring algorithm
-   - Multi-factor analysis combination
-   - Threshold-based decision mapping
-   - Detailed reasoning generation
-
-6. **Notification Manager (`notifications/manager.py`)**
-   - Cross-platform desktop alerts
-   - Configurable thresholds
-   - Non-blocking notifications
-
-7. **Storage Manager (`storage/manager.py`)**
-   - Excel/CSV export with openpyxl
-   - Automatic deduplication
-   - Append mode support
-   - Data integrity validation
-
-8. **Core Orchestration (`main.py`)**
-   - AlgoTradingSystem main class
-   - Pipeline coordination
-   - Error handling and logging
+Recognised headers: `Ticker`, `Symbol`, `Stock`, `Tickers`, `Symbols`, `Stocks`.
 
 ### Decision Algorithm
-
-Trading signals are generated using a weighted combination of three factors:
 
 ```
 Combined Score = (Sentiment × 0.4) + (Fundamentals × 0.3) + (Technicals × 0.3)
 
-Sentiment Score:
-  - Based on DistilBERT sentiment analysis
-  - Range: -1 (very negative) to +1 (very positive)
-  - Weighted by confidence level
-
-Fundamental Score:
-  - PEG ratio (lower is better)
-  - ROE percentage (higher is better)
-  - Intrinsic value vs current price
-  - Normalized to -1 to +1 range
-
-Technical Score:
-  - RSI levels (oversold/overbought)
-  - MACD signal crossovers
-  - Bollinger Band position
-  - Normalized to -1 to +1 range
-
-Decision Mapping:
-  Combined Score ≥ 0.7   → STRONG_BUY  (High confidence buy)
-  Combined Score ≥ 0.4   → BUY         (Positive signal)
-  Combined Score ≤ -0.7  → STRONG_SELL (High confidence sell)
-  Combined Score ≤ -0.4  → SELL        (Negative signal)
-  Otherwise              → HOLD        (Neutral position)
+Score ≥  0.7  → STRONG_BUY
+Score ≥  0.4  → BUY
+Score ≤ -0.7  → STRONG_SELL
+Score ≤ -0.4  → SELL
+Otherwise     → HOLD
 ```
 
-### Data Flow
+## 🗄️ Database Operations Reference
+
+### Service Layer API
+
+```python
+from database.service import get_database_service
+
+db = get_database_service()
+
+# Check connectivity
+db.is_available  # True / False
+
+# Use a session
+with db.session_scope() as session:
+    from database.repositories import AnalysisRepository, BacktestRepository
+    repo = AnalysisRepository(session)
+    runs = repo.get_recent_runs(days=7)
+```
+
+### Key Repository Methods
+
+| Repository | Method | Description |
+|---|---|---|
+| `AnalysisRepository` | `start_run()` / `complete_run()` | Lifecycle management |
+| `SignalRepository` | `save_signal()` | Persist a trading signal |
+| `NewsRepository` | `save_news_item()` | Persist scraped news |
+| `FundamentalsRepository` | `save_metrics()` | Persist fundamental data |
+| `BacktestRepository` | `save_result()` / `get_recent_backtests()` | Backtest CRUD |
+
+### Manual Table Reset
+
+```sql
+-- Connect to centurion_trading as admin
+TRUNCATE analysis_runs, stock_signals, news_items,
+         fundamental_metrics, backtest_results,
+         trading_signals, strategy_parameters
+CASCADE;
+```
+
+## 🪣 MinIO Operations Reference
+
+### Python API
+
+```python
+from storage.minio_service import get_minio_service
+
+minio = get_minio_service()
+
+# Save an image
+path = minio.save_backtest_image(
+    run_id="run_b080a824_20260218_163000",
+    image_data=png_bytes,
+    filename="equity_curve.png",
+    strategy_name="MACD Oscillator",
+    ticker="AAPL",
+    chart_title="Equity Curve",
+)
+
+# Retrieve all images for a run
+images = minio.get_backtest_images(run_id="run_b080a824_20260218_163000")
+for img in images:
+    print(img["chart_title"], img["chart_type"], img["size"])
+
+# List all stored runs (basic)
+runs = minio.list_runs()
+
+# List runs with full metadata (size, chart count, tickers, strategies)
+details = minio.list_runs_detailed()
+
+# Delete all images for a run
+deleted = minio.delete_run_images(run_id="run_b080a824_20260218_163000")
+```
+
+### Docker Compose Commands
+
+```powershell
+# Start MinIO
+cd deployment
+docker compose up -d minio
+
+# Stop MinIO
+docker compose down minio
+
+# View logs
+docker logs centurion-minio
+
+# Remove all data (destructive)
+docker compose down -v
+```
+
+### Storage Path Pattern
 
 ```
-User Input (Tickers) 
-    ↓
-News Scraping (Async, multiple sources)
-    ↓
-Sentiment Analysis (DistilBERT AI)
-    ↓
-Metrics Calculation (Fundamentals + Technicals)
-    ↓
-Decision Engine (Weighted scoring)
-    ↓
-Outputs: Dashboard + Excel/CSV + Alerts
+centurion-backtests/
+  └── <run_id>/                          # e.g. run_b080a824_20260218_163000
+       └── <TICKER>/                     # e.g. AAPL
+            └── <strategy_name>/         # e.g. macd_oscillator
+                 ├── chart_0.png         (matplotlib)
+                 ├── chart_1.json        (plotly)
+                 └── ...
 ```
+
+## 🐳 Docker Deployment
+
+The `deployment/docker-compose.yml` defines two services:
+
+| Service | Image | Ports | Purpose |
+|---|---|---|---|
+| `algo-trading` | Custom build | 8501 | Streamlit app |
+| `minio` | `minio/minio:latest` | 9000, 9001 | Object storage |
+
+```powershell
+# Start everything
+cd deployment
+docker compose up -d
+
+# Start only MinIO (for local development)
+docker compose up -d minio
+```
+
+See [DEPLOYMENT.md](deployment/DEPLOYMENT.md) for full cloud deployment instructions (Azure, GCP).
 
 ## 🔧 Troubleshooting
 
-### Installation Issues
+### Database Issues
 
-**ImportError: No module named 'XXX'**
-```powershell
-# Reinstall all dependencies
-pip install -r requirements.txt --upgrade
-```
+**"no password supplied"**
+→ Ensure `.env` has `CENTURION_DB_PASSWORD` set and `python-dotenv` is installed.
 
-**Virtual environment activation fails**
-```powershell
-# Windows PowerShell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-.\myenv\Scripts\Activate.ps1
-```
+**"relation analysis_runs does not exist"**
+→ Run `python setup_database.py` to create tables.
+
+**"can't subtract offset-naive and offset-aware datetimes"**
+→ Already fixed — all timestamps use `datetime.now(timezone.utc)`.
+
+**TimescaleDB warnings in logs**
+→ Harmless — TimescaleDB is optional. The app works with standard PostgreSQL.
+
+### MinIO Issues
+
+**Charts not appearing in MinIO after backtest**
+→ Ensure Docker container is running: `docker ps --filter name=centurion-minio`.
+→ Check `.env` has `MINIO_ENABLED=true`.
+→ Verify connectivity: `python -c "from storage.minio_service import get_minio_service; print(get_minio_service().is_available)"`.
+
+**"minio module not found"**
+→ Run `pip install minio`.
+
+**Connection refused on port 9000**
+→ Start MinIO: `cd deployment && docker compose up -d minio`.
 
 ### Streamlit Issues
 
-**Streamlit command not found**
-```powershell
-# Install streamlit explicitly
-pip install streamlit
-
-# Or run using Python module
-python -m streamlit run app.py
-```
-
 **Port already in use**
 ```powershell
-# Use different port
 streamlit run app.py --server.port 8502
 ```
 
-**Browser doesn't open automatically**
-- Manually navigate to `http://localhost:8501`
-- Check firewall settings
-- Try different browser
+**First run is slow**
+→ DistilBERT model downloads (~250 MB) on first launch. Subsequent runs are fast.
 
-### CSV Upload Issues
+### General
 
-**CSV file not loading**
-- ✅ Ensure file extension is `.csv`
-- ✅ Save as CSV (Comma delimited), not Excel format
-- ✅ Check for valid ticker symbols (1-5 characters)
-- ✅ Remove special characters except dots and dashes
-- ✅ Test with provided `sample_tickers.csv` first
-
-**Tickers showing as invalid**
-- Verify symbols are valid US stock tickers
-- Check for extra spaces or line breaks
-- Ensure uppercase format (auto-converted)
-- Maximum 5 characters per ticker
-
-### Analysis Issues
-
-**Analysis taking too long**
-- ⏳ Large lists (>20 tickers) need several minutes
-- ⏳ First run downloads DistilBERT model (~250MB)
-- ⏳ Internet speed affects news scraping
-- ⏳ Be patient, progress bar shows status
-
-**No results appearing**
-- 🔍 Verify tickers are US stock symbols
-- 🔍 Check internet connection
-- 🔍 Review console/terminal for error messages
-- 🔍 Some tickers may have limited news coverage
-- 🔍 Try with fewer tickers first
-
-**Scraping Issues**
-- Some websites may block automated scraping
-- System handles errors gracefully and continues
-- Uses multiple sources to ensure data availability
-- Check internet connectivity
-
-### Performance Issues
-
-**Slow first run**
-- Downloads DistilBERT model (~250MB) on first execution
-- Subsequent runs will be significantly faster
-- Model is cached locally
-
-**High memory usage**
-- DistilBERT model requires ~1GB RAM
-- Large ticker lists increase memory usage
-- Consider processing in smaller batches
-
-### Notification Issues
-
-**No popup notifications**
-- `plyer` library may not work on all systems
-- Notifications will print to console as fallback
-- Check OS notification permissions
-- Not critical for system functionality
-
-### Data Output Issues
-
-**Excel file not saving**
+**Import errors**
 ```powershell
-# Check file isn't open in Excel
-# Verify write permissions in directory
-# Try CSV format instead
+pip install -r requirements.txt --upgrade
 ```
 
-**Append mode not working**
-- Ensure existing file has same format
-- Check file isn't locked by another program
-- Verify column headers match
-
-### Common Error Messages
-
-**"ModuleNotFoundError: No module named 'pandas_ta'"**
-- This dependency was removed - reinstall requirements:
+**Virtual environment activation (Windows)**
 ```powershell
-pip install -r requirements.txt
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+.\mywinenv\Scripts\Activate.ps1
 ```
 
-**"Connection timeout" or "HTTP Error"**
-- Check internet connection
-- Some news sources may be temporarily unavailable
-- System continues with available sources
+## 📈 Dependencies
 
-**"Invalid ticker symbol"**
-- Verify ticker format (1-5 characters)
-- Check symbol exists on US exchanges
-- Use uppercase format
-
-## 💡 Pro Tips & Best Practices
-
-### For Best Results
-
-1. **Start Small**: Test with 5-10 tickers before running large analyses
-2. **Use CSV Upload**: Easier to manage and update ticker lists
-3. **Enable Append Mode**: Build historical database for trend analysis
-4. **Download Sample**: Use `sample_tickers.csv` to understand format
-5. **Regular Analysis**: Run daily for portfolio monitoring
-6. **Export Data**: Download results from UI for Excel/Google Sheets analysis
-7. **Check Multiple Tabs**: Each tab provides different insights
-8. **Review Top Signals**: Focus on top buy/sell signals for quick decisions
-9. **Batch Processing**: Upload 20-50 tickers for comprehensive sector analysis
-10. **Internet Speed**: Ensure stable connection for news scraping
-
-### Understanding Results
-
-- **STRONG_BUY/STRONG_SELL**: High confidence signals (score ≥ 0.7 or ≤ -0.7)
-- **BUY/SELL**: Moderate signals (score between 0.4-0.7 or -0.4 to -0.7)
-- **HOLD**: Neutral position (score between -0.4 and 0.4)
-- **Sentiment Confidence**: Higher percentage = more reliable sentiment
-- **Combined Score**: Weighted average of all factors
-- **Reasoning**: Check this for detailed explanation of each decision
-
-### Learning Path
-
-**Day 1**: Run with `sample_tickers.csv` to understand system  
-**Day 2**: Create custom list with 5 personal holdings  
-**Day 3**: Upload full portfolio for comprehensive analysis  
-**Day 4**: Enable append mode for daily tracking  
-**Day 5**: Analyze historical data and patterns  
-**Week 2+**: Use insights to inform trading decisions  
-
-## 📝 Important Notes
-
-### Technical Considerations
-
-- **Web Scraping**: Some scrapers provide simplified implementations due to website complexity. You may need to adjust selectors if website structures change.
-- **API Rate Limits**: System uses async I/O to optimize requests and respect rate limits. Be mindful when running frequent analyses.
-- **Data Accuracy**: Financial metrics are fetched from yfinance and may have slight delays. Real-time accuracy depends on data source.
-- **Model Performance**: DistilBERT sentiment analysis is highly accurate but not perfect. Always verify with news content.
-- **Extensible Architecture**: BaseNewsScraper class allows easy addition of new news sources.
-
-### Data Privacy & Security
-
-- **Local Processing**: All analysis runs locally on your machine
-- **No External APIs**: Except for news scraping and yfinance data
-- **CSV Security**: Your ticker lists are processed in memory only
-- **No Data Sharing**: Results saved locally, not sent to external servers
-
-### Performance Considerations
-
-- **First Run**: Downloads DistilBERT model (~250MB), takes 5-10 minutes
-- **Subsequent Runs**: Much faster with cached model
-- **Memory**: Requires ~1-2GB RAM for optimal performance
-- **CPU**: Benefits from multi-core processors for parallel scraping
-- **Internet**: Stable connection required for news scraping
-
-## 🚀 Future Enhancements
-
-Potential improvements for future versions:
-
-### Planned Features
-- Additional news sources (Bloomberg, Reuters, CNBC, Seeking Alpha)
-- Webhook notifications (Discord, Slack, Telegram)
-- Historical backtesting capabilities
-- Machine learning model training on historical decisions
-- Real-time streaming updates
-- Cryptocurrency support
-- Options analysis integration
-- Portfolio optimization suggestions
-
-### Community Contributions Welcome
-- Custom scraper implementations
-- Additional technical indicators
-- Alternative sentiment models
-- Performance optimizations
-- UI/UX improvements
-
-## 📚 Additional Resources
-
-### Sample Files Included
-
-- **`sample_tickers.csv`**: Example ticker list in proper format
-- **`run_streamlit.bat`**: Windows batch script for quick launch
-- **`.gitignore`**: Git configuration for clean repositories
-
-### Configuration
-
-All settings can be customized in `config.py`:
-
-```python
-# Decision weights (must sum to 1.0)
-SENTIMENT_WEIGHT = 0.4      # Sentiment analysis impact
-FUNDAMENTAL_WEIGHT = 0.3    # Fundamental metrics impact
-TECHNICAL_WEIGHT = 0.3      # Technical indicators impact
-
-# Thresholds for decision mapping
-STRONG_BUY_THRESHOLD = 0.7
-BUY_THRESHOLD = 0.4
-SELL_THRESHOLD = -0.4
-STRONG_SELL_THRESHOLD = -0.7
-
-# Alert configuration
-ALERT_CONFIDENCE_THRESHOLD = 0.85
-
-# Output settings
-OUTPUT_FILE = "daily_stock_news.xlsx"
-APPEND_MODE = True
-
-# Default tickers to monitor
-DEFAULT_TICKERS = ["AAPL", "MSFT", "GOOGL", "AMZN", ...]
-
-# News categorization keywords
-BREAKING_KEYWORDS = ["breaking", "urgent", "alert", ...]
-EARNINGS_KEYWORDS = ["earnings", "revenue", "profit", ...]
-DEALS_KEYWORDS = ["merger", "acquisition", "deal", ...]
-```
-
-### Project Structure Reference
-
-```
-algo_trade/
-├── app.py                    # Streamlit web interface
-├── main.py                   # Core system orchestrator
-├── config.py                 # Configuration settings
-├── models.py                 # Data models & enums
-├── utils.py                  # CSV utilities
-├── requirements.txt          # Python dependencies
-├── sample_tickers.csv        # Example ticker list
-├── run_streamlit.bat         # Quick launch script
-├── .gitignore               # Git ignore rules
-├── README.md                # This documentation
-├── scrapers/                # News scraping modules
-│   ├── __init__.py          # BaseNewsScraper class
-│   ├── yahoo_finance.py     # Yahoo Finance scraper
-│   ├── finviz.py            # Finviz scraper
-│   ├── investing.py         # Investing.com scraper
-│   ├── tradingview.py       # TradingView scraper
-│   └── aggregator.py        # Concurrent coordinator
-├── sentiment/               # AI sentiment analysis
-│   ├── __init__.py
-│   └── analyzer.py          # DistilBERT implementation
-├── metrics/                 # Financial metrics
-│   ├── __init__.py
-│   └── calculator.py        # Fundamentals & technicals
-├── decision_engine/         # Trading logic
-│   ├── __init__.py
-│   └── engine.py            # Decision algorithm
-├── notifications/           # Alert system
-│   ├── __init__.py
-│   └── manager.py           # Desktop notifications
-└── storage/                 # Data persistence
-    ├── __init__.py
-    └── manager.py           # Excel/CSV export
-```
-
-## 📄 License
-
-This project is provided as-is for educational and informational purposes.
-
-## 🤝 Contributing
-
-Feel free to fork, modify, and enhance the system for your needs!
-
-### How to Contribute
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your improvements
-4. Test thoroughly
-5. Submit a pull request
-
-Areas for contribution:
-- New news source scrapers
-- Additional technical indicators
-- UI/UX improvements
-- Performance optimizations
-- Documentation enhancements
-- Bug fixes
-
-## 🆘 Getting Help
-
-### Quick Troubleshooting Checklist
-
-1. ✅ Python 3.8+ installed
-2. ✅ Virtual environment activated
-3. ✅ All dependencies installed: `pip install -r requirements.txt`
-4. ✅ Internet connection stable
-5. ✅ CSV file in correct format
-6. ✅ Valid ticker symbols (1-5 characters)
-7. ✅ Streamlit running: `streamlit run app.py`
-
-### Common Issues
-
-- **Import errors**: Reinstall dependencies
-- **CSV upload fails**: Check file format and ticker validation
-- **Slow performance**: First run downloads AI model
-- **No results**: Verify internet connection and ticker validity
-
-## 📞 Support
-
-For issues, questions, or contributions:
-- Review this comprehensive README
-- Check the troubleshooting section
-- Test with `sample_tickers.csv`
-- Verify all dependencies are installed
-
----
+| Category | Packages |
+|---|---|
+| **Web Framework** | streamlit, plotly, streamlit-aggrid |
+| **Data** | pandas, numpy, openpyxl |
+| **Financial Data** | yfinance |
+| **Scraping** | aiohttp, beautifulsoup4, lxml, requests, selenium |
+| **AI/ML** | transformers, torch, scikit-learn |
+| **Analysis** | matplotlib, statsmodels |
+| **Database** | sqlalchemy ≥ 2.0, psycopg2-binary ≥ 2.9, python-dotenv ≥ 1.0 |
+| **Object Storage** | minio ≥ 7.2 |
+| **Auth** | pyyaml ≥ 6.0 |
+| **Notifications** | plyer |
 
 ## ⚠️ Disclaimer
 
-**IMPORTANT: READ CAREFULLY**
-
-This software is provided for **educational and informational purposes only**. It does not constitute:
-
-- Financial advice
-- Investment recommendations  
-- Professional trading guidance
-- Legal or tax advice
-
-**Key Points:**
-
-- 📊 **Not Financial Advice**: All trading decisions carry risk. Past performance does not guarantee future results.
-- 🔬 **Research Tool**: This system is designed to assist with research, not make trading decisions for you.
-- 💰 **Risk Warning**: Stock trading involves substantial risk of loss. Only invest what you can afford to lose.
-- 🎓 **Educational Use**: Perfect for learning about algorithmic trading, sentiment analysis, and financial data processing.
-- ⚖️ **Consult Professionals**: Always consult qualified financial advisors before making investment decisions.
-- 🔍 **Verify Data**: Cross-check all data and signals with multiple sources.
-- 📈 **No Guarantees**: The system's predictions and signals are not guaranteed to be accurate or profitable.
-
-**Use at your own risk. The developers and contributors assume no liability for financial losses.**
+This software is provided for **educational and informational purposes only**. It does not constitute financial advice, investment recommendations, or professional trading guidance. Stock trading involves substantial risk of loss. Always consult qualified financial advisors before making investment decisions. Use at your own risk.
 
 ---
 
-**Ready to get started? Run `streamlit run app.py` and begin analyzing! 🚀📈**
+**Ready to get started? Run `streamlit run app.py` and begin analysing! 🚀📈**
 
-*Last Updated: November 2025*
+*Last Updated: February 2026*

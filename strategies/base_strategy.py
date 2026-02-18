@@ -39,6 +39,7 @@ class ChartData:
     data: str | dict
     chart_type: str = "matplotlib"  # 'matplotlib' or 'plotly'
     description: str = ""
+    ticker: str = ""
 
 
 @dataclass
@@ -374,12 +375,214 @@ class BaseStrategy(ABC):
     
     def _calculate_max_drawdown(self, values: pd.Series) -> float:
         """Calculate maximum drawdown percentage."""
-        if len(values) < 2:
-            return 0.0
+        from strategies.utils import calculate_max_drawdown
+        return calculate_max_drawdown(values)
+    
+    def _calculate_portfolio(
+        self,
+        signals: pd.DataFrame,
+        capital: float,
+        risk: 'RiskParams'
+    ) -> pd.DataFrame:
+        """
+        Default portfolio calculation for standard long/short strategies.
         
-        peak = values.expanding(min_periods=1).max()
-        drawdown = (values - peak) / peak
-        return float(drawdown.min() * 100)
+        Computes holdings, cash, total value, and returns based on positions
+        and trading signals. Override in subclasses for custom portfolio logic
+        (e.g., short-only, pairs trading).
+        
+        Args:
+            signals: DataFrame with 'Close', 'positions', and 'signals' columns
+            capital: Initial capital
+            risk: Risk management parameters
+        
+        Returns:
+            DataFrame with portfolio values over time
+        """
+        portfolio = pd.DataFrame(index=signals.index)
+        
+        max_position_value = capital * risk.max_position_size
+        close_max = signals['Close'].dropna().max()
+        shares = int(max_position_value / close_max) if close_max > 0 else 0
+        
+        portfolio['positions'] = signals['positions']
+        portfolio['Close'] = signals['Close']
+        portfolio['holdings'] = signals['positions'] * signals['Close'] * shares
+        portfolio['cash'] = capital - (signals['signals'] * signals['Close'] * shares).cumsum()
+        portfolio['total_value'] = portfolio['holdings'] + portfolio['cash']
+        portfolio['returns'] = portfolio['total_value'].pct_change().fillna(0)
+        
+        return portfolio
+    
+    def _calculate_portfolio_long_only(
+        self,
+        signals: pd.DataFrame,
+        capital: float,
+        risk: 'RiskParams'
+    ) -> pd.DataFrame:
+        """
+        Portfolio calculation for strategies with bidirectional signals
+        that should only track long positions.
+        
+        Filters positions and signals to long-only (>= 0) before computing
+        holdings and cash flow. Used by RSI, Support/Resistance, and
+        Bollinger strategies.
+        
+        Args:
+            signals: DataFrame with 'Close', 'positions', and 'signals' columns
+            capital: Initial capital
+            risk: Risk management parameters
+        
+        Returns:
+            DataFrame with portfolio values over time
+        """
+        portfolio = pd.DataFrame(index=signals.index)
+        
+        long_positions = signals['positions'].clip(lower=0)
+        long_signals = signals['signals'].clip(lower=0)
+        
+        max_position_value = capital * risk.max_position_size
+        close_max = signals['Close'].dropna().max()
+        shares = int(max_position_value / close_max) if close_max > 0 else 0
+        
+        portfolio['positions'] = long_positions
+        portfolio['Close'] = signals['Close']
+        portfolio['holdings'] = long_positions * signals['Close'] * shares
+        portfolio['cash'] = capital - (long_signals * signals['Close'] * shares).cumsum()
+        portfolio['total_value'] = portfolio['holdings'] + portfolio['cash']
+        portfolio['returns'] = portfolio['total_value'].pct_change().fillna(0)
+        
+        return portfolio
+    
+    # --- Sentiment adjustment helpers ---
+    
+    def _sentiment_scale_indicator(
+        self,
+        signals: pd.DataFrame,
+        column: str,
+        sentiment: dict,
+        threshold: float = 0.5,
+        scale_factor: float = 0.2
+    ) -> pd.DataFrame:
+        """
+        Scale an indicator column based on sentiment strength.
+        
+        When |sentiment_score| exceeds threshold, the indicator is multiplied
+        by (1 + score * scale_factor), amplifying or dampening signals.
+        
+        Args:
+            signals: Trading signals DataFrame
+            column: Name of the indicator column to scale
+            sentiment: Sentiment dict with 'score' key
+            threshold: Minimum |score| to trigger scaling
+            scale_factor: Multiplier coefficient for sentiment score
+        
+        Returns:
+            Modified signals DataFrame
+        """
+        score = sentiment.get('score', 0)
+        if abs(score) > threshold:
+            multiplier = 1 + (score * scale_factor)
+            signals[column] = signals[column] * multiplier
+        return signals
+    
+    def _sentiment_zero_positions(
+        self,
+        signals: pd.DataFrame,
+        sentiment: dict,
+        threshold: float = -0.7
+    ) -> pd.DataFrame:
+        """
+        Zero all positions when sentiment is below threshold.
+        
+        Used by trend-following strategies to avoid long positions
+        when sentiment is strongly negative.
+        
+        Args:
+            signals: Trading signals DataFrame
+            sentiment: Sentiment dict with 'score' key
+            threshold: Score below which positions are zeroed
+        
+        Returns:
+            Modified signals DataFrame
+        """
+        score = sentiment.get('score', 0)
+        if score < threshold:
+            signals['positions'] = 0
+            signals['signals'] = signals['positions'].diff().fillna(0)
+        return signals
+    
+    def _sentiment_filter_positions(
+        self,
+        signals: pd.DataFrame,
+        sentiment: dict,
+        neg_threshold: float = -0.7,
+        pos_threshold: float = 0.7,
+        neg_target: int = 1,
+        pos_target: int = -1
+    ) -> pd.DataFrame:
+        """
+        Filter specific position directions based on sentiment.
+        
+        Removes positions matching neg_target when sentiment is below
+        neg_threshold, and pos_target when above pos_threshold.
+        
+        Args:
+            signals: Trading signals DataFrame
+            sentiment: Sentiment dict with 'score' key
+            neg_threshold: Score below which neg_target positions are removed
+            pos_threshold: Score above which pos_target positions are removed
+            neg_target: Position value to zero on negative sentiment (default: 1)
+            pos_target: Position value to zero on positive sentiment (default: -1)
+        
+        Returns:
+            Modified signals DataFrame
+        """
+        score = sentiment.get('score', 0)
+        if score < neg_threshold:
+            signals.loc[signals['positions'] == neg_target, 'positions'] = 0
+            signals['signals'] = signals['positions'].diff().fillna(0)
+        if score > pos_threshold:
+            signals.loc[signals['positions'] == pos_target, 'positions'] = 0
+            signals['signals'] = signals['positions'].diff().fillna(0)
+        return signals
+    
+    def _sentiment_filter_signals(
+        self,
+        signals: pd.DataFrame,
+        sentiment: dict,
+        neg_threshold: Optional[float] = None,
+        pos_threshold: Optional[float] = None,
+        recalc_method: str = 'cumsum_clip'
+    ) -> pd.DataFrame:
+        """
+        Filter buy/sell signals based on sentiment, then recalculate positions.
+        
+        Removes buy signals (1) when sentiment is below neg_threshold, and
+        sell signals (-1) when above pos_threshold.
+        
+        Args:
+            signals: Trading signals DataFrame
+            sentiment: Sentiment dict with 'score' key
+            neg_threshold: Score below which buy signals are removed
+            pos_threshold: Score above which sell signals are removed
+            recalc_method: How to recalculate positions:
+                'cumsum_clip' - cumsum().clip(0, 1) for long-only bounded
+                'cumsum' - cumsum() for unbounded
+        
+        Returns:
+            Modified signals DataFrame
+        """
+        score = sentiment.get('score', 0)
+        if neg_threshold is not None and score < neg_threshold:
+            signals.loc[signals['signals'] == 1, 'signals'] = 0
+        if pos_threshold is not None and score > pos_threshold:
+            signals.loc[signals['signals'] == -1, 'signals'] = 0
+        if recalc_method == 'cumsum_clip':
+            signals['positions'] = signals['signals'].cumsum().clip(0, 1)
+        elif recalc_method == 'cumsum':
+            signals['positions'] = signals['signals'].cumsum()
+        return signals
     
     @classmethod
     def get_info(cls) -> dict:

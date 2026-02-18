@@ -25,6 +25,11 @@ class MetricsCalculator:
     def __init__(self):
         """Initialize the metrics calculator."""
         pass
+
+    @staticmethod
+    def _safe_get(df, key: str, col: int = 0):
+        """Safely retrieve a value from a DataFrame by index label and column position."""
+        return df.loc[key].iloc[col] if key in df.index and len(df.columns) > col else 0
     
     def get_stock_metrics(self, ticker: str) -> Optional[StockMetrics]:
         """
@@ -321,15 +326,10 @@ class MetricsCalculator:
             return {}
     
     def _calculate_max_drawdown(self, hist: pd.DataFrame) -> Optional[float]:
-        """Calculate maximum drawdown percentage."""
+        """Calculate maximum drawdown percentage — delegates to shared utility."""
         try:
-            prices = hist['Close']
-            cumulative_max = prices.cummax()
-            drawdown = (prices - cumulative_max) / cumulative_max
-            max_drawdown = drawdown.min()
-            
-            return float(max_drawdown * 100)  # Return as percentage
-        
+            from strategies.utils import calculate_max_drawdown
+            return calculate_max_drawdown(hist['Close'])
         except:
             return None
 
@@ -429,10 +429,8 @@ class MetricsCalculator:
             if balance_sheet.empty or income_stmt.empty or len(balance_sheet.columns) < 2:
                 return None
             
-            # Current and prior year data
-            def safe_get(df, key, col=0):
-                return df.loc[key].iloc[col] if key in df.index and len(df.columns) > col else 0
-            
+            safe_get = self._safe_get
+
             # Current year (col 0) and prior year (col 1)
             receivables_t = safe_get(balance_sheet, 'Accounts Receivable', 0) or safe_get(balance_sheet, 'Net Receivables', 0)
             receivables_t1 = safe_get(balance_sheet, 'Accounts Receivable', 1) or safe_get(balance_sheet, 'Net Receivables', 1)
@@ -543,9 +541,8 @@ class MetricsCalculator:
             
             score = 0
             
-            def safe_get(df, key, col=0):
-                return df.loc[key].iloc[col] if key in df.index and len(df.columns) > col else 0
-            
+            safe_get = self._safe_get
+
             # Current year (col 0) and prior year (col 1)
             net_income_t = safe_get(income_stmt, 'Net Income', 0)
             net_income_t1 = safe_get(income_stmt, 'Net Income', 1)

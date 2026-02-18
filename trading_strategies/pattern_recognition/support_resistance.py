@@ -461,22 +461,13 @@ class SupportResistanceStrategy(BaseStrategy):
         signals: pd.DataFrame,
         sentiment: dict
     ) -> pd.DataFrame:
-        """Apply sentiment-based adjustments to trading signals."""
-        sentiment_score = sentiment.get('score', 0)
-        
-        # Use sentiment to filter signals
-        if sentiment_score < -0.5:
-            # Negative sentiment - filter bullish signals
-            signals.loc[signals['signals'] == 1, 'signals'] = 0
-        
-        if sentiment_score > 0.5:
-            # Positive sentiment - filter bearish signals
-            signals.loc[signals['signals'] == -1, 'signals'] = 0
-        
-        # Recalculate positions
-        signals['positions'] = signals['signals'].cumsum().clip(0, 1)
-        
-        return signals
+        """Filter buy/sell signals based on sentiment direction."""
+        return self._sentiment_filter_signals(
+            signals, sentiment,
+            neg_threshold=-0.5,
+            pos_threshold=0.5,
+            recalc_method='cumsum_clip'
+        )
     
     def _calculate_portfolio(
         self,
@@ -484,32 +475,8 @@ class SupportResistanceStrategy(BaseStrategy):
         capital: float,
         risk: RiskParams
     ) -> pd.DataFrame:
-        """Calculate portfolio value over time."""
-        portfolio = pd.DataFrame(index=signals.index)
-        
-        # Long only for simplicity
-        long_positions = signals['positions'].apply(lambda x: max(0, x))
-        
-        # Calculate position sizes
-        max_position_value = capital * risk.max_position_size
-        shares = int(max_position_value / signals['Close'].max()) if signals['Close'].max() > 0 else 0
-        
-        # Calculate holdings
-        portfolio['positions'] = long_positions
-        portfolio['Close'] = signals['Close']
-        portfolio['holdings'] = long_positions * signals['Close'] * shares
-        
-        # Calculate cash
-        long_signals = signals['signals'].apply(lambda x: max(0, x))
-        portfolio['cash'] = capital - (long_signals * signals['Close'] * shares).cumsum()
-        
-        # Total portfolio value
-        portfolio['total_value'] = portfolio['holdings'] + portfolio['cash']
-        
-        # Calculate returns
-        portfolio['returns'] = portfolio['total_value'].pct_change().fillna(0)
-        
-        return portfolio
+        """Long-only portfolio calculation for S/R strategy."""
+        return self._calculate_portfolio_long_only(signals, capital, risk)
     
     def _create_charts(
         self,
@@ -566,7 +533,8 @@ class SupportResistanceStrategy(BaseStrategy):
             title=f"{ticker} S/R Levels & Signals",
             data=matplotlib_to_base64(fig1),
             chart_type="matplotlib",
-            description="Price chart with support/resistance levels and trading signals"
+            description="Price chart with support/resistance levels and trading signals",
+            ticker=ticker
         ))
         
         # Chart 2: S/R level distribution
@@ -596,7 +564,8 @@ class SupportResistanceStrategy(BaseStrategy):
             title=f"{ticker} S/R Distribution",
             data=matplotlib_to_base64(fig2),
             chart_type="matplotlib",
-            description="Distribution of support and resistance levels"
+            description="Distribution of support and resistance levels",
+            ticker=ticker
         ))
         
         return charts

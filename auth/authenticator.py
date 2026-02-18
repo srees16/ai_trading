@@ -284,7 +284,6 @@ class Authenticator:
                     <div class="login-brand">
                         {logo_html}
                         <div class="login-title">Centurion Capital LLC</div>
-                        <div class="login-tagline">Enterprise AI Engine for Event-Driven Alpha</div>
                     </div>
                     <div class="login-divider"></div>
                 </div>
@@ -345,7 +344,7 @@ class Authenticator:
                 data = _b64.b64encode(f.read()).decode()
             return (
                 f'<img src="data:image/png;base64,{data}" '
-                f'style="height:4rem; margin-bottom:0.75rem;" />'
+                f'style="height:4rem; margin-bottom:0.75rem; mix-blend-mode:multiply;" />'
             )
         return ""
 
@@ -403,6 +402,14 @@ class Authenticator:
         }
         [data-testid="stForm"] [data-testid="stTextInput"] {
             margin-bottom: 0.5rem;
+        }
+
+        /* Hide 'Press Enter to submit form' caption */
+        [data-testid="stForm"] .st-emotion-cache-1ny7cjd,
+        [data-testid="stForm"] [data-testid="InputInstructions"],
+        [data-testid="stForm"] .stFormSubmitContent > div:last-child small,
+        [data-testid="stForm"] .st-emotion-cache-ue6h4q {
+            display: none !important;
         }
 
         /* Sign In button */

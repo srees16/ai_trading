@@ -480,7 +480,8 @@ class PairsTradingStrategy(BaseStrategy):
             title=f"{ticker1}/{ticker2} Pairs Analysis",
             data=matplotlib_to_base64(fig1),
             chart_type="matplotlib",
-            description="Normalized prices, Z-score, and position over time"
+            description="Normalized prices, Z-score, and position over time",
+            ticker=f"{ticker1}_{ticker2}"
         ))
         
         # Chart 2: Cointegration analysis
@@ -516,7 +517,8 @@ class PairsTradingStrategy(BaseStrategy):
             title=f"{ticker1}/{ticker2} Cointegration",
             data=matplotlib_to_base64(fig2),
             chart_type="matplotlib",
-            description="Price relationship and cointegration status"
+            description="Price relationship and cointegration status",
+            ticker=f"{ticker1}_{ticker2}"
         ))
         
         return charts

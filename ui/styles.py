@@ -184,8 +184,9 @@ def get_button_css() -> str:
         white-space: nowrap;
         overflow: visible;
         text-overflow: clip;
-        padding: 0.5rem 0.75rem;
-        font-size: 0.9rem;
+        padding: 0.55rem 0.85rem;
+        font-size: 1.05rem;
+        font-weight: 500;
         background-color: #f0f2f6 !important;
         color: #1a1a2e !important;
         border: 1px solid #ccc !important;

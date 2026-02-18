@@ -259,19 +259,9 @@ class DataService:
         return df
     
     def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> pd.Series:
-        """Calculate Relative Strength Index."""
-        delta = prices.diff()
-        
-        gain = delta.where(delta > 0, 0)
-        loss = -delta.where(delta < 0, 0)
-        
-        avg_gain = gain.ewm(com=period-1, min_periods=period).mean()
-        avg_loss = loss.ewm(com=period-1, min_periods=period).mean()
-        
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        
-        return rsi
+        """Calculate Relative Strength Index — delegates to shared utility."""
+        from strategies.utils import calculate_rsi
+        return calculate_rsi(prices, period)
     
     def _calculate_macd(
         self,

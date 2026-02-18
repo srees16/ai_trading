@@ -44,7 +44,7 @@ def render_control_panel():
     """Render the control panel with stock selection and settings."""
     st.subheader("📊 Stock Selection & Settings")
     
-    col1, col2, col3 = st.columns([1, 1, 1])
+    col1, col2 = st.columns([1, 1])
     
     tickers = []
     
@@ -54,15 +54,24 @@ def render_control_panel():
     with col2:
         _render_output_settings()
     
-    with col3:
-        run_clicked = _render_run_controls(tickers)
-    
     st.session_state.tickers = tickers
+    
+    # Run Analysis section — full width below the settings
+    st.markdown("---")
+    run_clicked = _render_run_controls(tickers)
     
     if run_clicked and len(tickers) > 0:
         st.session_state.analysis_complete = False
         st.session_state.signals = []
         st.session_state.progress_messages = []
+        # Snapshot the tickers the user chose for *this* analysis run.
+        # This is the authoritative list that backtesting will use,
+        # immune to the main-page widgets overwriting session tickers
+        # during casual navigation.
+        st.session_state.analysis_tickers = list(tickers)
+        # Bump the analysis run counter so the backtesting cache knows
+        # a fresh analysis was requested and will recompute strategies.
+        st.session_state.analysis_run_id = st.session_state.get('analysis_run_id', 0) + 1
         st.session_state.current_page = 'analysis'
         st.rerun()
 
@@ -114,7 +123,6 @@ def _handle_manual_entry() -> List[str]:
         help="Enter stock ticker symbols separated by commas"
     )
     tickers = [t.strip().upper() for t in ticker_input.split(',') if t.strip()]
-    st.success(f"✓ {len(tickers)} ticker(s) entered")
     return tickers
 
 
@@ -221,33 +229,60 @@ def _render_run_controls(tickers: List[str]) -> bool:
     Returns:
         True if run button was clicked
     """
-    st.markdown("**Run Analysis**")
-    st.write("")  # Spacer
+    # Status + Run button row
+    status_col, btn_col = st.columns([1.5, 1])
     
-    if tickers:
-        st.success(f"📈 {len(tickers)} stock(s) ready")
-    else:
-        st.warning("⚠️ No tickers selected")
+    with status_col:
+        if tickers:
+            st.success(f"📈 {len(tickers)} stock(s) ready")
+        else:
+            st.warning("⚠️ No tickers selected")
     
-    run_button = st.button(
-        "🚀 Run Analysis",
-        type="primary",
-        use_container_width=True,
-        disabled=len(tickers) == 0
+    with btn_col:
+        st.write("")  # Align vertically with status
+        run_button = st.button(
+            "🚀 Run Analysis",
+            type="primary",
+            use_container_width=True,
+            disabled=len(tickers) == 0
+        )
+    
+    # Navigation buttons — smaller, in a centered row
+    has_results = st.session_state.get('analysis_complete', False) and st.session_state.get('signals')
+    
+    st.markdown(
+        """<style>
+        div[data-testid="stHorizontalBlock"]:has(> div > div > button[key^="nav_"]) button,
+        button[key="nav_fundamental"], button[key="nav_backtest"], button[key="nav_history"], button[key="nav_results"] {
+            font-size: 0.85rem !important;
+            padding: 0.35rem 0.5rem !important;
+        }
+        </style>""",
+        unsafe_allow_html=True,
     )
     
-    # Navigation buttons
-    st.write("")  # Spacer
-    nav_col1, nav_col2 = st.columns(2)
+    if has_results:
+        _, nav_col0, nav_col1, nav_col2, nav_col3, _ = st.columns([0.6, 1, 1, 1, 1, 0.6])
+        with nav_col0:
+            if st.button("📈 Analysis Results", key="nav_results", use_container_width=True):
+                st.session_state.current_page = 'analysis'
+                st.rerun()
+    else:
+        _, nav_col1, nav_col2, nav_col3, _ = st.columns([0.8, 1, 1, 1, 0.8])
     
     with nav_col1:
-        if st.button("📊 Fundamental", key="nav_fundamental", use_container_width=True):
+        if st.button("📊 Fundamental Analysis", key="nav_fundamental", use_container_width=True):
             st.session_state.current_page = 'fundamental'
             st.rerun()
     
     with nav_col2:
-        if st.button("🔬 Backtest", key="nav_backtest", use_container_width=True):
+        if st.button("🔬 Backtest Strategy", key="nav_backtest", use_container_width=True):
             st.session_state.current_page = 'backtesting'
+            st.rerun()
+    
+    with nav_col3:
+        if st.button("📋 History", key="nav_history", use_container_width=True):
+            st.session_state.current_page = 'history'
             st.rerun()
     
     return run_button

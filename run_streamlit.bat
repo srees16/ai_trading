@@ -1,6 +1,9 @@
 @echo off
 REM Quick launch script for Algo Trading Alert System Streamlit UI
 
+REM Prevent torch/Streamlit file-watcher conflict
+set STREAMLIT_SERVER_FILE_WATCHER_TYPE=none
+
 echo ======================================================================
 echo  Algo Trading Alert System - Streamlit UI
 echo ======================================================================

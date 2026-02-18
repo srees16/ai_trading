@@ -368,45 +368,10 @@ class ParabolicSARStrategy(BaseStrategy):
         signals: pd.DataFrame,
         sentiment: dict
     ) -> pd.DataFrame:
-        """Apply sentiment-based adjustments to trading signals."""
-        sentiment_score = sentiment.get('score', 0)
-        
-        # Use sentiment to filter signals
-        # Only take long positions if sentiment confirms
-        if sentiment_score < -0.7:
-            signals['positions'] = 0
-            signals['signals'] = signals['positions'].diff().fillna(0)
-        
-        return signals
+        """Zero positions when sentiment is strongly negative."""
+        return self._sentiment_zero_positions(signals, sentiment)
     
-    def _calculate_portfolio(
-        self,
-        signals: pd.DataFrame,
-        capital: float,
-        risk: RiskParams
-    ) -> pd.DataFrame:
-        """Calculate portfolio value over time."""
-        portfolio = pd.DataFrame(index=signals.index)
-        
-        # Calculate position sizes (shares we can buy)
-        max_position_value = capital * risk.max_position_size
-        shares = int(max_position_value / signals['Close'].max()) if signals['Close'].max() > 0 else 0
-        
-        # Calculate holdings
-        portfolio['positions'] = signals['positions']
-        portfolio['Close'] = signals['Close']
-        portfolio['holdings'] = signals['positions'] * signals['Close'] * shares
-        
-        # Calculate cash
-        portfolio['cash'] = capital - (signals['signals'] * signals['Close'] * shares).cumsum()
-        
-        # Total portfolio value
-        portfolio['total_value'] = portfolio['holdings'] + portfolio['cash']
-        
-        # Calculate returns
-        portfolio['returns'] = portfolio['total_value'].pct_change().fillna(0)
-        
-        return portfolio
+    # _calculate_portfolio inherited from BaseStrategy
     
     def _create_charts(
         self,
@@ -456,7 +421,8 @@ class ParabolicSARStrategy(BaseStrategy):
             title=f"{ticker} Price & Parabolic SAR",
             data=matplotlib_to_base64(fig1),
             chart_type="matplotlib",
-            description="Price chart with Parabolic SAR indicator"
+            description="Price chart with Parabolic SAR indicator",
+            ticker=ticker
         ))
         
         # Chart 2: Trend indicator
@@ -516,7 +482,8 @@ class ParabolicSARStrategy(BaseStrategy):
             title=f"{ticker} Trend Analysis",
             data=matplotlib_to_base64(fig2),
             chart_type="matplotlib",
-            description="Trend zones and direction indicator"
+            description="Trend zones and direction indicator",
+            ticker=ticker
         ))
         
         return charts

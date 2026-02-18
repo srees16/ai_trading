@@ -15,7 +15,7 @@ from typing import Dict, Any, Optional
 
 from config import Config
 from trading_strategies import list_strategies, get_strategy
-from ui.components import render_page_header, render_footer, render_navigation_buttons
+from ui.components import render_page_header, render_footer, render_navigation_buttons, render_no_data_warning, render_tickers_being_analyzed
 from ui.tables import render_backtest_signals_table
 
 logger = logging.getLogger(__name__)
@@ -28,6 +28,14 @@ except ImportError:
     DB_AVAILABLE = False
     get_database_service = None
 
+# MinIO object storage check
+try:
+    from storage.minio_service import get_minio_service
+    MINIO_AVAILABLE = True
+except ImportError:
+    MINIO_AVAILABLE = False
+    get_minio_service = None
+
 
 def render_backtesting_page():
     """Render the strategy backtesting page."""
@@ -35,6 +43,11 @@ def render_backtesting_page():
         "🔬 Strategy Backtesting",
         description="Test and analyze trading strategies with historical data"
     )
+
+    # Show stocks being analyzed
+    tickers = st.session_state.get('tickers', [])
+    if tickers:
+        render_tickers_being_analyzed(tickers, st.session_state.get('ticker_mode', 'Default Tickers'))
     
     # Navigation buttons
     render_navigation_buttons(
@@ -44,9 +57,16 @@ def render_backtesting_page():
     
     st.markdown("---")
     
+    # Initialise cache in session state
+    if 'backtest_cache' not in st.session_state:
+        st.session_state.backtest_cache = {}  # {strategy_name: StrategyResult}
+    
     # Get available strategies
     strategies = list_strategies()
     strategy_options = {s['name']: s for s in strategies}
+    
+    # Pre-run all strategies once on first page visit
+    _precompute_all_strategies(strategies)
     
     # Layout: config column and results column
     outer_col1, config_col, results_col, outer_col2 = st.columns([0.3, 1.5, 3, 0.3])
@@ -58,6 +78,117 @@ def render_backtesting_page():
         _render_results_panel()
     
     render_footer()
+
+
+def _precompute_all_strategies(strategies: list):
+    """
+    Pre-compute backtests for all strategies using the analysis tickers.
+
+    Results are stored in ``st.session_state.backtest_cache`` keyed by
+    strategy name.  The cache is keyed exclusively by ``analysis_run_id``
+    which only increments when the user clicks **Run Analysis** on the
+    main page.  Navigating between pages never invalidates the cache.
+    """
+    # Only auto-precompute when the user has explicitly run an analysis
+    if not st.session_state.get('analysis_complete', False):
+        st.info("ℹ️ Run an analysis on the main page first to auto-compute all strategies.")
+        return
+
+    # Use the snapshot of tickers captured at "Run Analysis" time.
+    # This is immune to the main-page widgets overwriting
+    # st.session_state.tickers during casual navigation.
+    tickers = st.session_state.get('analysis_tickers',
+                                   st.session_state.get('tickers', []))
+    if not tickers:
+        return
+
+    # The main page increments this counter every time the user clicks
+    # "Run Analysis", so it is the *sole* cache-buster.
+    analysis_run = st.session_state.get('analysis_run_id', 0)
+    cached_run   = st.session_state.get('backtest_cache_run_id', None)
+
+    # Cache is still valid → skip recomputation entirely
+    if st.session_state.get('backtest_cache') and analysis_run == cached_run:
+        return
+
+    # ------------------------------------------------------------------
+    # Cache miss — run all strategies
+    # ------------------------------------------------------------------
+    st.session_state.backtest_cache = {}
+    st.session_state.backtest_result = None
+
+    # Determine which strategies to pre-compute (skip pairs trading)
+    eligible = [s for s in strategies if s['id'] != 'pairs_trading']
+    if not eligible:
+        return
+
+    # Default date range and capital
+    end_date = datetime.now()
+    start_date = end_date - timedelta(days=365)
+    default_dates = {
+        'start_date': start_date.strftime('%Y-%m-%d'),
+        'end_date': end_date.strftime('%Y-%m-%d'),
+        'capital': 10000.0,
+        'tickers': list(tickers),
+    }
+
+    progress_bar = st.progress(0, text="Pre-computing strategies…")
+    total = len(eligible)
+    succeeded = 0
+    total_minio_saved = 0
+
+    # Single run_id shared by all strategies in this batch
+    minio_run_id = _build_minio_run_id(tickers)
+
+    for idx, s_info in enumerate(eligible):
+        strategy_name = s_info['name']
+        progress_bar.progress(
+            (idx) / total,
+            text=f"Running **{strategy_name}** ({idx + 1}/{total})…"
+        )
+
+        try:
+            strategy_cls = get_strategy(s_info['id'])
+            params = strategy_cls.get_parameters()
+
+            param_values = {
+                pname: pconf.get('default', 0)
+                for pname, pconf in params.items()
+            }
+            param_values.update(default_dates)
+
+            strategy = strategy_cls()
+            result = strategy.run(**param_values)
+            st.session_state.backtest_cache[strategy_name] = result
+
+            if result.success:
+                succeeded += 1
+                # Save charts to MinIO during pre-computation
+                total_minio_saved += _save_charts_to_minio(
+                    run_id=minio_run_id,
+                    result=result,
+                    strategy_name=strategy_name,
+                )
+        except Exception as e:
+            logger.error(f"Pre-compute failed for {strategy_name}: {e}")
+
+    progress_bar.progress(1.0, text="All strategies computed ✅")
+
+    if total_minio_saved > 0:
+        st.toast(f"🪣 {total_minio_saved} chart(s) saved to object storage", icon="✅")
+
+    # Persist cache metadata
+    st.session_state.backtest_cache_tickers = sorted(set(t.upper() for t in tickers))
+    st.session_state.backtest_cache_run_id = analysis_run
+    st.session_state.backtest_minio_run_id = minio_run_id
+
+    # Set the first successful result as the active display
+    if st.session_state.backtest_cache:
+        first_name = next(iter(st.session_state.backtest_cache))
+        st.session_state.backtest_result = st.session_state.backtest_cache[first_name]
+        st.session_state.selected_strategy = first_name
+
+    st.success(f"✅ Pre-computed {succeeded}/{total} strategies for {', '.join(tickers)}")
 
 
 def _render_configuration_panel(strategies: list, strategy_options: Dict[str, Any]):
@@ -92,6 +223,12 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
         strategy_info = filtered_strategies[selected_name]
         st.caption(strategy_info['description'])
         
+        # Instantly load cached result when user switches strategy
+        cache = st.session_state.get('backtest_cache', {})
+        if selected_name in cache:
+            st.session_state.backtest_result = cache[selected_name]
+            st.session_state.selected_strategy = selected_name
+        
         # Get strategy class and parameters
         strategy_cls = get_strategy(strategy_info['id'])
         params = strategy_cls.get_parameters()
@@ -103,17 +240,27 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
         param_values = _render_parameter_inputs(params)
         
         st.markdown("---")
-        st.subheader("�️ Data Settings")
+        st.subheader("🗂️ Data Settings")
         
         # Ticker and date inputs
         _render_data_settings(strategy_info, param_values)
         
         st.markdown("---")
         
+        # Warn if no tickers provided
+        if not param_values.get('tickers'):
+            st.warning("⚠️ Please enter at least one ticker symbol above.")
+        
+        # Show cache status
+        if selected_name in cache:
+            st.caption(f"📦 Cached result loaded for **{selected_name}**")
+        
         run_backtest = st.button(
             "🚀 Run Backtest",
             type="primary",
-            use_container_width=True
+            use_container_width=True,
+            disabled=not param_values.get('tickers'),
+            help="Run with custom parameters (overrides cached result)"
         )
         
         if run_backtest:
@@ -181,17 +328,20 @@ def _render_data_settings(strategy_info: Dict, param_values: Dict):
             if ticker1 and ticker2 else []
         )
     else:
+        # Pre-fill with user's tickers from the main page
+        session_tickers = st.session_state.get('tickers', [])
+        default_ticker_str = ", ".join(session_tickers) if session_tickers else ""
         ticker_input = st.text_input(
             "Ticker Symbol(s)",
-            value="AAPL",
+            value=default_ticker_str,
             help="Enter one or more tickers separated by commas (e.g. AAPL, MSFT, GOOGL)"
         )
-        if ticker_input:
+        if ticker_input and ticker_input.strip():
             param_values['tickers'] = [
                 t.strip().upper() for t in ticker_input.split(",") if t.strip()
             ]
         else:
-            param_values['tickers'] = ["AAPL"]
+            param_values['tickers'] = []
     
     # Period selection
     period = st.selectbox(
@@ -237,11 +387,27 @@ def _execute_backtest(strategy_cls, strategy_info: Dict, param_values: Dict, sel
             st.session_state.backtest_result = result
             st.session_state.selected_strategy = selected_name
             
+            # Update the cache so future switches are instant
+            if 'backtest_cache' not in st.session_state:
+                st.session_state.backtest_cache = {}
+            st.session_state.backtest_cache[selected_name] = result
+            
             if result.success:
                 st.success("✅ Backtest completed!")
                 _save_backtest_to_database(
                     strategy_info, param_values, result, selected_name
                 )
+                # Save charts to MinIO independently of DB
+                minio_run_id = _build_minio_run_id(
+                    param_values.get('tickers', [])
+                )
+                minio_saved = _save_charts_to_minio(
+                    run_id=minio_run_id,
+                    result=result,
+                    strategy_name=selected_name,
+                )
+                if minio_saved > 0:
+                    st.toast(f"🪣 {minio_saved} chart(s) saved to object storage", icon="✅")
             else:
                 st.error(f"❌ Failed: {result.error_message}")
                 
@@ -304,6 +470,56 @@ def _save_backtest_to_database(
             
     except Exception as e:
         logger.error(f"Failed to save backtest to database: {e}")
+
+
+def _build_minio_run_id(tickers: list) -> str:
+    """
+    Build a unique run_id with a short UUID + timestamp for MinIO storage.
+    
+    Returns:
+        String like 'run_b080a824_20260218_163000'
+    """
+    import uuid
+    short_id = uuid.uuid4().hex[:8]
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    return f"run_{short_id}_{ts}"
+
+
+def _save_charts_to_minio(
+    run_id: str,
+    result: Any,
+    strategy_name: str,
+):
+    """
+    Save backtest chart images to MinIO object storage.
+
+    Args:
+        run_id: Shared run identifier (e.g. 'AAPL_TSLA_20260218_163000')
+        result: StrategyResult containing charts
+        strategy_name: Name of the strategy (used as subfolder)
+    """
+    if not MINIO_AVAILABLE or not get_minio_service:
+        return 0
+
+    try:
+        minio_svc = get_minio_service()
+        if not minio_svc.is_available:
+            return 0
+
+        if not result.charts:
+            return 0
+
+        saved = minio_svc.save_backtest_charts(
+            run_id=run_id,
+            charts=result.charts,
+            strategy_name=strategy_name,
+        )
+
+        return len(saved) if saved else 0
+
+    except Exception as e:
+        logger.error(f"Failed to save charts to MinIO: {e}")
+        return 0
 
 
 def _render_results_panel():

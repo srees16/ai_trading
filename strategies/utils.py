@@ -269,6 +269,56 @@ def create_metrics_summary(
     }
 
 
+def calculate_rsi(prices: pd.Series, period: int = 14) -> pd.Series:
+    """
+    Calculate Relative Strength Index using Wilder's smoothed method (EWM).
+    
+    Shared implementation used by DataService and RSI strategy to avoid
+    duplicate RSI calculation logic.
+    
+    Args:
+        prices: Price series (typically Close prices)
+        period: RSI lookback period (default: 14)
+    
+    Returns:
+        RSI values as pandas Series (0-100 scale, NaN filled with 50)
+    """
+    delta = prices.diff()
+    
+    gains = delta.where(delta > 0, 0)
+    losses = (-delta).where(delta < 0, 0)
+    
+    avg_gains = gains.ewm(com=period - 1, min_periods=period).mean()
+    avg_losses = losses.ewm(com=period - 1, min_periods=period).mean()
+    
+    rs = avg_gains / avg_losses
+    rs = rs.replace([np.inf, -np.inf], 0)
+    rsi = 100 - (100 / (1 + rs))
+    
+    return rsi.fillna(50)
+
+
+def calculate_max_drawdown(values: pd.Series) -> float:
+    """
+    Calculate maximum drawdown percentage from a value series.
+    
+    Shared implementation used by BaseStrategy and MetricsCalculator
+    to avoid duplicate drawdown logic.
+    
+    Args:
+        values: Series of portfolio values or prices
+    
+    Returns:
+        Maximum drawdown as a percentage (negative number, e.g. -15.2)
+    """
+    if len(values) < 2:
+        return 0.0
+    
+    peak = values.cummax()
+    drawdown = (values - peak) / peak
+    return float(drawdown.min() * 100)
+
+
 def format_currency(value: float, currency: str = "$") -> str:
     """Format a number as currency."""
     return f"{currency}{value:,.2f}"

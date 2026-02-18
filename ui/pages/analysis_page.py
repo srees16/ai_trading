@@ -103,6 +103,6 @@ def _render_no_signals_warning():
     """Render warning when no signals were generated."""
     st.warning("⚠️ No signals were generated. Please try different tickers.")
     
-    if st.button("← Back to Main", key="back_no_signals"):
+    if st.button("🏠 Main", key="back_no_signals"):
         st.session_state.current_page = 'main'
         st.rerun()

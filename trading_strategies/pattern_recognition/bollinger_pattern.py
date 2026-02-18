@@ -391,15 +391,10 @@ class BollingerPatternStrategy(BaseStrategy):
         signals: pd.DataFrame,
         sentiment: dict
     ) -> pd.DataFrame:
-        """Apply sentiment-based adjustments to trading signals."""
-        sentiment_score = sentiment.get('score', 0)
-        
-        # Filter bullish signals if sentiment is very negative
-        if sentiment_score < -0.7:
-            signals.loc[signals['signals'] == 1, 'signals'] = 0
-            signals['positions'] = signals['signals'].cumsum().clip(0, 1)
-        
-        return signals
+        """Filter bullish signals when sentiment is strongly negative."""
+        return self._sentiment_filter_signals(
+            signals, sentiment, neg_threshold=-0.7, recalc_method='cumsum_clip'
+        )
     
     def _calculate_portfolio(
         self,
@@ -407,28 +402,8 @@ class BollingerPatternStrategy(BaseStrategy):
         capital: float,
         risk: RiskParams
     ) -> pd.DataFrame:
-        """Calculate portfolio value over time."""
-        portfolio = pd.DataFrame(index=signals.index)
-        
-        # Calculate position sizes
-        max_position_value = capital * risk.max_position_size
-        shares = int(max_position_value / signals['Close'].dropna().max()) if signals['Close'].dropna().max() > 0 else 0
-        
-        # Calculate holdings
-        portfolio['positions'] = signals['positions']
-        portfolio['Close'] = signals['Close']
-        portfolio['holdings'] = signals['positions'] * signals['Close'] * shares
-        
-        # Calculate cash
-        portfolio['cash'] = capital - (signals['signals'].clip(lower=0) * signals['Close'] * shares).cumsum()
-        
-        # Total portfolio value
-        portfolio['total_value'] = portfolio['holdings'] + portfolio['cash']
-        
-        # Calculate returns
-        portfolio['returns'] = portfolio['total_value'].pct_change().fillna(0)
-        
-        return portfolio
+        """Long-only portfolio calculation for Bollinger pattern."""
+        return self._calculate_portfolio_long_only(signals, capital, risk)
     
     def _create_charts(
         self,
@@ -492,7 +467,8 @@ class BollingerPatternStrategy(BaseStrategy):
             title=f"{ticker} Bollinger Bands",
             data=matplotlib_to_base64(fig1),
             chart_type="matplotlib",
-            description="Price with Bollinger Bands and W pattern signals"
+            description="Price with Bollinger Bands and W pattern signals",
+            ticker=ticker
         ))
         
         # Chart 2: %B indicator
@@ -523,7 +499,8 @@ class BollingerPatternStrategy(BaseStrategy):
             title=f"{ticker} %B Indicator",
             data=matplotlib_to_base64(fig2),
             chart_type="matplotlib",
-            description="Bollinger %B showing position within bands"
+            description="Bollinger %B showing position within bands",
+            ticker=ticker
         ))
         
         return charts
