@@ -15,6 +15,7 @@ from typing import Optional, Dict
 
 from models import StockMetrics
 from config import Config
+from strategies.utils import calculate_max_drawdown
 
 logger = logging.getLogger(__name__)
 
@@ -328,7 +329,6 @@ class MetricsCalculator:
     def _calculate_max_drawdown(self, hist: pd.DataFrame) -> Optional[float]:
         """Calculate maximum drawdown percentage — delegates to shared utility."""
         try:
-            from strategies.utils import calculate_max_drawdown
             return calculate_max_drawdown(hist['Close'])
         except:
             return None

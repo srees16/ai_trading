@@ -9,19 +9,13 @@ import logging
 from typing import List, Any, Optional, Tuple, Dict
 
 from config import Config
+from database.service import get_database_service
 from main import AlgoTradingSystem
 from ui.components import render_completion_banner
 
 logger = logging.getLogger(__name__)
 
-# Database availability check
-try:
-    from database.service import get_database_service
-    DB_AVAILABLE = Config.is_database_configured()
-except ImportError:
-    DB_AVAILABLE = False
-    get_database_service = None
-    logger.warning("Database module not available - results won't be persisted")
+DB_AVAILABLE = Config.is_database_configured()
 
 
 async def run_analysis_async(tickers: List[str]) -> List[Any]:

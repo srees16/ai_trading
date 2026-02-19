@@ -12,7 +12,6 @@ Prerequisites:
     4. .env file configured with database credentials
 """
 
-import os
 import sys
 import logging
 from pathlib import Path

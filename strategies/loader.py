@@ -9,7 +9,6 @@ detected and registered without modifying core code.
 import importlib
 import importlib.util
 import sys
-import os
 from pathlib import Path
 from typing import Optional, Type
 import logging

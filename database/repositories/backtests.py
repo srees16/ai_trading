@@ -4,9 +4,8 @@ Repository for backtesting results data access.
 """
 
 import logging
-from typing import List, Optional, Dict, Any
+from typing import List, Dict, Any
 from datetime import datetime, timedelta
-from uuid import UUID
 
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, and_, func

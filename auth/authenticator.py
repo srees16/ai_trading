@@ -5,6 +5,7 @@ Provides user authentication, session management, and heartbeat
 monitoring with YAML-based credential storage.
 """
 
+import base64
 import hashlib
 import hmac
 import yaml
@@ -13,6 +14,9 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 from datetime import datetime, timedelta
 import logging
+
+from config import Config
+from trading_strategies import list_strategies
 
 logger = logging.getLogger(__name__)
 
@@ -336,12 +340,10 @@ class Authenticator:
     @staticmethod
     def _get_logo_html() -> str:
         """Return an <img> tag with the base64-encoded logo, or empty string."""
-        import base64 as _b64
-
         logo_path = Path(__file__).parent.parent / "centurion_logo.png"
         if logo_path.exists():
             with open(logo_path, "rb") as f:
-                data = _b64.b64encode(f.read()).decode()
+                data = base64.b64encode(f.read()).decode()
             return (
                 f'<img src="data:image/png;base64,{data}" '
                 f'style="height:4rem; margin-bottom:0.75rem; mix-blend-mode:multiply;" />'
@@ -465,14 +467,12 @@ def check_system_health() -> dict:
     
     # Check config
     try:
-        from config import Config
         health['config_loaded'] = hasattr(Config, 'DEFAULT_TICKERS')
     except Exception:
         pass
     
     # Check strategies
     try:
-        from trading_strategies import list_strategies
         strategies = list_strategies()
         health['strategies_available'] = len(strategies) > 0
     except Exception:
@@ -480,7 +480,6 @@ def check_system_health() -> dict:
     
     # Check storage
     try:
-        from pathlib import Path
         health['storage_accessible'] = Path.cwd().exists()
     except Exception:
         pass

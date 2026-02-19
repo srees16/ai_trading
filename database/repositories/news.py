@@ -7,7 +7,6 @@ import logging
 import hashlib
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
-from uuid import UUID
 
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, and_, func

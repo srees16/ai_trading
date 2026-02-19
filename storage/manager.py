@@ -10,7 +10,6 @@ import logging
 import pandas as pd
 from pathlib import Path
 from typing import List, Optional
-from datetime import datetime
 
 from models import TradingSignal
 from config import Config
@@ -96,62 +95,3 @@ class StorageManager:
         except Exception as e:
             logger.error("Error saving to file: %s", e)
             return None
-    
-    def load_signals(self) -> pd.DataFrame:
-        """
-        Load signals from file.
-        
-        Returns:
-            DataFrame with historical signals
-        """
-        if not self.file_path.exists():
-            logger.info("File %s does not exist", self.file_path)
-            return pd.DataFrame()
-        
-        try:
-            if self.file_path.suffix == '.xlsx':
-                df = pd.read_excel(self.file_path)
-            else:
-                df = pd.read_csv(self.file_path)
-            
-            logger.info("Loaded %d signals from %s", len(df), self.file_path)
-            return df
-        
-        except Exception as e:
-            logger.error("Error loading file: %s", e)
-            return pd.DataFrame()
-    
-    def get_signals_by_ticker(self, ticker: str) -> pd.DataFrame:
-        """
-        Get all signals for a specific ticker.
-        
-        Args:
-            ticker: Stock ticker symbol
-            
-        Returns:
-            DataFrame with signals for the ticker
-        """
-        df = self.load_signals()
-        if df.empty:
-            return df
-        
-        return df[df['ticker'] == ticker]
-    
-    def get_signals_by_date(self, date: datetime) -> pd.DataFrame:
-        """
-        Get all signals for a specific date.
-        
-        Args:
-            date: Date to filter by
-            
-        Returns:
-            DataFrame with signals for the date
-        """
-        df = self.load_signals()
-        if df.empty:
-            return df
-        
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        date_str = date.strftime('%Y-%m-%d')
-        
-        return df[df['timestamp'].dt.strftime('%Y-%m-%d') == date_str]

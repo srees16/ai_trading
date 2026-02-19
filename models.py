@@ -7,7 +7,7 @@ alert system including news items, stock metrics, and trading signals.
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, List, Dict
+from typing import Optional, List
 from enum import Enum
 
 

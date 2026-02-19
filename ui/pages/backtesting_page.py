@@ -6,6 +6,7 @@ Contains the strategy backtesting page rendering.
 
 import json
 import base64
+import uuid
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -14,33 +15,22 @@ import logging
 from typing import Dict, Any, Optional
 
 from config import Config
+from database.service import get_database_service
+from storage.minio_service import get_minio_service
 from trading_strategies import list_strategies, get_strategy
 from ui.components import render_page_header, render_footer, render_navigation_buttons, render_no_data_warning, render_tickers_being_analyzed
 from ui.tables import render_backtest_signals_table
 
 logger = logging.getLogger(__name__)
 
-# Database availability check
-try:
-    from database.service import get_database_service
-    DB_AVAILABLE = Config.is_database_configured()
-except ImportError:
-    DB_AVAILABLE = False
-    get_database_service = None
-
-# MinIO object storage check
-try:
-    from storage.minio_service import get_minio_service
-    MINIO_AVAILABLE = True
-except ImportError:
-    MINIO_AVAILABLE = False
-    get_minio_service = None
+DB_AVAILABLE = Config.is_database_configured()
+MINIO_AVAILABLE = True
 
 
 def render_backtesting_page():
     """Render the strategy backtesting page."""
     render_page_header(
-        "🔬 Strategy Backtesting",
+        "🔬 Backtest Strategy",
         description="Test and analyze trading strategies with historical data"
     )
 
@@ -56,6 +46,12 @@ def render_backtesting_page():
     )
     
     st.markdown("---")
+
+    # Guard: if no analysis has been run yet, show a helpful warning
+    if not st.session_state.get('analysis_complete', False):
+        render_no_data_warning(page_name="backtesting")
+        render_footer()
+        return
     
     # Initialise cache in session state
     if 'backtest_cache' not in st.session_state:
@@ -398,9 +394,15 @@ def _execute_backtest(strategy_cls, strategy_info: Dict, param_values: Dict, sel
                     strategy_info, param_values, result, selected_name
                 )
                 # Save charts to MinIO independently of DB
-                minio_run_id = _build_minio_run_id(
-                    param_values.get('tickers', [])
-                )
+                # Reuse the session's run_id so manual runs land in
+                # the same folder as pre-computed charts; create one
+                # only if none exists yet.
+                minio_run_id = st.session_state.get('backtest_minio_run_id')
+                if not minio_run_id:
+                    minio_run_id = _build_minio_run_id(
+                        param_values.get('tickers', [])
+                    )
+                    st.session_state.backtest_minio_run_id = minio_run_id
                 minio_saved = _save_charts_to_minio(
                     run_id=minio_run_id,
                     result=result,
@@ -479,7 +481,6 @@ def _build_minio_run_id(tickers: list) -> str:
     Returns:
         String like 'run_b080a824_20260218_163000'
     """
-    import uuid
     short_id = uuid.uuid4().hex[:8]
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     return f"run_{short_id}_{ts}"

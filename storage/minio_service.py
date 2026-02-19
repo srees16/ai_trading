@@ -23,6 +23,7 @@ Usage:
 """
 
 import io
+import os
 import json
 import logging
 import base64
@@ -35,6 +36,7 @@ logger = logging.getLogger(__name__)
 try:
     from minio import Minio
     from minio.error import S3Error
+    from minio.deleteobjects import DeleteObject
     MINIO_SDK_AVAILABLE = True
 except ImportError:
     MINIO_SDK_AVAILABLE = False
@@ -45,7 +47,6 @@ class MinIOConfig:
     """MinIO configuration from environment variables."""
 
     def __init__(self):
-        import os
         self.endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9000")
         self.access_key = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
         self.secret_key = os.getenv("MINIO_SECRET_KEY", "minioadmin123")
@@ -278,8 +279,6 @@ class MinIOService:
         if strategy_name:
             safe = strategy_name.lower().replace(" ", "_")
             prefix = f"{run_id}/{safe}/"
-            # If both strategy and run_id are given, search recursively
-            # under run_id — strategy folders are nested under ticker folders
 
         results: List[Dict[str, Any]] = []
 
@@ -367,8 +366,6 @@ class MinIOService:
             return 0
 
         try:
-            from minio.deleteobjects import DeleteObject
-
             objects = self.client.list_objects(
                 self._config.bucket_name,
                 prefix=f"{run_id}/",

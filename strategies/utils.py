@@ -14,6 +14,7 @@ import json
 from typing import Any, Optional
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 
 
 def matplotlib_to_base64(
@@ -49,8 +50,6 @@ def matplotlib_to_base64(
         base64_str = matplotlib_to_base64(fig)
         ```
     """
-    import matplotlib.pyplot as plt
-    
     # Create buffer
     buffer = io.BytesIO()
     

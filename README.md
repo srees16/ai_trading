@@ -170,7 +170,7 @@ pip install -r requirements.txt
 Copy the example and edit:
 
 ```powershell
-copy .env.example .env
+# Create .env in the project root (see .env for all available settings)
 ```
 
 Or create `.env` in the project root with the following:

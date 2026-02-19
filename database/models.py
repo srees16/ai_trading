@@ -10,8 +10,7 @@ These models are designed for:
 
 import uuid
 from datetime import datetime
-from typing import Optional, Dict, Any, List
-from decimal import Decimal
+
 
 from sqlalchemy import (
     Column, String, Float, Integer, Boolean, DateTime, Text,

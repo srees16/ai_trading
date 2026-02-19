@@ -6,7 +6,7 @@ Contains the main dashboard and control panel rendering.
 
 import streamlit as st
 from pathlib import Path
-from typing import List, Tuple
+from typing import List
 import logging
 
 from config import Config
@@ -16,6 +16,7 @@ from ui.components import (
     render_footer,
     render_features_section,
     render_how_to_use_section,
+    render_navigation_buttons,
 )
 
 logger = logging.getLogger(__name__)
@@ -229,17 +230,15 @@ def _render_run_controls(tickers: List[str]) -> bool:
     Returns:
         True if run button was clicked
     """
-    # Status + Run button row
-    status_col, btn_col = st.columns([1.5, 1])
+    # Status + Run button (left-aligned)
+    if tickers:
+        st.caption(f"📈 {len(tickers)} stock(s) ready")
+    else:
+        st.warning("⚠️ No tickers selected")
     
-    with status_col:
-        if tickers:
-            st.success(f"📈 {len(tickers)} stock(s) ready")
-        else:
-            st.warning("⚠️ No tickers selected")
+    btn_col, _ = st.columns([1, 1.5])
     
     with btn_col:
-        st.write("")  # Align vertically with status
         run_button = st.button(
             "🚀 Run Analysis",
             type="primary",
@@ -247,42 +246,10 @@ def _render_run_controls(tickers: List[str]) -> bool:
             disabled=len(tickers) == 0
         )
     
-    # Navigation buttons — smaller, in a centered row
-    has_results = st.session_state.get('analysis_complete', False) and st.session_state.get('signals')
-    
-    st.markdown(
-        """<style>
-        div[data-testid="stHorizontalBlock"]:has(> div > div > button[key^="nav_"]) button,
-        button[key="nav_fundamental"], button[key="nav_backtest"], button[key="nav_history"], button[key="nav_results"] {
-            font-size: 0.85rem !important;
-            padding: 0.35rem 0.5rem !important;
-        }
-        </style>""",
-        unsafe_allow_html=True,
+    # Navigation buttons
+    render_navigation_buttons(
+        current_page='main',
+        back_key_suffix='from_main'
     )
-    
-    if has_results:
-        _, nav_col0, nav_col1, nav_col2, nav_col3, _ = st.columns([0.6, 1, 1, 1, 1, 0.6])
-        with nav_col0:
-            if st.button("📈 Analysis Results", key="nav_results", use_container_width=True):
-                st.session_state.current_page = 'analysis'
-                st.rerun()
-    else:
-        _, nav_col1, nav_col2, nav_col3, _ = st.columns([0.8, 1, 1, 1, 0.8])
-    
-    with nav_col1:
-        if st.button("📊 Fundamental Analysis", key="nav_fundamental", use_container_width=True):
-            st.session_state.current_page = 'fundamental'
-            st.rerun()
-    
-    with nav_col2:
-        if st.button("🔬 Backtest Strategy", key="nav_backtest", use_container_width=True):
-            st.session_state.current_page = 'backtesting'
-            st.rerun()
-    
-    with nav_col3:
-        if st.button("📋 History", key="nav_history", use_container_width=True):
-            st.session_state.current_page = 'history'
-            st.rerun()
     
     return run_button

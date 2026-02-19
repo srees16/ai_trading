@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from database.connection import DatabaseManager
 from database.models import (
-    AnalysisRun, NewsItem, StockSignal, FundamentalMetric,
+    NewsItem, StockSignal, FundamentalMetric,
     BacktestResult, AnalysisStatus, SentimentType
 )
 from database.repositories import (
@@ -227,40 +227,6 @@ class DatabaseService:
             logger.error(f"Failed to save signals: {e}")
             return 0
     
-    def get_latest_signals(
-        self,
-        tickers: List[str] = None,
-        limit: int = 50
-    ) -> List[Dict[str, Any]]:
-        """Get latest signals, optionally filtered by tickers."""
-        try:
-            with self.session_scope() as session:
-                repo = SignalRepository(session)
-                
-                if tickers:
-                    signals = []
-                    for ticker in tickers:
-                        ticker_signals = repo.get_by_ticker(ticker, limit=10)
-                        signals.extend(ticker_signals)
-                else:
-                    signals = repo.get_recent_signals_summary(limit=limit)
-                    return signals if isinstance(signals, list) else []
-                
-                return [
-                    {
-                        'ticker': s.ticker,
-                        'decision': s.decision,
-                        'confidence': s.confidence_score,
-                        'strategy': s.strategy_name,
-                        'reasons': s.reasons,
-                        'created_at': s.created_at.isoformat()
-                    }
-                    for s in signals
-                ]
-        except Exception as e:
-            logger.error(f"Failed to get signals: {e}")
-            return []
-    
     # =================================================================
     # News Operations
     # =================================================================
@@ -457,14 +423,12 @@ class DatabaseService:
                     tickers_list = [t.upper() for t in tickers_input if t]
                 
                 backtest = BacktestResult(
-                    analysis_run_id=analysis_run_id,
                     strategy_id=result.get('strategy_id', result.get('strategy_name', 'unknown').lower().replace(' ', '_')),
                     strategy_name=result.get('strategy_name', 'unknown'),
                     tickers=tickers_list,
                     start_date=result.get('start_date'),
                     end_date=result.get('end_date'),
                     initial_capital=result.get('initial_capital', 10000),
-                    final_value=result.get('final_value'),
                     total_return=result.get('total_return'),
                     annualized_return=result.get('annualized_return'),
                     max_drawdown=result.get('max_drawdown'),
@@ -478,11 +442,13 @@ class DatabaseService:
                     losing_trades=result.get('losing_trades'),
                     avg_win=result.get('avg_win'),
                     avg_loss=result.get('avg_loss'),
-                    largest_win=result.get('largest_win'),
-                    largest_loss=result.get('largest_loss'),
                     parameters=result.get('parameters', {}),
-                    daily_returns=result.get('daily_returns', []),
-                    trade_log=result.get('trade_log', [])
+                    metrics={
+                        k: result[k]
+                        for k in ('final_value', 'largest_win', 'largest_loss',
+                                  'daily_returns', 'trade_log')
+                        if k in result
+                    },
                 )
                 repo.create(backtest)
                 logger.info(f"Saved backtest result for {tickers_list}")
@@ -491,40 +457,6 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"Failed to save backtest result: {e}")
             return False
-    
-    def get_strategy_performance(
-        self,
-        strategy_name: str = None,
-        ticker: str = None
-    ) -> List[Dict[str, Any]]:
-        """Get historical backtest performance."""
-        try:
-            with self.session_scope() as session:
-                repo = BacktestRepository(session)
-                
-                if strategy_name:
-                    results = repo.get_by_strategy(strategy_name, limit=50)
-                elif ticker:
-                    results = repo.get_all(limit=50)
-                    results = [r for r in results if r.ticker == ticker.upper()]
-                else:
-                    return repo.get_strategy_summary()
-                
-                return [
-                    {
-                        'strategy': r.strategy_name,
-                        'ticker': r.ticker,
-                        'total_return': r.total_return,
-                        'sharpe_ratio': r.sharpe_ratio,
-                        'max_drawdown': r.max_drawdown,
-                        'win_rate': r.win_rate,
-                        'created_at': r.created_at.isoformat()
-                    }
-                    for r in results
-                ]
-        except Exception as e:
-            logger.error(f"Failed to get strategy performance: {e}")
-            return []
     
     # =================================================================
     # Combined Analysis Save
@@ -616,16 +548,6 @@ class DatabaseService:
     # =================================================================
     # Utility Methods
     # =================================================================
-    
-    def get_run_statistics(self, days: int = 30) -> Dict[str, Any]:
-        """Get analysis run statistics."""
-        try:
-            with self.session_scope() as session:
-                repo = AnalysisRepository(session)
-                return repo.get_run_statistics(days)
-        except Exception as e:
-            logger.error(f"Failed to get run statistics: {e}")
-            return {}
     
     def initialize_database(self) -> bool:
         """Initialize database tables and hypertables."""

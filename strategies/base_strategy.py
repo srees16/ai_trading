@@ -12,6 +12,8 @@ from enum import Enum
 import pandas as pd
 from datetime import datetime
 
+from strategies.utils import calculate_max_drawdown
+
 
 class StrategyCategory(Enum):
     """Categories of trading strategies."""
@@ -375,7 +377,6 @@ class BaseStrategy(ABC):
     
     def _calculate_max_drawdown(self, values: pd.Series) -> float:
         """Calculate maximum drawdown percentage."""
-        from strategies.utils import calculate_max_drawdown
         return calculate_max_drawdown(values)
     
     def _calculate_portfolio(

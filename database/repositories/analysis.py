@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, and_, func
+from sqlalchemy import desc
 
 from database.models import AnalysisRun, AnalysisStatus
 from database.repositories.base import BaseRepository
@@ -154,91 +154,3 @@ class AnalysisRepository(BaseRepository[AnalysisRun]):
             query = query.filter(AnalysisRun.run_type == run_type)
         
         return query.order_by(desc(AnalysisRun.created_at)).limit(limit).all()
-    
-    def get_runs_by_status(
-        self,
-        status: AnalysisStatus,
-        limit: int = 50
-    ) -> List[AnalysisRun]:
-        """
-        Get runs by status.
-        
-        Args:
-            status: Status to filter
-            limit: Maximum results
-            
-        Returns:
-            List of runs
-        """
-        return self.session.query(AnalysisRun).filter(
-            AnalysisRun.status == status
-        ).order_by(desc(AnalysisRun.created_at)).limit(limit).all()
-    
-    def get_run_statistics(
-        self,
-        days: int = 30
-    ) -> Dict[str, Any]:
-        """
-        Get statistics about analysis runs.
-        
-        Args:
-            days: Days to analyze
-            
-        Returns:
-            Statistics dict
-        """
-        cutoff = datetime.utcnow() - timedelta(days=days)
-        
-        # Status counts
-        status_results = self.session.query(
-            AnalysisRun.status,
-            func.count(AnalysisRun.id).label('count')
-        ).filter(
-            AnalysisRun.created_at >= cutoff
-        ).group_by(AnalysisRun.status).all()
-        
-        # Type counts
-        type_results = self.session.query(
-            AnalysisRun.run_type,
-            func.count(AnalysisRun.id).label('count')
-        ).filter(
-            AnalysisRun.created_at >= cutoff
-        ).group_by(AnalysisRun.run_type).all()
-        
-        # Average duration
-        duration = self.session.query(
-            func.avg(AnalysisRun.duration_seconds)
-        ).filter(
-            and_(
-                AnalysisRun.created_at >= cutoff,
-                AnalysisRun.duration_seconds.isnot(None)
-            )
-        ).scalar()
-        
-        return {
-            'period_days': days,
-            'by_status': {s.value: c for s, c in status_results},
-            'by_type': {t: c for t, c in type_results},
-            'avg_duration_seconds': float(duration) if duration else None,
-            'total_runs': sum(c for _, c in status_results)
-        }
-    
-    def cleanup_old_runs(self, days: int = 90) -> int:
-        """
-        Delete old analysis runs.
-        
-        Args:
-            days: Delete runs older than this many days
-            
-        Returns:
-            Number of deleted runs
-        """
-        cutoff = datetime.utcnow() - timedelta(days=days)
-        
-        deleted = self.session.query(AnalysisRun).filter(
-            AnalysisRun.created_at < cutoff
-        ).delete()
-        
-        self.session.flush()
-        logger.info(f"Cleaned up {deleted} old analysis runs")
-        return deleted

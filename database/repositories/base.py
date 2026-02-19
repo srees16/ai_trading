@@ -4,13 +4,12 @@ Base repository class with common CRUD operations.
 """
 
 import logging
-from typing import TypeVar, Generic, List, Optional, Type, Any, Dict
-from datetime import datetime
+from typing import TypeVar, Generic, List, Optional, Type, Any
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy import and_, or_, desc, asc
+from sqlalchemy import and_, desc, asc
 
 from database.models import Base
 

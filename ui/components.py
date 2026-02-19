@@ -8,7 +8,6 @@ import base64
 import streamlit as st
 from pathlib import Path
 from typing import List, Dict, Optional, Any
-from datetime import datetime
 
 
 def load_logo_base64() -> str:
@@ -93,79 +92,63 @@ def render_footer():
 
 def render_navigation_buttons(
     current_page: str,
-    show_back: bool = True,
-    show_fundamental: bool = True,
-    show_backtest: bool = True,
-    show_history: bool = True,
-    back_key_suffix: str = ""
+    back_key_suffix: str = "",
+    **_kwargs,
 ):
     """
-    Render navigation buttons.
-    
+    Render navigation buttons for all pages.
+
+    Shows a button for every page except the one the user is currently on.
+    The Analysis Results button only appears when results are available.
+
     Args:
         current_page: Current page identifier
-        show_back: Show back to main button
-        show_fundamental: Show fundamental analysis button
-        show_backtest: Show backtesting button
-        show_history: Show history button
+            ('main', 'analysis', 'fundamental', 'backtesting', 'history')
         back_key_suffix: Suffix for button keys to avoid duplicates
     """
-    has_results = st.session_state.get('analysis_complete', False) and st.session_state.get('signals')
-    
-    # Build list of buttons to show
-    buttons = []
-    if show_back:
-        buttons.append(('main', '🏠 Main'))
-    if has_results and current_page != 'analysis':
-        buttons.append(('analysis', '📈 Analysis Results'))
-    if show_history and current_page != 'history':
-        buttons.append(('history', '📋 History'))
-    if current_page == 'fundamental' and show_backtest:
-        buttons.append(('backtesting', '🔬 Backtest A Strategy'))
-    elif current_page == 'backtesting' and show_fundamental:
-        buttons.append(('fundamental', '📊 Fundamental Analysis'))
-    elif current_page == 'history' and show_backtest:
-        buttons.append(('backtesting', '🔬 Backtest A Strategy'))
-    elif current_page == 'history' and show_fundamental:
-        buttons.append(('fundamental', '📊 Fundamental Analysis'))
-    
+    has_results = (
+        st.session_state.get('analysis_complete', False)
+        and st.session_state.get('signals')
+    )
+
+    # All possible navigation targets (id, label)
+    all_pages = [
+        ('main',         '🏠 Main'),
+        ('analysis',     '📈 Stock Analysis'),
+        ('fundamental',  '📊 Fundamental Analysis'),
+        ('backtesting',  '🔬 Backtest Strategy'),
+        ('history',      '📋 History'),
+    ]
+
+    # Build visible buttons: skip current page; skip Analysis if no results
+    buttons = [
+        (pid, label)
+        for pid, label in all_pages
+        if pid != current_page
+        and (pid != 'analysis' or has_results)
+    ]
+
     n = len(buttons)
     if n == 0:
         return
-    
-    col_spec = [1] + [1.2] * n + [1]
+
+    col_spec = [0.6] + [1] * n + [0.6]
     cols = st.columns(col_spec)
-    
+
     for i, (page_id, label) in enumerate(buttons):
         with cols[i + 1]:
-            if st.button(label, key=f"nav_{page_id}_{back_key_suffix}", use_container_width=True):
+            if st.button(
+                label,
+                key=f"nav_{page_id}_{back_key_suffix}",
+                use_container_width=True,
+            ):
                 st.session_state.current_page = page_id
                 st.rerun()
 
 
 def render_analysis_navigation_buttons():
     """Render navigation buttons for analysis results page."""
-    _, nav_col1, nav_col2, nav_col3, nav_col4, _ = st.columns([0.3, 1.2, 1.2, 1.2, 1.2, 0.3])
-    
-    with nav_col1:
-        if st.button("🏠 Main", key="back_from_analysis", use_container_width=True):
-            st.session_state.current_page = 'main'
-            st.rerun()
-    
-    with nav_col2:
-        if st.button("📊 Fundamental Analysis", key="nav_fundamental_from_analysis", use_container_width=True):
-            st.session_state.current_page = 'fundamental'
-            st.rerun()
-    
-    with nav_col3:
-        if st.button("🔬 Backtest Strategy", key="nav_backtest_from_analysis", use_container_width=True):
-            st.session_state.current_page = 'backtesting'
-            st.rerun()
-    
-    with nav_col4:
-        if st.button("📋 History", key="nav_history_from_analysis", use_container_width=True):
-            st.session_state.current_page = 'history'
-            st.rerun()
+    render_navigation_buttons(current_page='analysis', back_key_suffix='from_analysis')
 
 
 def render_metrics_cards(signals: List[Any]):
@@ -220,19 +203,6 @@ def render_metrics_cards(signals: List[Any]):
             decision_counts.get('STRONG_SELL', 0),
             help="Stocks with strong sell signals"
         )
-
-
-def render_stock_tags(tickers: List[str]) -> str:
-    """
-    Render stock tickers as markdown tags.
-    
-    Args:
-        tickers: List of stock ticker symbols
-    
-    Returns:
-        Markdown string with tickers as code tags
-    """
-    return " ".join([f"`{ticker}`" for ticker in tickers])
 
 
 def render_tickers_being_analyzed(tickers: List[str], ticker_mode: str):
@@ -343,6 +313,14 @@ def render_no_data_warning(page_name: str = "analysis"):
             3. Click **Run Analysis**
             4. Return to this page to view detailed fundamental metrics
             """)
+        elif page_name == "backtesting":
+            st.info("""
+            **To view backtest strategy:**
+            1. Click **Back to Main**
+            2. Select your stocks to analyze
+            3. Click **Run Analysis**
+            4. Return to this page to view backtesting results
+            """)
         else:
             st.info("""
             **To view analysis:**
@@ -389,32 +367,3 @@ def get_decision_emoji(decision: str) -> str:
         'STRONG_SELL': '🔴🔴',
     }
     return emoji_map.get(decision, '⚪')
-
-
-def get_status_indicator(
-    value: float,
-    thresholds: Dict[str, float],
-    labels: Dict[str, str]
-) -> tuple:
-    """
-    Get status indicator based on value and thresholds.
-    
-    Args:
-        value: The value to evaluate
-        thresholds: Dictionary with threshold values
-        labels: Dictionary with status labels
-    
-    Returns:
-        Tuple of (display_value, status_label)
-    """
-    if value is None:
-        return "N/A", "N/A"
-    
-    # Example for Z-score: thresholds={'safe': 2.99, 'grey': 1.81}
-    # labels={'safe': '🟢 Safe', 'grey': '🟡 Grey Zone', 'distress': '🔴 Distress'}
-    if 'safe' in thresholds and value > thresholds['safe']:
-        return f"{value:.2f}", labels.get('safe', 'Safe')
-    elif 'grey' in thresholds and value > thresholds['grey']:
-        return f"{value:.2f}", labels.get('grey', 'Grey')
-    else:
-        return f"{value:.2f}", labels.get('distress', 'Distress')

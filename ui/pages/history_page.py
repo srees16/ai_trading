@@ -5,42 +5,37 @@ Allows users to review past analysis runs, signals, and backtest results
 stored in the database, filtered by date/time.
 """
 
+import base64
+import json
 import streamlit as st
 import pandas as pd
+import plotly.io as pio
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
+from uuid import UUID
+
+from sqlalchemy import desc
 
 from config import Config
+from database.service import get_database_service
+from database.repositories import (
+    AnalysisRepository, SignalRepository, BacktestRepository
+)
+from database.models import NewsItem, StockSignal
+from storage.minio_service import get_minio_service
 from ui.components import render_page_header, render_footer, render_navigation_buttons, render_tickers_being_analyzed, get_decision_emoji
 
 logger = logging.getLogger(__name__)
 
-# Database availability check
-try:
-    from database.service import get_database_service
-    from database.repositories import (
-        AnalysisRepository, SignalRepository, BacktestRepository
-    )
-    DB_AVAILABLE = Config.is_database_configured()
-except ImportError:
-    DB_AVAILABLE = False
-    get_database_service = None
-    logger.warning("Database module not available - history page disabled")
-
-# MinIO object storage check
-try:
-    from storage.minio_service import get_minio_service
-    MINIO_AVAILABLE = True
-except ImportError:
-    MINIO_AVAILABLE = False
-    get_minio_service = None
+DB_AVAILABLE = Config.is_database_configured()
+MINIO_AVAILABLE = True
 
 
 def render_history_page():
     """Render the history page for reviewing past analysis results."""
     render_page_header(
-        title="📋 Analysis History",
+        title="📋 History",
         subtitle="Review past analyses, signals, and backtest results"
     )
 
@@ -54,9 +49,6 @@ def render_history_page():
     # Navigation
     render_navigation_buttons(
         current_page='history',
-        show_back=True,
-        show_fundamental=True,
-        show_backtest=True,
         back_key_suffix="history"
     )
 
@@ -240,8 +232,6 @@ def _render_run_summary(runs: list):
 
 def _render_run_details(session, run_id: str):
     """Render detailed view for a specific analysis run."""
-    from uuid import UUID
-
     try:
         run_uuid = UUID(run_id)
     except ValueError:
@@ -278,7 +268,6 @@ def _render_run_details(session, run_id: str):
 
     # Fetch news items for this run
     try:
-        from database.models import NewsItem
         news_items = session.query(NewsItem).filter(
             NewsItem.analysis_run_id == run_uuid
         ).order_by(NewsItem.published_at.desc()).all()
@@ -334,8 +323,6 @@ def _render_signal_history(date_range: Dict[str, Any]):
                     all_signals.extend(signals)
             else:
                 # Get all recent signals
-                from database.models import StockSignal
-                from sqlalchemy import desc
                 cutoff = date_range['start_date']
                 all_signals = session.query(StockSignal).filter(
                     StockSignal.created_at >= cutoff
@@ -473,9 +460,6 @@ def _render_backtest_history(date_range: Dict[str, Any]):
 
 def _render_minio_backtest_charts():
     """Render stored backtest chart images from MinIO object storage."""
-    import base64
-    import json
-
     try:
         minio_svc = get_minio_service()
         if not minio_svc.is_available:
@@ -539,8 +523,6 @@ def _render_minio_backtest_charts():
                         st.image(data, use_container_width=True)
 
                     elif chart_type == "plotly" and data:
-                        import plotly.io as pio
-
                         st.markdown(f"**{title}**")
                         try:
                             fig_json = json.loads(data)

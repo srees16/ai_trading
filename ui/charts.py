@@ -7,8 +7,7 @@ Contains all visualization and chart rendering functions for Plotly charts.
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from collections import defaultdict
 
 from ui.styles import DECISION_COLORS, SENTIMENT_COLORS, HEALTH_COLORS

@@ -6,12 +6,27 @@ Contains table rendering functions for signals and analysis results.
 
 import streamlit as st
 import pandas as pd
+import yfinance as yf
 from datetime import datetime
 from typing import List, Dict, Any
 from collections import defaultdict
+import logging
 
 from ui.styles import get_decision_style, get_signal_style
 from ui.components import get_decision_emoji
+
+logger = logging.getLogger(__name__)
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def _get_stock_name(ticker: str) -> str:
+    """Look up the company name for a ticker symbol via yfinance (cached 24h)."""
+    try:
+        info = yf.Ticker(ticker).info
+        return info.get("shortName") or info.get("longName") or ticker
+    except Exception:
+        logger.debug(f"Could not fetch stock name for {ticker}")
+        return ticker
 
 
 def render_simple_summary_table(signals: List[Any]):
@@ -52,9 +67,17 @@ def render_simple_summary_table(signals: List[Any]):
         signal_emoji = get_decision_emoji(most_common_decision)
         price = stock_prices.get(ticker)
         
+        # Collect the first valid URL from the group as the source link
+        source_url = next(
+            (s.news_item.url for s in group_signals if s.news_item.url),
+            None
+        )
+        
         summary_data.append({
-            'Stock': ticker,
+            'Ticker': ticker,
+            'Stock': _get_stock_name(ticker),
             'Source': source,
+            'Link': source_url or '',
             'News Count': len(group_signals),
             'Avg Score': round(avg_score, 2),
             'Signal': f"{signal_emoji} {most_common_decision.replace('_', ' ')}",
@@ -63,9 +86,19 @@ def render_simple_summary_table(signals: List[Any]):
         })
     
     df = pd.DataFrame(summary_data)
-    df = df.sort_values(['Stock', 'Avg Score'], ascending=[True, False])
+    df = df.sort_values(['Ticker', 'Avg Score'], ascending=[True, False])
     
-    st.dataframe(df.astype(str), use_container_width=True, hide_index=True)
+    st.dataframe(
+        df.astype(str),
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Link": st.column_config.LinkColumn(
+                "Link",
+                display_text="Open",
+            ),
+        },
+    )
     
     # Also show aggregated view per stock
     _render_overall_stock_signals(signals)
