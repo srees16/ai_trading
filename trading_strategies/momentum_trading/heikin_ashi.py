@@ -167,7 +167,7 @@ class HeikinAshiStrategy(BaseStrategy):
                 portfolio = self._calculate_portfolio(signals, capital, risk)
                 
                 # Create charts for this ticker
-                charts = self._create_charts(signals, ticker)
+                charts = self._create_charts(signals, portfolio, ticker, capital)
                 all_charts.extend(charts)
                 
                 # Calculate metrics
@@ -345,7 +345,9 @@ class HeikinAshiStrategy(BaseStrategy):
     def _create_charts(
         self,
         signals: pd.DataFrame,
-        ticker: str
+        portfolio: pd.DataFrame,
+        ticker: str,
+        capital: float
     ) -> list[ChartData]:
         """Create visualization charts."""
         charts = []
@@ -392,7 +394,7 @@ class HeikinAshiStrategy(BaseStrategy):
         
         ax1.set_title(f'{ticker} - Heikin-Ashi Candlesticks')
         ax1.set_xlabel('Time')
-        ax1.set_ylabel('Price')
+        ax1.set_ylabel('HA Price')
         ax1.legend(loc='best')
         ax1.grid(True, alpha=0.3)
         
@@ -414,29 +416,120 @@ class HeikinAshiStrategy(BaseStrategy):
             ticker=ticker
         ))
         
-        # Chart 2: Regular price vs HA price comparison
-        fig2, (ax2, ax3) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+        # Chart 2: Actual price with long/short positions
+        fig2, ax2 = plt.subplots(figsize=(12, 6))
         
-        # Regular price
-        ax2.plot(range(len(signals)), signals['Close'], label='Regular Close', color='blue')
-        ax2.set_title(f'{ticker} - Regular Close Price')
+        ax2.plot(signals.index, signals['Close'], label=ticker, color='blue', alpha=0.7)
+        
+        if not buy_signals.empty:
+            ax2.scatter(buy_signals.index, buy_signals['Close'],
+                       marker='^', color='green', s=100, label='LONG', zorder=5)
+        
+        if not sell_signals.empty:
+            ax2.scatter(sell_signals.index, sell_signals['Close'],
+                       marker='v', color='red', s=100, label='SHORT', zorder=5)
+        
+        ax2.set_title(f'{ticker} - Price with Positions')
+        ax2.set_xlabel('Date')
+        ax2.set_ylabel('Price')
         ax2.legend(loc='best')
         ax2.grid(True, alpha=0.3)
         
+        plt.tight_layout()
+        
+        charts.append(ChartData(
+            title=f"{ticker} Price & Positions",
+            data=matplotlib_to_base64(fig2),
+            chart_type="matplotlib",
+            description="Actual close price with long/short position markers",
+            ticker=ticker
+        ))
+        
+        # Chart 3: Regular price vs HA price comparison
+        fig3, (ax3a, ax3b) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+        
+        # Regular price
+        ax3a.plot(range(len(signals)), signals['Close'], label='Regular Close', color='blue')
+        ax3a.set_title(f'{ticker} - Regular Close Price')
+        ax3a.legend(loc='best')
+        ax3a.grid(True, alpha=0.3)
+        
         # HA Close price
-        ax3.plot(range(len(signals)), signals['ha_close'], label='HA Close', color='orange')
-        ax3.set_title('Heikin-Ashi Close Price (Smoothed)')
-        ax3.legend(loc='best')
-        ax3.grid(True, alpha=0.3)
-        ax3.set_xlabel('Date')
+        ax3b.plot(range(len(signals)), signals['ha_close'], label='HA Close', color='orange')
+        ax3b.set_title('Heikin-Ashi Close Price (Smoothed)')
+        ax3b.legend(loc='best')
+        ax3b.grid(True, alpha=0.3)
+        ax3b.set_xlabel('Date')
         
         plt.tight_layout()
         
         charts.append(ChartData(
             title=f"{ticker} Price Comparison",
-            data=matplotlib_to_base64(fig2),
+            data=matplotlib_to_base64(fig3),
             chart_type="matplotlib",
             description="Comparison of regular vs Heikin-Ashi prices",
+            ticker=ticker
+        ))
+        
+        # Chart 4: Total Asset / Portfolio Equity Curve
+        fig4, ax4 = plt.subplots(figsize=(12, 6))
+        
+        ax4.plot(portfolio.index, portfolio['total_value'], label='Total Asset', color='blue')
+        ax4.axhline(y=capital, color='gray', linestyle='--', alpha=0.7,
+                    label=f'Initial Capital (${capital:,.0f})')
+        ax4.fill_between(
+            portfolio.index,
+            portfolio['total_value'],
+            capital,
+            where=portfolio['total_value'] >= capital,
+            alpha=0.2, color='green', label='Profit'
+        )
+        ax4.fill_between(
+            portfolio.index,
+            portfolio['total_value'],
+            capital,
+            where=portfolio['total_value'] < capital,
+            alpha=0.2, color='red', label='Loss'
+        )
+        
+        ax4.set_title(f'{ticker} - Total Asset')
+        ax4.set_xlabel('Date')
+        ax4.set_ylabel('Portfolio Value ($)')
+        ax4.legend(loc='best')
+        ax4.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        charts.append(ChartData(
+            title=f"{ticker} Total Asset",
+            data=matplotlib_to_base64(fig4),
+            chart_type="matplotlib",
+            description="Portfolio total asset value over backtest period",
+            ticker=ticker
+        ))
+        
+        # Chart 5: Drawdown
+        fig5, ax5 = plt.subplots(figsize=(12, 6))
+        
+        cumulative_max = portfolio['total_value'].cummax()
+        drawdown = (portfolio['total_value'] - cumulative_max) / cumulative_max * 100
+        
+        ax5.fill_between(portfolio.index, drawdown, 0, color='red', alpha=0.4)
+        ax5.plot(portfolio.index, drawdown, color='darkred', linewidth=1)
+        ax5.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+        
+        ax5.set_title(f'{ticker} - Drawdown')
+        ax5.set_xlabel('Date')
+        ax5.set_ylabel('Drawdown (%)')
+        ax5.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        charts.append(ChartData(
+            title=f"{ticker} Drawdown",
+            data=matplotlib_to_base64(fig5),
+            chart_type="matplotlib",
+            description="Portfolio drawdown from peak over backtest period",
             ticker=ticker
         ))
         

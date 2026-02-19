@@ -154,7 +154,7 @@ class AwesomeOscillatorStrategy(BaseStrategy):
                 portfolio = self._calculate_portfolio(signals, capital, risk)
                 
                 # Create charts for this ticker
-                charts = self._create_charts(signals, ticker)
+                charts = self._create_charts(signals, portfolio, ticker, capital)
                 all_charts.extend(charts)
                 
                 # Calculate metrics
@@ -284,7 +284,9 @@ class AwesomeOscillatorStrategy(BaseStrategy):
     def _create_charts(
         self,
         signals: pd.DataFrame,
-        ticker: str
+        portfolio: pd.DataFrame,
+        ticker: str,
+        capital: float
     ) -> list[ChartData]:
         """Create visualization charts."""
         charts = []
@@ -354,6 +356,94 @@ class AwesomeOscillatorStrategy(BaseStrategy):
             data=matplotlib_to_base64(fig2),
             chart_type="matplotlib",
             description="Price and Awesome Oscillator histogram",
+            ticker=ticker
+        ))
+        
+        # Chart 3: Moving Averages (SMA short vs SMA long)
+        fig3, ax4 = plt.subplots(figsize=(12, 6))
+        
+        ax4.plot(signals.index, signals['Close'], label='Price', color='blue', alpha=0.5)
+        ax4.plot(signals.index, signals['sma_short'], label='SMA Short', color='orange')
+        ax4.plot(signals.index, signals['sma_long'], label='SMA Long', color='purple', linestyle='--')
+        
+        ax4.set_title(f'{ticker} - Moving Averages (SMA Short vs SMA Long)')
+        ax4.set_xlabel('Date')
+        ax4.set_ylabel('Price')
+        ax4.legend(loc='best')
+        ax4.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        charts.append(ChartData(
+            title=f"{ticker} Moving Averages",
+            data=matplotlib_to_base64(fig3),
+            chart_type="matplotlib",
+            description="Short and long simple moving averages of median price",
+            ticker=ticker
+        ))
+        
+        # Chart 4: Portfolio Equity Curve
+        fig4, ax5 = plt.subplots(figsize=(12, 6))
+        
+        ax5.plot(portfolio.index, portfolio['total_value'], label='Portfolio Value', color='blue')
+        ax5.axhline(y=capital, color='gray', linestyle='--', alpha=0.7, label=f'Initial Capital (${capital:,.0f})')
+        ax5.fill_between(
+            portfolio.index,
+            portfolio['total_value'],
+            capital,
+            where=portfolio['total_value'] >= capital,
+            alpha=0.2,
+            color='green',
+            label='Profit'
+        )
+        ax5.fill_between(
+            portfolio.index,
+            portfolio['total_value'],
+            capital,
+            where=portfolio['total_value'] < capital,
+            alpha=0.2,
+            color='red',
+            label='Loss'
+        )
+        
+        ax5.set_title(f'{ticker} - Portfolio Equity Curve')
+        ax5.set_xlabel('Date')
+        ax5.set_ylabel('Portfolio Value ($)')
+        ax5.legend(loc='best')
+        ax5.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        charts.append(ChartData(
+            title=f"{ticker} Equity Curve",
+            data=matplotlib_to_base64(fig4),
+            chart_type="matplotlib",
+            description="Portfolio equity curve over backtest period",
+            ticker=ticker
+        ))
+        
+        # Chart 5: Drawdown Chart
+        fig5, ax6 = plt.subplots(figsize=(12, 6))
+        
+        cumulative_max = portfolio['total_value'].cummax()
+        drawdown = (portfolio['total_value'] - cumulative_max) / cumulative_max * 100
+        
+        ax6.fill_between(portfolio.index, drawdown, 0, color='red', alpha=0.4)
+        ax6.plot(portfolio.index, drawdown, color='darkred', linewidth=1)
+        ax6.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+        
+        ax6.set_title(f'{ticker} - Drawdown')
+        ax6.set_xlabel('Date')
+        ax6.set_ylabel('Drawdown (%)')
+        ax6.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        
+        charts.append(ChartData(
+            title=f"{ticker} Drawdown",
+            data=matplotlib_to_base64(fig5),
+            chart_type="matplotlib",
+            description="Portfolio drawdown from peak over backtest period",
             ticker=ticker
         ))
         
