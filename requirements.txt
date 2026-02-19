@@ -1,39 +1,27 @@
-# Core dependencies
 aiohttp
 beautifulsoup4
 lxml
 requests
-
-# Data processing
 pandas
 numpy
 openpyxl
-
-# Financial data
 yfinance
-
-# Sentiment analysis
 transformers
 torch
-
-# Notifications
 plyer
-
-# Utilities
 python-dateutil
 pytz
-
-# Streamlit UI
 streamlit
 plotly
 streamlit-aggrid
-
-# Machine Learning
 scikit-learn
-
-# Trading Strategy Analysis
 matplotlib
 statsmodels
-
-# Web Automation
 selenium
+sqlalchemy
+psycopg2-binary
+python-dotenv
+pyyaml
+minio
+scipy
+Backtesting

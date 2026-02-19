@@ -375,17 +375,10 @@ class ShootingStarStrategy(BaseStrategy):
         signals: pd.DataFrame,
         sentiment: dict
     ) -> pd.DataFrame:
-        """Apply sentiment-based adjustments to trading signals."""
-        sentiment_score = sentiment.get('score', 0)
-        
-        # Shooting star is bearish - strengthen signal if sentiment is negative
-        # Weaken if sentiment is positive
-        if sentiment_score > 0.5:
-            # Positive sentiment - filter out some shooting star signals
-            signals.loc[signals['signals'] == -1, 'signals'] = 0
-            signals['positions'] = signals['signals'].cumsum()
-        
-        return signals
+        """Filter bearish signals when sentiment is positive."""
+        return self._sentiment_filter_signals(
+            signals, sentiment, pos_threshold=0.5, recalc_method='cumsum'
+        )
     
     def _calculate_portfolio(
         self,
@@ -489,7 +482,8 @@ class ShootingStarStrategy(BaseStrategy):
             title=f"{ticker} Candlestick & Patterns",
             data=matplotlib_to_base64(fig1),
             chart_type="matplotlib",
-            description="Candlestick chart with shooting star patterns highlighted"
+            description="Candlestick chart with shooting star patterns highlighted",
+            ticker=ticker
         ))
         
         # Chart 2: Pattern characteristics
@@ -520,7 +514,8 @@ class ShootingStarStrategy(BaseStrategy):
             title=f"{ticker} Pattern Analysis",
             data=matplotlib_to_base64(fig2),
             chart_type="matplotlib",
-            description="Candlestick pattern characteristic metrics"
+            description="Candlestick pattern characteristic metrics",
+            ticker=ticker
         ))
         
         return charts

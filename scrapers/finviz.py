@@ -2,6 +2,7 @@
 Finviz news scraper with Elite authentication support.
 """
 
+import os
 import logging
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -21,15 +22,15 @@ import time
 class FinvizScraper(BaseNewsScraper):
     """Scraper for Finviz news with Elite authentication."""
     
-    # Elite credentials (optional - only needed for Elite features)
-    FINVIZ_USERNAME = "s.srees@live.com"
-    FINVIZ_PASSWORD = "Imbest1!"
-    
     def __init__(self, use_elite: bool = False):
         super().__init__("Finviz", "https://finviz.com/quote.ashx?t={}")
         self.use_elite = use_elite
         self.driver: Optional[webdriver.Chrome] = None
         self._authenticated = False
+        
+        # Load credentials from environment variables
+        self.finviz_username = os.getenv('FINVIZ_USERNAME', '')
+        self.finviz_password = os.getenv('FINVIZ_PASSWORD', '')
     
     def _init_selenium_driver(self):
         """Initialize Selenium driver for Elite access."""
@@ -57,8 +58,8 @@ class FinvizScraper(BaseNewsScraper):
             email_input = wait.until(EC.presence_of_element_located((By.NAME, "email")))
             password_input = wait.until(EC.presence_of_element_located((By.NAME, "password")))
             
-            email_input.send_keys(self.FINVIZ_USERNAME)
-            password_input.send_keys(self.FINVIZ_PASSWORD)
+            email_input.send_keys(self.finviz_username)
+            password_input.send_keys(self.finviz_password)
             password_input.submit()
             
             wait.until(EC.presence_of_element_located((By.ID, "screener-content")))

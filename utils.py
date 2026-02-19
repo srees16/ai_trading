@@ -1,14 +1,15 @@
 """
-Utility functions for CSV processing and data handling.
+Utility Functions Module for Centurion Capital LLC.
+
+Provides helper functions for CSV processing, ticker validation,
+and data handling across the application.
 """
 
 import logging
 import pandas as pd
-from typing import List, Optional
+from typing import List, Tuple
 from io import StringIO
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', handlers=[logging.StreamHandler()])
 logger = logging.getLogger(__name__)
 
 
@@ -69,7 +70,7 @@ def parse_ticker_csv(file_content: str) -> List[str]:
             return []
 
 
-def validate_tickers(tickers: List[str]) -> tuple[List[str], List[str]]:
+def validate_tickers(tickers: List[str]) -> Tuple[List[str], List[str]]:
     """
     Validate ticker symbols.
     

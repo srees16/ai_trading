@@ -1,13 +1,13 @@
 """
-Main orchestration script for the algo-trading alert system.
+Main Orchestration Module for Centurion Capital LLC.
 
-This script coordinates all components to:
+Coordinates all trading system components to:
 1. Scrape news from multiple sources
-2. Analyze sentiment
-3. Calculate stock metrics
+2. Analyze sentiment using NLP
+3. Calculate fundamental and technical stock metrics
 4. Generate trading decisions
-5. Send notifications
-6. Save results to file
+5. Send notifications for actionable signals
+6. Persist results to file/database
 """
 
 import asyncio

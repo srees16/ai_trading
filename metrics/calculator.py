@@ -1,14 +1,23 @@
 """
-Stock metrics calculator - fundamentals and technicals.
+Stock Metrics Calculator Module.
+
+Calculates fundamental and technical metrics for stocks
+using Yahoo Finance data and standard financial formulas.
 """
+
+import logging
 
 import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 from typing import Optional, Dict
+
 from models import StockMetrics
 from config import Config
+from strategies.utils import calculate_max_drawdown
+
+logger = logging.getLogger(__name__)
 
 
 class MetricsCalculator:
@@ -17,6 +26,11 @@ class MetricsCalculator:
     def __init__(self):
         """Initialize the metrics calculator."""
         pass
+
+    @staticmethod
+    def _safe_get(df, key: str, col: int = 0):
+        """Safely retrieve a value from a DataFrame by index label and column position."""
+        return df.loc[key].iloc[col] if key in df.index and len(df.columns) > col else 0
     
     def get_stock_metrics(self, ticker: str) -> Optional[StockMetrics]:
         """
@@ -40,7 +54,7 @@ class MetricsCalculator:
             hist = stock.history(start=start_date, end=end_date)
             
             if hist.empty:
-                print(f"No historical data for {ticker}")
+                logger.warning("No historical data for %s", ticker)
                 return None
             
             # Calculate fundamentals
@@ -77,7 +91,7 @@ class MetricsCalculator:
             return metrics
         
         except Exception as e:
-            print(f"Error calculating metrics for {ticker}: {e}")
+            logger.error("Error calculating metrics for %s: %s", ticker, e)
             return None
     
     def _calculate_fundamentals(
@@ -128,7 +142,7 @@ class MetricsCalculator:
             fundamentals['piotroski_f_score'] = piotroski_f
         
         except Exception as e:
-            print(f"Error calculating fundamentals: {e}")
+            logger.error("Error calculating fundamentals: %s", e)
         
         return fundamentals
     
@@ -227,7 +241,7 @@ class MetricsCalculator:
             technicals['max_drawdown'] = max_dd
         
         except Exception as e:
-            print(f"Error calculating technicals: {e}")
+            logger.error("Error calculating technicals: %s", e)
         
         return technicals
     
@@ -313,15 +327,9 @@ class MetricsCalculator:
             return {}
     
     def _calculate_max_drawdown(self, hist: pd.DataFrame) -> Optional[float]:
-        """Calculate maximum drawdown percentage."""
+        """Calculate maximum drawdown percentage — delegates to shared utility."""
         try:
-            prices = hist['Close']
-            cumulative_max = prices.cummax()
-            drawdown = (prices - cumulative_max) / cumulative_max
-            max_drawdown = drawdown.min()
-            
-            return float(max_drawdown * 100)  # Return as percentage
-        
+            return calculate_max_drawdown(hist['Close'])
         except:
             return None
 
@@ -389,7 +397,7 @@ class MetricsCalculator:
             return round(float(z_score), 2)
         
         except Exception as e:
-            print(f"Error calculating Altman Z-Score: {e}")
+            logger.error("Error calculating Altman Z-Score: %s", e)
             return None
 
     def _calculate_beneish_m_score(self, stock: yf.Ticker) -> Optional[float]:
@@ -421,10 +429,8 @@ class MetricsCalculator:
             if balance_sheet.empty or income_stmt.empty or len(balance_sheet.columns) < 2:
                 return None
             
-            # Current and prior year data
-            def safe_get(df, key, col=0):
-                return df.loc[key].iloc[col] if key in df.index and len(df.columns) > col else 0
-            
+            safe_get = self._safe_get
+
             # Current year (col 0) and prior year (col 1)
             receivables_t = safe_get(balance_sheet, 'Accounts Receivable', 0) or safe_get(balance_sheet, 'Net Receivables', 0)
             receivables_t1 = safe_get(balance_sheet, 'Accounts Receivable', 1) or safe_get(balance_sheet, 'Net Receivables', 1)
@@ -496,7 +502,7 @@ class MetricsCalculator:
             return round(float(m_score), 2)
         
         except Exception as e:
-            print(f"Error calculating Beneish M-Score: {e}")
+            logger.error("Error calculating Beneish M-Score: %s", e)
             return None
 
     def _calculate_piotroski_f_score(self, stock: yf.Ticker, info: dict) -> Optional[int]:
@@ -535,9 +541,8 @@ class MetricsCalculator:
             
             score = 0
             
-            def safe_get(df, key, col=0):
-                return df.loc[key].iloc[col] if key in df.index and len(df.columns) > col else 0
-            
+            safe_get = self._safe_get
+
             # Current year (col 0) and prior year (col 1)
             net_income_t = safe_get(income_stmt, 'Net Income', 0)
             net_income_t1 = safe_get(income_stmt, 'Net Income', 1)
@@ -608,5 +613,5 @@ class MetricsCalculator:
             return int(score)
         
         except Exception as e:
-            print(f"Error calculating Piotroski F-Score: {e}")
+            logger.error("Error calculating Piotroski F-Score: %s", e)
             return None

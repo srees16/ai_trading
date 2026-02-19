@@ -8,10 +8,12 @@ their own data loading logic.
 
 import pandas as pd
 import numpy as np
+import yfinance as yf
 from datetime import datetime, timedelta
-from typing import Optional, Union
+from typing import Optional
 import logging
-from functools import lru_cache
+
+from strategies.utils import calculate_rsi
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +57,7 @@ class DataService:
     
     def _check_yfinance(self) -> bool:
         """Check if yfinance is available."""
-        try:
-            import yfinance
-            return True
-        except ImportError:
-            logger.warning("yfinance not installed. Install with: pip install yfinance")
-            return False
+        return True
     
     def get_ohlcv(
         self,
@@ -114,8 +111,6 @@ class DataService:
         """Fetch data from Yahoo Finance."""
         if not self._yf_available:
             raise ImportError("yfinance is required for data fetching")
-        
-        import yfinance as yf
         
         try:
             df = yf.download(
@@ -259,19 +254,8 @@ class DataService:
         return df
     
     def _calculate_rsi(self, prices: pd.Series, period: int = 14) -> pd.Series:
-        """Calculate Relative Strength Index."""
-        delta = prices.diff()
-        
-        gain = delta.where(delta > 0, 0)
-        loss = -delta.where(delta < 0, 0)
-        
-        avg_gain = gain.ewm(com=period-1, min_periods=period).mean()
-        avg_loss = loss.ewm(com=period-1, min_periods=period).mean()
-        
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        
-        return rsi
+        """Calculate Relative Strength Index — delegates to shared utility."""
+        return calculate_rsi(prices, period)
     
     def _calculate_macd(
         self,
@@ -352,8 +336,6 @@ class DataService:
         """
         if not self._yf_available:
             return
-        
-        import yfinance as yf
         
         # Batch download
         try:

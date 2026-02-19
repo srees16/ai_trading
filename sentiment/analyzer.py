@@ -1,11 +1,19 @@
 """
-Sentiment analysis module using transformers.
+Sentiment Analysis Module.
+
+Analyzes news sentiment using DistilBERT transformer models
+to classify text as positive, negative, or neutral.
 """
+
+import logging
 
 from transformers import pipeline
 from typing import List, Tuple
+
 from models import NewsItem, SentimentLabel
 from config import Config
+
+logger = logging.getLogger(__name__)
 
 
 class SentimentAnalyzer:
@@ -13,13 +21,13 @@ class SentimentAnalyzer:
     
     def __init__(self):
         """Initialize the sentiment analysis pipeline."""
-        print("Loading sentiment analysis model...")
+        logger.info("Loading sentiment analysis model...")
         self.pipeline = pipeline(
             "sentiment-analysis",
             model=Config.SENTIMENT_MODEL,
             device=-1  # Use CPU (-1), set to 0 for GPU
         )
-        print("Sentiment model loaded successfully.")
+        logger.info("Sentiment model loaded successfully")
     
     def analyze(self, text: str) -> Tuple[float, SentimentLabel, float]:
         """
@@ -56,7 +64,7 @@ class SentimentAnalyzer:
             return sentiment_score, sentiment_label, confidence
         
         except Exception as e:
-            print(f"Error analyzing sentiment: {e}")
+            logger.error("Error analyzing sentiment: %s", e)
             return 0.0, SentimentLabel.NEUTRAL, 0.5
     
     def analyze_news_item(self, news_item: NewsItem) -> NewsItem:
