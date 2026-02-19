@@ -172,20 +172,24 @@ def profit(port: pd.DataFrame, asset_col: str = 'total asset', title: str = 'Tot
     fig = plt.figure()
     bx = fig.add_subplot(111)
     
-    port[asset_col].plot(label=title)
+    bx.plot(port.index, port[asset_col], label=title)
     
     # Long/short markers
     if 'signals' in port.columns:
-        bx.plot(
-            port['signals'].loc[port['signals'] == 1].index,
-            port[asset_col][port['signals'] == 1],
-            lw=0, marker='^', c='g', label='long'
-        )
-        bx.plot(
-            port['signals'].loc[port['signals'] < 0].index,
-            port[asset_col][port['signals'] < 0],
-            lw=0, marker='v', c='r', label='short'
-        )
+        longs = port['signals'] == 1
+        shorts = port['signals'] < 0
+        if longs.any():
+            bx.plot(
+                port.index[longs],
+                port[asset_col][longs],
+                lw=0, marker='^', c='g', label='long'
+            )
+        if shorts.any():
+            bx.plot(
+                port.index[shorts],
+                port[asset_col][shorts],
+                lw=0, marker='v', c='r', label='short'
+            )
     
     plt.legend(loc='best')
     plt.grid(True)

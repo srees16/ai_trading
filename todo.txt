@@ -1,0 +1,5 @@
+1. integrate portfolio analysis with workflow (UI & backend)
+2. Verify tables and results that can be saved in db
+3. Explore API implemention
+4. zerodha api integration POC
+5. Explore Agentic implementation

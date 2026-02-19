@@ -342,16 +342,33 @@ def _render_data_settings(strategy_info: Dict, param_values: Dict):
     # Period selection
     period = st.selectbox(
         "Data Period",
-        options=["1mo", "3mo", "6mo", "1y", "2y", "5y"],
+        options=["1mo", "3mo", "6mo", "1y", "2y", "5y", "Custom"],
         index=3
     )
     
-    end_date = datetime.now()
-    period_days = {
-        "1mo": 30, "3mo": 90, "6mo": 180,
-        "1y": 365, "2y": 730, "5y": 1825
-    }
-    start_date = end_date - timedelta(days=period_days.get(period, 365))
+    if period == "Custom":
+        date_col1, date_col2 = st.columns(2)
+        with date_col1:
+            start_date = st.date_input(
+                "Start Date",
+                value=datetime.now() - timedelta(days=365),
+                max_value=datetime.now()
+            )
+        with date_col2:
+            end_date = st.date_input(
+                "End Date",
+                value=datetime.now(),
+                max_value=datetime.now()
+            )
+        if start_date >= end_date:
+            st.warning("⚠️ Start date must be before end date.")
+    else:
+        end_date = datetime.now()
+        period_days = {
+            "1mo": 30, "3mo": 90, "6mo": 180,
+            "1y": 365, "2y": 730, "5y": 1825
+        }
+        start_date = end_date - timedelta(days=period_days.get(period, 365))
     
     param_values['start_date'] = start_date.strftime('%Y-%m-%d')
     param_values['end_date'] = end_date.strftime('%Y-%m-%d')
