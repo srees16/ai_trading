@@ -40,7 +40,7 @@ A comprehensive Python-based enterprise trading platform combining multi-source 
 ### Interactive Web Interface
 - **Enterprise Branding**: Centurion Capital LLC logo and styling throughout
 - **Modular UI Architecture**: Separate page modules for main, analysis, fundamental, backtesting, and history
-- **Consistent Navigation**: Uniform button labels across all pages (🏠 Main, 📊 Fundamental Analysis, 🔬 Backtest Strategy, 📋 History)
+- **Consistent Navigation**: Uniform button labels across all pages (🏠 Main, 📈 Stock Analysis, 📊 Fundamental Analysis, 🔬 Backtest Strategy, 📋 History)
 - **CSV Upload**: Upload custom ticker lists in various formats
 - **Visual Analytics**: Interactive charts, pie charts, scatter plots, and bar graphs
 - **Authentication**: YAML-based credential management
@@ -69,7 +69,7 @@ centurion_core/
 │   ├── styles.py                 # CSS styling
 │   └── pages/
 │       ├── main_page.py          # Dashboard & control panel
-│       ├── analysis_page.py      # Analysis results display
+│       ├── analysis_page.py      # Stock analysis results display
 │       ├── fundamental_page.py   # Fundamental analysis drill-down
 │       ├── backtesting_page.py   # Strategy backtesting with MinIO integration
 │       └── history_page.py       # Historical results browser (DB + MinIO)
@@ -298,7 +298,7 @@ Opens at **http://localhost:9090** (port configured in `.streamlit/config.toml`)
 
 1. Launch the app → you land on the **Main** page.
 2. Select tickers (default list, manual entry, or CSV upload).
-3. Click **🚀 Run Analysis** → results appear on the **Analysis** page.
+3. Click **🚀 Run Analysis** → results appear on the **Stock Analysis** page.
 4. Navigate to **📊 Fundamental Analysis** for detailed fundamental drill-down.
 5. Navigate to **🔬 Backtest Strategy** to test any of the 9 strategies.
 6. Navigate to **📋 History** to review past runs, signals, and stored charts.
@@ -336,6 +336,7 @@ All pages share consistent navigation buttons:
 | Button | Action |
 |---|---|
 | 🏠 **Main** | Return to the main dashboard |
+| 📈 **Stock Analysis** | View analysis results (visible after running analysis) |
 | 📊 **Fundamental Analysis** | Open fundamental metrics page |
 | 🔬 **Backtest Strategy** | Open the backtesting page |
 | 📋 **History** | Open historical results browser |

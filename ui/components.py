@@ -99,7 +99,7 @@ def render_navigation_buttons(
     Render navigation buttons for all pages.
 
     Shows a button for every page except the one the user is currently on.
-    The Analysis Results button only appears when results are available.
+    The Stock Analysis button only appears when results are available.
 
     Args:
         current_page: Current page identifier
