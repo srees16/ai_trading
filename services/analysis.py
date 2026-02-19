@@ -11,7 +11,6 @@ from typing import List, Any, Optional, Tuple, Dict
 from config import Config
 from database.service import get_database_service
 from main import AlgoTradingSystem
-from ui.components import render_completion_banner
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +50,6 @@ async def run_analysis_async(tickers: List[str]) -> List[Any]:
         progress_placeholder.progress(100)
         progress_placeholder.empty()
         status_placeholder.empty()
-        
-        # Show completion banner
-        render_completion_banner(len(tickers), len(signals), db_saved)
         
         # Show save location if available
         if save_path:

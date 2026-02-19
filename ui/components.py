@@ -229,39 +229,6 @@ def render_tickers_being_analyzed(tickers: List[str], ticker_mode: str):
     )
 
 
-def render_completion_banner(
-    tickers_count: int,
-    signals_count: int,
-    db_saved: bool = False
-):
-    """
-    Render analysis completion banner.
-    
-    Args:
-        tickers_count: Number of tickers analyzed
-        signals_count: Number of signals generated
-        db_saved: Whether results were saved to database
-    """
-    db_badge = ' • 🗄️ Saved to DB' if db_saved else ''
-    
-    st.markdown(
-        f"""
-        <div style="
-            background: linear-gradient(90deg, #00cc44, #00aa33);
-            color: white;
-            padding: 0.6rem 1rem;
-            border-radius: 6px;
-            text-align: center;
-            margin: 0.5rem 0;
-        ">
-            <span style="font-weight: 600;">✅ Analysis Complete</span>
-            <span style="margin-left: 1rem;">Analyzed <strong>{tickers_count}</strong> stocks • <strong>{signals_count}</strong> signals generated{db_badge}</span>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-
 def render_features_section():
     """Render the features section on the main page."""
     st.markdown("### 🎯 Features")
