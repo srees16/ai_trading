@@ -2,5 +2,49 @@
 2. Explore API implemention
 3. kite app has hardcoded credentials and api key details, access them via .env
 4. login page must have US stocks, Ind stocks, crypto radio button
-5. Explore Agentic implementation:
-    types of agents: webscraping agents, 
+5. collate common utilities like strategies, UI, auth, db persistence (minio & postgresql) and branch out US stocks, Ind stocks but they need to import above from common location
+6. Explore Agentic implementation - types of agents:
+    orchestrator agent
+    webscraping agent
+    news & sentiment agent
+    data ingestion agent
+    strategy scanner agent
+    execution_agent
+    risk guard agent
+    Options Analysis Agent
+    portfolio manager agent
+
+Tech stack:
+    agent framework - langgraph
+    LLM - claude opus 4.6
+    vector search - ChromaDB or pgvector
+    Message Queue - Redis Streams
+    Scheduler - APScheduler or Celery Beat
+    Web Scraping - crawl4ai + BeautifulSoup
+
+========
+
+User says: "Find oversold NIFTY 50 stocks with positive news sentiment and suggest a trade"
+Step 1: planner agent → decomposes into 4 sub-tasks
+
+Step 2: Data Ingestion Agent
+        → Fetches NIFTY 50 real-time quotes
+        → Returns 50 UnifiedQuotes
+
+Step 3: Strategy Scanner Agent (depends on Step 2)
+        → Runs RSI scan → finds 6 oversold stocks
+        → Returns 6 Signals
+
+Step 4: News Sentiment Agent (depends on Step 3, parallel-capable)
+        → Scrapes news for those 6 stocks
+        → Returns sentiment: 3 positive, 2 neutral, 1 negative
+
+Step 5: Orchestrator → filters to 3 stocks (oversold + positive sentiment)
+
+Step 6: Risk Guardian Agent
+        → Checks position limits → approves 2, blocks 1 (sector overweight)
+
+Step 7: Orchestrator → presents 2 trade recommendations to user
+        → User approves → Execution Agent places orders
+
+7. Full audit trail in agent_runs table using langfuse or free dashboard
