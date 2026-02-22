@@ -1,9 +1,6 @@
 """
-Streamlit UI - Index-wise Live Stock Market Data (Real-time via Kite Connect)
-
-Displays stocks grouped by their index (NIFTY50, NIFTYBANK, NIFTYIT, NIFTYENERGY)
-with real-time data fetched from Zerodha Kite Connect API.
-Columns: Name, High, Low, Volume, LTP, Change (%).
+run the app by using:
+    streamlit run zerodha_live.py
 """
 
 import sys
@@ -172,7 +169,7 @@ def main():
     st.markdown("""
     <style>
         /* ── Global compact overrides ── */
-        .block-container { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+        .block-container { padding-top: 1rem; padding-bottom: 0.5rem; }
         .stMarkdown, .stText, p, span, label, li { font-size: 0.82rem !important; line-height: 1.3 !important; }
         h1, h2, h3, h4 { margin-top: 0 !important; margin-bottom: 0.2rem !important; }
         /* Shrink emoji sizing globally */
@@ -190,6 +187,7 @@ def main():
             background: linear-gradient(135deg, #0d1117 0%, #161b22 40%, #0f3460 100%);
             padding: 0.9rem 1.6rem;
             border-radius: 10px;
+            margin-top: 0.6rem;
             margin-bottom: 0.5rem;
             display: flex;
             align-items: center;
@@ -513,7 +511,7 @@ def main():
         </div>
         <div style="text-align:right">
             <div class="live-pill {pill_class}"><span class="live-dot"></span> {pill_label}</div>
-            <div class="live-pill pill-open" style="margin-top:4px"><span class="live-dot"></span> Connected — {kite_status}</div>
+            <div class="live-pill pill-open" style="margin-top:4px"><span class="live-dot"></span> Online — {kite_status}</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -543,15 +541,15 @@ def main():
                 key="refresh_secs",
             )
 
+        with c_spacer:
+            quotes_badge_slot = st.empty()
+
         with c2:
             if st.button("🔄 Reconnect", width="stretch"):
                 st.cache_resource.clear()
                 st.rerun()
 
         st.markdown('</div>', unsafe_allow_html=True)
-
-    # ── Quotes badge (filled by the data fragment) ──
-    quotes_badge_slot = st.empty()
 
     # ── Collect all stock names (used for sidebar dropdown + data fetch) ──
     all_stock_names = set()
