@@ -15,7 +15,7 @@ from auth.kite_session import create_kite_session
 
 # The request_token line below is kept because ``kite_auth.py``
 # updates it in-place via regex.  Do NOT remove this line.
-request_token='VbrYfPvItylZ1VoQSi2AFZ54wHwEqq23'
+request_token='Jy5Q4oB7veIgUT8Vkghjb5ltvCtF8Ikl'
 
 kite = None  # module-level reference set by zerodha_login()
 

@@ -11,6 +11,7 @@ import sys
 import os
 import logging
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from dateutil.relativedelta import relativedelta
 from kiteconnect import KiteConnect, exceptions as kite_exceptions
@@ -157,7 +158,7 @@ def fetch_option_chain(
             except Exception:
                 pass
 
-    # Fetch OI change using historical data (last 2 candles)
+    # ── OI change helper (called from threads) ──────────────────
     def _oi_change(instrument_token: int) -> int:
         """Return OI change (current - previous candle)."""
         try:
@@ -174,7 +175,44 @@ def fetch_option_chain(
             pass
         return 0
 
-    # Build strike rows
+    # ── Collect instrument tokens for threaded OI-change fetch ──
+    oi_tasks = {}          # key → (strike_index, "ce"|"pe")
+    token_map = {}         # same key → instrument_token
+
+    for i, strike in enumerate(strike_prices):
+        ce_q = quotes.get(ce_instruments[i], {})
+        pe_q = quotes.get(pe_instruments[i], {})
+        ce_tok = ce_q.get("instrument_token", 0)
+        pe_tok = pe_q.get("instrument_token", 0)
+        if ce_tok:
+            k = f"{i}_ce"
+            oi_tasks[k] = (i, "ce")
+            token_map[k] = ce_tok
+        if pe_tok:
+            k = f"{i}_pe"
+            oi_tasks[k] = (i, "pe")
+            token_map[k] = pe_tok
+
+    # ── Fire all OI-change calls in parallel (thread pool) ──────
+    MAX_WORKERS = min(20, len(oi_tasks) or 1)
+    oi_results = {}  # key → int
+
+    log.info("Fetching OI changes for %d instruments with %d threads",
+             len(oi_tasks), MAX_WORKERS)
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
+        futures = {
+            pool.submit(_oi_change, token_map[k]): k
+            for k in oi_tasks
+        }
+        for fut in as_completed(futures):
+            k = futures[fut]
+            try:
+                oi_results[k] = fut.result()
+            except Exception:
+                oi_results[k] = 0
+
+    # ── Build strike rows ───────────────────────────────────────
     rows = []
     for i, strike in enumerate(strike_prices):
         ce_key = ce_instruments[i]
@@ -188,20 +226,30 @@ def fetch_option_chain(
         ce_oi = ce_q.get("oi", 0)
         pe_oi = pe_q.get("oi", 0)
 
-        ce_token = ce_q.get("instrument_token", 0)
-        pe_token = pe_q.get("instrument_token", 0)
+        # Net price change from previous close
+        ce_change = ce_q.get("net_change", 0) or 0
+        pe_change = pe_q.get("net_change", 0) or 0
 
-        ce_oi_chg = _oi_change(ce_token) if ce_token else 0
-        pe_oi_chg = _oi_change(pe_token) if pe_token else 0
+        # Volume
+        ce_volume = ce_q.get("volume", 0) or 0
+        pe_volume = pe_q.get("volume", 0) or 0
+
+        # OI change (already fetched in parallel)
+        ce_oi_chg = oi_results.get(f"{i}_ce", 0)
+        pe_oi_chg = oi_results.get(f"{i}_pe", 0)
 
         rows.append({
             "strike": strike,
             "ce_ltp": ce_ltp,
+            "ce_change": ce_change,
             "ce_oi": ce_oi,
             "ce_oi_chg": ce_oi_chg,
+            "ce_volume": ce_volume,
             "pe_ltp": pe_ltp,
+            "pe_change": pe_change,
             "pe_oi": pe_oi,
             "pe_oi_chg": pe_oi_chg,
+            "pe_volume": pe_volume,
             "is_atm": strike == atm,
         })
 

@@ -345,12 +345,13 @@ def main():
         }
         [data-testid="stSidebar"] > div:first-child {
             background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
-            padding: 0.4rem 0.7rem !important;
+            padding: 0.25rem 0.6rem !important;
         }
         [data-testid="stSidebar"] h3 {
             color: #e2e8f0 !important;
-            font-size: 0.88rem !important;
-            margin-bottom: 0.15rem !important;
+            font-size: 0.82rem !important;
+            margin-bottom: 0 !important;
+            margin-top: 0 !important;
         }
         [data-testid="stSidebar"] label,
         [data-testid="stSidebar"] .stMarkdown {
@@ -358,25 +359,26 @@ def main():
         }
         [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p {
             color: #a0aec0 !important;
-            font-size: 0.68rem !important;
+            font-size: 0.62rem !important;
             margin-bottom: 0 !important;
+            line-height: 1.1 !important;
         }
         [data-testid="stSidebar"] .stSelectbox,
         [data-testid="stSidebar"] .stNumberInput,
         [data-testid="stSidebar"] .stTextInput {
-            margin-bottom: 0.05rem !important;
+            margin-bottom: 0 !important;
         }
         [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] {
-            font-size: 0.74rem !important;
-            min-height: 1.8rem !important;
+            font-size: 0.7rem !important;
+            min-height: 1.6rem !important;
         }
         [data-testid="stSidebar"] .stSelectbox [data-baseweb="select"] > div {
-            padding: 0.15rem 0.4rem !important;
+            padding: 0.1rem 0.35rem !important;
         }
         [data-testid="stSidebar"] .stNumberInput input {
-            font-size: 0.74rem !important;
-            padding: 0.15rem 0.35rem !important;
-            height: 1.8rem !important;
+            font-size: 0.7rem !important;
+            padding: 0.1rem 0.3rem !important;
+            height: 1.6rem !important;
         }
         /* Remove dark stepper bands on number inputs */
         [data-testid="stSidebar"] .stNumberInput [data-baseweb="input"] {
@@ -387,24 +389,30 @@ def main():
             background: transparent !important;
             border-color: rgba(255,255,255,0.15) !important;
             color: #a0aec0 !important;
+            padding: 0 !important;
+            min-height: 0.7rem !important;
+            height: 0.7rem !important;
         }
         [data-testid="stSidebar"] .stNumberInput button:hover {
             background: rgba(255,255,255,0.08) !important;
             color: #e2e8f0 !important;
         }
         [data-testid="stSidebar"] .stButton > button {
-            margin-top: 0.3rem !important;
-            font-size: 0.76rem !important;
-            padding: 0.35rem 0.5rem !important;
+            margin-top: 0.15rem !important;
+            font-size: 0.74rem !important;
+            padding: 0.3rem 0.5rem !important;
             letter-spacing: 0.4px;
         }
         [data-testid="stSidebar"] hr {
-            margin: 0.25rem 0 !important;
+            margin: 0.15rem 0 !important;
             border-color: rgba(255,255,255,0.08) !important;
         }
         [data-testid="stSidebar"] div[data-testid="stVerticalBlock"] > div {
             padding-top: 0 !important;
             padding-bottom: 0 !important;
+        }
+        [data-testid="stSidebar"] .element-container {
+            margin-bottom: 0.05rem !important;
         }
         [data-testid="stSidebarCollapsedControl"] {
             left: auto !important;
@@ -441,8 +449,8 @@ def main():
         .ctrl-row .stMarkdown { margin: 0 !important; }
         .ctrl-row [data-testid="stSlider"] label,
         .ctrl-row [data-testid="stCheckbox"] label { font-size: 0.72rem !important; }
-        .ctrl-row [data-testid="stSlider"] { padding-top: 0 !important; max-width: 180px; }
-        .ctrl-row [data-testid="stSlider"] [data-baseweb="slider"] { margin-top: 0 !important; padding: 0 !important; }
+        .ctrl-row [data-testid="stSlider"] { padding-top: 0 !important; max-width: 160px; }
+        .ctrl-row [data-testid="stSlider"] [data-baseweb="slider"] { margin-top: 0 !important; padding: 0 !important; max-width: 160px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -478,17 +486,6 @@ def main():
 
     pill_class, pill_label = _nse_market_status()
 
-    # ── Header bar ──
-    st.markdown(f"""
-    <div class="header-bar">
-        <div>
-            <h1>📈 Indian Stock Market</h1>
-            <p class="subtitle">Real-time data · Zerodha Kite Connect</p>
-        </div>
-        <div class="live-pill {pill_class}"><span class="live-dot"></span> {pill_label}</div>
-    </div>
-    """, unsafe_allow_html=True)
-
     # ── Connect to Kite & DB ──
     try:
         kite = get_kite_session()
@@ -502,9 +499,24 @@ def main():
         st.rerun()
         return
     except Exception as e:
+        kite_status = "Disconnected"
         st.error(f"Kite Connect login failed: {e}")
         st.info("Run `py kite_token_store.py` first to generate a valid request token, then click Reconnect.")
         return
+
+    # ── Header bar (rendered after Kite login so kite_status is available) ──
+    st.markdown(f"""
+    <div class="header-bar">
+        <div>
+            <h1>📈 Indian Stock Market</h1>
+            <p class="subtitle">Real-time data · Zerodha Kite Connect</p>
+        </div>
+        <div style="text-align:right">
+            <div class="live-pill {pill_class}"><span class="live-dot"></span> {pill_label}</div>
+            <div class="live-pill pill-open" style="margin-top:4px"><span class="live-dot"></span> Connected — {kite_status}</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     try:
         conn = get_db_connection()
@@ -517,20 +529,13 @@ def main():
         st.warning("No index groups found. Run setup_livestocks_db.py first.")
         return
 
-    # ── Top control bar: status + settings (single compact line) ──
+    # ── Top control bar: settings pushed left ──
     ctrl_container = st.container()
     with ctrl_container:
         st.markdown('<div class="ctrl-row">', unsafe_allow_html=True)
-        c1, c2, c3, c4 = st.columns([3, 1.2, 1.8, 1])
+        c1, c_spacer, c2 = st.columns([1.5, 6, 1])
 
         with c1:
-            # Placeholder — badges rendered after quotes are fetched
-            ctrl_badge_slot = st.empty()
-
-        with c2:
-            auto_refresh = st.toggle("Auto-refresh", value=True, key="auto_refresh")
-
-        with c3:
             refresh_secs = st.select_slider(
                 "Refresh interval ⏱",
                 options=[10, 15, 20, 30, 45, 60, 90, 120],
@@ -538,12 +543,15 @@ def main():
                 key="refresh_secs",
             )
 
-        with c4:
+        with c2:
             if st.button("🔄 Reconnect", width="stretch"):
                 st.cache_resource.clear()
                 st.rerun()
 
         st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Quotes badge (filled by the data fragment) ──
+    quotes_badge_slot = st.empty()
 
     # ── Collect all stock names (used for sidebar dropdown + data fetch) ──
     all_stock_names = set()
@@ -635,7 +643,7 @@ def main():
     # ── STOCKS TAB ─────────────────────────────────────────────
     with stocks_main_tab:
         # ── Auto-refreshing data fragment ──
-        _run_every = timedelta(seconds=refresh_secs) if auto_refresh else None
+        _run_every = timedelta(seconds=refresh_secs)
 
         @st.fragment(run_every=_run_every)
         def _live_data_panel():
@@ -647,14 +655,15 @@ def main():
     
             if quotes:
                 update_stocks_in_db(_conn, quotes)
-                quote_badge = f'<span class="status-badge badge-info" style="margin-left:6px">📊 {len(quotes)} quotes</span>'
+                quotes_badge_slot.markdown(
+                    f'<span class="status-badge badge-info">📊 {len(quotes)} quotes</span>',
+                    unsafe_allow_html=True,
+                )
             else:
-                quote_badge = '<span class="status-badge badge-warn" style="margin-left:6px"> Cached data</span>'
-    
-            ctrl_badge_slot.markdown(
-                f'<span class="status-badge badge-success">● Connected — {kite_status}</span>{quote_badge}',
-                unsafe_allow_html=True,
-            )
+                quotes_badge_slot.markdown(
+                    '<span class="status-badge badge-warn">⚠ Cached data</span>',
+                    unsafe_allow_html=True,
+                )
     
             # ── Display tabs ──
             tab_names = [name for _, name in groups]
@@ -1140,53 +1149,110 @@ def _render_option_chain_tab(kite):
     rows = []
     for r in oc_data["strikes"]:
         rows.append({
-            "CE OI": r["ce_oi"],
-            "CE OI Chg": r["ce_oi_chg"],
-            "CE LTP": r["ce_ltp"],
-            "Strike": r["strike"],
-            "PE LTP": r["pe_ltp"],
-            "PE OI Chg": r["pe_oi_chg"],
-            "PE OI": r["pe_oi"],
-            "_is_atm": r["is_atm"],
+            "CE OI":     r["ce_oi"],
+            "CE ΔOI":    r["ce_oi_chg"],
+            "CE Vol":    r.get("ce_volume", 0),
+            "CE LTP":    r["ce_ltp"],
+            "CE Chg":    r.get("ce_change", 0),
+            "Strike":    r["strike"],
+            "PE Chg":    r.get("pe_change", 0),
+            "PE LTP":    r["pe_ltp"],
+            "PE Vol":    r.get("pe_volume", 0),
+            "PE ΔOI":    r["pe_oi_chg"],
+            "PE OI":     r["pe_oi"],
+            "_is_atm":   r["is_atm"],
         })
     df = pd.DataFrame(rows)
 
-    # ── Style the chain ──
-    # Capture ATM row indices before dropping the helper column
+    # ── Style the chain (Sensibull / NSE colour scheme) ──
+    atm_strike = oc_data["atm_strike"]
     atm_indices = set(df.index[df["_is_atm"]].tolist())
     display_df = df.drop(columns=["_is_atm"])
 
-    def _style_oc(styler):
-        """Apply option-chain heatmap colours."""
+    ce_cols = ["CE OI", "CE ΔOI", "CE Vol", "CE LTP", "CE Chg"]
+    pe_cols = ["PE Chg", "PE LTP", "PE Vol", "PE ΔOI", "PE OI"]
+    col_list = list(display_df.columns)
 
-        def _color_oi_chg(val):
+    def _style_oc(styler):
+        """Apply Sensibull / NSE-style option chain colours.
+
+        ITM CE  (strike ≤ ATM) → soft green tint on call columns
+        ITM PE  (strike ≥ ATM) → soft red tint on put columns
+        ATM row → golden highlight band across all columns
+        OI Δ / LTP Chg → green=+  red=−
+        """
+
+        # ── Colours ──
+        CE_ITM_BG  = "background:rgba(232,245,233,0.85)"   # soft green
+        PE_ITM_BG  = "background:rgba(255,235,238,0.85)"   # soft red
+        ATM_BG     = "background:rgba(255,235,59,0.28)"    # golden / yellow
+        STRIKE_BG  = "background:rgba(236,239,241,0.55);font-weight:700"  # neutral grey
+        GREEN_TXT  = "color:#2e7d32"                       # green text
+        RED_TXT    = "color:#c62828"                       # red text
+        BOLD_GREEN = "color:#1b5e20;font-weight:700"
+        BOLD_RED   = "color:#b71c1c;font-weight:700"
+
+        # ── Row-level shading (ITM + ATM) ──
+        def _shade_row(row):
+            strike = row["Strike"]
+            styles = [""] * len(row)
+
+            # ATM band overrides ITM shading
+            if row.name in atm_indices:
+                return [ATM_BG] * len(row)
+
+            for i, col in enumerate(col_list):
+                if col in ce_cols and strike <= atm_strike:
+                    styles[i] = CE_ITM_BG
+                elif col in pe_cols and strike >= atm_strike:
+                    styles[i] = PE_ITM_BG
+                elif col == "Strike":
+                    styles[i] = STRIKE_BG
+            return styles
+
+        # ── Per-cell colour for change values ──
+        def _color_change(val):
             try:
-                v = int(val)
-                if v > 500_000:
-                    return "background:rgba(72,187,120,0.25);color:#38a169;font-weight:700"
+                v = float(val)
                 if v > 0:
-                    return "color:#38a169"
+                    return GREEN_TXT
                 if v < 0:
-                    return "background:rgba(229,62,62,0.15);color:#e53e3e"
+                    return RED_TXT
             except (ValueError, TypeError):
                 pass
             return ""
 
-        def _color_atm(row):
-            if row.name in atm_indices:
-                return ["background:rgba(66,153,225,0.15)"] * len(row)
-            return [""] * len(row)
+        # ── OI Δ with intensity (large buildup = bold) ──
+        def _color_oi_delta(val):
+            try:
+                v = int(val)
+                if v > 500_000:
+                    return f"{BOLD_GREEN};background:rgba(200,230,201,0.4)"
+                if v > 0:
+                    return GREEN_TXT
+                if v < -500_000:
+                    return f"{BOLD_RED};background:rgba(255,205,210,0.4)"
+                if v < 0:
+                    return RED_TXT
+            except (ValueError, TypeError):
+                pass
+            return ""
 
-        styler = styler.apply(_color_atm, axis=1)
-        styler = styler.map(_color_oi_chg, subset=["CE OI Chg", "PE OI Chg"])
+        styler = styler.apply(_shade_row, axis=1)
+        styler = styler.map(_color_change, subset=["CE Chg", "PE Chg"])
+        styler = styler.map(_color_oi_delta, subset=["CE ΔOI", "PE ΔOI"])
         styler = styler.format({
-            "CE OI": "{:,.0f}",
-            "CE OI Chg": "{:+,.0f}",
-            "CE LTP": "₹{:,.2f}",
-            "Strike": "{:,.0f}",
-            "PE LTP": "₹{:,.2f}",
-            "PE OI Chg": "{:+,.0f}",
-            "PE OI": "{:,.0f}",
+            "CE OI":   "{:,.0f}",
+            "CE ΔOI":  "{:+,.0f}",
+            "CE Vol":  "{:,.0f}",
+            "CE LTP":  "₹{:,.2f}",
+            "CE Chg":  "{:+.2f}",
+            "Strike":  "{:,.0f}",
+            "PE Chg":  "{:+.2f}",
+            "PE LTP":  "₹{:,.2f}",
+            "PE Vol":  "{:,.0f}",
+            "PE ΔOI":  "{:+,.0f}",
+            "PE OI":   "{:,.0f}",
         }, na_rep="—")
         return styler
 
@@ -1194,14 +1260,19 @@ def _render_option_chain_tab(kite):
     st.dataframe(
         styled,
         hide_index=True,
+        height=min(len(display_df) * 36 + 40, 720),
         column_config={
-            "CE OI":     st.column_config.TextColumn("CE OI", width="small"),
-            "CE OI Chg": st.column_config.TextColumn("CE ΔOI", width="small"),
-            "CE LTP":    st.column_config.TextColumn("CE LTP", width="small"),
-            "Strike":    st.column_config.TextColumn("Strike", width="small"),
-            "PE LTP":    st.column_config.TextColumn("PE LTP", width="small"),
-            "PE OI Chg": st.column_config.TextColumn("PE ΔOI", width="small"),
-            "PE OI":     st.column_config.TextColumn("PE OI", width="small"),
+            "CE OI":   st.column_config.TextColumn("CE OI",  width="small"),
+            "CE ΔOI":  st.column_config.TextColumn("CE ΔOI", width="small"),
+            "CE Vol":  st.column_config.TextColumn("CE Vol", width="small"),
+            "CE LTP":  st.column_config.TextColumn("CE LTP", width="small"),
+            "CE Chg":  st.column_config.TextColumn("CE Chg", width="small"),
+            "Strike":  st.column_config.TextColumn("Strike", width="small"),
+            "PE Chg":  st.column_config.TextColumn("PE Chg", width="small"),
+            "PE LTP":  st.column_config.TextColumn("PE LTP", width="small"),
+            "PE Vol":  st.column_config.TextColumn("PE Vol", width="small"),
+            "PE ΔOI":  st.column_config.TextColumn("PE ΔOI", width="small"),
+            "PE OI":   st.column_config.TextColumn("PE OI",  width="small"),
         },
         width="stretch",
     )

@@ -5,7 +5,43 @@ Consolidates the Chrome / Edge driver creation logic used by both
 ``download_nse_csv.py`` and ``get_request_token.py``.
 """
 
+import logging
+import os
+
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.edge.service import Service as EdgeService
+
+# Suppress noisy Selenium driver-manager HTTP warnings
+logging.getLogger("selenium.webdriver.common.selenium_manager").setLevel(logging.ERROR)
+
+# Optional: use webdriver-manager if installed (avoids network probe entirely)
+try:
+    from webdriver_manager.chrome import ChromeDriverManager
+    from webdriver_manager.microsoft import EdgeChromiumDriverManager
+    _WDM_AVAILABLE = True
+except ImportError:
+    _WDM_AVAILABLE = False
+
+
+def _resolve_chrome_service():
+    """Return a ChromeService, preferring webdriver-manager when available."""
+    if _WDM_AVAILABLE:
+        try:
+            return ChromeService(ChromeDriverManager().install())
+        except Exception:
+            pass
+    return ChromeService()      # fallback to Selenium built-in manager / cache
+
+
+def _resolve_edge_service():
+    """Return an EdgeService, preferring webdriver-manager when available."""
+    if _WDM_AVAILABLE:
+        try:
+            return EdgeService(EdgeChromiumDriverManager().install())
+        except Exception:
+            pass
+    return EdgeService()
 
 
 def get_driver(download_dir=None, stealth=False):
@@ -27,15 +63,16 @@ def get_driver(download_dir=None, stealth=False):
     selenium.webdriver.Chrome | selenium.webdriver.Edge
     """
     browsers = [
-        ("Chrome", _chrome_options, webdriver.Chrome),
-        ("Edge",   _edge_options,   webdriver.Edge),
+        ("Chrome", _chrome_options, webdriver.Chrome, _resolve_chrome_service),
+        ("Edge",   _edge_options,   webdriver.Edge,   _resolve_edge_service),
     ]
 
     last_error = None
-    for name, options_fn, driver_cls in browsers:
+    for name, options_fn, driver_cls, service_fn in browsers:
         try:
             options = options_fn(download_dir, stealth)
-            driver = driver_cls(options=options)
+            service = service_fn()
+            driver = driver_cls(service=service, options=options)
 
             if stealth:
                 # Hide webdriver flag from JavaScript
