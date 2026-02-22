@@ -3,3 +3,4 @@
 3. Explore API implemention
 4. zerodha api integration POC
 5. Explore Agentic implementation
+6. kite app has hardcoded credentials and api key details, access them via .env
