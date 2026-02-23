@@ -3,8 +3,6 @@ feedback:
         enable placing order from ticker on holdings page
         name the tables on UI and under holdings
 
-update readme: need to install Ollama from https://ollama.com/download and pull 
-
 1. Verify tables and results that can be saved to db
 2. Explore API implemention
 3. kite app has hardcoded credentials and api key details, access them via .env

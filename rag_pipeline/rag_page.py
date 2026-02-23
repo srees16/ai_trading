@@ -54,17 +54,28 @@ def render_rag_page() -> None:
     """
     st.markdown(
         """
-        <h2 style="text-align:center;">
-            Strategy KB
-        </h2>
-        <p style="text-align:center; color:#666;">
-            Upload strategy PDFs, ask questions, and get context-aware answers.
-        </p>
+        <style>
+        div.stButton > button {
+            background-color: #28a745;
+            color: white;
+            border: none;
+        }
+        div.stButton > button:hover {
+            background-color: #218838;
+            color: white;
+            border: none;
+        }
+        div.stButton > button:active,
+        div.stButton > button:focus {
+            background-color: #1e7e34;
+            color: white;
+            border: none;
+        }
+        </style>
+        <h2 style="text-align:center; margin-bottom:0;">Strategy KB</h2>
         """,
         unsafe_allow_html=True,
     )
-
-    st.divider()
 
     # ---- RAG toggle (always visible) ------------------------------------
     rag_on = render_rag_toggle()
@@ -91,12 +102,9 @@ def render_rag_page() -> None:
             )
             render_rag_response(response)
 
-    st.divider()
-
     # ---- Upload & manage sections (only when RAG is on) -----------------
     if rag_on:
-        with st.expander("Upload Documents", expanded=False):
-            render_pdf_uploader()
+        render_pdf_uploader()
 
         with st.expander("Knowledge Base", expanded=False):
             render_knowledge_base()
