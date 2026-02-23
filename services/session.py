@@ -13,6 +13,7 @@ def initialize_session_state():
     _init_analysis_state()
     _init_backtest_state()
     _init_navigation_state()
+    _init_rag_state()
 
 
 def _init_analysis_state():
@@ -51,3 +52,13 @@ def _init_navigation_state():
     """Initialize navigation-related session state variables."""
     if 'current_page' not in st.session_state:
         st.session_state.current_page = 'main'
+
+
+def _init_rag_state():
+    """Initialize RAG pipeline session state variables."""
+    defaults = {
+        'rag_enabled': True,
+    }
+    for key, default_value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default_value

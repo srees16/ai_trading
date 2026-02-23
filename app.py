@@ -19,6 +19,7 @@ from ui.pages import (
     render_backtesting_page,
     render_history_page,
 )
+from rag_pipeline.rag_page import render_rag_page
 from services.session import initialize_session_state
 from auth import check_authentication, render_user_menu
 
@@ -62,6 +63,7 @@ def main():
         'fundamental': render_fundamental_page,
         'backtesting': render_backtesting_page,
         'history': render_history_page,
+        'rag': render_rag_page,
     }
     
     # Get the page renderer and execute

@@ -25,3 +25,6 @@ pyyaml
 minio
 scipy
 Backtesting
+chromadb
+sentence-transformers
+PyMuPDF
