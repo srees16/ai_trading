@@ -9,15 +9,16 @@ feedback:
 4. login page must have US stocks, Ind stocks, crypto radio button and same workflow/pipeline for cross-market isolation
 5. collate common utilities like strategies, UI, auth, db persistence (minio & postgresql) and branch out US stocks, Ind stocks but they need to import above from common location
 6. Explore Agentic implementation - types of agents:
-    planner agent
-    webscraping agent
-    news & sentiment agent
-    data ingestion agent
-    strategy scanner agent
-    execution_agent
-    risk guard agent
-    Options Analysis Agent
-    portfolio manager agent
+    planner agent - planner
+    supervisor agent - supervisor
+    webscraping agent - scraper
+    news & sentiment agent - reporter
+    data ingestion agent - ingestor
+    strategy scanner agent - strategist
+    risk guard agent - guard
+    Options Analysis Agent - 
+    portfolio manager agent - 
+    code execution/implementation agent - enforcer
 
 Tech stack:
     agent framework - langgraph

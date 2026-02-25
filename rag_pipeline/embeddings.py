@@ -4,6 +4,8 @@ Embedding Service for Centurion Capital LLC RAG Pipeline.
 Wraps sentence-transformers to produce dense vector embeddings
 from text chunks. Designed so the embedding backend can be swapped
 (e.g. OpenAI, Cohere) by implementing the same interface.
+
+Default model: BAAI/bge-base-en-v1.5 (768-dim, instruction-tuned).
 """
 
 import logging
@@ -26,6 +28,10 @@ class EmbeddingBackend(Protocol):
         """Return a list of embedding vectors for the given texts."""
         ...
 
+    def embed_query(self, text: str) -> List[float]:
+        """Embed a single query string (may apply query prefix)."""
+        ...
+
 
 # ---------------------------------------------------------------------------
 # Default: sentence-transformers (local, free, fast)
@@ -35,11 +41,17 @@ class SentenceTransformerBackend:
     Local embedding backend using sentence-transformers.
 
     Models live on HuggingFace Hub and are cached locally after first
-    download (~90 MB for all-MiniLM-L6-v2).
+    download.  BGE models benefit from a query-instruction prefix for
+    asymmetric retrieval tasks.
     """
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2") -> None:
+    def __init__(
+        self,
+        model_name: str = "BAAI/bge-base-en-v1.5",
+        query_prefix: str = "",
+    ) -> None:
         self._model_name = model_name
+        self._query_prefix = query_prefix
         self._model = None
 
     @property
@@ -52,7 +64,7 @@ class SentenceTransformerBackend:
         return self._model
 
     def embed(self, texts: List[str]) -> List[List[float]]:
-        """Embed a batch of texts and return float lists."""
+        """Embed a batch of document texts (no prefix)."""
         if not texts:
             return []
         embeddings = self.model.encode(
@@ -62,6 +74,17 @@ class SentenceTransformerBackend:
             normalize_embeddings=True,
         )
         return embeddings.tolist()
+
+    def embed_query(self, text: str) -> List[float]:
+        """Embed a single query with optional instruction prefix."""
+        prefixed = f"{self._query_prefix}{text}" if self._query_prefix else text
+        embeddings = self.model.encode(
+            [prefixed],
+            show_progress_bar=False,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+        )
+        return embeddings[0].tolist()
 
 
 # ---------------------------------------------------------------------------
@@ -81,14 +104,14 @@ class EmbeddingService:
     ) -> None:
         self._config = config or RAGConfig()
         self._backend = backend or SentenceTransformerBackend(
-            model_name=self._config.embedding_model
+            model_name=self._config.embedding_model,
+            query_prefix=self._config.embedding_query_prefix,
         )
 
     def embed_texts(self, texts: List[str]) -> List[List[float]]:
-        """Embed a list of texts."""
+        """Embed a list of document texts."""
         return self._backend.embed(texts)
 
     def embed_query(self, query: str) -> List[float]:
-        """Embed a single query string and return one vector."""
-        result = self._backend.embed([query])
-        return result[0] if result else []
+        """Embed a single query string (with optional instruction prefix)."""
+        return self._backend.embed_query(query)

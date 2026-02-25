@@ -59,12 +59,21 @@ class VectorStoreManager:
         if self._collection is None:
             self._collection = self.client.get_or_create_collection(
                 name=self._config.chroma_collection_name,
-                metadata={"hnsw:space": "cosine"},
+                metadata={
+                    "hnsw:space": "cosine",
+                    "hnsw:M": self._config.hnsw_m,
+                    "hnsw:construction_ef": self._config.hnsw_ef_construction,
+                    "hnsw:search_ef": self._config.hnsw_ef_search,
+                },
             )
             logger.info(
-                "Collection '%s' ready (%d documents)",
+                "Collection '%s' ready (%d documents) "
+                "[HNSW M=%d, ef_construction=%d, ef_search=%d]",
                 self._config.chroma_collection_name,
                 self._collection.count(),
+                self._config.hnsw_m,
+                self._config.hnsw_ef_construction,
+                self._config.hnsw_ef_search,
             )
         return self._collection
 
@@ -140,6 +149,46 @@ class VectorStoreManager:
         """Return total document count in the collection."""
         return self.collection.count()
 
+    def source_exists(self, source_name: str) -> bool:
+        """Check whether any chunks from *source_name* are stored."""
+        try:
+            results = self.collection.get(
+                where={"source": source_name},
+                include=[],  # only need IDs – skip heavy fields
+            )
+            return bool(results.get("ids"))
+        except Exception:
+            return False
+
+    def get_source_file_hash(self, source_name: str) -> Optional[str]:
+        """Return the ``file_hash`` stored for *source_name*, or None.
+
+        Looks at the first chunk's metadata.  All chunks from the
+        same file share the same ``file_hash``.
+        """
+        try:
+            results = self.collection.get(
+                where={"source": source_name},
+                include=["metadatas"],
+            )
+            metas = results.get("metadatas") or []
+            if metas and metas[0]:
+                return metas[0].get("file_hash")
+        except Exception:
+            pass
+        return None
+
+    def get_source_chunk_count(self, source_name: str) -> int:
+        """Return the number of chunks stored for *source_name*."""
+        try:
+            results = self.collection.get(
+                where={"source": source_name},
+                include=[],
+            )
+            return len(results.get("ids") or [])
+        except Exception:
+            return 0
+
     def list_sources(self) -> List[str]:
         """Return unique source filenames stored in the collection."""
         all_meta = self.collection.get(include=["metadatas"])
@@ -159,6 +208,9 @@ class VectorStoreManager:
             "total_sources": len(sources),
             "sources": sources,
             "persist_directory": self._config.chroma_persist_dir,
+            "hnsw_m": self._config.hnsw_m,
+            "hnsw_ef_construction": self._config.hnsw_ef_construction,
+            "hnsw_ef_search": self._config.hnsw_ef_search,
         }
 
     # ------------------------------------------------------------------

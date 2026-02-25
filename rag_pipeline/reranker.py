@@ -37,12 +37,12 @@ class RerankerBackend(Protocol):
 
     def rerank(
         self, query: str, texts: List[str], top_n: int = 5
-    ) -> List[int]:
+    ) -> List[tuple]:
         """
         Re-rank texts by relevance to query.
 
-        Returns indices into the original ``texts`` list, ordered by
-        descending relevance, truncated to ``top_n``.
+        Returns list of (index, score) tuples ordered by descending
+        relevance, truncated to ``top_n``.
         """
         ...
 
@@ -76,10 +76,10 @@ class CrossEncoderBackend:
 
     def rerank(
         self, query: str, texts: List[str], top_n: int = 5
-    ) -> List[int]:
+    ) -> List[tuple]:
         """
-        Score each (query, text) pair and return top_n indices sorted by
-        descending relevance score.
+        Score each (query, text) pair and return top_n (index, score)
+        tuples sorted by descending relevance score.
         """
         if not texts:
             return []
@@ -90,7 +90,7 @@ class CrossEncoderBackend:
 
         # Pair each index with its score, sort descending, take top_n
         scored = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)
-        return [idx for idx, _score in scored[:top_n]]
+        return [(idx, float(score)) for idx, score in scored[:top_n]]
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +101,8 @@ class CrossEncoderReranker:
     """
     Re-ranking service used by the RAG query engine.
 
-    Wraps a configurable backend and provides typed chunk re-ranking.
+    Wraps a configurable backend and provides typed chunk re-ranking
+    with a **relevance score threshold** to filter out irrelevant chunks.
     """
 
     def __init__(
@@ -113,35 +114,65 @@ class CrossEncoderReranker:
         self._backend = backend or CrossEncoderBackend(
             model_name=self._config.reranker_model
         )
+        self._score_threshold: float = getattr(
+            self._config, "rerank_score_threshold", 0.25
+        )
 
     def rerank(
         self,
         query: str,
         chunks: list,
         top_n: Optional[int] = None,
+        score_threshold: Optional[float] = None,
     ) -> list:
         """
-        Re-rank a list of RetrievedChunk objects.
+        Re-rank a list of RetrievedChunk objects and filter by relevance.
 
         Args:
             query:  The user query string.
             chunks: List of RetrievedChunk from the initial retrieval.
             top_n:  Number of top results to return after re-ranking.
+            score_threshold: Minimum cross-encoder score to keep a chunk.
+                If None, uses the configured default.
 
         Returns:
-            Re-ranked list of RetrievedChunk, truncated to top_n.
+            Re-ranked list of RetrievedChunk, filtered by score threshold
+            and truncated to top_n.  Each chunk's metadata is enriched
+            with ``rerank_score``.
         """
         if not chunks:
             return []
 
         top_n = top_n or self._config.rerank_top_n
+        threshold = score_threshold if score_threshold is not None else self._score_threshold
 
         texts = [chunk.text for chunk in chunks]
-        ranked_indices = self._backend.rerank(query, texts, top_n=top_n)
+        # Get all scored results (not truncated) so we can filter first
+        ranked = self._backend.rerank(query, texts, top_n=len(texts))
 
-        reranked = [chunks[i] for i in ranked_indices]
+        reranked = []
+        filtered_out = 0
+        for idx, score in ranked:
+            # Apply relevance score threshold — drop chunks the
+            # cross-encoder considers irrelevant to the query
+            if score < threshold:
+                filtered_out += 1
+                continue
+            chunk = chunks[idx]
+            chunk.metadata["rerank_score"] = round(score, 4)
+            reranked.append(chunk)
+            if len(reranked) >= top_n:
+                break
+
         logger.info(
-            "Re-ranked %d → %d chunks for query: %.60s…",
-            len(chunks), len(reranked), query,
+            "Re-ranked %d → %d chunks (threshold=%.2f, filtered_out=%d) "
+            "for query: %.60s…",
+            len(chunks), len(reranked), threshold, filtered_out, query,
         )
+        if reranked:
+            scores = [c.metadata.get('rerank_score', 0.0) for c in reranked]
+            logger.info(
+                "Rerank scores: min=%.4f, max=%.4f, mean=%.4f",
+                min(scores), max(scores), sum(scores) / len(scores),
+            )
         return reranked

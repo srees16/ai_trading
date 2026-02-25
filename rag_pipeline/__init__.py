@@ -44,7 +44,15 @@ from rag_pipeline.vector_store import VectorStoreManager
 from rag_pipeline.pdf_ingestion import PDFIngestionService
 from rag_pipeline.query_engine import RAGQueryEngine
 from rag_pipeline.reranker import CrossEncoderReranker
-from rag_pipeline.llm_service import OllamaLLMBackend
+from rag_pipeline.llm_service import OllamaLLMBackend, ClaudeLLMBackend, OpenAILLMBackend, create_llm_backend
+from rag_pipeline.query_rewriter import QueryRewriter
+from rag_pipeline.hybrid_search import HybridSearcher, BM25Index
+from rag_pipeline.evaluation import EvalDataset, EvalQuery, EvalReport, RetrievalLogger, run_evaluation
+from rag_pipeline.triplet_export import TripletExporter
+from rag_pipeline.perf_trace import PipelineTrace, Span
+from rag_pipeline.token_counter import count_tokens, truncate_to_budget, budget_chunks
+from rag_pipeline.semantic_cache import SemanticCache
+from rag_pipeline.tiered_retrieval import TieredRetriever, FAQEntry
 
 __all__ = [
     "RAGConfig",
@@ -53,4 +61,24 @@ __all__ = [
     "RAGQueryEngine",
     "CrossEncoderReranker",
     "OllamaLLMBackend",
+    "ClaudeLLMBackend",
+    "OpenAILLMBackend",
+    "create_llm_backend",
+    "QueryRewriter",
+    "HybridSearcher",
+    "BM25Index",
+    "EvalDataset",
+    "EvalQuery",
+    "EvalReport",
+    "RetrievalLogger",
+    "run_evaluation",
+    "TripletExporter",
+    "PipelineTrace",
+    "Span",
+    "count_tokens",
+    "truncate_to_budget",
+    "budget_chunks",
+    "SemanticCache",
+    "TieredRetriever",
+    "FAQEntry",
 ]
