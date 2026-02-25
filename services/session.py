@@ -1,7 +1,8 @@
 """
 Session Management Module for Centurion Capital LLC.
 
-Handles Streamlit session state initialization and management.
+Handles Streamlit session state initialization and management,
+including the SessionCache lifecycle.
 """
 
 import streamlit as st
@@ -13,6 +14,7 @@ def initialize_session_state():
     _init_analysis_state()
     _init_backtest_state()
     _init_navigation_state()
+    _init_cache()
 
 
 def _init_analysis_state():
@@ -22,6 +24,7 @@ def _init_analysis_state():
         'signals': [],
         'progress_messages': [],
         'ticker_mode': "Default Tickers",
+
     }
     
     # Import here to avoid circular imports
@@ -51,3 +54,20 @@ def _init_navigation_state():
     """Initialize navigation-related session state variables."""
     if 'current_page' not in st.session_state:
         st.session_state.current_page = 'main'
+
+
+def _init_cache():
+    """
+    Initialise the ``SessionCache`` singleton.
+
+    The cache persists across Streamlit reruns within the same browser
+    session.  It is only cleared explicitly (e.g. when the user starts a
+    brand-new analysis with a completely different ticker set).
+    """
+    from services.cache import get_session_cache  # noqa: local import to avoid circular
+    from config import Config
+
+    cache = get_session_cache()
+    # Apply configured TTL (in case env vars changed between restarts)
+    from datetime import timedelta
+    cache._default_ttl = timedelta(minutes=Config.CACHE_TTL_MINUTES)

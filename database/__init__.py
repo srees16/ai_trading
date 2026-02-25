@@ -16,14 +16,21 @@ from database.models import (
     FundamentalMetric,
     BacktestResult,
     NewsItem,
-    AnalysisRun
+    AnalysisRun,
+    RawScrapedNews,
+    BacktestTrade,
+    BacktestEquityPoint,
+    BacktestDailyReturn,
+    StrategyPerformanceSummary,
+    DataFreshness,
 )
 from database.repositories import (
     SignalRepository,
     FundamentalRepository,
     BacktestRepository,
     NewsRepository,
-    AnalysisRepository
+    AnalysisRepository,
+    FreshnessRepository,
 )
 from database.service import DatabaseService, get_database_service
 
@@ -38,12 +45,19 @@ __all__ = [
     'BacktestResult',
     'NewsItem',
     'AnalysisRun',
+    'RawScrapedNews',
+    'BacktestTrade',
+    'BacktestEquityPoint',
+    'BacktestDailyReturn',
+    'StrategyPerformanceSummary',
+    'DataFreshness',
     # Repositories
     'SignalRepository',
     'FundamentalRepository',
     'BacktestRepository',
     'NewsRepository',
     'AnalysisRepository',
+    'FreshnessRepository',
     # Service
     'DatabaseService',
     'get_database_service',

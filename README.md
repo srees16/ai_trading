@@ -16,10 +16,11 @@ A comprehensive Python-based enterprise trading platform combining multi-source 
 - **Async Architecture**: Concurrent scraping for optimal performance
 
 ### Strategy Backtesting
-- **9 Built-in Strategies** across three categories:
+- **11 Built-in Strategies** across three categories:
   - **Momentum**: MACD Oscillator, Parabolic SAR, Heikin-Ashi, Awesome Oscillator
   - **Pattern Recognition**: RSI Pattern, Bollinger Band Pattern, Shooting Star, Support & Resistance
-  - **Statistical Arbitrage**: Pairs Trading
+  - **Statistical Arbitrage**: Pairs Trading, Mean Reversion (Stocks), Crypto Mean Reversion (Z-Score)
+- **Crypto Mean Reversion Pipeline**: Full statistical arbitrage pipeline for cryptocurrency pairs via the Binance public API — includes EDA, cointegration tests (Engle-Granger & Johansen), 2- and 3-asset portfolio construction, backtesting with parameter optimisation (max equity, min drawdown, min volatility, max Sharpe), and wealth/drawdown analysis
 - **Multi-Ticker Support**: Run backtests across multiple tickers simultaneously
 - **Per-Ticker Performance Tabs**: Detailed metrics breakdown per ticker
 - **Strategy Caching**: Pre-computes and caches results for instant strategy switching
@@ -129,7 +130,12 @@ centurion_core/
 │   │   ├── shooting_star.py            # + shooting_star_bktest.py
 │   │   └── support_resistance.py       # + support_resistance_bktest.py
 │   └── statistical_arbitrage/
-│       └── pairs_trading.py            # + pairs_trading_bktest.py
+│       ├── pairs_trading.py            # + pairs_trading_bktest.py
+│       ├── mean_reversion.py           # Stock mean reversion adapter
+│       ├── mean_reversion_strategy.py  # Crypto mean reversion (Binance API)
+│       ├── binance_data.py             # Binance public REST API client + CSV cache
+│       ├── edge_mean_reversion.py      # ADF, Hurst, Variance Ratio, cointegration tests
+│       └── edge_risk_kit.py            # Drawdown & summary statistics helpers
 │
 ├── notifications/                # Desktop alerts
 │   └── manager.py
@@ -160,6 +166,11 @@ centurion_core/
 
 ```powershell
 cd centurion_core
+
+# Activate the virtual environment (create it first if needed)
+# python -m venv mywinenv
+.\mywinenv\Scripts\Activate.ps1
+
 pip install -r requirements.txt
 ```
 
@@ -300,7 +311,7 @@ Opens at **http://localhost:9090** (port configured in `.streamlit/config.toml`)
 2. Select tickers (default list, manual entry, or CSV upload).
 3. Click **🚀 Run Analysis** → results appear on the **Stock Analysis** page.
 4. Navigate to **📊 Fundamental Analysis** for detailed fundamental drill-down.
-5. Navigate to **🔬 Backtest Strategy** to test any of the 9 strategies.
+5. Navigate to **🔬 Backtest Strategy** to test any of the 11 strategies.
 6. Navigate to **📋 History** to review past runs, signals, and stored charts.
 
 ### Strategy Backtesting
@@ -316,6 +327,17 @@ Opens at **http://localhost:9090** (port configured in `.streamlit/config.toml`)
    - Results auto-saved to **PostgreSQL** (`backtest_results` table).
    - Charts auto-saved to **MinIO** (`centurion-backtests` bucket).
 7. Switch strategies instantly — cached results load without re-computation.
+
+#### Crypto Mean Reversion Strategy
+
+The **Crypto Mean Reversion (Z-Score)** strategy runs a full statistical arbitrage pipeline against live Binance data:
+
+1. Select the strategy from the dropdown.
+2. Enter crypto tickers (e.g., `ETH, BTC, LTC`) — these are automatically mapped to USDT pairs.
+3. The pipeline runs: EDA → statistical tests → 2-asset portfolio → 3-asset portfolio → backtesting.
+4. With **optimisation enabled** (default), four optimisation targets are tested: max equity, min drawdown, min volatility, and max Sharpe ratio.
+5. All charts (8 matplotlib PNGs) and backtest HTML plots are saved to MinIO; results are persisted to PostgreSQL.
+6. Data is fetched from the Binance public REST API (no API key required) and cached locally as CSV.
 
 ### History Page
 
@@ -553,9 +575,10 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 | **Web Framework** | streamlit, plotly, streamlit-aggrid |
 | **Data** | pandas, numpy, openpyxl |
 | **Financial Data** | yfinance |
+| **Crypto Data** | Binance public REST API (no key required) |
 | **Scraping** | aiohttp, beautifulsoup4, lxml, requests, selenium |
 | **AI/ML** | transformers, torch, scikit-learn |
-| **Analysis** | matplotlib, statsmodels |
+| **Analysis** | matplotlib, statsmodels, backtesting (0.6+), arch |
 | **Database** | sqlalchemy ≥ 2.0, psycopg2-binary ≥ 2.9, python-dotenv ≥ 1.0 |
 | **Object Storage** | minio ≥ 7.2 |
 | **Auth** | pyyaml ≥ 6.0 |

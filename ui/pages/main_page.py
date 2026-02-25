@@ -109,7 +109,6 @@ def _render_ticker_selection() -> List[str]:
 
 def _handle_default_tickers() -> List[str]:
     """Handle default tickers selection."""
-    st.info(f"Using {len(Config.DEFAULT_TICKERS)} default tickers")
     with st.expander("View default tickers"):
         st.write(", ".join(Config.DEFAULT_TICKERS))
     return Config.DEFAULT_TICKERS
@@ -218,6 +217,13 @@ def _render_output_settings():
         help="Append results to existing file instead of overwriting"
     )
     Config.APPEND_MODE = append_mode
+    
+    st.markdown("---")
+    st.markdown("**Data Sources**")
+    st.caption(
+        "News is scraped from Yahoo Finance, Finviz, Investing.com, "
+        "TradingView, and r/WallStreetBets."
+    )
 
 
 def _render_run_controls(tickers: List[str]) -> bool:
@@ -231,18 +237,15 @@ def _render_run_controls(tickers: List[str]) -> bool:
         True if run button was clicked
     """
     # Status + Run button (left-aligned)
-    if tickers:
-        st.caption(f"📈 {len(tickers)} stock(s) ready")
-    else:
+    if not tickers:
         st.warning("⚠️ No tickers selected")
     
-    btn_col, _ = st.columns([1, 1.5])
+    btn_col, _ = st.columns([1, 2])
     
     with btn_col:
         run_button = st.button(
-            "🚀 Run Analysis",
+            "Run Analysis",
             type="primary",
-            use_container_width=True,
             disabled=len(tickers) == 0
         )
     

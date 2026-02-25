@@ -21,7 +21,7 @@ def load_logo_base64() -> str:
     if logo_path.exists():
         with open(logo_path, "rb") as f:
             logo_data = base64.b64encode(f.read()).decode()
-        return f'<img src="data:image/png;base64,{logo_data}" style="height: 3rem; vertical-align: middle; margin-right: 0.2rem;">'
+        return f'<img src="data:image/png;base64,{logo_data}" style="height: 1.6rem; vertical-align: middle; margin-right: 0.2rem;">'
     return ""
 
 
@@ -36,7 +36,7 @@ def load_logo_base64_small() -> str:
     if logo_path.exists():
         with open(logo_path, "rb") as f:
             logo_data = base64.b64encode(f.read()).decode()
-        return f'<img src="data:image/png;base64,{logo_data}" style="height: 2.5rem; vertical-align: middle; margin-right: 0.5rem;">'
+        return f'<img src="data:image/png;base64,{logo_data}" style="height: 1.4rem; vertical-align: middle; margin-right: 0.3rem;">'
     return ""
 
 
@@ -45,8 +45,7 @@ def render_header():
     logo_html = load_logo_base64()
     
     st.markdown(
-        f'<div class="main-header">{logo_html}Centurion Capital LLC</div>'
-        f'<p class="main-subtitle">Enterprise AI Engine for Event-Driven Alpha</p>',
+        f'<div class="main-header">{logo_html}Centurion Capital LLC</div>',
         unsafe_allow_html=True
     )
 
@@ -62,19 +61,20 @@ def render_page_header(title: str, subtitle: Optional[str] = None, description: 
     """
     logo_html = load_logo_base64_small()
     
+    # Compact: combine company name, page title, and description into fewer elements
+    title_part = f' <span style="font-size: 0.85em; font-weight: 600; color: #2d3436;">| {title}</span>' if title else ''
     st.markdown(
-        f'<div class="main-header">{logo_html}Centurion Capital LLC</div>',
+        f'<div class="main-header">{logo_html}Centurion Capital LLC{title_part}</div>',
         unsafe_allow_html=True
     )
     
-    if title:
-        st.markdown(f'<p class="page-subtitle">{title}</p>', unsafe_allow_html=True)
-    
+    desc_parts = []
     if subtitle:
-        st.markdown(f'<p class="main-subtitle">{subtitle}</p>', unsafe_allow_html=True)
-    
+        desc_parts.append(subtitle)
     if description:
-        st.markdown(f'<p class="page-description">{description}</p>', unsafe_allow_html=True)
+        desc_parts.append(description)
+    if desc_parts:
+        st.markdown(f'<p class="page-description">{" — ".join(desc_parts)}</p>', unsafe_allow_html=True)
 
 
 def render_footer():
@@ -117,6 +117,7 @@ def render_navigation_buttons(
         ('analysis',     '📈 Stock Analysis'),
         ('fundamental',  '📊 Fundamental Analysis'),
         ('backtesting',  '🔬 Backtest Strategy'),
+        ('crypto',       '₿ Crypto'),
         ('history',      '📋 History'),
     ]
 
@@ -132,15 +133,15 @@ def render_navigation_buttons(
     if n == 0:
         return
 
-    col_spec = [0.6] + [1] * n + [0.6]
-    cols = st.columns(col_spec)
+    col_spec = [0.3] + [1] * n + [0.3]
+    cols = st.columns(col_spec, gap="small")
 
     for i, (page_id, label) in enumerate(buttons):
         with cols[i + 1]:
             if st.button(
                 label,
                 key=f"nav_{page_id}_{back_key_suffix}",
-                use_container_width=True,
+                width='stretch',
             ):
                 st.session_state.current_page = page_id
                 st.rerun()

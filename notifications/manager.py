@@ -1,10 +1,18 @@
 """
-Notification system for popup alerts.
+Notification system for popup alerts and email reports.
 """
 
-from typing import List
+import os
+import logging
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from datetime import datetime
+from typing import List, Optional
 from models import NewsItem
 from config import Config
+
+logger = logging.getLogger(__name__)
 
 try:
     from plyer import notification
@@ -120,3 +128,123 @@ class NotificationManager:
                 f"Reasoning: {signal.reasoning[:150]}..."
             )
             self.send_notification(title, message)
+
+    # ── Email helpers ────────────────────────────────────────────────
+
+    @staticmethod
+    def send_wsb_email(
+        news_items: List[NewsItem],
+        tickers: List[str],
+        recipients: Optional[List[str]] = None,
+    ) -> bool:
+        """
+        Send an email summary of WallStreetBets mentions for the
+        analysed tickers.
+
+        Uses SMTP with credentials from environment variables:
+            CENTURION_EMAIL_HOST   (default: smtp-mail.outlook.com)
+            CENTURION_EMAIL_PORT   (default: 587)
+            CENTURION_EMAIL_USER   (sender address)
+            CENTURION_EMAIL_PASS   (sender password / app-password)
+
+        Args:
+            news_items: List of all NewsItem objects from analysis
+            tickers: Tickers that were analysed
+            recipients: Override list; defaults to ["s.srees@live.com"]
+
+        Returns:
+            True on success, False on failure or missing config
+        """
+        if recipients is None:
+            recipients = ["s.srees@live.com"]
+
+        smtp_host = os.getenv("CENTURION_EMAIL_HOST", "smtp-mail.outlook.com")
+        smtp_port = int(os.getenv("CENTURION_EMAIL_PORT", "587"))
+        smtp_user = os.getenv("CENTURION_EMAIL_USER", "")
+        smtp_pass = os.getenv("CENTURION_EMAIL_PASS", "")
+
+        if not smtp_user or not smtp_pass:
+            logger.warning(
+                "Email not configured (set CENTURION_EMAIL_USER / "
+                "CENTURION_EMAIL_PASS). Skipping WSB email."
+            )
+            return False
+
+        # ── Build HTML body ──────────────────────────────────────────
+        wsb_items = [n for n in news_items if n.source == "WallStreetBets"]
+        by_ticker: dict[str, list[NewsItem]] = {}
+        for item in wsb_items:
+            by_ticker.setdefault(item.ticker, []).append(item)
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+        rows = ""
+        for t in tickers:
+            items = by_ticker.get(t, [])
+            if not items:
+                rows += (
+                    f"<tr><td style='padding:6px 12px;border:1px solid #ddd;'>"
+                    f"<b>{t}</b></td>"
+                    f"<td style='padding:6px 12px;border:1px solid #ddd;' "
+                    f"colspan='3'><em>No WSB mentions</em></td></tr>\n"
+                )
+                continue
+            for item in items:
+                sentiment = (
+                    item.sentiment_label.value.title()
+                    if item.sentiment_label
+                    else "N/A"
+                )
+                link = (
+                    f"<a href='{item.url}'>{item.title[:80]}</a>"
+                    if item.url
+                    else item.title[:80]
+                )
+                rows += (
+                    f"<tr>"
+                    f"<td style='padding:6px 12px;border:1px solid #ddd;'><b>{t}</b></td>"
+                    f"<td style='padding:6px 12px;border:1px solid #ddd;'>{link}</td>"
+                    f"<td style='padding:6px 12px;border:1px solid #ddd;'>{sentiment}</td>"
+                    f"<td style='padding:6px 12px;border:1px solid #ddd;'>"
+                    f"{item.timestamp.strftime('%H:%M') if item.timestamp else ''}</td>"
+                    f"</tr>\n"
+                )
+
+        html = f"""\
+<html><body style="font-family:Segoe UI,Arial,sans-serif;">
+<h2 style="color:#1a1a2e;">Centurion Capital &mdash; WallStreetBets Report</h2>
+<p>Generated: {now} &nbsp;|&nbsp; Tickers analysed: {', '.join(tickers)}</p>
+<table style="border-collapse:collapse;width:100%;">
+<thead>
+<tr style="background:#1a1a2e;color:#fff;">
+  <th style="padding:8px 12px;text-align:left;">Ticker</th>
+  <th style="padding:8px 12px;text-align:left;">Post</th>
+  <th style="padding:8px 12px;text-align:left;">Sentiment</th>
+  <th style="padding:8px 12px;text-align:left;">Time</th>
+</tr>
+</thead>
+<tbody>
+{rows}
+</tbody>
+</table>
+<br>
+<p style="font-size:0.85rem;color:#999;">&copy; 2026 Centurion Capital LLC</p>
+</body></html>"""
+
+        # ── Send ─────────────────────────────────────────────────────
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = f"WSB Mentions — {', '.join(tickers)} — {now}"
+        msg["From"] = smtp_user
+        msg["To"] = ", ".join(recipients)
+        msg.attach(MIMEText(html, "html"))
+
+        try:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
+                server.starttls()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_user, recipients, msg.as_string())
+            logger.info("WSB email sent to %s", ", ".join(recipients))
+            return True
+        except Exception as exc:
+            logger.error("Failed to send WSB email: %s", exc)
+            return False
