@@ -33,12 +33,20 @@ class Config:
     # Web Scraping
     # =================================================================
     REQUEST_TIMEOUT: int = 10  # seconds
-    MAX_CONCURRENT_REQUESTS: int = 5
+    MAX_CONCURRENT_REQUESTS: int = 5  # enforced via asyncio.Semaphore in aggregator
     USER_AGENT: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/119.0.0.0 Safari/537.36"
     )
+    
+    # =================================================================
+    # Session Cache
+    # =================================================================
+    CACHE_TTL_MINUTES: int = int(os.getenv("CENTURION_CACHE_TTL_MINUTES", "30"))
+    # News cache has a shorter TTL than metrics since news is more volatile
+    NEWS_CACHE_TTL_MINUTES: int = int(os.getenv("CENTURION_NEWS_CACHE_TTL_MINUTES", "15"))
+    METRICS_CACHE_TTL_MINUTES: int = int(os.getenv("CENTURION_METRICS_CACHE_TTL_MINUTES", "30"))
     
     # =================================================================
     # Technical Analysis Parameters

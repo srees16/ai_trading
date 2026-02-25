@@ -24,7 +24,5 @@ python-dotenv
 pyyaml
 minio
 scipy
+seaborn
 Backtesting
-chromadb
-sentence-transformers
-PyMuPDF

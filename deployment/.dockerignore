@@ -2,6 +2,7 @@
 
 # Virtual environments
 myenv/
+mywinenv/
 venv/
 env/
 ENV/

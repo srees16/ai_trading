@@ -12,14 +12,6 @@ Manual stock tickers example: RGTI, QUBT, QBTS, IONQ
 import streamlit as st
 import logging
 from ui.styles import apply_custom_styles
-from ui.pages import (
-    render_main_page,
-    render_analysis_page,
-    render_fundamental_page,
-    render_backtesting_page,
-    render_history_page,
-)
-from rag_pipeline.rag_page import render_rag_page
 from services.session import initialize_session_state
 from auth import check_authentication, render_user_menu
 
@@ -54,21 +46,28 @@ def main():
     # Render user menu (logout button, user info)
     render_user_menu()
     
-    # Route to appropriate page
+    # Route to appropriate page — imports are deferred so the login
+    # page renders without waiting for heavy strategy / ML deps.
     current_page = st.session_state.get('current_page', 'main')
-    
-    page_routes = {
-        'main': render_main_page,
-        'analysis': render_analysis_page,
-        'fundamental': render_fundamental_page,
-        'backtesting': render_backtesting_page,
-        'history': render_history_page,
-        'rag': render_rag_page,
-    }
-    
-    # Get the page renderer and execute
-    page_renderer = page_routes.get(current_page, render_main_page)
-    page_renderer()
+
+    if current_page == 'analysis':
+        from ui.pages.analysis_page import render_analysis_page
+        render_analysis_page()
+    elif current_page == 'fundamental':
+        from ui.pages.fundamental_page import render_fundamental_page
+        render_fundamental_page()
+    elif current_page == 'backtesting':
+        from ui.pages.backtesting_page import render_backtesting_page
+        render_backtesting_page()
+    elif current_page == 'crypto':
+        from ui.pages.crypto_page import render_crypto_page
+        render_crypto_page()
+    elif current_page == 'history':
+        from ui.pages.history_page import render_history_page
+        render_history_page()
+    else:
+        from ui.pages.main_page import render_main_page
+        render_main_page()
 
 
 if __name__ == "__main__":

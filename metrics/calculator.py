@@ -21,27 +21,47 @@ logger = logging.getLogger(__name__)
 
 
 class MetricsCalculator:
-    """Calculates fundamental and technical metrics for stocks."""
+    """Calculates fundamental and technical metrics for stocks.
+    
+    Maintains a per-ticker in-memory cache so that repeated calls for
+    the same ticker (e.g. once per news article) hit yfinance only once.
+    """
     
     def __init__(self):
-        """Initialize the metrics calculator."""
-        pass
+        """Initialize the metrics calculator with an empty cache."""
+        self._cache: dict[str, Optional[StockMetrics]] = {}
 
     @staticmethod
     def _safe_get(df, key: str, col: int = 0):
         """Safely retrieve a value from a DataFrame by index label and column position."""
         return df.loc[key].iloc[col] if key in df.index and len(df.columns) > col else 0
     
-    def get_stock_metrics(self, ticker: str) -> Optional[StockMetrics]:
+    def get_stock_metrics(self, ticker: str, *, force: bool = False) -> Optional[StockMetrics]:
         """
         Calculate all metrics for a stock.
         
+        Results are cached per ticker for the lifetime of this instance
+        so that multiple news articles for the same ticker don't trigger
+        redundant yfinance API calls.
+        
         Args:
             ticker: Stock ticker symbol
+            force: If ``True``, bypass cache and re-fetch
             
         Returns:
             StockMetrics object with all calculated metrics
         """
+        if not force and ticker in self._cache:
+            logger.debug("Metrics cache HIT for %s", ticker)
+            return self._cache[ticker]
+
+        logger.debug("Metrics cache MISS for %s — fetching from yfinance", ticker)
+        metrics = self._fetch_metrics(ticker)
+        self._cache[ticker] = metrics
+        return metrics
+
+    def _fetch_metrics(self, ticker: str) -> Optional[StockMetrics]:
+        """Actually fetch and compute metrics from yfinance."""
         try:
             stock = yf.Ticker(ticker)
             
@@ -93,6 +113,27 @@ class MetricsCalculator:
         except Exception as e:
             logger.error("Error calculating metrics for %s: %s", ticker, e)
             return None
+
+    def prefetch_metrics(self, tickers: list[str]) -> dict[str, Optional[StockMetrics]]:
+        """
+        Fetch metrics for a list of unique tickers, populating the cache.
+
+        Args:
+            tickers: Ticker symbols to prefetch
+
+        Returns:
+            ``{ticker: StockMetrics | None}``
+        """
+        unique = list(dict.fromkeys(tickers))
+        results: dict[str, Optional[StockMetrics]] = {}
+        for t in unique:
+            results[t] = self.get_stock_metrics(t)
+        return results
+
+    @property
+    def cached_tickers(self) -> set[str]:
+        """Return the set of tickers currently in the metrics cache."""
+        return set(self._cache.keys())
     
     def _calculate_fundamentals(
         self, 
