@@ -1,4 +1,6 @@
 aiohttp
+anthropic
+openai
 beautifulsoup4
 lxml
 requests
