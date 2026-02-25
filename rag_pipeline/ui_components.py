@@ -174,8 +174,11 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
                 def _on_cancel():
                     st.session_state["rag_ingest_cancel"] = True
 
+                _cancel_btn_counter = [0]
+
                 def _show_spinner(pct: int, label: str, show_cancel: bool = True) -> None:
                     """Render a multi-color spinner with percentage text."""
+                    _cancel_btn_counter[0] += 1
                     # Gradient color based on percentage
                     if pct < 25:
                         ring_color = "#3498db"   # blue
@@ -217,8 +220,8 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
                     )
                     if show_cancel:
                         cancel_ph.button(
-                            "✖ Cancel Ingestion",
-                            key=f"rag_cancel_ingest_{pct}_{i if 'i' in dir() else 0}",
+                            "Cancel Ingestion",
+                            key=f"rag_cancel_ingest_{_cancel_btn_counter[0]}",
                             on_click=_on_cancel,
                             type="secondary",
                         )
@@ -391,10 +394,10 @@ def render_rag_response(response: RAGResponse) -> None:
     if response.rag_enabled and response.answer:
         resubmit_key = f"resub_{hash(response.query + response.answer[:80])}"
         st.divider()
-        rs_col1, rs_col2 = st.columns([1, 5])
+        rs_col1, rs_col2 = st.columns([2, 5])
         with rs_col1:
             if st.button(
-                "🔄 Re-submit Query",
+                "🔄 Re-submit",
                 key=resubmit_key,
                 help="Not satisfied with the answer? Re-run the query to get a fresh response.",
             ):
@@ -524,7 +527,6 @@ def _render_code_apply_section(
             if st.button(
                 "✅ Apply",
                 key=f"{apply_key}_apply",
-                type="primary",
                 help="Apply the code snippet to the selected strategy file (backup created automatically).",
             ):
                 # Use preview if available, otherwise generate fresh
@@ -605,6 +607,11 @@ def render_knowledge_base() -> None:
     stats = vs.get_collection_stats()
 
     col1, col2, col3 = st.columns(3)
+    st.markdown(
+        "<style>[data-testid='stMetric'] {font-size: 0.85rem;} "
+        "[data-testid='stMetricValue'] {font-size: 1.1rem;}</style>",
+        unsafe_allow_html=True,
+    )
     col1.metric("Total Chunks", stats["total_documents"])
     col2.metric("PDF Sources", stats["total_sources"])
     col3.metric("Collection", stats["collection_name"])
@@ -632,7 +639,7 @@ def render_knowledge_base() -> None:
                  "latest chunking pipeline. Use after pipeline upgrades.",
         ):
             ingestion_svc = _get_ingestion_service()
-            with st.spinner("Re-ingesting all documents (this may take a minute)..."):
+            with st.spinner("Re-ingesting in progress (this may take a while)..."):
                 results = ingestion_svc.reingest_all()
             for r in results:
                 if r["status"] == "success":
@@ -643,7 +650,7 @@ def render_knowledge_base() -> None:
                     st.warning(f"⚠️ **{r.get('source', '?')}** — {r.get('status', 'unknown')}")
             st.rerun()
     with col_reset:
-        if st.button("⚠️ Reset Entire Knowledge Base", type="secondary"):
+        if st.button("⚠️ Reset Knowledge Base", type="secondary"):
             vs.reset_collection()
             st.warning("Knowledge base has been reset.")
             st.rerun()

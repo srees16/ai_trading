@@ -1,9 +1,0 @@
-chromadb
-sentence-transformers
-numpy
-PyMuPDF
-requests
-anthropic
-openai
-python-dotenv
-streamlit

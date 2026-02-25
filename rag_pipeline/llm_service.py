@@ -825,7 +825,7 @@ class _FallbackLLMBackend:
             return (
                 f"\u26a0\ufe0f **{self._provider.title()} is selected but "
                 f"`{self._missing_key}` is not set.**\n\n"
-                f"Add it to `rag_pipeline/.env` and restart the app."
+                f"Add it to the project root `.env` and restart the app."
             )
         supported = ", ".join(f"`{p}`" for p in _PROVIDERS)
         return (
