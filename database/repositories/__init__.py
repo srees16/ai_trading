@@ -10,6 +10,7 @@ from database.repositories.fundamentals import FundamentalRepository
 from database.repositories.backtests import BacktestRepository
 from database.repositories.news import NewsRepository
 from database.repositories.analysis import AnalysisRepository
+from database.repositories.freshness import FreshnessRepository
 
 __all__ = [
     'BaseRepository',
@@ -18,4 +19,5 @@ __all__ = [
     'BacktestRepository',
     'NewsRepository',
     'AnalysisRepository',
+    'FreshnessRepository',
 ]

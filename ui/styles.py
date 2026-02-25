@@ -110,8 +110,8 @@ def get_background_css(bg_base64: Optional[str] = None) -> str:
     .main .block-container {{
         background: rgba(255, 255, 255, 0.95);
         border-radius: 10px;
-        padding: 2rem 3rem !important;
-        margin: 1rem;
+        padding: 0.75rem 2rem !important;
+        margin: 0.5rem 1rem;
     }}
     """
 
@@ -120,11 +120,12 @@ def get_typography_css() -> str:
     """Get CSS for typography styling."""
     return """
     .main-header {
-        font-size: 3rem;
+        font-size: 1.5rem;
         font-weight: bold;
         color: #1a1a2e !important;
         text-align: center;
-        margin-bottom: 0.25rem;
+        margin-bottom: 0;
+        line-height: 1.3;
     }
     .main-subtitle {
         text-align: center;
@@ -132,21 +133,22 @@ def get_typography_css() -> str:
         margin-top: 0;
         margin-bottom: 0;
         font-weight: 500;
+        font-size: 0.85rem;
     }
     .page-subtitle {
-        font-size: 2rem;
+        font-size: 1.25rem;
         font-weight: 600;
         color: #2d3436 !important;
         text-align: center;
         margin-top: 0;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.15rem;
     }
     .page-description {
         text-align: center;
         color: #444 !important;
-        font-size: 0.95rem;
+        font-size: 0.85rem;
         margin-top: 0;
-        margin-bottom: 1rem;
+        margin-bottom: 0.25rem;
     }
     /* Ensure all text is visible */
     .stMarkdown, .stMarkdown p, .stMarkdown span, .stMarkdown li {
@@ -156,12 +158,12 @@ def get_typography_css() -> str:
         color: #1a1a2e !important;
     }
     h1, h2, h3, h4, h5, h6 {
-        margin-top: 0.5rem;
-        margin-bottom: 0.5rem;
+        margin-top: 0.25rem;
+        margin-bottom: 0.25rem;
         color: #1a1a2e !important;
     }
     .stSubheader {
-        margin-top: 0.5rem;
+        margin-top: 0.25rem;
         color: #1a1a2e !important;
     }
     /* Caption text */
@@ -184,8 +186,8 @@ def get_button_css() -> str:
         white-space: nowrap;
         overflow: visible;
         text-overflow: clip;
-        padding: 0.55rem 0.85rem;
-        font-size: 1.05rem;
+        padding: 0.3rem 0.7rem;
+        font-size: 0.9rem;
         font-weight: 500;
         background-color: #f0f2f6 !important;
         color: #1a1a2e !important;
@@ -222,8 +224,8 @@ def get_layout_css() -> str:
     }
     /* Reduce default spacing */
     .block-container {
-        padding-top: 0.5rem;
-        padding-bottom: 1rem;
+        padding-top: 0.25rem;
+        padding-bottom: 0.5rem;
     }
     /* User menu bar - seamless with background */
     .stApp > header {
@@ -241,8 +243,8 @@ def get_layout_css() -> str:
         margin-bottom: 0;
     }
     hr {
-        margin: 0.75rem 0;
-        border-color: rgba(0, 0, 0, 0.2);
+        margin: 0.35rem 0;
+        border-color: rgba(0, 0, 0, 0.15);
     }
     /* Hide sidebar completely */
     [data-testid="stSidebar"] {
@@ -258,9 +260,9 @@ def get_footer_css() -> str:
     .footer {
         text-align: center;
         color: #1a1a2e !important;
-        font-size: 0.85rem;
-        padding: 1.5rem 0 1rem 0;
-        margin-top: 2rem;
+        font-size: 0.8rem;
+        padding: 0.75rem 0 0.5rem 0;
+        margin-top: 1rem;
         border-top: 1px solid rgba(0, 0, 0, 0.15);
         background: transparent;
         text-shadow: 0 0 8px rgba(255, 255, 255, 0.9), 0 0 16px rgba(255, 255, 255, 0.7);
