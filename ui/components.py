@@ -17,7 +17,7 @@ def load_logo_base64() -> str:
     Returns:
         HTML img tag with embedded base64 logo, or empty string if not found
     """
-    logo_path = Path(__file__).parent.parent / "centurion_logo.png"
+    logo_path = Path(__file__).parent / "assets" / "centurion_logo.png"
     if logo_path.exists():
         with open(logo_path, "rb") as f:
             logo_data = base64.b64encode(f.read()).decode()
@@ -32,7 +32,7 @@ def load_logo_base64_small() -> str:
     Returns:
         HTML img tag with embedded base64 logo (smaller), or empty string if not found
     """
-    logo_path = Path(__file__).parent.parent / "centurion_logo.png"
+    logo_path = Path(__file__).parent / "assets" / "centurion_logo.png"
     if logo_path.exists():
         with open(logo_path, "rb") as f:
             logo_data = base64.b64encode(f.read()).decode()

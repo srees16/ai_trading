@@ -31,7 +31,6 @@ import streamlit as st
 import logging
 
 from ui.components import load_logo_base64_small
-from ui.styles import get_background_css
 from rag_pipeline.ui_components import (
     render_rag_toggle,
     render_pdf_uploader,
@@ -50,94 +49,15 @@ def render_rag_page() -> None:
 
     Can be called from centurion_core's page router or run standalone.
     """
-    # ── Shared background image ──
-    _bg_css = get_background_css()
-    if _bg_css:
-        st.markdown(f"<style>{_bg_css}</style>", unsafe_allow_html=True)
-
     _logo_html = load_logo_base64_small()
 
     st.markdown(
         """
         <style>
-        /* ── Compact layout — no wasted space ── */
-        .block-container {
-            padding-top: 2.5rem !important;
-            padding-bottom: 0.5rem !important;
-        }
-        header[data-testid="stHeader"] {
-            height: 0px !important;
-            min-height: 0px !important;
-            padding: 0 !important;
-        }
-        #MainMenu, footer {
-            display: none !important;
-        }
-
-        /* Reduce vertical gaps between widgets */
-        .stElementContainer,
-        div[data-testid="stVerticalBlock"] > div {
-            margin-bottom: 0px !important;
-            padding-bottom: 0px !important;
-        }
-        div[data-testid="stVerticalBlock"] {
-            gap: 0.45rem !important;
-        }
-
         /* ── Center content with max-width ── */
         .block-container > div {
             max-width: 720px;
             margin: 0 auto;
-        }
-
-        /* ── Source dropdown: fixed width ── */
-        div[data-testid="stSelectbox"] {
-            width: 420px !important;
-            max-width: 100% !important;
-        }
-        div[data-testid="stSelectbox"] > div {
-            width: 420px !important;
-        }
-        div[data-testid="stSelectbox"] [data-baseweb="select"] {
-            width: 100% !important;
-        }
-        div[data-testid="stSelectbox"] [data-baseweb="select"] > div {
-            width: 100% !important;
-        }
-        /* Disable tooltip on dropdown options */
-        div[data-testid="stSelectbox"] [data-baseweb="select"] li[role="option"],
-        div[data-testid="stSelectbox"] [data-baseweb="select"] li[role="option"] * {
-            pointer-events: auto;
-            title: none;
-        }
-        ul[role="listbox"] li[role="option"]::after,
-        ul[role="listbox"] li[role="option"]::before {
-            display: none !important;
-        }
-        ul[role="listbox"] li[role="option"] [data-baseweb="tooltip"],
-        ul[role="listbox"] li[role="option"] [role="tooltip"],
-        div[data-baseweb="tooltip"] {
-            display: none !important;
-            visibility: hidden !important;
-            opacity: 0 !important;
-        }
-
-        /* ── Green submit button ── */
-        div.stButton > button {
-            background-color: #28a745;
-            color: white;
-            border: none;
-        }
-        div.stButton > button:hover {
-            background-color: #218838;
-            color: white;
-            border: none;
-        }
-        div.stButton > button:active,
-        div.stButton > button:focus {
-            background-color: #1e7e34;
-            color: white;
-            border: none;
         }
 
         /* ── Multi-color spinner ── */
@@ -203,7 +123,7 @@ def render_rag_page() -> None:
     )
 
     st.markdown(
-        f'<h2 style="text-align:center; margin:0 0 0.3rem 0; padding:0;">{_logo_html} RAG Engine</h2>',
+        f'<h2 style="text-align:center; margin:0 0 0.3rem 0; padding:0;">{_logo_html} Centurion Capital LLC</h2>',
         unsafe_allow_html=True,
     )
 
@@ -286,10 +206,11 @@ if __name__ == "__main__" or st.runtime.exists():
     try:
         st.set_page_config(
             page_title="Centurion RAG Pipeline",
-            #page_icon="📚",
             layout="wide",
         )
     except st.errors.StreamlitAPIException:
         pass  # already set by main app
 
+    from ui.styles import apply_custom_styles
+    apply_custom_styles()
     render_rag_page()

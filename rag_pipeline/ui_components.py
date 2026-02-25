@@ -131,6 +131,7 @@ def render_rag_toggle() -> bool:
         "RAG",
         value=st.session_state["rag_enabled"],
         help="When enabled, queries will retrieve context from uploaded strategy documents.",
+        key="rag_pipeline_toggle",
     )
     return st.session_state["rag_enabled"]
 

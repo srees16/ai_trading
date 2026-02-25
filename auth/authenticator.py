@@ -340,7 +340,7 @@ class Authenticator:
     @staticmethod
     def _get_logo_html() -> str:
         """Return an <img> tag with the base64-encoded logo, or empty string."""
-        logo_path = Path(__file__).parent.parent / "centurion_logo.png"
+        logo_path = Path(__file__).parent.parent / "ui" / "assets" / "centurion_logo.png"
         if logo_path.exists():
             with open(logo_path, "rb") as f:
                 data = base64.b64encode(f.read()).decode()
@@ -543,7 +543,7 @@ def render_user_menu():
     with col_user:
         st.markdown(
             f"<div style='white-space: nowrap; padding: 0; margin: 0; color: #1a1a2e; font-size: 0.82rem; line-height: 1.4;'>"
-            f"👤 <strong>{user_name}</strong> <em>({user_role})</em> "
+            f"<strong>{user_name}</strong> "
             f"<span style='font-size: 0.72rem; margin-left: 6px; opacity: 0.75;'>{health_icon}</span>"
             f"</div>",
             unsafe_allow_html=True

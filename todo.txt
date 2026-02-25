@@ -70,11 +70,9 @@ verify mean_reversion_strategy vs mean_reversion for statistical_arbitrage, they
 1. integrate new scripts with workflow (UI & backend)
 2. Verify tables and results that can be saved in db
 3. Explore API implemention
-4. zerodha api integration POC
-5. Explore Agentic implementation
-6. binance api https://www.youtube.com/watch?v=ZiBBVYB5PuU
+4. Explore Agentic implementation
+5. binance api https://www.youtube.com/watch?v=ZiBBVYB5PuU
                 https://www.youtube.com/watch?v=P_SIZDsI3Ro
-
 
 
 give a separate readme or write up on end to end flow reg architecture, databases, scrapers, and all components involved, logic of each strategy in as much detail as possible

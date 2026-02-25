@@ -48,7 +48,10 @@ def create_kite_session():
         return kite
     except (kite_exceptions.TokenException, kite_exceptions.InputException):
         # Token expired or invalid — launch login flow
-        from auth.kite_auth import fetch_request_token
+        try:
+            from kite_connect.auth.kite_auth import fetch_request_token
+        except ImportError:
+            from auth.kite_auth import fetch_request_token
 
         print("\n  [!] Token expired. Launching login flow...\n")
         new_token = fetch_request_token()

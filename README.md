@@ -1,6 +1,6 @@
 # Centurion Capital LLC — Enterprise AI Trading Platform
 
-A comprehensive Python-based enterprise trading platform combining multi-source news scraping, AI-powered sentiment analysis, fundamental & technical analysis, strategy backtesting, and persistent data storage. Features an interactive Streamlit web interface, PostgreSQL database persistence, and MinIO object storage for backtest chart images.
+A comprehensive Python-based enterprise trading platform combining multi-source news scraping, AI-powered sentiment analysis, fundamental & technical analysis, strategy backtesting, persistent data storage, live Indian market trading via Zerodha Kite Connect, and a RAG-powered document intelligence pipeline. Features an interactive Streamlit web interface, PostgreSQL database persistence, MinIO object storage, ChromaDB vector search, and multi-provider LLM integration.
 
 ## 🚀 Key Features
 
@@ -20,6 +20,11 @@ A comprehensive Python-based enterprise trading platform combining multi-source 
   - **Momentum**: MACD Oscillator, Parabolic SAR, Heikin-Ashi, Awesome Oscillator
   - **Pattern Recognition**: RSI Pattern, Bollinger Band Pattern, Shooting Star, Support & Resistance
   - **Statistical Arbitrage**: Pairs Trading, Mean Reversion (Stocks), Crypto Mean Reversion (Z-Score)
+- **Standalone Strategy Scripts** (6 additional):
+  - **FX Intraday**: London Breakout, Dual Thrust (GBP/USD minute data)
+  - **Derivatives**: Options Straddle (AAPL), VIX Calculator (CBOE methodology)
+  - **Portfolio Analysis**: Asset Allocation (SLSQP optimisation for quantum computing stocks)
+  - **Risk Modelling**: Monte Carlo Simulation (GBM price forecasting)
 - **Crypto Mean Reversion Pipeline**: Full statistical arbitrage pipeline for cryptocurrency pairs via the Binance public API — includes EDA, cointegration tests (Engle-Granger & Johansen), 2- and 3-asset portfolio construction, backtesting with parameter optimisation (max equity, min drawdown, min volatility, max Sharpe), and wealth/drawdown analysis
 - **Multi-Ticker Support**: Run backtests across multiple tickers simultaneously
 - **Per-Ticker Performance Tabs**: Detailed metrics breakdown per ticker
@@ -32,6 +37,25 @@ A comprehensive Python-based enterprise trading platform combining multi-source 
 - **Repository Pattern**: Clean data access layer via SQLAlchemy ORM
 - **History Page**: Browse past analyses, signals, and backtests filtered by date range
 
+
+### Live Trading — Zerodha Kite Connect (`kite_connect/`)
+- **Live Indian Market Dashboard**: Streamlit-based real-time portfolio monitoring, P&L tracking, and sector heatmaps
+- **Automated OAuth**: Selenium-driven Kite Connect authentication with 2FA TOTP and token caching
+- **NSE Data Pipeline**: Equity bhavcopy download and PostgreSQL bulk loader (`livestocks_ind` database)
+- **Option Chain Analysis**: Concurrent option chain fetching with Greeks (Delta, Gamma, Theta, Vega) and OI display
+- **Order Execution**: Market/limit/SL orders via Kite API with modification and cancellation support
+- **Live RSI Strategy**: Real-time RSI computation on streaming ticks with automated order placement
+
+### RAG Document Intelligence (`rag_pipeline/`)
+- **PDF Ingestion**: Structure-aware chunking via PyMuPDF with Markdown-aware splitting and file hash deduplication
+- **Hybrid Search**: BM25 + vector similarity fused via Reciprocal Rank Fusion (RRF)
+- **Cross-Encoder Reranking**: `ms-marco-MiniLM-L-6-v2` for precision re-scoring
+- **Multi-Provider LLM**: Ollama (local, default: mistral), Anthropic Claude, OpenAI GPT-4o
+- **10-Stage Query Pipeline**: Cache check → query rewrite → hybrid retrieval → FAQ tier → rerank → context assembly → dedup → LLM generation → post-processing → cache store
+- **Semantic Cache**: Embedding-based answer caching (cosine ≥ 0.92 threshold)
+- **Code Applicator**: Extracts code from RAG answers and applies to strategy files via LLM-assisted merging with backup/revert
+- **Evaluation Suite**: IR metrics (Hit Rate, MRR, NDCG, MAP) + LLM-as-Judge scoring
+- **Training Data Export**: Triplet generation (query, positive, negative) for embedding fine-tuning
 ### Object Storage (MinIO)
 - **Chart Image Persistence**: All backtest charts (matplotlib & plotly) saved to S3-compatible MinIO
 - **Organised by Run**: Images stored under `<run_id>/<ticker>/<strategy>/<filename>` paths
@@ -68,6 +92,9 @@ centurion_core/
 │   ├── charts.py                 # Chart rendering utilities
 │   ├── tables.py                 # Table rendering utilities
 │   ├── styles.py                 # CSS styling
+│   ├── assets/
+│   │   ├── centurion_logo.png    # Centurion Capital LLC logo
+│   │   └── nature_bg.png         # Background image
 │   └── pages/
 │       ├── main_page.py          # Dashboard & control panel
 │       ├── analysis_page.py      # Stock analysis results display
@@ -129,13 +156,61 @@ centurion_core/
 │   │   ├── bollinger_pattern.py
 │   │   ├── shooting_star.py            # + shooting_star_bktest.py
 │   │   └── support_resistance.py       # + support_resistance_bktest.py
-│   └── statistical_arbitrage/
-│       ├── pairs_trading.py            # + pairs_trading_bktest.py
-│       ├── mean_reversion.py           # Stock mean reversion adapter
-│       ├── mean_reversion_strategy.py  # Crypto mean reversion (Binance API)
-│       ├── binance_data.py             # Binance public REST API client + CSV cache
-│       ├── edge_mean_reversion.py      # ADF, Hurst, Variance Ratio, cointegration tests
-│       └── edge_risk_kit.py            # Drawdown & summary statistics helpers
+│   ├── statistical_arbitrage/
+│   │   ├── pairs_trading.py            # + pairs_trading_bktest.py
+│   │   ├── mean_reversion.py           # Stock mean reversion adapter
+│   │   ├── mean_reversion_strategy.py  # Crypto mean reversion (Binance API)
+│   │   ├── binance_data.py             # Binance public REST API client + CSV cache
+│   │   ├── edge_mean_reversion.py      # ADF, Hurst, Variance Ratio, cointegration tests
+│   │   └── edge_risk_kit.py            # Drawdown & summary statistics helpers
+│   ├── fx_intraday/
+│   │   ├── london_breakout_bktest.py   # London session breakout (GBP/USD)
+│   │   └── dual_thrust_bktest.py       # Opening range breakout
+│   ├── derivatives/
+│   │   ├── options_straddle_bktest.py  # Long straddle (AAPL options)
+│   │   └── vix_calculator.py           # CBOE VIX methodology
+│   ├── portfolio_analysis/
+│   │   └── asset_allocation.py         # SLSQP portfolio optimisation
+│   └── risk_modelling/
+│       └── monte_carlo_bktest.py       # GBM price simulation
+│
+├── kite_connect/                 # Zerodha live trading (Indian markets)
+│   ├── zerodha_live.py           # Main Streamlit live dashboard (~1326 lines)
+│   ├── auth/
+│   │   ├── kite_auth.py          # OAuth token management
+│   │   └── kite_selenium_auth.py # Automated 2FA login via Selenium
+│   ├── core/
+│   │   ├── config.py             # KiteConfig dataclass (API keys, DB, paths)
+│   │   ├── database_service.py   # PostgreSQL connection pool (livestocks_ind)
+│   │   └── selenium_service.py   # Chrome/Edge WebDriver lifecycle
+│   ├── nse/
+│   │   ├── nse_csv_downloader.py # NSE bhavcopy CSV download
+│   │   └── nse_data_loader.py    # CSV → PostgreSQL bulk loader
+│   ├── options/
+│   │   └── option_chain.py       # Concurrent option chain + Greeks
+│   └── trading/
+│       ├── order_service.py      # Kite order API wrapper
+│       └── rsi_strategy.py       # Live RSI trading strategy
+│
+├── rag_pipeline/                 # RAG document intelligence
+│   ├── config.py                 # 60+ field configuration dataclass
+│   ├── embeddings.py             # sentence-transformers (BGE-base-en-v1.5)
+│   ├── vector_store.py           # ChromaDB HNSW cosine wrapper
+│   ├── pdf_ingestion.py          # Structure-aware PDF chunking (~1280 lines)
+│   ├── hybrid_search.py          # BM25 + vector RRF fusion
+│   ├── reranker.py               # Cross-encoder reranking
+│   ├── query_rewriter.py         # LLM query expansion
+│   ├── semantic_cache.py         # Embedding-based answer cache
+│   ├── llm_service.py            # Ollama / Claude / OpenAI abstraction
+│   ├── query_engine.py           # 10-stage RAG pipeline (~968 lines)
+│   ├── evaluation.py             # IR metrics + LLM-as-Judge
+│   ├── tiered_retrieval.py       # FAQ tier (similarity ≥ 0.90)
+│   ├── token_counter.py          # tiktoken / heuristic counter
+│   ├── triplet_export.py         # Fine-tuning triplet generator
+│   ├── code_applier.py           # RAG → strategy code applicator
+│   ├── ui_components.py          # Streamlit RAG widgets
+│   ├── rag_page.py               # RAG page entry point
+│   └── perf_trace.py             # Pipeline stage timing
 │
 ├── notifications/                # Desktop alerts
 │   └── manager.py
@@ -160,6 +235,7 @@ centurion_core/
 | Python | 3.10+ | Runtime |
 | PostgreSQL | 14+ | Analysis & backtest persistence |
 | Docker | 20+ | MinIO object storage |
+| Ollama | Latest | Local LLM inference (RAG pipeline) |
 | pip | Latest | Package management |
 
 ### 1. Clone & Install Dependencies
@@ -572,17 +648,21 @@ Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
 
 | Category | Packages |
 |---|---|
-| **Web Framework** | streamlit, plotly, streamlit-aggrid |
+| **Web Framework** | streamlit, plotly |
 | **Data** | pandas, numpy, openpyxl |
 | **Financial Data** | yfinance |
 | **Crypto Data** | Binance public REST API (no key required) |
-| **Scraping** | aiohttp, beautifulsoup4, lxml, requests, selenium |
+| **Live Trading** | kiteconnect (Zerodha Kite Connect SDK) |
+| **Scraping** | aiohttp, beautifulsoup4, lxml, requests, selenium, webdriver-manager |
 | **AI/ML** | transformers, torch, scikit-learn |
-| **Analysis** | matplotlib, statsmodels, backtesting (0.6+), arch |
+| **LLM Providers** | anthropic, openai (Ollama via HTTP — no pip package needed) |
+| **RAG / Embeddings** | chromadb, sentence-transformers, PyMuPDF, tiktoken |
+| **Analysis** | matplotlib, statsmodels, backtesting (0.6+), arch, scipy, seaborn |
 | **Database** | sqlalchemy ≥ 2.0, psycopg2-binary ≥ 2.9, python-dotenv ≥ 1.0 |
 | **Object Storage** | minio ≥ 7.2 |
 | **Auth** | pyyaml ≥ 6.0 |
 | **Notifications** | plyer |
+| **Agent Protocol** | a2a-sdk\[http-server\] == 0.3.20 (Google Agent-to-Agent) |
 
 ## ⚠️ Disclaimer
 
@@ -592,4 +672,4 @@ This software is provided for **educational and informational purposes only**. I
 
 **Ready to get started? Run `streamlit run app.py` and begin analysing! 🚀📈**
 
-*Last Updated: February 2026*
+*Last Updated: July 2025*

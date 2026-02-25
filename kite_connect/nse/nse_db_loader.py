@@ -16,7 +16,10 @@ import sys
 import glob
 import pandas as pd
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+# Append kite_connect to path (not insert) to avoid shadowing top-level packages
+_kite_root = os.path.dirname(os.path.dirname(__file__))
+if _kite_root not in sys.path:
+    sys.path.append(_kite_root)
 
 from core.config import DOWNLOAD_DIR, TABLE_NAME, DB_NAME
 from core.db_service import get_connection

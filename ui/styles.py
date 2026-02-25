@@ -71,7 +71,7 @@ def get_background_base64() -> Optional[str]:
     Returns:
         Base64 encoded string or None if image doesn't exist
     """
-    bg_path = Path(__file__).parent.parent / "nature_bg.png"
+    bg_path = Path(__file__).parent / "assets" / "nature_bg.png"
     if bg_path.exists():
         with open(bg_path, "rb") as f:
             return base64.b64encode(f.read()).decode()

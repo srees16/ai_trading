@@ -594,7 +594,7 @@ combined_score = sentiment_score × 0.4 + fundamental_score × 0.3 + technical_s
 
 **Health colors**: `SAFE=#00cc44`, `CAUTION=#ffd700`, `DANGER=#e63946`
 
-- CSS: Background image (`nature_bg.png` with white overlay), typography, buttons, layout, footer, data elements
+- CSS: Background image (`ui/assets/nature_bg.png` with white overlay), typography, buttons, layout, footer, data elements
 - `apply_custom_styles()`: Injects all CSS into Streamlit via `st.markdown(unsafe_allow_html=True)`
 
 ### 14.2 Components: `ui/components.py` (~300 lines)
@@ -904,6 +904,20 @@ Each strategy has a corresponding `*_bktest.py` file (standalone scripts, not im
 - `rsi_pattern_recognize_bktest.py`, `shooting_star_bktest.py`, `support_resistance_bktest.py`, `bollinger_band_bktest.py`
 - `pairs_trading_bktest.py`
 
+### 17.8 FX Intraday Strategies (`trading_strategies/fx_intraday/`)
+- `london_breakout_bktest.py` (~300 lines): London session breakout using Tokyo session range for GBP/USD. Thresholds from last Tokyo hour, 50 bps stop-loss, positions cleared at London close.
+- `dual_thrust_bktest.py` (~300 lines): Opening range breakout with configurable lookback (`rg=5`) and trigger multiplier (`param=0.5`). Symmetric thresholds from prior OHLC, supports position reversal, day-end flat.
+
+### 17.9 Derivatives / Options (`trading_strategies/derivatives/`)
+- `options_straddle_bktest.py` (~349 lines): Long straddle strategy on AAPL options via `yf.Ticker.option_chain()`. Entry when `|call − put| < threshold(10)`. V-shaped payoff diagram with breakeven annotations.
+- `vix_calculator.py` (~512 lines): CBOE VIX methodology adapted for equity options. Implements variance swap sigma formula, forward strike calculation, OTM option selection with zero-settle exclusion, and weighted front/rear term VIX computation.
+
+### 17.10 Portfolio Analysis (`trading_strategies/portfolio_analysis/`)
+- `asset_allocation.py` (~240 lines): Markowitz-style portfolio optimisation for quantum computing stocks (RGTI, QBTS, IONQ, NBIS). SLSQP optimisation for max Sharpe and max median return. Dynamic asset allocation with conditional weight switching based on rolling return thresholds.
+
+### 17.11 Risk Modelling (`trading_strategies/risk_modelling/`)
+- `monte_carlo_bktest.py` (~220 lines): Monte Carlo simulation using GBM for stock price forecasting. Train/test split, drift calculation, best-fit selection by minimum std deviation. Accuracy test across 100–1000 simulations showing prediction does not improve with count.
+
 ### 17.7 Shared Backtest Utilities: `trading_strategies/backtest_utils.py` (200 lines)
 - `mdd(series)`: Maximum drawdown (iterative, returns negative float)
 - `candlestick(df, ax, highlight, ...)`: matplotlib candlestick chart with fill_between, optional highlight overlay
@@ -956,5 +970,144 @@ Each strategy has a corresponding `*_bktest.py` file (standalone scripts, not im
 | `storage/` | 3 | File + MinIO object storage |
 | `ui/` | 4 + 7 pages | Streamlit UI components + pages |
 | `strategies/` | 6 | Strategy framework (base, registry, loader, data, utils) |
-| `trading_strategies/` | ~25 | Strategy implementations + backtest scripts + utilities |
+| `trading_strategies/` | ~31 | Strategy implementations + backtest scripts + utilities |
+| `kite_connect/` | 13 | Zerodha live trading + Indian market monitoring |
+| `rag_pipeline/` | 18 | RAG document Q&A + code applicator |
 | `deployment/` | 7 | Docker + cloud deployment |
+
+---
+
+## 21. Kite Connect — Live Indian Market Module (`kite_connect/`)
+
+### 21.1 `kite_connect/zerodha_live.py` (~1326 lines)
+**Purpose:** Main Streamlit dashboard for live Indian stock market monitoring.
+
+| Symbol | Type | Description |
+|--------|------|-------------|
+| `show_live_dashboard()` | Function | Full dashboard: portfolio table, live prices, P&L, market sector heatmap |
+| `show_market_overview()` | Function | NSE index summary (NIFTY 50, BANK NIFTY, etc.) |
+| `show_portfolio_analysis()` | Function | Holdings breakdown with allocation pie chart |
+| `show_order_panel()` | Function | Buy/sell order form with validation |
+| `setup_sidebar()` | Function | Authentication status, refresh controls, theme toggle |
+| CSS animation | Inline | Gradient background with keyframe animation (fixed f-string → string concat) |
+
+### 21.2 `kite_connect/auth/` (OAuth & Token Management)
+- `kite_auth.py` (~195 lines): `KiteAuth` class — OAuth flow wrapper for Kite Connect API. Manages `api_key`, `api_secret`, `access_token` lifecycle. Token caching to file for session persistence.
+- `kite_selenium_auth.py` (~340 lines): `KiteSeleniumAuth` — automated login via Selenium (Chrome/Edge). Handles 2FA TOTP input, redirect URL capture, token extraction. Falls back to manual login on automation failure.
+
+### 21.3 `kite_connect/core/` (Config, DB, Selenium)
+- `config.py` (~76 lines): `KiteConfig` dataclass — API credentials, DB connection string (`livestocks_ind`), Selenium browser preference, file paths.
+- `database_service.py` (~205 lines): `DatabaseService` — PostgreSQL (`psycopg2`) with connection pooling. Methods: `execute_query`, `fetch_all`, `fetch_one`, `save_stock_data` (bulk upsert), `get_latest_prices`.
+- `selenium_service.py` (~273 lines): `SeleniumService` — Chrome/Edge WebDriver lifecycle (headless or visible). Auto-detects installed browsers, manages driver via `webdriver-manager`.
+
+### 21.4 `kite_connect/nse/` (NSE Data)
+- `nse_csv_downloader.py` (~203 lines): Downloads equity bhavcopy CSV from NSE India. Parses delivery data, handles date formatting, saves to local CSV.
+- `nse_data_loader.py` (~169 lines): Loads NSE CSV data into PostgreSQL `livestocks_ind` database. Creates tables if missing, handles schema mapping.
+
+### 21.5 `kite_connect/options/` (Option Chain)
+- `option_chain.py` (~172 lines): Fetches live NSE option chain data using `ThreadPoolExecutor` for concurrent strike price fetching. Displays option chain table with Greeks (Delta, Gamma, Theta, Vega) and OI analysis.
+
+### 21.6 `kite_connect/trading/` (Order Execution & Strategy)
+- `order_service.py` (~155 lines): `OrderService` — wraps Kite Connect order API. Supports market/limit/SL orders, order modification, cancellation, and order book retrieval.
+- `rsi_strategy.py` (~146 lines): `RSIStrategy` — live RSI-based trading. Computes RSI on streaming tick data, generates buy (RSI < 30) / sell (RSI > 70) signals, places orders via `OrderService`.
+
+### 21.7 `kite_connect/setup/`
+- `__init__.py` — package marker
+
+---
+
+## 22. RAG Pipeline — Document Intelligence (`rag_pipeline/`)
+
+### 22.1 `rag_pipeline/config.py` (~150 lines)
+**Purpose:** Central configuration dataclass with 60+ fields.
+
+| Field Group | Key Fields |
+|-------------|------------|
+| Embedding | `embedding_model = "BAAI/bge-base-en-v1.5"`, `embedding_dim = 768` |
+| Chunking | `chunk_size = 512`, `chunk_overlap = 64`, `min_chunk_length = 50` |
+| Retrieval | `retrieval_top_k = 5`, `similarity_threshold = 0.3`, `max_context_tokens = 3000` |
+| LLM | `llm_provider = "ollama"`, `llm_model = "mistral"`, `llm_temperature = 0.2` |
+| Reranker | `rerank_enabled = True`, `rerank_model = "cross-encoder/ms-marco-MiniLM-L-6-v2"`, `rerank_top_k = 3` |
+| Hybrid Search | `hybrid_search_enabled = True`, `hybrid_bm25_weight = 0.3` |
+| Cache | `semantic_cache_enabled = True`, `semantic_cache_threshold = 0.92` |
+
+### 22.2 `rag_pipeline/embeddings.py` (~250 lines)
+`EmbeddingService` — sentence-transformers wrapper with batch encoding, normalisation, and similarity computation. Caches the model in `st.session_state`.
+
+### 22.3 `rag_pipeline/vector_store.py` (~300 lines)
+`VectorStoreManager` — ChromaDB `PersistentClient` wrapper. HNSW cosine index with configurable M/ef. CRUD: `add_documents`, `query`, `delete_by_metadata`, `delete_by_ids`. Collection lifecycle: `reset_collection`, `get_collection_stats`, `list_sources`.
+
+### 22.4 `rag_pipeline/pdf_ingestion.py` (~1280 lines)
+`IngestionService` — Structure-aware PDF chunking via PyMuPDF (fitz).
+- Layout-aware text extraction preserving tables, headings, lists
+- `RecursiveCharacterTextSplitter` with Markdown-aware separators
+- Metadata: page number, source, section heading, token count, file hash
+- Deduplication via file hash (skips already-indexed PDFs)
+- Progress callbacks for Streamlit spinners
+
+### 22.5 `rag_pipeline/hybrid_search.py` (~230 lines)
+`HybridSearcher` — Reciprocal Rank Fusion (RRF) of BM25 + vector similarity.
+- BM25 via `rank_bm25.BM25Okapi` over stored chunk texts
+- RRF formula: $\text{score}(d) = \sum_r \frac{1}{k + \text{rank}_r(d)}$ with $k=60$
+- Configurable BM25 weight (default 0.3)
+
+### 22.6 `rag_pipeline/reranker.py` (~190 lines)
+`Reranker` — Cross-encoder re-ranking using `ms-marco-MiniLM-L-6-v2`. Scores query-document pairs and returns top-k by relevance. Falls back to original ranking on error.
+
+### 22.7 `rag_pipeline/query_rewriter.py` (~160 lines)
+`QueryRewriter` — LLM-based query expansion. Generates alternative phrasings to improve recall. Caches rewrites per query.
+
+### 22.8 `rag_pipeline/semantic_cache.py` (~180 lines)
+`SemanticCache` — Embedding-based answer cache. Returns cached answer when cosine similarity ≥ 0.92 threshold. Stores query embedding + answer + timestamp. Supports TTL expiry and manual invalidation.
+
+### 22.9 `rag_pipeline/llm_service.py` (~844 lines)
+`LLMService` — Multi-provider LLM abstraction.
+
+| Provider | Model | Notes |
+|----------|-------|-------|
+| Ollama | `mistral` (default) | Local inference via HTTP API |
+| Anthropic | `claude-sonnet-4-20250514` | API key required |
+| OpenAI | `gpt-4o` | API key required |
+
+Features: system prompt injection, token budget enforcement, streaming support, retry with exponential backoff.
+
+### 22.10 `rag_pipeline/query_engine.py` (~968 lines)
+`QueryEngine` — 10-stage RAG pipeline:
+1. Semantic cache check
+2. Query rewriting
+3. Hybrid retrieval (BM25 + vector)
+4. Tiered FAQ check
+5. Cross-encoder reranking
+6. Context assembly (token budget)
+7. Source deduplication
+8. LLM generation with citations
+9. Response post-processing
+10. Cache storage
+
+### 22.11 `rag_pipeline/evaluation.py` (~583 lines)
+`RAGEvaluator` — IR metrics (Hit Rate, MRR, NDCG, MAP) + LLM-as-Judge (faithfulness, relevance, completeness scored 1–5). Generates HTML evaluation reports.
+
+### 22.12 `rag_pipeline/tiered_retrieval.py` (~200 lines)
+`TieredRetriever` — FAQ layer with dedicated ChromaDB collection. Returns FAQ answer when similarity ≥ 0.90, bypassing full RAG pipeline.
+
+### 22.13 `rag_pipeline/token_counter.py` (~135 lines)
+Token counting via tiktoken (with whitespace×1.3 heuristic fallback). Functions: `count_tokens`, `truncate_to_budget`, `budget_chunks`.
+
+### 22.14 `rag_pipeline/triplet_export.py` (~270 lines)
+`TripletExporter` — Generates training triplets (query, positive, negative) for contrastive embedding fine-tuning. Exports as JSONL or CSV.
+
+### 22.15 `rag_pipeline/ui_components.py` (~657 lines)
+Reusable Streamlit widgets: PDF uploader, query input, response renderer (with code block handling and thumbs up/down feedback), knowledge base manager, "Apply Code to Strategy" panel.
+
+### 22.16 `rag_pipeline/code_applier.py` (~492 lines)
+`CodeApplier` — Extracts code blocks from RAG answers and applies them to strategy files.
+- LLM-assisted intelligent merging of code snippets into existing files
+- Timestamped backup with `py_compile` syntax verification (auto-rollback on error)
+- JSONL audit log of all applied patches
+- One-click revert to most recent backup
+
+### 22.17 `rag_pipeline/perf_trace.py` (~100 lines)
+Performance tracing decorator and context manager for pipeline stage timing. Logs stage name, duration, and metadata.
+
+### 22.18 `rag_pipeline/rag_page.py` (~150 lines)
+Streamlit page entry point for the RAG interface. Wires together all UI components and initialises session state singletons.

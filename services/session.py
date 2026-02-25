@@ -56,6 +56,19 @@ def _init_navigation_state():
         st.session_state.current_page = 'main'
 
 
+def _init_rag_state():
+    """Initialize RAG pipeline session state variables."""
+    defaults = {
+        'rag_enabled': True,
+        'rag_query': '',
+        'rag_response': None,
+    }
+
+    for key, default_value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = default_value
+
+
 def _init_cache():
     """
     Initialise the ``SessionCache`` singleton.

@@ -14,8 +14,6 @@ from utils import parse_ticker_csv, validate_tickers, create_sample_csv
 from ui.components import (
     render_header,
     render_footer,
-    render_features_section,
-    render_how_to_use_section,
     render_navigation_buttons,
 )
 
@@ -28,12 +26,6 @@ def render_main_page():
     
     st.markdown("---")
     
-    # Welcome screen - features section
-    render_features_section()
-    render_how_to_use_section()
-    
-    st.markdown("---")
-    
     # Render control panel
     render_control_panel()
     
@@ -43,8 +35,6 @@ def render_main_page():
 
 def render_control_panel():
     """Render the control panel with stock selection and settings."""
-    st.subheader("📊 Stock Selection & Settings")
-    
     col1, col2 = st.columns([1, 1])
     
     tickers = []
@@ -58,7 +48,6 @@ def render_control_panel():
     st.session_state.tickers = tickers
     
     # Run Analysis section — full width below the settings
-    st.markdown("---")
     run_clicked = _render_run_controls(tickers)
     
     if run_clicked and len(tickers) > 0:
@@ -217,13 +206,6 @@ def _render_output_settings():
         help="Append results to existing file instead of overwriting"
     )
     Config.APPEND_MODE = append_mode
-    
-    st.markdown("---")
-    st.markdown("**Data Sources**")
-    st.caption(
-        "News is scraped from Yahoo Finance, Finviz, Investing.com, "
-        "TradingView, and r/WallStreetBets."
-    )
 
 
 def _render_run_controls(tickers: List[str]) -> bool:

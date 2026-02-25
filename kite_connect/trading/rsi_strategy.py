@@ -331,7 +331,10 @@ def scan_watchlist(kite: KiteConnect, symbols: list[str],
 
 if __name__ == "__main__":
     import json
-    from auth.kite_session import create_kite_session
+    try:
+        from kite_connect.auth.kite_session import create_kite_session
+    except ImportError:
+        from auth.kite_session import create_kite_session
     from core.db_service import get_connection
 
     logging.basicConfig(level=logging.INFO)

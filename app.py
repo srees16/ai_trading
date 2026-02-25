@@ -13,7 +13,7 @@ import streamlit as st
 import logging
 from ui.styles import apply_custom_styles
 from services.session import initialize_session_state
-from auth import check_authentication, render_user_menu
+from auth.authenticator import check_authentication, render_user_menu
 
 # Configure logging
 logging.basicConfig(
@@ -45,9 +45,49 @@ def main():
     
     # Render user menu (logout button, user info)
     render_user_menu()
-    
-    # Route to appropriate page — imports are deferred so the login
-    # page renders without waiting for heavy strategy / ML deps.
+
+    # ── Top-level app selector ──────────────────────────────────
+    # Displayed as a compact radio bar right after login.
+    APP_OPTIONS = {
+        "trading_platform": "📈 US Stocks",
+        "live_stocks":      "📈 Ind Stocks",
+        "rag_engine":       "📚 RAG Engine",
+    }
+
+    current_app = st.session_state.get("current_app", "trading_platform")
+
+    selected_app = st.radio(
+        "Select Application",
+        options=list(APP_OPTIONS.keys()),
+        format_func=lambda k: APP_OPTIONS[k],
+        index=list(APP_OPTIONS.keys()).index(current_app),
+        horizontal=True,
+        key="app_selector",
+        label_visibility="collapsed",
+    )
+
+    if selected_app != current_app:
+        st.session_state["current_app"] = selected_app
+        # Reset sub-page when switching apps
+        st.session_state["current_page"] = "main"
+        st.rerun()
+
+    # ── Route to selected application ───────────────────────────
+    if selected_app == "live_stocks":
+        from kite_connect.zerodha_live import render_live_dashboard
+        render_live_dashboard()
+
+    elif selected_app == "rag_engine":
+        from rag_pipeline.rag_page import render_rag_page
+        render_rag_page()
+
+    else:
+        # Default: Trading Platform with sub-page routing
+        _route_trading_platform()
+
+
+def _route_trading_platform():
+    """Route to the appropriate Trading Platform sub-page."""
     current_page = st.session_state.get('current_page', 'main')
 
     if current_page == 'analysis':

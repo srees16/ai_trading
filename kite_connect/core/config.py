@@ -32,7 +32,7 @@ DOWNLOAD_DIR = os.path.join(os.path.expanduser("~"), "Downloads")
 INDEX_GROUPS = ["NIFTY50", "NIFTYBANK", "NIFTYIT", "NIFTYENERGY"]
 
 # ── Streamlit ──────────────────────────────────────────────────
-REFRESH_INTERVAL = 30  # seconds between auto-refresh
+REFRESH_INTERVAL = 10  # seconds between auto-refresh
 
 # ── Paths ──────────────────────────────────────────────────────
 KITE_APP_FILE = os.path.join(

@@ -1,6 +1,0 @@
-[server]
-fileWatcherType = "none"
-port = 9090
-
-[browser]
-gatherUsageStats = false

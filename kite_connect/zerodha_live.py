@@ -25,12 +25,11 @@ if _PROJECT_ROOT not in sys.path:
 from kiteconnect import KiteConnect, exceptions as kite_exceptions
 from core.config import REFRESH_INTERVAL
 from core.db_service import get_connection
-from auth.kite_session import create_kite_session
+from kite_connect.auth.kite_session import create_kite_session
 from trading.order_service import place_order, get_order_book, get_positions, get_holdings, cancel_order
 from trading.rsi_strategy import scan_watchlist
 from options.option_chain import discover_expiries, fetch_option_chain, INDEX_META
 from ui.components import load_logo_base64_small
-from ui.styles import get_background_css
 
 
 # ── Kite Connect Session ───────────────────────────────────────
@@ -168,29 +167,17 @@ def fetch_realtime_quotes(kite, stock_symbols):
 
 
 # ── Main App ───────────────────────────────────────────────────
-def main():
-    st.set_page_config(page_title="Live Stocks - India", page_icon="📈", layout="wide")
+def render_live_dashboard():
+    """
+    Render the live Indian stock market dashboard.
 
-    # ── Custom CSS for enterprise look ──
-    _bg_css = get_background_css()
-    _bg_block = _bg_css if _bg_css else ""
-    st.markdown(f"""
+    Can be called from the main app router (app.py) or run standalone.
+    Does NOT call st.set_page_config — the caller is responsible for that.
+    """
+
+    # ── Page-specific CSS (shared base styles come from apply_custom_styles) ──
+    st.markdown("""
     <style>
-        {_bg_block}
-        /* ── Global compact overrides ── */
-        .block-container { padding-top: 1rem; padding-bottom: 0.5rem; }
-        .stMarkdown, .stText, p, span, label, li { font-size: 0.82rem !important; line-height: 1.3 !important; }
-        h1, h2, h3, h4 { margin-top: 0 !important; margin-bottom: 0.2rem !important; }
-        /* Shrink emoji sizing globally */
-        .stMarkdown img.emoji, .stButton img.emoji { height: 0.9em !important; width: 0.9em !important; }
-        /* Reduce vertical gaps between Streamlit elements */
-        div[data-testid="stVerticalBlock"] > div { padding-top: 0 !important; padding-bottom: 0 !important; }
-        div[data-testid="stVerticalBlockBorderWrapper"] { gap: 0.25rem !important; }
-        .element-container { margin-bottom: 0.15rem !important; }
-        /* Reduce expander internal padding */
-        details[data-testid="stExpander"] summary { padding: 0.3rem 0.6rem !important; font-size: 0.8rem !important; }
-        details[data-testid="stExpander"] > div { padding: 0.3rem 0.6rem !important; }
-
         /* Header bar styling */
         .header-bar {
             background: linear-gradient(135deg, #0d1117 0%, #161b22 40%, #0f3460 100%);
@@ -334,15 +321,6 @@ def main():
             box-shadow: 0 1px 2px rgba(0,0,0,0.08);
         }
 
-        /* Button styling */
-        .stButton > button {
-            border-radius: 6px;
-            font-weight: 600;
-            font-size: 0.75rem !important;
-            padding: 0.25rem 0.7rem;
-            transition: all 0.15s;
-        }
-
         /* Move sidebar to RIGHT side of the page */
         [data-testid="stSidebar"] {
             left: auto !important;
@@ -426,27 +404,6 @@ def main():
             right: 0.5rem !important;
         }
 
-        /* Center and constrain dataframe tables */
-        [data-testid="stDataFrame"] {
-            max-width: 900px;
-            margin: 0 auto;
-        }
-        [data-testid="stDataFrame"] table {
-            font-size: 0.78rem !important;
-        }
-
-        /* Tighter input widgets */
-        .stTextInput > div, .stSelectbox > div, .stNumberInput > div {
-            margin-bottom: 0.1rem !important;
-        }
-        .stTextInput input, .stNumberInput input {
-            font-size: 0.8rem !important;
-            padding: 0.25rem 0.5rem !important;
-        }
-        .stSelectbox [data-baseweb="select"] {
-            font-size: 0.8rem !important;
-        }
-
         /* Control bar: vertically center all widgets in a row */
         .ctrl-row [data-testid="stHorizontalBlock"] { gap: 0.5rem !important; }
         .ctrl-row [data-testid="stVerticalBlock"] {
@@ -517,12 +474,12 @@ def main():
     st.markdown(f"""
     <div class="header-bar">
         <div>
-            <h1>{_logo_html} 📈 Indian Stock Market</h1>
+            <h1>{_logo_html} Centurion Capital LLC</h1>
             <p class="subtitle">Real-time data · Zerodha Kite Connect</p>
         </div>
         <div style="text-align:right">
             <div class="live-pill {pill_class}"><span class="live-dot"></span> {pill_label}</div>
-            <div class="live-pill pill-open" style="margin-top:4px"><span class="live-dot"></span> Online — {kite_status}</div>
+            <div class="live-pill pill-open" style="margin-top:4px"><span class="live-dot"></span> Online</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -547,7 +504,7 @@ def main():
         with c1:
             refresh_secs = st.select_slider(
                 "Refresh interval ⏱",
-                options=[10, 15, 20, 30, 45, 60, 90, 120],
+                options=[5, 10, 15, 20, 30, 45, 60],
                 value=REFRESH_INTERVAL,
                 key="refresh_secs",
             )
@@ -570,7 +527,7 @@ def main():
         group_stocks_map[group_id] = names
         all_stock_names.update(names)
     sorted_stock_list = sorted(all_stock_names)
-    conn.close()  # fragment opens its own connection
+    conn.close()
 
     # ── Right sidebar: Place Order panel (isolated fragment) ──
     @st.fragment
@@ -1322,4 +1279,7 @@ def _render_option_chain_tab(kite):
 
 
 if __name__ == "__main__":
-    main()
+    st.set_page_config(page_title="Live Stocks - India", page_icon="📈", layout="wide")
+    from ui.styles import apply_custom_styles
+    apply_custom_styles()
+    render_live_dashboard()
