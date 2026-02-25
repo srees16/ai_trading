@@ -1,10 +1,15 @@
+feedback:
+        include tab under stocks to view all stocks
+        enable placing order from ticker on holdings page
+        name the tables on UI and under holdings
+
 1. Verify tables and results that can be saved to db
 2. Explore API implemention
 3. kite app has hardcoded credentials and api key details, access them via .env
-4. login page must have US stocks, Ind stocks, crypto radio button
+4. login page must have US stocks, Ind stocks, crypto radio button and same workflow/pipeline for cross-market isolation
 5. collate common utilities like strategies, UI, auth, db persistence (minio & postgresql) and branch out US stocks, Ind stocks but they need to import above from common location
 6. Explore Agentic implementation - types of agents:
-    orchestrator agent
+    planner agent
     webscraping agent
     news & sentiment agent
     data ingestion agent
@@ -16,11 +21,22 @@
 
 Tech stack:
     agent framework - langgraph
-    LLM - claude opus 4.6
+    LLM - claude opus 4.6 (paid)
     vector search - ChromaDB or pgvector
     Message Queue - Redis Streams
     Scheduler - APScheduler or Celery Beat
     Web Scraping - crawl4ai + BeautifulSoup
+
+Message Queue architecture:
+[Client]
+    ↓
+[API]
+    ↓
+[Message Queue]
+    ↓
+[Worker(s)]
+    ↓
+[Database / Index / LLM]
 
 
 User says: "Find oversold NIFTY 50 stocks with positive news sentiment and suggest a trade"

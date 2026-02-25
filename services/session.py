@@ -14,7 +14,7 @@ def initialize_session_state():
     _init_analysis_state()
     _init_backtest_state()
     _init_navigation_state()
-    _init_cache()
+    _init_rag_state()
 
 
 def _init_analysis_state():
