@@ -30,7 +30,7 @@ class DatabaseConfig:
         self.pool_size = int(os.getenv('CENTURION_DB_POOL_SIZE', os.getenv('DB_POOL_SIZE', '10')))
         self.max_overflow = int(os.getenv('CENTURION_DB_MAX_OVERFLOW', os.getenv('DB_MAX_OVERFLOW', '20')))
         self.pool_timeout = int(os.getenv('CENTURION_DB_POOL_TIMEOUT', os.getenv('DB_POOL_TIMEOUT', '30')))
-        self.pool_recycle = int(os.getenv('CENTURION_DB_POOL_RECYCLE', os.getenv('DB_POOL_RECYCLE', '3600')))
+        self.pool_recycle = int(os.getenv('CENTURION_DB_POOL_RECYCLE', os.getenv('DB_POOL_RECYCLE', '1800')))
         self.echo_sql = os.getenv('DB_ECHO_SQL', 'false').lower() == 'true'
         self.ssl_mode = os.getenv('DB_SSL_MODE', 'prefer')
         

@@ -12,11 +12,10 @@ from typing import List
 
 from dotenv import load_dotenv
 
-# Load .env from the rag_pipeline directory (then project root as fallback)
+# Load .env from the project root (single source of truth)
 _MODULE_DIR = Path(__file__).resolve().parent
 _PROJECT_ROOT = _MODULE_DIR.parent
 
-load_dotenv(_MODULE_DIR / ".env", override=False)
 load_dotenv(_PROJECT_ROOT / ".env", override=False)
 
 # Default persistent directories

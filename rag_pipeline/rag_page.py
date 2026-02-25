@@ -30,6 +30,8 @@ if _PROJECT_ROOT not in sys.path:
 import streamlit as st
 import logging
 
+from ui.components import load_logo_base64_small
+from ui.styles import get_background_css
 from rag_pipeline.ui_components import (
     render_rag_toggle,
     render_pdf_uploader,
@@ -48,6 +50,13 @@ def render_rag_page() -> None:
 
     Can be called from centurion_core's page router or run standalone.
     """
+    # ── Shared background image ──
+    _bg_css = get_background_css()
+    if _bg_css:
+        st.markdown(f"<style>{_bg_css}</style>", unsafe_allow_html=True)
+
+    _logo_html = load_logo_base64_small()
+
     st.markdown(
         """
         <style>
@@ -189,8 +198,12 @@ def render_rag_page() -> None:
             font-size: 0.88em;
         }
         </style>
-        <h2 style="text-align:center; margin:0 0 0.3rem 0; padding:0;">RAG Engine</h2>
         """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        f'<h2 style="text-align:center; margin:0 0 0.3rem 0; padding:0;">{_logo_html} RAG Engine</h2>',
         unsafe_allow_html=True,
     )
 

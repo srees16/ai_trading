@@ -1,0 +1,7 @@
+use below prompts to verify output of RAG from source "Advances in Financial ML"
+
+give a method on how to form a gaps series, detract it from prices? p.37
+what is cusum filter, show an example of how i can implement the symmetric CUSUM filter? p.39
+how can i find daily volatility estimates, is there a function that i can use? p.44
+what is triple barrier labeling method? how can i apply using python? p.45, snippet 3.2
+how can i expand getEvents to incorporate meta-labelling p.50, snippet 3.6

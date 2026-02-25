@@ -17,6 +17,10 @@ logging.getLogger("tornado.general").setLevel(logging.CRITICAL)
 
 # Add kite_connect folder to path so we can import shared modules
 sys.path.insert(0, os.path.dirname(__file__))
+# Add project root so we can import shared ui utilities
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 from kiteconnect import KiteConnect, exceptions as kite_exceptions
 from core.config import REFRESH_INTERVAL
@@ -25,6 +29,8 @@ from auth.kite_session import create_kite_session
 from trading.order_service import place_order, get_order_book, get_positions, get_holdings, cancel_order
 from trading.rsi_strategy import scan_watchlist
 from options.option_chain import discover_expiries, fetch_option_chain, INDEX_META
+from ui.components import load_logo_base64_small
+from ui.styles import get_background_css
 
 
 # ── Kite Connect Session ───────────────────────────────────────
@@ -166,8 +172,11 @@ def main():
     st.set_page_config(page_title="Live Stocks - India", page_icon="📈", layout="wide")
 
     # ── Custom CSS for enterprise look ──
-    st.markdown("""
+    _bg_css = get_background_css()
+    _bg_block = _bg_css if _bg_css else ""
+    st.markdown(f"""
     <style>
+        {_bg_block}
         /* ── Global compact overrides ── */
         .block-container { padding-top: 1rem; padding-bottom: 0.5rem; }
         .stMarkdown, .stText, p, span, label, li { font-size: 0.82rem !important; line-height: 1.3 !important; }
@@ -502,11 +511,13 @@ def main():
         st.info("Run `py kite_token_store.py` first to generate a valid request token, then click Reconnect.")
         return
 
+    _logo_html = load_logo_base64_small()
+
     # ── Header bar (rendered after Kite login so kite_status is available) ──
     st.markdown(f"""
     <div class="header-bar">
         <div>
-            <h1>📈 Indian Stock Market</h1>
+            <h1>{_logo_html} 📈 Indian Stock Market</h1>
             <p class="subtitle">Real-time data · Zerodha Kite Connect</p>
         </div>
         <div style="text-align:right">

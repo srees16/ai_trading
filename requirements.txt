@@ -28,3 +28,6 @@ minio
 scipy
 seaborn
 Backtesting
+chromadb
+sentence-transformers
+PyMuPDF
