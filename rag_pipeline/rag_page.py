@@ -1,12 +1,8 @@
 """
 RAG Pipeline — Standalone Streamlit Page for Centurion Capital LLC.
 
-This is a **placeholder page** that will later be replaced / integrated
-into the main centurion_core UI. It demonstrates the full RAG workflow:
-    1. Toggle RAG on/off
-    2. Upload & ingest PDFs
-    3. Query the knowledge base
-    4. View / manage indexed documents
+Usage:
+    streamlit run rag_page.py
 
 Integration notes:
     The page delegates all rendering to reusable widgets in
@@ -55,6 +51,69 @@ def render_rag_page() -> None:
     st.markdown(
         """
         <style>
+        /* ── Compact layout — no wasted space ── */
+        .block-container {
+            padding-top: 2.5rem !important;
+            padding-bottom: 0.5rem !important;
+        }
+        header[data-testid="stHeader"] {
+            height: 0px !important;
+            min-height: 0px !important;
+            padding: 0 !important;
+        }
+        #MainMenu, footer {
+            display: none !important;
+        }
+
+        /* Reduce vertical gaps between widgets */
+        .stElementContainer,
+        div[data-testid="stVerticalBlock"] > div {
+            margin-bottom: 0px !important;
+            padding-bottom: 0px !important;
+        }
+        div[data-testid="stVerticalBlock"] {
+            gap: 0.45rem !important;
+        }
+
+        /* ── Center content with max-width ── */
+        .block-container > div {
+            max-width: 720px;
+            margin: 0 auto;
+        }
+
+        /* ── Source dropdown: fixed width ── */
+        div[data-testid="stSelectbox"] {
+            width: 420px !important;
+            max-width: 100% !important;
+        }
+        div[data-testid="stSelectbox"] > div {
+            width: 420px !important;
+        }
+        div[data-testid="stSelectbox"] [data-baseweb="select"] {
+            width: 100% !important;
+        }
+        div[data-testid="stSelectbox"] [data-baseweb="select"] > div {
+            width: 100% !important;
+        }
+        /* Disable tooltip on dropdown options */
+        div[data-testid="stSelectbox"] [data-baseweb="select"] li[role="option"],
+        div[data-testid="stSelectbox"] [data-baseweb="select"] li[role="option"] * {
+            pointer-events: auto;
+            title: none;
+        }
+        ul[role="listbox"] li[role="option"]::after,
+        ul[role="listbox"] li[role="option"]::before {
+            display: none !important;
+        }
+        ul[role="listbox"] li[role="option"] [data-baseweb="tooltip"],
+        ul[role="listbox"] li[role="option"] [role="tooltip"],
+        div[data-baseweb="tooltip"] {
+            display: none !important;
+            visibility: hidden !important;
+            opacity: 0 !important;
+        }
+
+        /* ── Green submit button ── */
         div.stButton > button {
             background-color: #28a745;
             color: white;
@@ -71,8 +130,66 @@ def render_rag_page() -> None:
             color: white;
             border: none;
         }
+
+        /* ── Multi-color spinner ── */
+        @keyframes centurion-spin {
+            0%   { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        @keyframes centurion-color {
+            0%   { border-top-color: #3498db; }
+            25%  { border-top-color: #e74c3c; }
+            50%  { border-top-color: #f1c40f; }
+            75%  { border-top-color: #2ecc71; }
+            100% { border-top-color: #3498db; }
+        }
+        .centurion-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(0,0,0,0.1);
+            border-top: 3px solid #3498db;
+            border-radius: 50%;
+            animation: centurion-spin 0.8s linear infinite,
+                       centurion-color 2.4s ease-in-out infinite;
+            vertical-align: middle;
+        }
+        .spinner-wrapper {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 12px 0;
+        }
+        .spinner-text {
+            font-size: 0.92rem;
+            color: #555;
+            font-weight: 500;
+            font-style: italic;
+        }
+
+        /* ── Code block styling ── */
+        pre, code {
+            font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Monaco', monospace !important;
+        }
+        div[data-testid="stCode"] {
+            border-radius: 8px;
+            margin: 0.5rem 0;
+        }
+        div[data-testid="stCode"] pre {
+            padding: 1rem !important;
+            font-size: 0.88rem !important;
+            line-height: 1.5 !important;
+        }
+        /* Inline code in markdown */
+        .stMarkdown code {
+            background-color: rgba(100, 100, 100, 0.15);
+            padding: 0.15em 0.4em;
+            border-radius: 4px;
+            font-size: 0.88em;
+        }
         </style>
-        <h2 style="text-align:center; margin-bottom:0;">Strategy KB</h2>
+        <h2 style="text-align:center; margin:0 0 0.3rem 0; padding:0;">RAG Engine</h2>
         """,
         unsafe_allow_html=True,
     )
@@ -80,17 +197,55 @@ def render_rag_page() -> None:
     # ---- RAG toggle (always visible) ------------------------------------
     rag_on = render_rag_toggle()
 
+    # ---- Knowledge-base source selector (radio buttons) -----------------
+    selected_source = None
+    if rag_on:
+        from rag_pipeline.ui_components import render_kb_source_selector
+        selected_source = render_kb_source_selector()
+
     # ---- Query section (always visible) ---------------------------------
     query_text = render_query_input()
 
-    if st.button("Search", type="primary", key="rag_search_btn"):
+    # Check for re-submit trigger from the response UI
+    _resubmit_query = st.session_state.pop("rag_resubmit_query", None)
+    _is_resubmit = _resubmit_query is not None
+    if _is_resubmit:
+        query_text = _resubmit_query
+
+    if _is_resubmit or st.button("Submit Query", type="primary", key="rag_search_btn"):
         if not query_text:
             st.warning("Please enter a query first.")
         elif rag_on:
-            with st.spinner("Searching knowledge base..."):
-                engine = _get_query_engine()
-                response = engine.query(query_text)
-                render_rag_response(response)
+            # Show multi-color spinner with a creative line
+            import random as _rnd
+            _SPINNER_LINES = [
+                "Diving deep into your documents…",
+                "Summoning insights from the vault…",
+                "Connecting the dots across pages…",
+                "Mining your knowledge base for gold…",
+                "Crunching context at light speed…",
+                "Reading between the lines for you…",
+                "Paging through the archives…",
+                "Hunting for the perfect answer…",
+                "Cross-referencing your strategy docs…",
+                "Assembling intelligence from the KB…",
+            ]
+            spinner_placeholder = st.empty()
+            spinner_placeholder.markdown(
+                '<div class="spinner-wrapper">'
+                '  <div class="centurion-spinner"></div>'
+                f'  <span class="spinner-text">{_rnd.choice(_SPINNER_LINES)}</span>'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+            engine = _get_query_engine()
+            source_kw = {"source_filter": selected_source} if selected_source else {}
+            if _is_resubmit:
+                source_kw["skip_cache"] = True
+                st.info("🔄 Re-submitting query for a fresh response…")
+            response = engine.query(query_text, **source_kw)
+            spinner_placeholder.empty()
+            render_rag_response(response)
         else:
             # RAG disabled — pass query directly to LLM without retrieval
             from rag_pipeline.query_engine import RAGResponse
