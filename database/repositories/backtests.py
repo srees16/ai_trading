@@ -92,6 +92,7 @@ class BacktestRepository(BaseRepository[BacktestResult]):
     def get_strategy_summary(self, strategy_id: str) -> Dict[str, Any]:
         """
         Get summary statistics for a strategy's backtest history.
+        Uses a single SQL aggregate query instead of loading all rows.
         
         Args:
             strategy_id: Strategy identifier
@@ -99,14 +100,22 @@ class BacktestRepository(BaseRepository[BacktestResult]):
         Returns:
             Summary dict with aggregated metrics
         """
-        results = self.session.query(BacktestResult).filter(
+        result = self.session.query(
+            func.min(BacktestResult.strategy_name).label('strategy_name'),
+            func.count(BacktestResult.id).label('total_backtests'),
+            func.avg(BacktestResult.total_return).label('avg_return'),
+            func.avg(BacktestResult.sharpe_ratio).label('avg_sharpe'),
+            func.max(BacktestResult.total_return).label('best_return'),
+            func.min(BacktestResult.total_return).label('worst_return'),
+            func.avg(BacktestResult.win_rate).label('avg_win_rate'),
+        ).filter(
             and_(
                 BacktestResult.strategy_id == strategy_id,
                 BacktestResult.success == True
             )
-        ).all()
+        ).first()
         
-        if not results:
+        if not result or not result.total_backtests:
             return {
                 'strategy_id': strategy_id,
                 'total_backtests': 0,
@@ -116,36 +125,54 @@ class BacktestRepository(BaseRepository[BacktestResult]):
                 'worst_return': None
             }
         
-        returns = [r.total_return for r in results if r.total_return is not None]
-        sharpes = [r.sharpe_ratio for r in results if r.sharpe_ratio is not None]
-        
         return {
             'strategy_id': strategy_id,
-            'strategy_name': results[0].strategy_name,
-            'total_backtests': len(results),
-            'successful_backtests': sum(1 for r in results if r.success),
-            'avg_return': sum(returns) / len(returns) if returns else None,
-            'avg_sharpe': sum(sharpes) / len(sharpes) if sharpes else None,
-            'best_return': max(returns) if returns else None,
-            'worst_return': min(returns) if returns else None,
-            'avg_win_rate': sum(r.win_rate for r in results if r.win_rate) / len([r for r in results if r.win_rate]),
+            'strategy_name': result.strategy_name,
+            'total_backtests': result.total_backtests,
+            'successful_backtests': result.total_backtests,  # already filtered
+            'avg_return': float(result.avg_return) if result.avg_return is not None else None,
+            'avg_sharpe': float(result.avg_sharpe) if result.avg_sharpe is not None else None,
+            'best_return': float(result.best_return) if result.best_return is not None else None,
+            'worst_return': float(result.worst_return) if result.worst_return is not None else None,
+            'avg_win_rate': float(result.avg_win_rate) if result.avg_win_rate is not None else None,
         }
     
     def get_all_strategies_summary(self) -> List[Dict[str, Any]]:
         """
-        Get summary for all strategies.
+        Get summary for all strategies in a single GROUP BY query.
+        Eliminates the previous N+1 pattern.
         
         Returns:
             List of strategy summaries
         """
-        # Get distinct strategy IDs
-        strategy_ids = self.session.query(
+        rows = self.session.query(
+            BacktestResult.strategy_id,
+            func.min(BacktestResult.strategy_name).label('strategy_name'),
+            func.count(BacktestResult.id).label('total_backtests'),
+            func.avg(BacktestResult.total_return).label('avg_return'),
+            func.avg(BacktestResult.sharpe_ratio).label('avg_sharpe'),
+            func.max(BacktestResult.total_return).label('best_return'),
+            func.min(BacktestResult.total_return).label('worst_return'),
+            func.avg(BacktestResult.win_rate).label('avg_win_rate'),
+        ).filter(
+            BacktestResult.success == True
+        ).group_by(
             BacktestResult.strategy_id
-        ).distinct().all()
+        ).all()
         
         return [
-            self.get_strategy_summary(sid[0])
-            for sid in strategy_ids
+            {
+                'strategy_id': r.strategy_id,
+                'strategy_name': r.strategy_name,
+                'total_backtests': r.total_backtests,
+                'successful_backtests': r.total_backtests,
+                'avg_return': float(r.avg_return) if r.avg_return is not None else None,
+                'avg_sharpe': float(r.avg_sharpe) if r.avg_sharpe is not None else None,
+                'best_return': float(r.best_return) if r.best_return is not None else None,
+                'worst_return': float(r.worst_return) if r.worst_return is not None else None,
+                'avg_win_rate': float(r.avg_win_rate) if r.avg_win_rate is not None else None,
+            }
+            for r in rows
         ]
     
     def get_recent_backtests(
@@ -177,7 +204,8 @@ class BacktestRepository(BaseRepository[BacktestResult]):
         end_date: datetime = None
     ) -> Dict[str, Any]:
         """
-        Compare multiple strategies side by side.
+        Compare multiple strategies side by side in a single SQL query.
+        Eliminates the previous N+1 loop pattern.
         
         Args:
             strategy_ids: List of strategy IDs to compare
@@ -188,39 +216,43 @@ class BacktestRepository(BaseRepository[BacktestResult]):
         Returns:
             Comparison data for all strategies
         """
-        comparison = {'strategies': []}
-        
-        for strategy_id in strategy_ids:
-            query = self.session.query(BacktestResult).filter(
-                and_(
-                    BacktestResult.strategy_id == strategy_id,
-                    BacktestResult.success == True
-                )
+        query = self.session.query(
+            BacktestResult.strategy_id,
+            func.min(BacktestResult.strategy_name).label('strategy_name'),
+            func.count(BacktestResult.id).label('backtest_count'),
+            func.avg(BacktestResult.total_return).label('avg_return'),
+            func.avg(BacktestResult.sharpe_ratio).label('avg_sharpe'),
+            func.avg(BacktestResult.max_drawdown).label('avg_drawdown'),
+            func.max(BacktestResult.total_return).label('best_return'),
+            func.min(BacktestResult.total_return).label('worst_return'),
+        ).filter(
+            and_(
+                BacktestResult.strategy_id.in_(strategy_ids),
+                BacktestResult.success == True
             )
-            
-            if ticker:
-                query = query.filter(BacktestResult.tickers.contains([ticker.upper()]))
-            if start_date:
-                query = query.filter(BacktestResult.start_date >= start_date)
-            if end_date:
-                query = query.filter(BacktestResult.end_date <= end_date)
-            
-            results = query.all()
-            
-            if results:
-                returns = [r.total_return for r in results if r.total_return]
-                sharpes = [r.sharpe_ratio for r in results if r.sharpe_ratio]
-                drawdowns = [r.max_drawdown for r in results if r.max_drawdown]
-                
-                comparison['strategies'].append({
-                    'strategy_id': strategy_id,
-                    'strategy_name': results[0].strategy_name,
-                    'backtest_count': len(results),
-                    'avg_return': sum(returns) / len(returns) if returns else None,
-                    'avg_sharpe': sum(sharpes) / len(sharpes) if sharpes else None,
-                    'avg_drawdown': sum(drawdowns) / len(drawdowns) if drawdowns else None,
-                    'best_return': max(returns) if returns else None,
-                    'worst_return': min(returns) if returns else None,
-                })
+        )
         
-        return comparison
+        if ticker:
+            query = query.filter(BacktestResult.tickers.contains([ticker.upper()]))
+        if start_date:
+            query = query.filter(BacktestResult.start_date >= start_date)
+        if end_date:
+            query = query.filter(BacktestResult.end_date <= end_date)
+        
+        rows = query.group_by(BacktestResult.strategy_id).all()
+        
+        return {
+            'strategies': [
+                {
+                    'strategy_id': r.strategy_id,
+                    'strategy_name': r.strategy_name,
+                    'backtest_count': r.backtest_count,
+                    'avg_return': float(r.avg_return) if r.avg_return is not None else None,
+                    'avg_sharpe': float(r.avg_sharpe) if r.avg_sharpe is not None else None,
+                    'avg_drawdown': float(r.avg_drawdown) if r.avg_drawdown is not None else None,
+                    'best_return': float(r.best_return) if r.best_return is not None else None,
+                    'worst_return': float(r.worst_return) if r.worst_return is not None else None,
+                }
+                for r in rows
+            ]
+        }

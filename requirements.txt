@@ -24,4 +24,5 @@ python-dotenv
 pyyaml
 minio
 scipy
+seaborn
 Backtesting

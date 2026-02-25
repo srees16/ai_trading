@@ -30,8 +30,7 @@ MINIO_AVAILABLE = True
 def render_backtesting_page():
     """Render the strategy backtesting page."""
     render_page_header(
-        "🔬 Backtest Strategy",
-        description="Test and analyze trading strategies with historical data"
+        "🔬 Backtest Strategy"
     )
 
     # Show stocks being analyzed
@@ -57,8 +56,8 @@ def render_backtesting_page():
     if 'backtest_cache' not in st.session_state:
         st.session_state.backtest_cache = {}  # {strategy_name: StrategyResult}
     
-    # Get available strategies
-    strategies = list_strategies()
+    # Get available strategies (exclude crypto — those live on the Crypto page)
+    strategies = [s for s in list_strategies() if s.get('category') != 'crypto']
     strategy_options = {s['name']: s for s in strategies}
     
     # Pre-run all strategies once on first page visit
@@ -113,8 +112,14 @@ def _precompute_all_strategies(strategies: list):
     st.session_state.backtest_cache = {}
     st.session_state.backtest_result = None
 
-    # Determine which strategies to pre-compute (skip pairs trading)
-    eligible = [s for s in strategies if s['id'] != 'pairs_trading']
+    # Determine which strategies to pre-compute
+    # Skip strategies that need more tickers than we have (e.g. pairs
+    # trading, mean-reversion cointegration when only 1 ticker).
+    num_tickers = len(tickers)
+    eligible = [
+        s for s in strategies
+        if num_tickers >= s.get('min_tickers', 1)
+    ]
     if not eligible:
         return
 
@@ -251,13 +256,14 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
         if selected_name in cache:
             st.caption(f"📦 Cached result loaded for **{selected_name}**")
         
-        run_backtest = st.button(
-            "🚀 Run Backtest",
-            type="primary",
-            use_container_width=True,
-            disabled=not param_values.get('tickers'),
-            help="Run with custom parameters (overrides cached result)"
-        )
+        btn_col, _ = st.columns([1, 2])
+        with btn_col:
+            run_backtest = st.button(
+                "Run Backtest",
+                type="primary",
+                disabled=not param_values.get('tickers'),
+                help="Run with custom parameters (overrides cached result)"
+            )
         
         if run_backtest:
             _execute_backtest(strategy_cls, strategy_info, param_values, selected_name)
@@ -541,33 +547,53 @@ def _save_charts_to_minio(
 
 
 def _render_results_panel():
-    """Render the backtest results panel."""
+    """Render the backtest results panel with tabs for each strategy."""
     st.subheader("📈 Results")
-    
-    result = st.session_state.backtest_result
-    
-    if result is None:
-        st.info("👈 Configure a strategy and click **Run Backtest** to see results")
+
+    cache = st.session_state.get('backtest_cache', {})
+
+    # Fall back to single-result view when cache is empty
+    if not cache:
+        result = st.session_state.get('backtest_result')
+        if result is None:
+            st.info("👈 Configure a strategy and click **Run Backtest** to see results")
+            return
+        _render_single_strategy_result(result)
         return
-    
+
+    # Determine default tab from currently selected strategy
+    strategy_names = list(cache.keys())
+    selected = st.session_state.get('selected_strategy', strategy_names[0])
+    default_idx = strategy_names.index(selected) if selected in strategy_names else 0
+
+    tabs = st.tabs(strategy_names)
+
+    for tab, name in zip(tabs, strategy_names):
+        with tab:
+            result = cache[name]
+            _render_single_strategy_result(result)
+
+
+def _render_single_strategy_result(result):
+    """Render metrics, charts, tables, and signals for a single strategy result."""
     if not result.success:
         st.error(f"❌ Backtest failed: {result.error_message}")
         return
-    
+
     # Display metrics
     if result.metrics:
         _render_performance_metrics(result.metrics)
-    
+
     st.markdown("---")
-    
+
     # Charts
     if result.charts:
         _render_charts(result.charts)
-    
+
     # Tables
     if result.tables:
         _render_tables(result.tables)
-    
+
     # Signals
     _render_signals(result.signals)
 
@@ -651,36 +677,98 @@ def _render_ticker_metric_cards(t_metrics: Dict, display_keys: list):
         st.warning(f"Error: {t_metrics['error']}")
         return
     
+    # Separate scalar vs complex (dict/list) values
+    scalar_items = []
+    complex_items = []  # (label, value)
+    
     # Collect available metrics in display order
-    items = []
     for key, label, fmt in display_keys:
         if key in t_metrics and t_metrics[key] is not None:
-            items.append((label, t_metrics[key], fmt))
+            val = t_metrics[key]
+            if isinstance(val, (dict, list)):
+                complex_items.append((label, val))
+            else:
+                scalar_items.append((label, val, fmt))
     
     # Also pick up any extra keys not in the predefined list
     shown_keys = {k for k, _, _ in display_keys}
     skip_keys = {'ticker', 'initial_capital', 'calculation_error'}
     for key, val in t_metrics.items():
         if key not in shown_keys and key not in skip_keys:
-            items.append((key.replace('_', ' ').title(), val, 'auto'))
+            label = key.replace('_', ' ').title()
+            if isinstance(val, (dict, list)):
+                complex_items.append((label, val))
+            else:
+                scalar_items.append((label, val, 'auto'))
     
-    if not items:
+    if not scalar_items and not complex_items:
         st.info("No metrics available")
         return
     
-    # Render in rows of 4
-    for row_start in range(0, len(items), 4):
-        row = items[row_start:row_start + 4]
+    # Render scalar metrics in rows of 4
+    for row_start in range(0, len(scalar_items), 4):
+        row = scalar_items[row_start:row_start + 4]
         cols = st.columns(len(row))
         for col, (label, val, fmt) in zip(cols, row):
             with col:
                 st.metric(label, _format_metric_value(val, fmt))
+    
+    # Render complex (nested dict / list) values as expandable tables
+    for label, val in complex_items:
+        _render_complex_metric(label, val)
+
+
+def _render_complex_metric(label: str, val):
+    """Render a nested dict or list metric as an expandable section."""
+    import pandas as pd
+    with st.expander(f"📋 {label}", expanded=False):
+        if isinstance(val, list):
+            if val and isinstance(val[0], dict):
+                # List of dicts → table
+                df = pd.DataFrame(val)
+                st.dataframe(df, width='stretch', hide_index=True)
+            else:
+                for item in val:
+                    st.text(str(item))
+        elif isinstance(val, dict):
+            # Separate scalar sub-values from further nested ones
+            scalar_pairs = []
+            nested_pairs = []
+            for k, v in val.items():
+                if isinstance(v, (dict, list)):
+                    nested_pairs.append((k, v))
+                else:
+                    scalar_pairs.append((k, v))
+            # Show scalar pairs as a compact table
+            if scalar_pairs:
+                rows = []
+                for k, v in scalar_pairs:
+                    display_key = k.replace('_', ' ').title()
+                    if isinstance(v, float):
+                        if 'return' in k or 'drawdown' in k or 'pct' in k:
+                            display_val = f"{v:.2f}%"
+                        else:
+                            display_val = f"{v:.4f}"
+                    elif isinstance(v, bool):
+                        display_val = "Yes" if v else "No"
+                    else:
+                        display_val = str(v)
+                    rows.append({"Metric": display_key, "Value": display_val})
+                df = pd.DataFrame(rows)
+                st.dataframe(df, width='stretch', hide_index=True)
+            # Recurse for nested items
+            for k, v in nested_pairs:
+                _render_complex_metric(k.replace('_', ' ').title(), v)
+        else:
+            st.text(str(val))
 
 
 def _format_metric_value(val, fmt: str) -> str:
     """Format a metric value for display."""
     if val is None:
         return "N/A"
+    if isinstance(val, bool):
+        return "Yes" if val else "No"
     if fmt == 'pct' and isinstance(val, (int, float)):
         return f"{val:.2f}%"
     if fmt == 'dec' and isinstance(val, (int, float)):
@@ -701,19 +789,34 @@ def _render_flat_metrics(flat_metrics: Dict):
         st.info("No metrics available")
         return
     
-    items = [(k.replace('_', ' ').title(), v) for k, v in flat_metrics.items()]
-    for row_start in range(0, len(items), 4):
-        row = items[row_start:row_start + 4]
+    scalar_items = []
+    complex_items = []
+    for k, v in flat_metrics.items():
+        label = k.replace('_', ' ').title()
+        if isinstance(v, (dict, list)):
+            complex_items.append((label, v))
+        else:
+            scalar_items.append((label, v))
+    
+    # Render scalar metrics in rows of 4
+    for row_start in range(0, len(scalar_items), 4):
+        row = scalar_items[row_start:row_start + 4]
         cols = st.columns(len(row))
         for col, (name, val) in zip(cols, row):
             with col:
-                if isinstance(val, float):
+                if isinstance(val, bool):
+                    st.metric(name, "Yes" if val else "No")
+                elif isinstance(val, float):
                     if 'return' in name.lower() or 'drawdown' in name.lower():
                         st.metric(name, f"{val:.2f}%")
                     else:
                         st.metric(name, f"{val:.4f}")
                 else:
                     st.metric(name, str(val))
+    
+    # Render complex values as expandable tables
+    for label, val in complex_items:
+        _render_complex_metric(label, val)
 
 
 def _render_charts(charts: list):
@@ -730,14 +833,14 @@ def _render_charts(charts: list):
                     if chart.data.startswith('data:')
                     else chart.data
                 )
-                st.image(base64.b64decode(img_data), use_container_width=True)
+                st.image(base64.b64decode(img_data), width='stretch')
             except Exception as e:
                 st.warning(f"Could not display chart: {e}")
                 
         elif chart.chart_type == 'plotly':
             try:
                 fig = go.Figure(json.loads(chart.data))
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
             except Exception as e:
                 st.warning(f"Could not display chart: {e}")
 
@@ -750,7 +853,7 @@ def _render_tables(tables: list):
     for table in tables:
         st.caption(table.title)
         if table.data:
-            st.dataframe(pd.DataFrame(table.data), use_container_width=True)
+            st.dataframe(pd.DataFrame(table.data), width='stretch')
 
 
 def _render_signals(signals: Optional[Any]):

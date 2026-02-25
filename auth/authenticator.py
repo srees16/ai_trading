@@ -310,7 +310,7 @@ class Authenticator:
                 )
                 
                 submitted = st.form_submit_button(
-                    "Sign In", use_container_width=True, type="primary"
+                    "Sign In", width='stretch', type="primary"
                 )
                 
                 if submitted:
@@ -512,45 +512,44 @@ def render_user_menu():
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 0.5rem 1rem;
-        margin: -1rem -1rem 0.5rem -1rem;
+        padding: 0.2rem 0.5rem;
+        margin: -0.5rem -0.5rem 0 -0.5rem;
         background: transparent;
     }
     .user-info-left {
         display: flex;
         align-items: center;
-        gap: 10px;
-        font-size: 14px;
+        gap: 6px;
+        font-size: 0.82rem;
         color: #1a1a2e;
         font-weight: 500;
     }
     .health-status {
-        font-size: 12px;
+        font-size: 0.72rem;
         color: #666;
-        margin-left: 10px;
+        margin-left: 6px;
     }
     /* Remove white box around user menu area */
     [data-testid="stHorizontalBlock"]:first-child {
         background: transparent !important;
-        margin-top: -10px;
+        margin-top: 28px;
     }
     </style>
     """, unsafe_allow_html=True)
     
-    # Create layout: user info left, health status center, logout right
-    col_user, col_spacer, col_logout = st.columns([2, 4, 1])
+    # Create layout: user info left, logout right — compact single row
+    col_user, col_logout = st.columns([5, 1], gap="small")
     
     with col_user:
         st.markdown(
-            f"<div style='white-space: nowrap; padding-top: 5px; margin-top: 5px; color: #1a1a2e;'>"
+            f"<div style='white-space: nowrap; padding: 0; margin: 0; color: #1a1a2e; font-size: 0.82rem; line-height: 1.4;'>"
             f"👤 <strong>{user_name}</strong> <em>({user_role})</em> "
-            f"<span style='font-size: 12px; margin-left: 8px;'>{health_icon} Session Active</span>"
+            f"<span style='font-size: 0.72rem; margin-left: 6px; opacity: 0.75;'>{health_icon}</span>"
             f"</div>",
             unsafe_allow_html=True
         )
     
     with col_logout:
-        st.markdown("<div style='margin-top: 5px;'></div>", unsafe_allow_html=True)
-        if st.button("🚪 Logout", key="logout_btn", use_container_width=True):
+        if st.button("🚪 Logout", key="logout_btn", width='stretch'):
             logout()
             st.rerun()

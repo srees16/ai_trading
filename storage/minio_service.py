@@ -160,9 +160,12 @@ class MinIOService:
 
         self._ensure_bucket()
 
-        safe_strategy = strategy_name.lower().replace(" ", "_")
-        safe_ticker = ticker.upper() if ticker else "unknown"
-        object_name = f"{run_id}/{safe_ticker}/{safe_strategy}/{filename}"
+        safe_strategy = strategy_name.lower().replace("/", "-").replace(" ", "_")
+        if ticker:
+            safe_ticker = ticker.upper()
+            object_name = f"{run_id}/{safe_ticker}/{safe_strategy}/{filename}"
+        else:
+            object_name = f"{run_id}/{safe_strategy}/{filename}"
 
         metadata = {
             "x-amz-meta-run-id": run_id,
@@ -277,7 +280,7 @@ class MinIOService:
 
         prefix = f"{run_id}/"
         if strategy_name:
-            safe = strategy_name.lower().replace(" ", "_")
+            safe = strategy_name.lower().replace("/", "-").replace(" ", "_")
             prefix = f"{run_id}/{safe}/"
 
         results: List[Dict[str, Any]] = []

@@ -35,8 +35,7 @@ MINIO_AVAILABLE = True
 def render_history_page():
     """Render the history page for reviewing past analysis results."""
     render_page_header(
-        title="📋 History",
-        subtitle="Review past analyses, signals, and backtest results"
+        title="📋 History"
     )
 
     # Show stocks being analyzed
@@ -188,7 +187,7 @@ def _render_analysis_runs(date_range: Dict[str, Any]):
 
             st.dataframe(
                 display_df,
-                use_container_width=True,
+                width='stretch',
                 hide_index=True,
             )
 
@@ -262,7 +261,7 @@ def _render_run_details(session, run_id: str):
             })
 
         df_signals = pd.DataFrame(signal_data)
-        st.dataframe(df_signals, use_container_width=True, hide_index=True)
+        st.dataframe(df_signals, width='stretch', hide_index=True)
     else:
         st.info("No signals recorded for this run.")
 
@@ -285,7 +284,7 @@ def _render_run_details(session, run_id: str):
                         'Published': n.published_at.strftime('%Y-%m-%d %H:%M') if n.published_at else 'N/A',
                     })
                 df_news = pd.DataFrame(news_data)
-                st.dataframe(df_news, use_container_width=True, hide_index=True)
+                st.dataframe(df_news, width='stretch', hide_index=True)
     except Exception as e:
         logger.debug(f"Could not load news items for run: {e}")
 
@@ -360,7 +359,7 @@ def _render_signal_history(date_range: Dict[str, Any]):
                 })
 
             df = pd.DataFrame(signal_data)
-            st.dataframe(df.astype(str), use_container_width=True, hide_index=True)
+            st.dataframe(df.astype(str), width='stretch', hide_index=True)
 
             # Decision distribution chart
             if len(all_signals) > 1:
@@ -442,7 +441,7 @@ def _render_backtest_history(date_range: Dict[str, Any]):
                 })
 
             df = pd.DataFrame(bt_data)
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width='stretch', hide_index=True)
 
             # Strategy performance comparison
             if len(successful) > 1:
@@ -496,7 +495,7 @@ def _render_minio_backtest_charts():
                 })
 
             df_runs = pd.DataFrame(table_rows).astype(str)
-            st.dataframe(df_runs, use_container_width=True, hide_index=True)
+            st.dataframe(df_runs, width='stretch', hide_index=True)
 
             # --- Run selector & chart viewer ---
             selected_run = st.selectbox(
@@ -520,14 +519,14 @@ def _render_minio_backtest_charts():
 
                     if chart_type == "matplotlib" and data:
                         st.markdown(f"**{title}**")
-                        st.image(data, use_container_width=True)
+                        st.image(data, width='stretch')
 
                     elif chart_type == "plotly" and data:
                         st.markdown(f"**{title}**")
                         try:
                             fig_json = json.loads(data)
                             fig = pio.from_json(json.dumps(fig_json))
-                            st.plotly_chart(fig, use_container_width=True)
+                            st.plotly_chart(fig, width='stretch')
                         except Exception:
                             # Fallback: show presigned URL link
                             url = img.get("presigned_url")
@@ -569,7 +568,7 @@ def _render_strategy_comparison(backtests: list):
         })
 
     df_comp = pd.DataFrame(comparison_data)
-    st.dataframe(df_comp, use_container_width=True, hide_index=True)
+    st.dataframe(df_comp, width='stretch', hide_index=True)
 
     # Bar chart of avg returns by strategy
     if len(comparison_data) > 1:
