@@ -7,14 +7,14 @@ stored in the database, filtered by date/time.
 
 import base64
 import json
-import streamlit as st
-import pandas as pd
-import plotly.io as pio
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 from uuid import UUID
 
+import pandas as pd
+import plotly.io as pio
+import streamlit as st
 from sqlalchemy import desc
 
 from config import Config
@@ -34,6 +34,8 @@ MINIO_AVAILABLE = True
 
 def render_history_page():
     """Render the history page for reviewing past analysis results."""
+    logger.info("[user=%s] Viewing History page",
+                st.session_state.get('username', 'unknown'))
     render_page_header(
         title="📋 History"
     )

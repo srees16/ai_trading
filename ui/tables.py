@@ -4,16 +4,17 @@ Data Tables Module for Centurion Capital LLC.
 Contains table rendering functions for signals and analysis results.
 """
 
-import streamlit as st
-import pandas as pd
-import yfinance as yf
-from datetime import datetime
-from typing import List, Dict, Any
-from collections import defaultdict
 import logging
+from collections import defaultdict
+from datetime import datetime
+from typing import Any, Dict, List
 
-from ui.styles import get_decision_style, get_signal_style
+import pandas as pd
+import streamlit as st
+import yfinance as yf
+
 from ui.components import get_decision_emoji
+from ui.styles import get_decision_style, get_signal_style
 
 logger = logging.getLogger(__name__)
 

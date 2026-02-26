@@ -13,11 +13,12 @@ Session-cache integration
   call (instead of 10).
 """
 
-import streamlit as st
 import logging
 from collections import defaultdict
 from datetime import timedelta
-from typing import List, Any, Optional, Tuple, Dict
+from typing import Any, Dict, List, Optional, Tuple
+
+import streamlit as st
 
 from config import Config
 from database.service import get_database_service

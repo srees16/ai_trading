@@ -18,7 +18,7 @@ except ImportError:
 
 # The request_token line below is kept because ``kite_auth.py``
 # updates it in-place via regex.  Do NOT remove this line.
-request_token='uXDLR6IKzEKmrSEhxIAD0s0yLckfgKAG'
+request_token='UndRhIA0LG8we0BnV7R7hRg1qut6GGij'
 
 kite = None  # module-level reference set by zerodha_login()
 

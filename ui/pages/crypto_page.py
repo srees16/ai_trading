@@ -6,15 +6,16 @@ the Binance public API.  Crypto strategies are isolated here so the
 main backtesting page stays focused on equities.
 """
 
-import json
 import base64
+import json
+import logging
 import uuid
-import streamlit as st
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
+
 import pandas as pd
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import logging
-from typing import Dict, Any, Optional
+import streamlit as st
 
 from config import Config
 from database.service import get_database_service
@@ -42,6 +43,8 @@ _DEFAULT_CRYPTO_TICKERS = "ETH, BTC, LTC"
 # ====================================================================
 def render_crypto_page():
     """Render the cryptocurrency trading strategies page."""
+    logger.info("[user=%s] Viewing Crypto page",
+                st.session_state.get('username', 'unknown'))
     render_page_header("₿ Crypto Strategies")
 
     # Navigation buttons
@@ -99,6 +102,8 @@ def _render_configuration_panel(
     if not selected_name:
         return
 
+    logger.info("[user=%s] Selected crypto strategy: %s",
+                st.session_state.get('username', 'unknown'), selected_name)
     strategy_info = strategy_options[selected_name]
     st.caption(strategy_info["description"])
 
@@ -138,6 +143,8 @@ def _render_configuration_panel(
         )
 
     if run_btn:
+        logger.info("[user=%s] Clicked 'Run Backtest' for crypto strategy: %s",
+                    st.session_state.get('username', 'unknown'), selected_name)
         _execute_backtest(strategy_cls, strategy_info, param_values, selected_name)
 
 

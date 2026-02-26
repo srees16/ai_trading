@@ -17,16 +17,17 @@ Strategy Rules:
 Reference: Classic Japanese candlestick technique
 """
 
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
-from typing import Optional
-from datetime import datetime
-import time
-
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
+from typing import Optional
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from matplotlib.patches import Rectangle
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from strategies.base_strategy import (

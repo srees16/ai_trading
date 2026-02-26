@@ -14,13 +14,14 @@ we will see about it later
 for more details about macd
 https://github.com/je-suis-tm/quant-trading/blob/master/MACD%20oscillator%20backtest.py'''
 
+import sys
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import yfinance as yf
 
-import sys
-from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from backtest_utils import mdd
 

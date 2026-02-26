@@ -4,15 +4,16 @@ Backtesting Page Module for Centurion Capital LLC.
 Contains the strategy backtesting page rendering.
 """
 
-import json
 import base64
+import json
+import logging
 import uuid
-import streamlit as st
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
+
 import pandas as pd
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import logging
-from typing import Dict, Any, Optional
+import streamlit as st
 
 from config import Config
 from database.service import get_database_service
@@ -26,9 +27,90 @@ logger = logging.getLogger(__name__)
 DB_AVAILABLE = Config.is_database_configured()
 MINIO_AVAILABLE = True
 
+# ── CSS-only multi-colour spinning wheel with percentage overlay ────
+_STRATEGY_SPINNER_CSS = """
+<style>
+@keyframes bt-spin {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+@keyframes bt-colors {
+  0%   { border-top-color: #4fc3f7; }
+  25%  { border-top-color: #ab47bc; }
+  50%  { border-top-color: #66bb6a; }
+  75%  { border-top-color: #ffa726; }
+  100% { border-top-color: #4fc3f7; }
+}
+.bt-spinner-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2.5rem 0 1.5rem 0;
+}
+.bt-spinner-ring {
+  position: relative;
+  width: 72px;
+  height: 72px;
+}
+.bt-spinner-ring::before {
+  content: '';
+  box-sizing: border-box;
+  position: absolute;
+  inset: 0;
+  border: 5px solid rgba(255,255,255,0.10);
+  border-top: 5px solid #4fc3f7;
+  border-radius: 50%;
+  animation: bt-spin 0.8s linear infinite,
+             bt-colors 3s ease-in-out infinite;
+}
+.bt-spinner-pct {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: rgba(255,255,255,0.88);
+  letter-spacing: 0.02em;
+}
+.bt-spinner-label {
+  margin-top: 0.8rem;
+  font-size: 0.92rem;
+  color: rgba(255,255,255,0.68);
+}
+/* Green "Run Backtest" button */
+[data-testid="stMainBlockContainer"] button[kind="primary"].bt-green-btn,
+.bt-green-btn-scope button[kind="primary"] {
+    background-color: #38a169 !important;
+    border-color: #38a169 !important;
+    color: #fff !important;
+    white-space: nowrap !important;
+    font-size: 0.82rem !important;
+}
+.bt-green-btn-scope button[kind="primary"]:hover {
+    background-color: #2f855a !important;
+    border-color: #2f855a !important;
+}
+</style>
+"""
+
+def _spinner_html(pct: int, label: str) -> str:
+    return (
+        f'<div class="bt-spinner-wrap">'
+        f'  <div class="bt-spinner-ring">'
+        f'    <div class="bt-spinner-pct">{pct}%</div>'
+        f'  </div>'
+        f'  <div class="bt-spinner-label">{label}</div>'
+        f'</div>'
+    )
+
 
 def render_backtesting_page():
     """Render the strategy backtesting page."""
+    logger.info("[user=%s] Viewing Backtesting page",
+                st.session_state.get('username', 'unknown'))
     render_page_header(
         "🔬 Backtest Strategy"
     )
@@ -133,7 +215,8 @@ def _precompute_all_strategies(strategies: list):
         'tickers': list(tickers),
     }
 
-    progress_bar = st.progress(0, text="Pre-computing strategies…")
+    spinner_slot = st.empty()
+    st.markdown(_STRATEGY_SPINNER_CSS, unsafe_allow_html=True)
     total = len(eligible)
     succeeded = 0
     total_minio_saved = 0
@@ -143,9 +226,13 @@ def _precompute_all_strategies(strategies: list):
 
     for idx, s_info in enumerate(eligible):
         strategy_name = s_info['name']
-        progress_bar.progress(
-            (idx) / total,
-            text=f"Running **{strategy_name}** ({idx + 1}/{total})…"
+        pct = int(idx / total * 100)
+        logger.info("[user=%s] Pre-computing strategy %d/%d: %s",
+                    st.session_state.get('username', 'unknown'),
+                    idx + 1, total, strategy_name)
+        spinner_slot.markdown(
+            _spinner_html(pct, f"Running {strategy_name} ({idx + 1}/{total})…"),
+            unsafe_allow_html=True,
         )
 
         try:
@@ -164,6 +251,8 @@ def _precompute_all_strategies(strategies: list):
 
             if result.success:
                 succeeded += 1
+                logger.info("[user=%s] Strategy '%s' pre-compute succeeded",
+                            st.session_state.get('username', 'unknown'), strategy_name)
                 # Save charts to MinIO during pre-computation
                 total_minio_saved += _save_charts_to_minio(
                     run_id=minio_run_id,
@@ -173,7 +262,10 @@ def _precompute_all_strategies(strategies: list):
         except Exception as e:
             logger.error(f"Pre-compute failed for {strategy_name}: {e}")
 
-    progress_bar.progress(1.0, text="All strategies computed ✅")
+    spinner_slot.markdown(
+        _spinner_html(100, "All strategies computed ✅"),
+        unsafe_allow_html=True,
+    )
 
     if total_minio_saved > 0:
         st.toast(f"🪣 {total_minio_saved} chart(s) saved to object storage", icon="✅")
@@ -190,6 +282,9 @@ def _precompute_all_strategies(strategies: list):
         st.session_state.selected_strategy = first_name
 
     st.success(f"✅ Pre-computed {succeeded}/{total} strategies for {', '.join(tickers)}")
+    logger.info("[user=%s] Pre-computation complete: %d/%d strategies succeeded for %s",
+                st.session_state.get('username', 'unknown'),
+                succeeded, total, ', '.join(tickers))
 
 
 def _render_configuration_panel(strategies: list, strategy_options: Dict[str, Any]):
@@ -256,16 +351,21 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
         if selected_name in cache:
             st.caption(f"📦 Cached result loaded for **{selected_name}**")
         
-        btn_col, _ = st.columns([1, 2])
+        btn_col, _ = st.columns([1.3, 1.7])
         with btn_col:
+            st.markdown('<div class="bt-green-btn-scope">', unsafe_allow_html=True)
             run_backtest = st.button(
                 "Run Backtest",
                 type="primary",
                 disabled=not param_values.get('tickers'),
-                help="Run with custom parameters (overrides cached result)"
+                help="Run with custom parameters (overrides cached result)",
+                use_container_width=True,
             )
+            st.markdown('</div>', unsafe_allow_html=True)
         
         if run_backtest:
+            logger.info("[user=%s] Clicked 'Run Backtest' for strategy: %s",
+                        st.session_state.get('username', 'unknown'), selected_name)
             _execute_backtest(strategy_cls, strategy_info, param_values, selected_name)
 
 
@@ -399,6 +499,8 @@ def _execute_backtest(strategy_cls, strategy_info: Dict, param_values: Dict, sel
         param_values: Parameter values dictionary
         selected_name: Selected strategy name
     """
+    _user = st.session_state.get('username', 'unknown')
+    logger.info("[user=%s] Executing backtest: %s", _user, selected_name)
     with st.spinner("Running backtest..."):
         try:
             strategy = strategy_cls()
@@ -413,6 +515,8 @@ def _execute_backtest(strategy_cls, strategy_info: Dict, param_values: Dict, sel
             
             if result.success:
                 st.success("✅ Backtest completed!")
+                logger.info("[user=%s] Backtest completed successfully: %s",
+                            _user, selected_name)
                 _save_backtest_to_database(
                     strategy_info, param_values, result, selected_name
                 )
@@ -434,6 +538,8 @@ def _execute_backtest(strategy_cls, strategy_info: Dict, param_values: Dict, sel
                 if minio_saved > 0:
                     st.toast(f"🪣 {minio_saved} chart(s) saved to object storage", icon="✅")
             else:
+                logger.warning("[user=%s] Backtest failed: %s — %s",
+                               _user, selected_name, result.error_message)
                 st.error(f"❌ Failed: {result.error_message}")
                 
         except Exception as e:

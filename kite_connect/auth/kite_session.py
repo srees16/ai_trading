@@ -4,12 +4,13 @@ Shared Kite Connect session management.
 Consolidates the duplicated login logic into a single reusable function.
 """
 
-import sys
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from kiteconnect import KiteConnect, exceptions as kite_exceptions
+
 from core.config import API_KEY, API_SECRET, KITE_APP_FILE
 
 

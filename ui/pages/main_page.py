@@ -4,24 +4,27 @@ Main Page Module for Centurion Capital LLC.
 Contains the main dashboard and control panel rendering.
 """
 
-import streamlit as st
+import logging
 from pathlib import Path
 from typing import List
-import logging
+
+import streamlit as st
 
 from config import Config
-from utils import parse_ticker_csv, validate_tickers, create_sample_csv
 from ui.components import (
     render_header,
     render_footer,
     render_navigation_buttons,
 )
+from utils import parse_ticker_csv, validate_tickers, create_sample_csv
 
 logger = logging.getLogger(__name__)
 
 
 def render_main_page():
     """Render the main application page."""
+    logger.info("[user=%s] Viewing US Stocks main page",
+                st.session_state.get('username', 'unknown'))
     render_header()
     
     st.markdown("---")
@@ -47,10 +50,14 @@ def render_control_panel():
     
     st.session_state.tickers = tickers
     
-    # Run Analysis section — full width below the settings
+    # Run Analysis section — full width below the settings (tighter spacing)
+    st.markdown('<div style="margin-top: -1.5rem;"></div>', unsafe_allow_html=True)
     run_clicked = _render_run_controls(tickers)
     
     if run_clicked and len(tickers) > 0:
+        logger.info("[user=%s] Clicked 'Run Analysis' with %d tickers: %s",
+                    st.session_state.get('username', 'unknown'),
+                    len(tickers), ', '.join(tickers))
         st.session_state.analysis_complete = False
         st.session_state.signals = []
         st.session_state.progress_messages = []
@@ -169,11 +176,20 @@ def _render_output_settings():
         help="Choose the output file format"
     )
     
-    use_custom_path = st.checkbox(
-        "Use custom save location",
-        value=False,
-        help="Choose a custom directory to save the output file"
-    )
+    chk_col1, chk_col2 = st.columns(2)
+    with chk_col1:
+        use_custom_path = st.checkbox(
+            "Use custom save location",
+            value=False,
+            help="Choose a custom directory to save the output file"
+        )
+    with chk_col2:
+        append_mode = st.checkbox(
+            "Append to existing file",
+            value=Config.APPEND_MODE,
+            help="Append results to existing file instead of overwriting"
+        )
+        Config.APPEND_MODE = append_mode
     
     if use_custom_path:
         custom_path = st.text_input(
@@ -199,13 +215,6 @@ def _render_output_settings():
         Config.OUTPUT_FILE = default_filename
         default_path = Path.cwd() / default_filename
         st.caption(f"📁 Save to: `{default_path}`")
-    
-    append_mode = st.checkbox(
-        "Append to existing file",
-        value=Config.APPEND_MODE,
-        help="Append results to existing file instead of overwriting"
-    )
-    Config.APPEND_MODE = append_mode
 
 
 def _render_run_controls(tickers: List[str]) -> bool:

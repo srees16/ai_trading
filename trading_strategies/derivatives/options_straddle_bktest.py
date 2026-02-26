@@ -62,10 +62,11 @@ the same strike date and almost the same price is tough
 to make our life easier, we only consider european options with cash settlement in this script
 """
 
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
 import re
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import yfinance as yf
 
 '''as we have gathered all the available call and put options

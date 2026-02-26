@@ -21,16 +21,24 @@ from typing import List, Optional
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Try to import tiktoken (optional dependency)
+# Lazy tiktoken loading (optional dependency)
 # ---------------------------------------------------------------------------
 _tiktoken_enc = None
+_tiktoken_loaded = False
 
-try:
-    import tiktoken as _tiktoken_mod
-    _tiktoken_enc = _tiktoken_mod.get_encoding("cl100k_base")
-    logger.debug("tiktoken detected — using cl100k_base for token counting")
-except Exception:
-    pass
+
+def _get_tiktoken_enc():
+    """Lazy-load tiktoken encoding on first use to avoid import-time cost."""
+    global _tiktoken_enc, _tiktoken_loaded
+    if not _tiktoken_loaded:
+        _tiktoken_loaded = True
+        try:
+            import tiktoken as _tiktoken_mod
+            _tiktoken_enc = _tiktoken_mod.get_encoding("cl100k_base")
+            logger.debug("tiktoken detected — using cl100k_base for token counting")
+        except Exception:
+            pass
+    return _tiktoken_enc
 
 
 # ---------------------------------------------------------------------------
@@ -47,8 +55,9 @@ def count_tokens(text: str) -> int:
     """
     if not text:
         return 0
-    if _tiktoken_enc is not None:
-        return len(_tiktoken_enc.encode(text, disallowed_special=()))
+    enc = _get_tiktoken_enc()
+    if enc is not None:
+        return len(enc.encode(text, disallowed_special=()))
     # Heuristic: ~1.3 tokens per whitespace-delimited word
     return int(len(text.split()) * 1.3)
 
@@ -62,9 +71,10 @@ def truncate_to_budget(text: str, max_tokens: int) -> str:
     if count_tokens(text) <= max_tokens:
         return text
 
-    if _tiktoken_enc is not None:
-        tokens = _tiktoken_enc.encode(text, disallowed_special=())
-        return _tiktoken_enc.decode(tokens[:max_tokens])
+    enc = _get_tiktoken_enc()
+    if enc is not None:
+        tokens = enc.encode(text, disallowed_special=())
+        return enc.decode(tokens[:max_tokens])
 
     # Heuristic: estimate words budget and truncate
     word_budget = int(max_tokens / 1.3)

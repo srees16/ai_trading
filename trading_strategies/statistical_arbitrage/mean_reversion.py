@@ -18,19 +18,20 @@ Reference:
     - Chee-Foong (original author, 15 Apr 2021)
 """
 
-import numpy as np
-import pandas as pd
-import matplotlib
-matplotlib.use("Agg")           # non-interactive backend for headless chart export
-import matplotlib.pyplot as plt
-import statsmodels.api as sm
+import sys
 import time
 import warnings
-from typing import Optional
 from datetime import datetime
-
-import sys
 from pathlib import Path
+from typing import Optional
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import statsmodels.api as sm
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from strategies.base_strategy import (
@@ -44,8 +45,6 @@ from strategies.base_strategy import (
 from strategies.registry import StrategyRegistry
 from strategies.data_service import DataService
 from strategies.utils import matplotlib_to_base64, dataframe_to_table
-
-# Local edge utilities (self-contained copies)
 from trading_strategies.statistical_arbitrage.edge_mean_reversion import (
     perform_adf_test,
     perform_hurst_exp_test,

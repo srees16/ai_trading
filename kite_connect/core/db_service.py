@@ -5,8 +5,9 @@ Provides a single connection factory used by all modules that need
 PostgreSQL access, eliminating duplicated psycopg2.connect() calls.
 """
 
-import sys
 import os
+import sys
+
 import psycopg2
 
 # Append kite_connect to path (not insert) to avoid shadowing top-level packages

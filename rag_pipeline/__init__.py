@@ -39,20 +39,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-from rag_pipeline.config import RAGConfig
-from rag_pipeline.vector_store import VectorStoreManager
-from rag_pipeline.pdf_ingestion import PDFIngestionService
-from rag_pipeline.query_engine import RAGQueryEngine
-from rag_pipeline.reranker import CrossEncoderReranker
-from rag_pipeline.llm_service import OllamaLLMBackend, ClaudeLLMBackend, OpenAILLMBackend, create_llm_backend
-from rag_pipeline.query_rewriter import QueryRewriter
-from rag_pipeline.hybrid_search import HybridSearcher, BM25Index
-from rag_pipeline.evaluation import EvalDataset, EvalQuery, EvalReport, RetrievalLogger, run_evaluation
-from rag_pipeline.triplet_export import TripletExporter
-from rag_pipeline.perf_trace import PipelineTrace, Span
-from rag_pipeline.token_counter import count_tokens, truncate_to_budget, budget_chunks
-from rag_pipeline.semantic_cache import SemanticCache
-from rag_pipeline.tiered_retrieval import TieredRetriever, FAQEntry
+# ---------------------------------------------------------------------------
+# Lazy public API — heavy submodules are only imported on first access.
+# This avoids pulling in chromadb, numpy, sentence-transformers, etc.
+# when the package is merely referenced by another import.
+# ---------------------------------------------------------------------------
 
 __all__ = [
     "RAGConfig",
@@ -82,3 +73,43 @@ __all__ = [
     "TieredRetriever",
     "FAQEntry",
 ]
+
+_LAZY_IMPORTS = {
+    "RAGConfig":              "rag_pipeline.config",
+    "VectorStoreManager":     "rag_pipeline.vector_store",
+    "PDFIngestionService":    "rag_pipeline.pdf_ingestion",
+    "RAGQueryEngine":         "rag_pipeline.query_engine",
+    "CrossEncoderReranker":   "rag_pipeline.reranker",
+    "OllamaLLMBackend":      "rag_pipeline.llm_service",
+    "ClaudeLLMBackend":      "rag_pipeline.llm_service",
+    "OpenAILLMBackend":      "rag_pipeline.llm_service",
+    "create_llm_backend":    "rag_pipeline.llm_service",
+    "QueryRewriter":          "rag_pipeline.query_rewriter",
+    "HybridSearcher":         "rag_pipeline.hybrid_search",
+    "BM25Index":              "rag_pipeline.hybrid_search",
+    "EvalDataset":            "rag_pipeline.evaluation",
+    "EvalQuery":              "rag_pipeline.evaluation",
+    "EvalReport":             "rag_pipeline.evaluation",
+    "RetrievalLogger":        "rag_pipeline.evaluation",
+    "run_evaluation":         "rag_pipeline.evaluation",
+    "TripletExporter":        "rag_pipeline.triplet_export",
+    "PipelineTrace":          "rag_pipeline.perf_trace",
+    "Span":                   "rag_pipeline.perf_trace",
+    "count_tokens":           "rag_pipeline.token_counter",
+    "truncate_to_budget":     "rag_pipeline.token_counter",
+    "budget_chunks":          "rag_pipeline.token_counter",
+    "SemanticCache":          "rag_pipeline.semantic_cache",
+    "TieredRetriever":        "rag_pipeline.tiered_retrieval",
+    "FAQEntry":               "rag_pipeline.tiered_retrieval",
+}
+
+
+def __getattr__(name: str):
+    if name in _LAZY_IMPORTS:
+        import importlib
+        module = importlib.import_module(_LAZY_IMPORTS[name])
+        value = getattr(module, name)
+        # Cache on the package so subsequent lookups are instant
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module 'rag_pipeline' has no attribute {name!r}")

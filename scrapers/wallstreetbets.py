@@ -16,8 +16,9 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 import aiohttp
-from scrapers import BaseNewsScraper
+
 from models import NewsItem
+from scrapers import BaseNewsScraper
 from config import Config
 
 logger = logging.getLogger(__name__)

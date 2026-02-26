@@ -5,9 +5,11 @@ Yahoo Finance news scraper using yfinance library.
 import logging
 from datetime import datetime
 from typing import List
+
 import yfinance as yf
-from scrapers import BaseNewsScraper
+
 from models import NewsItem
+from scrapers import BaseNewsScraper
 
 logger = logging.getLogger(__name__)
 

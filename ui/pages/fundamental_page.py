@@ -4,8 +4,10 @@ Fundamental Analysis Page Module for Centurion Capital LLC.
 Contains the fundamental metrics analysis page rendering.
 """
 
+import logging
+from typing import Any, Dict
+
 import streamlit as st
-from typing import Dict, Any
 
 from ui.components import (
     render_page_header,
@@ -18,9 +20,13 @@ from ui.components import (
 from ui.charts import render_fundamental_charts, render_fundamental_summary_metrics
 from ui.tables import render_fundamental_table
 
+logger = logging.getLogger(__name__)
+
 
 def render_fundamental_page():
     """Render the fundamental analysis page."""
+    logger.info("[user=%s] Viewing Fundamental Analysis page",
+                st.session_state.get('username', 'unknown'))
     render_page_header(
         "📊 Fundamental Analysis",
         description="Altman Z-Score • Beneish M-Score • Piotroski F-Score"

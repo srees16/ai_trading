@@ -18,27 +18,21 @@ Integration notes:
         )
 """
 
+import logging
 import sys
 from pathlib import Path
 
-# Ensure project root is on sys.path so `rag_pipeline` is importable
-# regardless of how this script is launched (standalone or via main app).
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 import streamlit as st
-import logging
 
-from ui.components import load_logo_base64_small
-from rag_pipeline.ui_components import (
-    render_rag_toggle,
-    render_pdf_uploader,
-    render_query_input,
-    render_rag_response,
-    render_knowledge_base,
-    _get_query_engine,
-)
+from ui.components import load_logo_base64_small, render_header_bar, render_footer
+
+# RAG UI helpers are imported lazily inside render_rag_page() to avoid
+# pulling in the heavy RAG dependency chain (chromadb, numpy, etc.) at
+# module-import time.  Only lightweight stdlib imports live here.
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +43,19 @@ def render_rag_page() -> None:
 
     Can be called from centurion_core's page router or run standalone.
     """
+    # Ensure RAG session-state keys exist (deferred from global init)
+    from services.session import ensure_rag_state
+    ensure_rag_state()
+
+    from rag_pipeline.ui_components import (
+        render_rag_toggle,
+        render_pdf_uploader,
+        render_query_input,
+        render_rag_response,
+        render_knowledge_base,
+        _get_query_engine,
+    )
+
     _logo_html = load_logo_base64_small()
 
     st.markdown(
@@ -122,19 +129,20 @@ def render_rag_page() -> None:
         unsafe_allow_html=True,
     )
 
-    st.markdown(
-        f'<h2 style="text-align:center; margin:0 0 0.3rem 0; padding:0;">{_logo_html} Centurion Capital LLC</h2>',
-        unsafe_allow_html=True,
-    )
+    render_header_bar(subtitle="Research-Augmented Generation · Knowledge Engine")
+    _user = st.session_state.get('username', 'unknown')
+    logger.info("[user=%s] RAG Engine: page view", _user)
 
     # ---- RAG toggle (always visible) ------------------------------------
     rag_on = render_rag_toggle()
+    logger.info("[user=%s] RAG Engine: RAG toggle=%s", _user, rag_on)
 
     # ---- Knowledge-base source selector (radio buttons) -----------------
     selected_source = None
     if rag_on:
         from rag_pipeline.ui_components import render_kb_source_selector
         selected_source = render_kb_source_selector()
+        logger.info("[user=%s] RAG Engine: KB source=%s", _user, selected_source)
 
     # ---- Query section (always visible) ---------------------------------
     query_text = render_query_input()
@@ -146,6 +154,8 @@ def render_rag_page() -> None:
         query_text = _resubmit_query
 
     if _is_resubmit or st.button("Submit Query", type="primary", key="rag_search_btn"):
+        logger.info("[user=%s] RAG Engine: Submit Query clicked — rag_on=%s, resubmit=%s, query='%.80s'",
+                    _user, rag_on, _is_resubmit, query_text or '')
         if not query_text:
             st.warning("Please enter a query first.")
         elif rag_on:
@@ -192,17 +202,24 @@ def render_rag_page() -> None:
 
     # ---- Upload & manage sections (only when RAG is on) -----------------
     if rag_on:
+        logger.info("[user=%s] RAG Engine: PDF upload section visible", _user)
         render_pdf_uploader()
 
         with st.expander("Knowledge Base", expanded=False):
             render_knowledge_base()
 
+    render_footer()
+
 
 # ---------------------------------------------------------------------------
 # Standalone runner – ``streamlit run rag_pipeline/rag_page.py``
 # ---------------------------------------------------------------------------
-if __name__ == "__main__" or st.runtime.exists():
-    # Minimal page config for standalone mode
+if __name__ == "__main__":
+    # Minimal page config for standalone mode only.
+    # NOTE: Do NOT use ``st.runtime.exists()`` here – it is True whenever
+    # Streamlit is running, which means the block would also execute when
+    # app.py *imports* this module, causing ``render_rag_page()`` to be
+    # called twice and triggering a duplicate widget-key error.
     try:
         st.set_page_config(
             page_title="Centurion RAG Pipeline",

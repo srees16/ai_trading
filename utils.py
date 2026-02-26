@@ -6,7 +6,6 @@ and data handling across the application.
 """
 
 import logging
-import pandas as pd
 from typing import List, Tuple
 from io import StringIO
 
@@ -30,6 +29,7 @@ def parse_ticker_csv(file_content: str) -> List[str]:
     """
     try:
         # Read CSV
+        import pandas as pd
         df = pd.read_csv(StringIO(file_content))
         
         # Try to find ticker column

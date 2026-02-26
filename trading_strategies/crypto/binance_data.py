@@ -19,13 +19,14 @@ Usage::
     )
 """
 
+import logging
 import os
 import time
-import logging
-import pandas as pd
-import requests
 from datetime import datetime, timezone
 from typing import Dict, Optional
+
+import pandas as pd
+import requests
 
 logger = logging.getLogger(__name__)
 

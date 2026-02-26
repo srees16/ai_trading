@@ -15,10 +15,13 @@ top m is just the reverse of bottom w
 rules of bollinger bands and bottom w can be found in the following link:
 https://www.tradingview.com/wiki/Bollinger_Bands_(BB)'''
 
-import pandas as pd
-import matplotlib.pyplot as plt
 import copy
+import sys
+from pathlib import Path
+
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 import yfinance as yf
 
 '''first step is to calculate moving average and moving standard deviation

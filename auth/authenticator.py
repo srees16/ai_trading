@@ -8,14 +8,13 @@ monitoring with YAML-based credential storage.
 import base64
 import hashlib
 import hmac
+import logging
 import os
-import yaml
-import streamlit as st
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional, Tuple
-from datetime import datetime, timedelta
-import logging
 
+import streamlit as st
 from dotenv import load_dotenv
 
 from config import Config
@@ -74,6 +73,7 @@ def load_credentials() -> Dict:
     
     try:
         with open(CREDENTIALS_PATH, 'r') as f:
+            import yaml
             return yaml.safe_load(f)
     except Exception as e:
         logger.error(f"Error loading credentials: {e}")
@@ -85,6 +85,7 @@ def save_credentials(credentials: Dict) -> bool:
     try:
         CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(CREDENTIALS_PATH, 'w') as f:
+            import yaml
             yaml.dump(credentials, f, default_flow_style=False)
         return True
     except Exception as e:
@@ -321,19 +322,27 @@ class Authenticator:
                     "Password", type="password", placeholder="Enter your password", label_visibility="collapsed"
                 )
                 
-                submitted = st.form_submit_button(
-                    "Sign In", width='stretch', type="primary"
-                )
+                # width='stretch' requires Streamlit >=1.44
+                _btn_kwargs = {"type": "primary"}
+                try:
+                    _btn_kwargs["width"] = "stretch"
+                    submitted = st.form_submit_button("Sign In", **_btn_kwargs)
+                except TypeError:
+                    _btn_kwargs.pop("width", None)
+                    submitted = st.form_submit_button("Sign In", **_btn_kwargs)
                 
                 if submitted:
                     if username and password:
                         success, message = self.authenticate(username, password)
                         if success:
+                            logger.info("[user=%s] Login successful", username)
                             st.success(message)
                             st.rerun()
                         else:
+                            logger.warning("[user=%s] Login failed: %s", username, message)
                             st.error(message)
                     else:
+                        logger.warning("Login attempt with empty credentials")
                         st.warning("Please enter both username and password")
             
             # Footer
@@ -351,22 +360,43 @@ class Authenticator:
 
     @staticmethod
     def _get_logo_html() -> str:
-        """Return an <img> tag with the base64-encoded logo, or empty string."""
+        """Return an <img> tag with the base64-encoded logo, or empty string.
+
+        The result is cached in ``st.session_state`` so the image file is
+        only read from disk once per session.
+        """
+        _CACHE_KEY = "_login_logo_html"
+        if _CACHE_KEY in st.session_state:
+            return st.session_state[_CACHE_KEY]
+
         logo_path = Path(__file__).parent.parent / "ui" / "assets" / "centurion_logo.png"
+        html = ""
         if logo_path.exists():
             with open(logo_path, "rb") as f:
                 data = base64.b64encode(f.read()).decode()
-            return (
+            html = (
                 f'<img src="data:image/png;base64,{data}" '
                 f'style="height:4rem; margin-bottom:0.75rem; mix-blend-mode:multiply;" />'
             )
-        return ""
+        st.session_state[_CACHE_KEY] = html
+        return html
 
     @staticmethod
     def _get_login_css() -> str:
-        """Return all CSS specific to the login page."""
+        """Return all CSS specific to the login page.
+
+        Includes minimal layout resets (hide sidebar, reduce spacing) so
+        the login page looks correct without the heavyweight
+        ``apply_custom_styles()`` call (which base64-encodes the
+        background image).
+        """
         return """
         <style>
+        /* ---------- minimal layout resets ---------- */
+        [data-testid="stSidebar"] { display: none; }
+        .block-container { padding-top: 0.25rem; padding-bottom: 0.5rem; }
+        [data-testid="stHeader"] { background: transparent !important; }
+
         /* ---------- login page overrides ---------- */
         .login-spacer { height: 4vh; }
 
@@ -563,5 +593,6 @@ def render_user_menu():
     
     with col_logout:
         if st.button("🚪 Logout", key="logout_btn", width='stretch'):
+            logger.info("[user=%s] Logged out", st.session_state.get('username', 'unknown'))
             logout()
             st.rerun()
