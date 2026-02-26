@@ -195,9 +195,10 @@ def _render_landing_page():
     <style>
         .landing-card {
             background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
-            padding: 2rem 2.5rem; margin: 0.6rem auto; max-width: 720px;
+            padding: 2rem 2.5rem; margin: 0.6rem auto 0 auto; max-width: 720px;
             box-shadow: 0 1px 4px rgba(0,0,0,0.06);
         }
+        div[data-testid="column"]:has(button) { margin-top: -0.6rem; }
         .landing-card h3 { color: #1a1a2e !important; margin-top: 0 !important; font-size: 1.15rem !important; }
         .landing-card ul { padding-left: 1.2rem; margin: 0.8rem 0; }
         .landing-card li { color: #2d3436 !important; font-size: 0.92rem; line-height: 1.75; }

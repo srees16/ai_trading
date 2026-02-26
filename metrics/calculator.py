@@ -6,15 +6,15 @@ using Yahoo Finance data and standard financial formulas.
 """
 
 import logging
-
-import yfinance as yf
-import pandas as pd
-import numpy as np
 from datetime import datetime, timedelta
-from typing import Optional, Dict
+from typing import Dict, Optional
 
-from models import StockMetrics
+import numpy as np
+import pandas as pd
+import yfinance as yf
+
 from config import Config
+from models import StockMetrics
 from strategies.utils import calculate_max_drawdown
 
 logger = logging.getLogger(__name__)

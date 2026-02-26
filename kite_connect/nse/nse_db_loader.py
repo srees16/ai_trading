@@ -11,9 +11,10 @@ Mapping:
   %CHNG       ->  change
 """
 
+import glob
 import os
 import sys
-import glob
+
 import pandas as pd
 
 # Append kite_connect to path (not insert) to avoid shadowing top-level packages

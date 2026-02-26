@@ -6,12 +6,12 @@ to classify text as positive, negative, or neutral.
 """
 
 import logging
-
-from transformers import pipeline
 from typing import List, Tuple
 
-from models import NewsItem, SentimentLabel
+from transformers import pipeline
+
 from config import Config
+from models import NewsItem, SentimentLabel
 
 logger = logging.getLogger(__name__)
 

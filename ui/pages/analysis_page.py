@@ -42,10 +42,10 @@ _SPINNER_CSS = """
   padding: 4rem 0 2rem 0;
 }
 .centurion-spinner {
-  width: 56px;
-  height: 56px;
-  border: 5px solid rgba(255,255,255,0.12);
-  border-top: 5px solid #4fc3f7;
+  width: 40px;
+  height: 40px;
+  border: 4px solid rgba(120,120,120,0.18);
+  border-top: 4px solid #4fc3f7;
   border-radius: 50%;
   animation: centurion-spin 0.8s linear infinite,
              centurion-colors 3s ease-in-out infinite;
@@ -53,7 +53,7 @@ _SPINNER_CSS = """
 .centurion-spinner-label {
   margin-top: 1.1rem;
   font-size: 1.05rem;
-  color: rgba(255,255,255,0.78);
+  color: #4a4a5a;
   letter-spacing: 0.03em;
 }
 </style>

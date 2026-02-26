@@ -7,10 +7,11 @@ Ensures consistent interface across all strategies for UI integration.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Optional
-from enum import Enum
-import pandas as pd
 from datetime import datetime
+from enum import Enum
+from typing import Any, Optional
+
+import pandas as pd
 
 from strategies.utils import calculate_max_drawdown
 

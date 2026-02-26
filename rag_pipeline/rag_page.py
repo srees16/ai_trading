@@ -129,7 +129,7 @@ def render_rag_page() -> None:
         unsafe_allow_html=True,
     )
 
-    render_header_bar(subtitle="Research-Augmented Generation · Knowledge Engine")
+    render_header_bar(subtitle="Knowledge Engine")
     _user = st.session_state.get('username', 'unknown')
     logger.info("[user=%s] RAG Engine: page view", _user)
 

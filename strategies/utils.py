@@ -12,9 +12,10 @@ import base64
 import io
 import json
 from typing import Any, Optional
-import pandas as pd
-import numpy as np
+
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 
 
 def matplotlib_to_base64(

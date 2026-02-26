@@ -2,15 +2,16 @@
 Notification system for popup alerts and email reports.
 """
 
-import os
 import logging
+import os
 import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from datetime import datetime
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from typing import List, Optional
-from models import NewsItem
+
 from config import Config
+from models import NewsItem
 
 logger = logging.getLogger(__name__)
 
