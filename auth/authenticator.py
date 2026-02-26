@@ -8,6 +8,7 @@ monitoring with YAML-based credential storage.
 import base64
 import hashlib
 import hmac
+import os
 import yaml
 import streamlit as st
 from pathlib import Path
@@ -15,8 +16,12 @@ from typing import Dict, Optional, Tuple
 from datetime import datetime, timedelta
 import logging
 
+from dotenv import load_dotenv
+
 from config import Config
 from trading_strategies import list_strategies
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -38,15 +43,22 @@ def load_credentials() -> Dict:
     """Load credentials from YAML file."""
     if not CREDENTIALS_PATH.exists():
         # Create default credentials file
+        admin_pw = os.getenv("CENTURION_DEFAULT_ADMIN_PASSWORD", "")
+        analyst_pw = os.getenv("CENTURION_DEFAULT_ANALYST_PASSWORD", "")
+        if not admin_pw or not analyst_pw:
+            logger.warning(
+                "CENTURION_DEFAULT_ADMIN_PASSWORD / CENTURION_DEFAULT_ANALYST_PASSWORD "
+                "not set in .env — default credentials file will have empty passwords"
+            )
         default_creds = {
             'users': {
                 'admin': {
-                    'password': hash_password('admin123'),
+                    'password': hash_password(admin_pw),
                     'name': 'Administrator',
                     'role': 'admin'
                 },
                 'analyst': {
-                    'password': hash_password('analyst123'),
+                    'password': hash_password(analyst_pw),
                     'name': 'Stock Analyst',
                     'role': 'analyst'
                 }
