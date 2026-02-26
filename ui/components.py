@@ -204,7 +204,7 @@ def render_navigation_buttons(
             if st.button(
                 label,
                 key=f"nav_{page_id}_{back_key_suffix}",
-                width='stretch',
+                use_container_width=True,
             ):
                 logger.info("[user=%s] Navigation: %s -> %s",
                             st.session_state.get('username', 'unknown'),

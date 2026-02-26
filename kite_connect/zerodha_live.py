@@ -639,7 +639,7 @@ def _render_dashboard():
             quotes_badge_slot = st.empty()
 
         with c2:
-            if st.button("🔄 Reconnect", width="stretch"):
+            if st.button("🔄 Reconnect", use_container_width=True):
                 logger.info("[user=%s] Ind Stocks: Reconnect clicked", st.session_state.get('username', 'unknown'))
                 st.cache_resource.clear()
                 st.rerun()
@@ -709,7 +709,7 @@ def _render_dashboard():
         """, unsafe_allow_html=True)
 
         btn_label = f"Place {o_txn.capitalize()} Order"
-        if st.button(btn_label, width="stretch", type="primary"):
+        if st.button(btn_label, use_container_width=True, type="primary"):
             logger.info("[user=%s] Ind Stocks: Place Order clicked — symbol=%s, side=%s, qty=%s, type=%s, product=%s",
                         st.session_state.get('username', 'unknown'), o_symbol, o_txn, o_qty, o_type, o_product)
             if o_symbol not in all_stock_names:
@@ -846,14 +846,14 @@ def _render_dashboard():
                     key="qt_prod_global",
                     label_visibility="collapsed",
                 )
-                if qt_cols[3].button("🟢 BUY", key="qt_buy_global", width="stretch"):
+                if qt_cols[3].button("🟢 BUY", key="qt_buy_global", use_container_width=True):
                     res = place_order(kite, qt_symbol, "NSE", "BUY", qt_qty,
                                       order_type="MARKET", product=qt_product)
                     if res["success"]:
                         st.success(f"BUY order placed — ID: {res['order_id']}")
                     else:
                         st.error(res["error"])
-                if qt_cols[4].button("🔴 SELL", key="qt_sell_global", width="stretch"):
+                if qt_cols[4].button("🔴 SELL", key="qt_sell_global", use_container_width=True):
                     res = place_order(kite, qt_symbol, "NSE", "SELL", qt_qty,
                                       order_type="MARKET", product=qt_product)
                     if res["success"]:
@@ -895,7 +895,7 @@ def _render_dashboard():
                         cancel_id = cancel_cols[0].selectbox(
                             "Order", pending["order_id"].tolist(), label_visibility="collapsed",
                         )
-                        if cancel_cols[1].button("❌ Cancel", width="stretch"):
+                        if cancel_cols[1].button("❌ Cancel", use_container_width=True):
                             logger.info("[user=%s] Ind Stocks: Cancel Order clicked — order_id=%s", st.session_state.get('username', 'unknown'), cancel_id)
                             res = cancel_order(kite, cancel_id)
                             if res["success"]:
@@ -1091,7 +1091,7 @@ def _render_dashboard():
                     st.warning("⚠️ **Live trading enabled** — orders will be placed automatically on signals.")
     
                 scan_btn_col, scan_status_col = st.columns([1, 3])
-                run_scan = scan_btn_col.button("🔍 Run Scan", width="stretch", key="rsi_scan_btn")
+                run_scan = scan_btn_col.button("🔍 Run Scan", use_container_width=True, key="rsi_scan_btn")
 
                 if run_scan:
                     logger.info("[user=%s] Ind Stocks: Run RSI Scan clicked — capital=%s, rsi_low=%s, rsi_high=%s, interval=%s, auto=%s",
@@ -1206,7 +1206,7 @@ def _render_option_chain_tab(kite):
         key="oc_timeframe",
     )
 
-    oc_refresh = oc_c5.button("🔄 Refresh", key="oc_refresh_btn", width="stretch")
+    oc_refresh = oc_c5.button("🔄 Refresh", key="oc_refresh_btn", use_container_width=True)
     if oc_refresh:
         logger.info("[user=%s] Ind Stocks: Refresh Option Chain clicked — index=%s", st.session_state.get('username', 'unknown'), oc_index)
 
@@ -1405,7 +1405,7 @@ def _render_option_chain_tab(kite):
 
         if qt_c6.button(
             f"{'🟢' if qt_side == 'BUY' else '🔴'} {qt_side}",
-            key="oqt_go", width="stretch",
+            key="oqt_go", use_container_width=True,
         ):
             from trading.order_service import place_order as _place_order
             res = _place_order(

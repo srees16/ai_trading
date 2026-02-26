@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
+import bcrypt
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -28,14 +29,44 @@ logger = logging.getLogger(__name__)
 CREDENTIALS_PATH = Path(__file__).parent / "credentials.yaml"
 
 
+# ---------------------------------------------------------------------------
+# Password hashing — bcrypt with transparent SHA-256 legacy migration
+# ---------------------------------------------------------------------------
+
 def hash_password(password: str) -> str:
-    """Hash a password using SHA-256."""
-    return hashlib.sha256(password.encode()).hexdigest()
+    """Hash a password using bcrypt (12 rounds, random salt).
+
+    Returns a UTF-8 bcrypt hash string suitable for storage.
+    """
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12)).decode()
+
+
+def _is_legacy_sha256(hashed: str) -> bool:
+    """Return True if *hashed* looks like a bare SHA-256 hex digest."""
+    return len(hashed) == 64 and all(c in '0123456789abcdef' for c in hashed)
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    """Verify a password against its hash."""
-    return hmac.compare_digest(hash_password(password), hashed)
+    """Verify *password* against a stored hash.
+
+    Supports both:
+    - **bcrypt** hashes (``$2b$…`` / ``$2a$…``)
+    - **legacy SHA-256** hex digests (64 hex chars, no salt)
+
+    Legacy hashes are checked via constant-time comparison so timing
+    attacks are still mitigated.  Callers should re-hash and persist
+    the bcrypt version after a successful legacy match (see
+    ``Authenticator.authenticate``).
+    """
+    if _is_legacy_sha256(hashed):
+        # Constant-time compare against the old unsalted SHA-256
+        legacy_hash = hashlib.sha256(password.encode()).hexdigest()
+        return hmac.compare_digest(legacy_hash, hashed)
+    # bcrypt path
+    try:
+        return bcrypt.checkpw(password.encode(), hashed.encode())
+    except (ValueError, TypeError):
+        return False
 
 
 def load_credentials() -> Dict:
@@ -54,12 +85,12 @@ def load_credentials() -> Dict:
 
     if not CREDENTIALS_PATH.exists():
         # Create default credentials file
-        admin_pw = os.getenv("CENTURION_DEFAULT_ADMIN_PASSWORD", "")
-        analyst_pw = os.getenv("CENTURION_DEFAULT_ANALYST_PASSWORD", "")
-        if not admin_pw or not analyst_pw:
+        admin_pw = os.getenv("CENTURION_DEFAULT_ADMIN_PASSWORD", "admin123")
+        analyst_pw = os.getenv("CENTURION_DEFAULT_ANALYST_PASSWORD", "analyst123")
+        if admin_pw in ("admin123",) or analyst_pw in ("analyst123",):
             logger.warning(
-                "CENTURION_DEFAULT_ADMIN_PASSWORD / CENTURION_DEFAULT_ANALYST_PASSWORD "
-                "not set in .env — default credentials file will have empty passwords"
+                "Using default passwords — set CENTURION_DEFAULT_ADMIN_PASSWORD / "
+                "CENTURION_DEFAULT_ANALYST_PASSWORD env vars (or .env) for production"
             )
         default_creds = {
             'users': {
@@ -203,7 +234,14 @@ class Authenticator:
         st.session_state.user_name = user.get('name', username)
         st.session_state.login_time = datetime.now()
         st.session_state.login_attempts = 0
-        
+
+        # ── Auto-migrate legacy SHA-256 hash → bcrypt ────────────
+        if _is_legacy_sha256(user['password']):
+            new_hash = hash_password(password)
+            self.credentials['users'][username]['password'] = new_hash
+            save_credentials(self.credentials)
+            logger.info("Migrated password hash for '%s' from SHA-256 to bcrypt", username)
+
         logger.info(f"User '{username}' logged in successfully")
         return True, f"Welcome, {st.session_state.user_name}!"
     
@@ -312,14 +350,8 @@ class Authenticator:
                     "Password", type="password", placeholder="Enter your password", label_visibility="collapsed"
                 )
                 
-                # width='stretch' requires Streamlit >=1.44
-                _btn_kwargs = {"type": "primary"}
-                try:
-                    _btn_kwargs["width"] = "stretch"
-                    submitted = st.form_submit_button("Sign In", **_btn_kwargs)
-                except TypeError:
-                    _btn_kwargs.pop("width", None)
-                    submitted = st.form_submit_button("Sign In", **_btn_kwargs)
+                submitted = st.form_submit_button("Sign In", type="primary",
+                                                       use_container_width=True)
                 
                 if submitted:
                     if username and password:
@@ -582,7 +614,7 @@ def render_user_menu():
         )
     
     with col_logout:
-        if st.button("🚪 Logout", key="logout_btn", width='stretch'):
+        if st.button("🚪 Logout", key="logout_btn", use_container_width=True):
             logger.info("[user=%s] Logged out", st.session_state.get('username', 'unknown'))
             logout()
             st.rerun()
