@@ -21,12 +21,18 @@ def load_logo_base64() -> str:
     Returns:
         HTML img tag with embedded base64 logo, or empty string if not found
     """
+    _KEY = "_logo_b64_large"
+    if _KEY in st.session_state:
+        return st.session_state[_KEY]
+
     logo_path = Path(__file__).parent / "assets" / "centurion_logo.png"
+    html = ""
     if logo_path.exists():
         with open(logo_path, "rb") as f:
             logo_data = base64.b64encode(f.read()).decode()
-        return f'<img src="data:image/png;base64,{logo_data}" style="height: 1.6rem; vertical-align: middle; margin-right: 0.2rem;">'
-    return ""
+        html = f'<img src="data:image/png;base64,{logo_data}" style="height: 1.6rem; vertical-align: middle; margin-right: 0.2rem;">'
+    st.session_state[_KEY] = html
+    return html
 
 
 def load_logo_base64_small() -> str:
@@ -36,12 +42,18 @@ def load_logo_base64_small() -> str:
     Returns:
         HTML img tag with embedded base64 logo (smaller), or empty string if not found
     """
+    _KEY = "_logo_b64_small"
+    if _KEY in st.session_state:
+        return st.session_state[_KEY]
+
     logo_path = Path(__file__).parent / "assets" / "centurion_logo.png"
+    html = ""
     if logo_path.exists():
         with open(logo_path, "rb") as f:
             logo_data = base64.b64encode(f.read()).decode()
-        return f'<img src="data:image/png;base64,{logo_data}" style="height: 1.4rem; vertical-align: middle; margin-right: 0.3rem;">'
-    return ""
+        html = f'<img src="data:image/png;base64,{logo_data}" style="height: 1.4rem; vertical-align: middle; margin-right: 0.3rem;">'
+    st.session_state[_KEY] = html
+    return html
 
 
 _HEADER_BAR_CSS = """

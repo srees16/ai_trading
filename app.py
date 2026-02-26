@@ -16,7 +16,17 @@ import os
 # Use multiple strategies to find the project root reliably, even when
 # Streamlit's script runner re-executes the file in an unusual context.
 _PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-if _PROJECT_ROOT not in sys.path:
+# ALWAYS force project root to position 0 — other modules (e.g.
+# kite_connect/zerodha_live) append sub-package dirs that contain an
+# 'auth/' folder which would shadow our top-level auth package.
+if sys.path and sys.path[0] == _PROJECT_ROOT:
+    pass  # already in pole position
+else:
+    # Remove any existing entry first, then re-insert at 0
+    try:
+        sys.path.remove(_PROJECT_ROOT)
+    except ValueError:
+        pass
     sys.path.insert(0, _PROJECT_ROOT)
 # Also set as env-var so child processes / rerun cycles inherit it
 os.environ.setdefault("PYTHONPATH", _PROJECT_ROOT)
@@ -25,22 +35,22 @@ if os.getcwd() != _PROJECT_ROOT:
     os.chdir(_PROJECT_ROOT)
 
 import logging
-import threading
 
 import streamlit as st
 
 from auth.authenticator import check_authentication, render_user_menu
+# Pin the top-level 'auth' package in sys.modules so that sub-packages
+# like kite_connect/auth/ can never shadow it across Streamlit reruns.
+import auth as _auth_pkg              # noqa: F811
+sys.modules.setdefault('auth', _auth_pkg)
+
 from services.session import initialize_session_state
 from ui.styles import apply_custom_styles
 
-def _preload_heavy_libs():
-    try:
-        import numpy      # noqa: F401
-        import pandas      # noqa: F401
-    except Exception:
-        pass
-
-threading.Thread(target=_preload_heavy_libs, daemon=True).start()
+# NOTE: The previous background preload of numpy/pandas was removed.
+# On Windows the GIL + Cython-extension compilation made the background
+# thread *slow down* the main thread rather than helping.  Streamlit
+# loads these packages on-demand when they are first needed.
 
 # Configure logging
 logging.basicConfig(
@@ -108,7 +118,9 @@ def main():
         # Clear stale RAG one-shot keys so they don't leak across apps
         for _k in ("rag_resubmit_query",):
             st.session_state.pop(_k, None)
-        st.rerun()
+        # NOTE: No st.rerun() here — selected_app already holds the new
+        # value so the routing block below renders the correct module
+        # immediately, saving an entire Streamlit round-trip (~1-2 s).
 
     # ── Route to selected application ───────────────────────────
     if selected_app == "live_stocks":

@@ -39,7 +39,19 @@ def verify_password(password: str, hashed: str) -> bool:
 
 
 def load_credentials() -> Dict:
-    """Load credentials from YAML file."""
+    """Load credentials from YAML file.
+
+    The parsed dict is cached in ``st.session_state`` so the YAML file
+    is only read from disk once per session (called 2× per rerun
+    via ``check_authentication`` and ``render_user_menu``).
+
+    Call ``invalidate_credentials_cache()`` after programmatic changes to
+    the YAML file (e.g. password resets) to force a reload.
+    """
+    _CACHE_KEY = "_cached_credentials"
+    if _CACHE_KEY in st.session_state:
+        return st.session_state[_CACHE_KEY]
+
     if not CREDENTIALS_PATH.exists():
         # Create default credentials file
         admin_pw = os.getenv("CENTURION_DEFAULT_ADMIN_PASSWORD", "")
@@ -69,15 +81,25 @@ def load_credentials() -> Dict:
         }
         save_credentials(default_creds)
         logger.info("Created default credentials file")
+        st.session_state[_CACHE_KEY] = default_creds
         return default_creds
     
     try:
         with open(CREDENTIALS_PATH, 'r') as f:
             import yaml
-            return yaml.safe_load(f)
+            creds = yaml.safe_load(f)
+        st.session_state[_CACHE_KEY] = creds
+        return creds
     except Exception as e:
         logger.error(f"Error loading credentials: {e}")
-        return {'users': {}, 'settings': {'session_timeout_minutes': 60}}
+        fallback = {'users': {}, 'settings': {'session_timeout_minutes': 60}}
+        st.session_state[_CACHE_KEY] = fallback
+        return fallback
+
+
+def invalidate_credentials_cache():
+    """Clear the cached credentials so the next call re-reads the YAML."""
+    st.session_state.pop("_cached_credentials", None)
 
 
 def save_credentials(credentials: Dict) -> bool:
@@ -87,6 +109,8 @@ def save_credentials(credentials: Dict) -> bool:
         with open(CREDENTIALS_PATH, 'w') as f:
             import yaml
             yaml.dump(credentials, f, default_flow_style=False)
+        # Invalidate cache so next load_credentials() picks up changes
+        st.session_state.pop("_cached_credentials", None)
         return True
     except Exception as e:
         logger.error(f"Error saving credentials: {e}")

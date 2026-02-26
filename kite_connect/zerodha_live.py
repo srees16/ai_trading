@@ -9,8 +9,6 @@ import os
 import sys
 from datetime import datetime, timedelta
 
-import pandas as pd
-import requests
 import streamlit as st
 
 # Suppress harmless Tornado WebSocket closed errors during st.rerun()
@@ -18,26 +16,101 @@ logging.getLogger("tornado.general").setLevel(logging.CRITICAL)
 logger = logging.getLogger(__name__)
 
 # Add kite_connect folder to path so we can import shared modules
-sys.path.insert(0, os.path.dirname(__file__))
+# NOTE: *append* (not insert-at-0) so the project-root 'auth' package
+# is never shadowed by kite_connect/auth/.
+_KITE_DIR = os.path.dirname(__file__)
+if _KITE_DIR not in sys.path:
+    sys.path.append(_KITE_DIR)
 # Add project root so we can import shared ui utilities
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
+elif sys.path[0] != _PROJECT_ROOT:
+    # Ensure project root stays at position 0
+    sys.path.remove(_PROJECT_ROOT)
+    sys.path.insert(0, _PROJECT_ROOT)
 
-from kiteconnect import KiteConnect, exceptions as kite_exceptions
-from core.config import REFRESH_INTERVAL
-from core.db_service import get_connection
-from kite_connect.auth.kite_session import create_kite_session
-from trading.order_service import place_order, get_order_book, get_positions, get_holdings, cancel_order
-from trading.rsi_strategy import scan_watchlist
-from options.option_chain import discover_expiries, fetch_option_chain, INDEX_META
+# ── Heavy imports are LAZY ──────────────────────────────────────────
+# kiteconnect pulls in twisted+autobahn (~30 s on Windows).  We defer
+# all heavy imports to first actual use so the login page isn't blocked.
 from ui.components import load_logo_base64_small, render_header_bar, render_footer
+
+# Lazy singletons — populated on first call via _ensure_imports()
+_kite_mod = None
+_kite_exceptions = None
+
+# Forward-declare names that _ensure_imports() injects into globals().
+# This keeps Pylance / mypy happy while avoiding the actual imports.
+pd = None                   # type: ignore[assignment]
+requests = None             # type: ignore[assignment]
+KiteConnect = None          # type: ignore[assignment]
+kite_exceptions = None      # type: ignore[assignment]
+REFRESH_INTERVAL = None     # type: ignore[assignment]
+get_connection = None       # type: ignore[assignment]
+create_kite_session = None  # type: ignore[assignment]
+place_order = None          # type: ignore[assignment]
+get_order_book = None       # type: ignore[assignment]
+get_positions = None        # type: ignore[assignment]
+get_holdings = None         # type: ignore[assignment]
+cancel_order = None         # type: ignore[assignment]
+scan_watchlist = None       # type: ignore[assignment]
+discover_expiries = None    # type: ignore[assignment]
+fetch_option_chain = None   # type: ignore[assignment]
+INDEX_META = None           # type: ignore[assignment]
+
+
+def _ensure_imports():
+    """Import heavy kite / DB / trading modules once, on first use."""
+    global _kite_mod, _kite_exceptions
+    if _kite_mod is not None:
+        return
+    import kiteconnect as _km
+    _kite_mod = _km
+    _kite_exceptions = _km.exceptions
+    # Pull remaining heavy modules into the global module namespace
+    # so existing code keeps working via module-level references.
+    import importlib
+    glb = globals()
+    # pandas + requests are deferred because pandas alone takes ~70 s
+    # on Windows (Cython extension compilation).
+    import pandas as _pd
+    glb['pd'] = _pd
+    import requests as _req
+    glb['requests'] = _req
+    glb['KiteConnect'] = _km.KiteConnect
+    glb['kite_exceptions'] = _km.exceptions
+    from core.config import REFRESH_INTERVAL as _ri
+    glb['REFRESH_INTERVAL'] = _ri
+    from core.db_service import get_connection as _gc
+    glb['get_connection'] = _gc
+    from kite_connect.auth.kite_session import create_kite_session as _cks
+    glb['create_kite_session'] = _cks
+    from trading.order_service import (
+        place_order as _po, get_order_book as _gob,
+        get_positions as _gp, get_holdings as _gh,
+        cancel_order as _co,
+    )
+    glb['place_order'] = _po
+    glb['get_order_book'] = _gob
+    glb['get_positions'] = _gp
+    glb['get_holdings'] = _gh
+    glb['cancel_order'] = _co
+    from trading.rsi_strategy import scan_watchlist as _sw
+    glb['scan_watchlist'] = _sw
+    from options.option_chain import (
+        discover_expiries as _de, fetch_option_chain as _foc,
+        INDEX_META as _im,
+    )
+    glb['discover_expiries'] = _de
+    glb['fetch_option_chain'] = _foc
+    glb['INDEX_META'] = _im
 
 
 # ── Kite Connect Session ───────────────────────────────────────
 @st.cache_resource(show_spinner=False)
 def get_kite_session():
     """Login to Kite Connect and return the kite instance."""
+    _ensure_imports()
     return create_kite_session()
 
 
@@ -195,7 +268,7 @@ def _render_landing_page():
     <style>
         .landing-card {
             background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
-            padding: 2rem 2.5rem; margin: 0.6rem auto 0 auto; max-width: 720px;
+            padding: 0.5rem 1rem 1rem 1rem; margin: 0.6rem auto 0 auto; max-width: 720px;
             box-shadow: 0 1px 4px rgba(0,0,0,0.06);
         }
         div[data-testid="column"]:has(button) { margin-top: -0.6rem; }
@@ -227,6 +300,7 @@ def _render_landing_page():
 
 def _render_dashboard():
     """Core dashboard — called after landing-page gate."""
+    _ensure_imports()  # lazy-load kiteconnect, twisted, DB, etc.
 
     # ── Page-specific CSS (shared base styles come from apply_custom_styles) ──
     st.markdown("""
@@ -529,7 +603,7 @@ def _render_dashboard():
     # ── Header bar (rendered after Kite login so kite_status is available) ──
     _pills_html = (
         f'<div class="live-pill {pill_class}"><span class="live-dot"></span> {pill_label}</div>'
-        f'<div class="live-pill pill-open" style="margin-top:4px"><span class="live-dot"></span> Online</div>'
+        f'<div class="live-pill pill-open" style="margin-top:10px"><span class="live-dot"></span> Online</div>'
     )
     render_header_bar(
         subtitle="Real-time data · Zerodha Kite Connect",

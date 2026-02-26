@@ -11,21 +11,57 @@ import uuid
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional
 
-import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
 
 from config import Config
-from database.service import get_database_service
-from storage.minio_service import get_minio_service
-from trading_strategies import list_strategies, get_strategy
+from trading_strategies import list_strategies
 from ui.components import render_page_header, render_footer, render_navigation_buttons, render_no_data_warning, render_tickers_being_analyzed
-from ui.tables import render_backtest_signals_table
 
 logger = logging.getLogger(__name__)
 
 DB_AVAILABLE = Config.is_database_configured()
 MINIO_AVAILABLE = True
+
+# Lazy heavy imports — pandas alone takes ~70 s on some machines.
+pd = None       # type: ignore[assignment]
+go = None       # type: ignore[assignment]
+
+
+def _ensure_heavy():
+    """Import pandas, plotly, and ui.tables on first use."""
+    global pd, go
+    if pd is not None:
+        return
+    import pandas as _pd
+    import plotly.graph_objects as _go
+    pd = _pd
+    go = _go
+    globals()['pd'] = _pd
+    globals()['go'] = _go
+    from ui.tables import render_backtest_signals_table as _rbt
+    globals()['render_backtest_signals_table'] = _rbt
+
+
+# Forward-declare for Pylance
+render_backtest_signals_table = None  # type: ignore[assignment]
+
+
+def _get_db_service():
+    """Lazy import of database.service (pulls in SQLAlchemy)."""
+    from database.service import get_database_service
+    return get_database_service()
+
+
+def _get_minio():
+    """Lazy import of storage.minio_service."""
+    from storage.minio_service import get_minio_service
+    return get_minio_service()
+
+
+def _get_strategy(name):
+    """Lazy import of get_strategy (pulls in the actual strategy class)."""
+    from trading_strategies import get_strategy
+    return get_strategy(name)
 
 # ── CSS-only multi-colour spinning wheel with percentage overlay ────
 _STRATEGY_SPINNER_CSS = """
@@ -109,6 +145,7 @@ def _spinner_html(pct: int, label: str) -> str:
 
 def render_backtesting_page():
     """Render the strategy backtesting page."""
+    _ensure_heavy()  # lazy-load pandas, plotly, ui.tables
     logger.info("[user=%s] Viewing Backtesting page",
                 st.session_state.get('username', 'unknown'))
     render_page_header(
@@ -236,7 +273,7 @@ def _precompute_all_strategies(strategies: list):
         )
 
         try:
-            strategy_cls = get_strategy(s_info['id'])
+            strategy_cls = _get_strategy(s_info['id'])
             params = strategy_cls.get_parameters()
 
             param_values = {
@@ -324,7 +361,7 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
             st.session_state.selected_strategy = selected_name
         
         # Get strategy class and parameters
-        strategy_cls = get_strategy(strategy_info['id'])
+        strategy_cls = _get_strategy(strategy_info['id'])
         params = strategy_cls.get_parameters()
         
         st.markdown("---")
@@ -560,11 +597,11 @@ def _save_backtest_to_database(
     selected_name: str
 ):
     """Save backtest results to database if available."""
-    if not DB_AVAILABLE or not get_database_service:
+    if not DB_AVAILABLE:
         return
     
     try:
-        db_service = get_database_service()
+        db_service = _get_db_service()
         tickers_list = param_values.get('tickers', [])
         
         backtest_data = {
@@ -634,11 +671,11 @@ def _save_charts_to_minio(
         result: StrategyResult containing charts
         strategy_name: Name of the strategy (used as subfolder)
     """
-    if not MINIO_AVAILABLE or not get_minio_service:
+    if not MINIO_AVAILABLE:
         return 0
 
     try:
-        minio_svc = get_minio_service()
+        minio_svc = _get_minio()
         if not minio_svc.is_available:
             return 0
 
