@@ -15,7 +15,6 @@ from ui.components import (
     render_navigation_buttons,
     render_no_data_warning,
     render_score_interpretations_table,
-    render_tickers_being_analyzed,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,11 +48,6 @@ def render_fundamental_page():
         description="Altman Z-Score • Beneish M-Score • Piotroski F-Score"
     )
 
-    # Show stocks being analyzed
-    tickers = st.session_state.get('tickers', [])
-    if tickers:
-        render_tickers_being_analyzed(tickers, st.session_state.get('ticker_mode', 'Default Tickers'))
-    
     # Navigation buttons
     render_navigation_buttons(
         current_page='fundamental',

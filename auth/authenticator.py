@@ -322,15 +322,13 @@ class Authenticator:
         _, center_col, _ = st.columns([1.2, 1.6, 1.2])
         
         with center_col:
-            # Branding header
+            # Dark gradient header bar (matches module landing pages)
             st.markdown(
                 f"""
-                <div class="login-card">
-                    <div class="login-brand">
-                        {logo_html}
-                        <div class="login-title">Centurion Capital LLC</div>
-                    </div>
-                    <div class="login-divider"></div>
+                <div class="login-header-bar">
+                    {logo_html}
+                    <div class="login-header-title">Centurion Capital LLC</div>
+                    <div class="login-header-subtitle">ALGORITHMIC TRADING · EVENT-DRIVEN ALPHA</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -338,16 +336,11 @@ class Authenticator:
             
             # Login form
             with st.form("login_form"):
-                st.markdown(
-                    "<p style='text-align:center; margin:0 0 1rem 0; font-size:0.95rem; color:#555;'>"
-                    "Sign in to continue</p>",
-                    unsafe_allow_html=True,
-                )
                 username = st.text_input(
-                    "Username", placeholder="Enter your username", label_visibility="collapsed"
+                    "Username", placeholder="Username", label_visibility="collapsed"
                 )
                 password = st.text_input(
-                    "Password", type="password", placeholder="Enter your password", label_visibility="collapsed"
+                    "Password", type="password", placeholder="Password", label_visibility="collapsed"
                 )
                 
                 submitted = st.form_submit_button("Sign In", type="primary",
@@ -398,7 +391,8 @@ class Authenticator:
                 data = base64.b64encode(f.read()).decode()
             html = (
                 f'<img src="data:image/png;base64,{data}" '
-                f'style="height:4rem; margin-bottom:0.75rem; mix-blend-mode:multiply;" />'
+                f'style="height:4rem; margin-bottom:0.75rem; '
+                f'filter:brightness(0) invert(1);" />'
             )
         st.session_state[_CACHE_KEY] = html
         return html
@@ -420,54 +414,67 @@ class Authenticator:
         [data-testid="stHeader"] { background: transparent !important; }
 
         /* ---------- login page overrides ---------- */
-        .login-spacer { height: 4vh; }
+        .login-spacer { height: 14vh; }
 
-        .login-card {
-            text-align: center;
-            padding: 0 0.5rem;
-        }
-        .login-brand {
+        /* Dark gradient header bar (same as module pages) */
+        .login-header-bar {
+            background: linear-gradient(135deg, #0d1117 0%, #161b22 40%, #0f3460 100%);
+            padding: 1.5rem 1.6rem 1.2rem 1.6rem;
+            border-radius: 10px 10px 0 0;
+            margin-bottom: 0;
             display: flex;
             flex-direction: column;
             align-items: center;
+            justify-content: center;
+            border-left: 4px solid #4299e1;
+            box-shadow: 0 -2px 8px rgba(0,0,0,0.25);
+            text-align: center;
         }
-        .login-title {
-            font-size: 1.9rem;
-            font-weight: 700;
-            color: #1a1a2e;
-            letter-spacing: 0.5px;
+        .login-header-title {
+            color: #ffffff !important;
+            font-size: 1.55rem;
+            font-weight: 800;
+            letter-spacing: 0.3px;
+            line-height: 1.3;
         }
-        .login-tagline {
-            font-size: 0.85rem;
-            color: #666;
-            margin-top: 0.25rem;
-            font-weight: 400;
-        }
-        .login-divider {
-            width: 60px;
-            height: 3px;
-            background: linear-gradient(90deg, #00cc44, #00aa33);
-            border-radius: 2px;
-            margin: 1.25rem auto 0.5rem auto;
+        .login-header-subtitle {
+            color: #8b949e !important;
+            font-size: 0.72rem;
+            margin-top: 0.2rem;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
+            font-weight: 500;
         }
 
-        /* Form container polish */
+        /* Form container polish – blended into dark band */
         [data-testid="stForm"] {
-            background: rgba(255,255,255,0.98) !important;
-            border: 1px solid #e0e0e0 !important;
-            border-radius: 12px !important;
-            padding: 1.75rem 1.5rem !important;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.06) !important;
+            background: linear-gradient(180deg, #0f3460 0%, #0d1117 100%) !important;
+            border: none !important;
+            border-left: 4px solid #4299e1 !important;
+            border-radius: 0 0 10px 10px !important;
+            padding: 1.25rem 1.5rem 1.75rem 1.5rem !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
         }
 
-        /* Input fields */
+        /* Input fields – dark themed */
         [data-testid="stForm"] input {
             border-radius: 8px !important;
             padding: 0.6rem 0.75rem !important;
             font-size: 0.95rem !important;
+            background: rgba(255,255,255,0.08) !important;
+            border: 1px solid rgba(255,255,255,0.15) !important;
+            color: #e2e8f0 !important;
+        }
+        [data-testid="stForm"] input::placeholder {
+            color: #718096 !important;
         }
         [data-testid="stForm"] [data-testid="stTextInput"] {
             margin-bottom: 0.5rem;
+        }
+        /* Input labels / captions in dark form */
+        [data-testid="stForm"] label,
+        [data-testid="stForm"] .stTextInput label {
+            color: #a0aec0 !important;
         }
 
         /* Hide 'Press Enter to submit form' caption */

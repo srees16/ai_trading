@@ -22,6 +22,7 @@ from ui.components import (
     render_footer,
     render_navigation_buttons,
     render_no_data_warning,
+    spinner_html,
 )
 
 logger = logging.getLogger(__name__)
@@ -291,30 +292,33 @@ def _execute_backtest(
     strategy_cls, strategy_info: Dict, param_values: Dict, selected_name: str
 ):
     """Run the crypto backtest and persist results."""
-    with st.spinner("Running crypto backtest — fetching data from Binance…"):
-        try:
-            strategy = strategy_cls()
-            result = strategy.run(**param_values)
-            st.session_state.crypto_result = result
-            st.session_state.crypto_selected = selected_name
+    _crypto_sp = st.empty()
+    _crypto_sp.markdown(spinner_html("Running crypto backtest — fetching data from Binance…"), unsafe_allow_html=True)
+    try:
+        strategy = strategy_cls()
+        result = strategy.run(**param_values)
+        _crypto_sp.empty()
+        st.session_state.crypto_result = result
+        st.session_state.crypto_selected = selected_name
 
-            # Update cache
-            if "crypto_cache" not in st.session_state:
-                st.session_state.crypto_cache = {}
-            st.session_state.crypto_cache[selected_name] = result
+        # Update cache
+        if "crypto_cache" not in st.session_state:
+            st.session_state.crypto_cache = {}
+        st.session_state.crypto_cache[selected_name] = result
 
-            if result.success:
-                st.success("✅ Crypto backtest completed!")
-                _save_backtest_to_database(
-                    strategy_info, param_values, result, selected_name
-                )
-                _save_charts_to_minio(result, selected_name)
-            else:
-                st.error(f"❌ Failed: {result.error_message}")
+        if result.success:
+            st.success("✅ Crypto backtest completed!")
+            _save_backtest_to_database(
+                strategy_info, param_values, result, selected_name
+            )
+            _save_charts_to_minio(result, selected_name)
+        else:
+            st.error(f"❌ Failed: {result.error_message}")
 
-        except Exception as e:
-            logger.error(f"Error running crypto backtest: {e}")
-            st.error(f"❌ Error: {str(e)}")
+    except Exception as e:
+        _crypto_sp.empty()
+        logger.error(f"Error running crypto backtest: {e}")
+        st.error(f"❌ Error: {str(e)}")
 
 
 # ====================================================================

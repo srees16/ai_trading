@@ -31,7 +31,10 @@ logger = logging.getLogger(__name__)
 DB_AVAILABLE = Config.is_database_configured()
 
 
-async def run_analysis_async(tickers: List[str]) -> List[Any]:
+async def run_analysis_async(
+    tickers: List[str],
+    progress_callback=None,
+) -> List[Any]:
     """
     Run the stock analysis asynchronously, reusing cached data
     for tickers that were already analysed in this session.
@@ -50,7 +53,8 @@ async def run_analysis_async(tickers: List[str]) -> List[Any]:
     
     signals = await _execute_analysis(
         system, tickers, cache,
-        status_placeholder
+        status_placeholder,
+        progress_callback=progress_callback,
     )
 
     if not signals:
@@ -91,7 +95,8 @@ async def _execute_analysis(
     system: AlgoTradingSystem,
     tickers: List[str],
     cache,
-    status_placeholder
+    status_placeholder,
+    progress_callback=None,
 ) -> List[Any]:
     """
     Execute the main analysis pipeline with session-cache integration.
@@ -105,6 +110,8 @@ async def _execute_analysis(
     """
     # ── Step 1: News scraping (with cache) ───────────────────────────
     status_placeholder.info("📰 Scraping news from multiple sources...")
+    if progress_callback:
+        progress_callback(0, "Scraping news…")
     
     # Build dict of cached news
     cached_news: Dict[str, list] = cache.get_all("news")
@@ -144,6 +151,8 @@ async def _execute_analysis(
     
     # ── Step 2: Sentiment analysis (with cache) ──────────────────────
     status_placeholder.info("🧠 Analyzing sentiment...")
+    if progress_callback:
+        progress_callback(33, "Analyzing sentiment…")
     
     # Separate already-analysed items from new ones
     items_to_analyse = []
@@ -177,6 +186,8 @@ async def _execute_analysis(
     
     # ── Step 3: Metrics + signals ────────────────────────────────────
     status_placeholder.info("📊 Calculating metrics and generating signals...")
+    if progress_callback:
+        progress_callback(66, "Calculating metrics…")
     
     # Pre-populate MetricsCalculator cache with any previously cached metrics
     cached_metrics = cache.get_all("metrics")
@@ -218,6 +229,8 @@ async def _execute_analysis(
         cache.put("signals", ticker, sigs)
     
     status_placeholder.success(f"✓ Generated {len(signals)} trading signals")
+    if progress_callback:
+        progress_callback(100, "Analysis complete ✅")
     
     # ── Step 4: WSB email report (auto-send when SMTP configured) ────
     wsb_news = [n for n in analyzed_news if n.source == "WallStreetBets"]
