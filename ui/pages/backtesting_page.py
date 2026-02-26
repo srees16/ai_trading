@@ -266,9 +266,8 @@ def _precompute_all_strategies(strategies: list):
         _spinner_html(100, "All strategies computed ✅"),
         unsafe_allow_html=True,
     )
-
-    if total_minio_saved > 0:
-        st.toast(f"🪣 {total_minio_saved} chart(s) saved to object storage", icon="✅")
+    import time as _time; _time.sleep(0.6)
+    spinner_slot.empty()
 
     # Persist cache metadata
     st.session_state.backtest_cache_tickers = sorted(set(t.upper() for t in tickers))
@@ -281,7 +280,6 @@ def _precompute_all_strategies(strategies: list):
         st.session_state.backtest_result = st.session_state.backtest_cache[first_name]
         st.session_state.selected_strategy = first_name
 
-    st.success(f"✅ Pre-computed {succeeded}/{total} strategies for {', '.join(tickers)}")
     logger.info("[user=%s] Pre-computation complete: %d/%d strategies succeeded for %s",
                 st.session_state.get('username', 'unknown'),
                 succeeded, total, ', '.join(tickers))
@@ -501,50 +499,58 @@ def _execute_backtest(strategy_cls, strategy_info: Dict, param_values: Dict, sel
     """
     _user = st.session_state.get('username', 'unknown')
     logger.info("[user=%s] Executing backtest: %s", _user, selected_name)
-    with st.spinner("Running backtest..."):
-        try:
-            strategy = strategy_cls()
-            result = strategy.run(**param_values)
-            st.session_state.backtest_result = result
-            st.session_state.selected_strategy = selected_name
-            
-            # Update the cache so future switches are instant
-            if 'backtest_cache' not in st.session_state:
-                st.session_state.backtest_cache = {}
-            st.session_state.backtest_cache[selected_name] = result
-            
-            if result.success:
-                st.success("✅ Backtest completed!")
-                logger.info("[user=%s] Backtest completed successfully: %s",
-                            _user, selected_name)
-                _save_backtest_to_database(
-                    strategy_info, param_values, result, selected_name
+
+    st.markdown(_STRATEGY_SPINNER_CSS, unsafe_allow_html=True)
+    manual_spinner = st.empty()
+    manual_spinner.markdown(
+        _spinner_html(0, f"Running {selected_name}…"),
+        unsafe_allow_html=True,
+    )
+
+    try:
+        strategy = strategy_cls()
+        result = strategy.run(**param_values)
+        st.session_state.backtest_result = result
+        st.session_state.selected_strategy = selected_name
+
+        # Update the cache so future switches are instant
+        if 'backtest_cache' not in st.session_state:
+            st.session_state.backtest_cache = {}
+        st.session_state.backtest_cache[selected_name] = result
+
+        manual_spinner.markdown(
+            _spinner_html(100, f"{selected_name} complete ✅"),
+            unsafe_allow_html=True,
+        )
+        import time as _time; _time.sleep(0.6)
+        manual_spinner.empty()
+
+        if result.success:
+            logger.info("[user=%s] Backtest completed successfully: %s",
+                        _user, selected_name)
+            _save_backtest_to_database(
+                strategy_info, param_values, result, selected_name
+            )
+            minio_run_id = st.session_state.get('backtest_minio_run_id')
+            if not minio_run_id:
+                minio_run_id = _build_minio_run_id(
+                    param_values.get('tickers', [])
                 )
-                # Save charts to MinIO independently of DB
-                # Reuse the session's run_id so manual runs land in
-                # the same folder as pre-computed charts; create one
-                # only if none exists yet.
-                minio_run_id = st.session_state.get('backtest_minio_run_id')
-                if not minio_run_id:
-                    minio_run_id = _build_minio_run_id(
-                        param_values.get('tickers', [])
-                    )
-                    st.session_state.backtest_minio_run_id = minio_run_id
-                minio_saved = _save_charts_to_minio(
-                    run_id=minio_run_id,
-                    result=result,
-                    strategy_name=selected_name,
-                )
-                if minio_saved > 0:
-                    st.toast(f"🪣 {minio_saved} chart(s) saved to object storage", icon="✅")
-            else:
-                logger.warning("[user=%s] Backtest failed: %s — %s",
-                               _user, selected_name, result.error_message)
-                st.error(f"❌ Failed: {result.error_message}")
-                
-        except Exception as e:
-            logger.error(f"Error running backtest: {e}")
-            st.error(f"❌ Error: {str(e)}")
+                st.session_state.backtest_minio_run_id = minio_run_id
+            _save_charts_to_minio(
+                run_id=minio_run_id,
+                result=result,
+                strategy_name=selected_name,
+            )
+        else:
+            logger.warning("[user=%s] Backtest failed: %s — %s",
+                           _user, selected_name, result.error_message)
+            st.error(f"❌ Failed: {result.error_message}")
+
+    except Exception as e:
+        manual_spinner.empty()
+        logger.error(f"Error running backtest: {e}")
+        st.error(f"❌ Error: {str(e)}")
 
 
 def _save_backtest_to_database(

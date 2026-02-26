@@ -238,40 +238,6 @@ class Authenticator:
             'login_time': st.session_state.login_time
         }
     
-    def add_user(self, username: str, password: str, name: str, role: str = 'analyst') -> bool:
-        """Add a new user (admin only)."""
-        if st.session_state.user_role != 'admin':
-            logger.warning("Non-admin attempted to add user")
-            return False
-        
-        if username in self.credentials['users']:
-            return False
-        
-        self.credentials['users'][username] = {
-            'password': hash_password(password),
-            'name': name,
-            'role': role
-        }
-        return save_credentials(self.credentials)
-    
-    def change_password(self, username: str, old_password: str, new_password: str) -> Tuple[bool, str]:
-        """Change user password."""
-        users = self.credentials.get('users', {})
-        
-        if username not in users:
-            return False, "User not found"
-        
-        if not verify_password(old_password, users[username]['password']):
-            return False, "Current password is incorrect"
-        
-        if len(new_password) < 6:
-            return False, "New password must be at least 6 characters"
-        
-        self.credentials['users'][username]['password'] = hash_password(new_password)
-        if save_credentials(self.credentials):
-            return True, "Password changed successfully"
-        return False, "Failed to save new password"
-    
     def render_login_form(self) -> bool:
         """
         Render a polished, enterprise-grade login form with branding.

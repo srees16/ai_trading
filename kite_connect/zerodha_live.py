@@ -209,15 +209,11 @@ def _render_landing_page():
         <ul>
             <li><strong>Real-time quotes</strong> — NIFTY 50, Bank Nifty, IT &amp; Energy indices streamed via Zerodha Kite Connect</li>
             <li><strong>Live market status</strong> — automatic detection of pre-open, live, and post-market sessions from NSE</li>
-            <li><strong>RSI scanner</strong> — scan your watchlist for overbought / oversold signals with configurable thresholds</li>
-            <li><strong>Option chain viewer</strong> — real-time option chains with OI, Greeks, and IV for NIFTY &amp; BANKNIFTY</li>
             <li><strong>One-click order placement</strong> — place, modify, and cancel orders directly from the dashboard</li>
-            <li><strong>Portfolio &amp; positions</strong> — view current holdings, open positions, and today's order book at a glance</li>
         </ul>
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown('<div style="margin-top: -0.75rem;"></div>', unsafe_allow_html=True)
     _, col_btn, _ = st.columns([3, 1, 3])
     with col_btn:
         if st.button("Start Kite Session", type="primary", use_container_width=True):

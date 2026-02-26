@@ -17,7 +17,7 @@ from database.connection import DatabaseManager
 from database.models import (
     NewsItem, StockSignal, FundamentalMetric,
     BacktestResult, AnalysisStatus, SentimentType,
-    RawScrapedNews, BacktestTrade, BacktestEquityPoint,
+    BacktestTrade, BacktestEquityPoint,
     BacktestDailyReturn, StrategyPerformanceSummary, DataFreshness,
 )
 from database.repositories import (
@@ -662,58 +662,6 @@ class DatabaseService:
         except Exception as e:
             logger.warning(f"Failed to get freshness: {e}")
             return []
-    
-    # =================================================================
-    # Raw News Operations (Bronze Layer)
-    # =================================================================
-    
-    def save_raw_news(
-        self,
-        items: List[Dict[str, Any]],
-        scraper_name: str = 'unknown',
-    ) -> int:
-        """
-        Save raw scraped news items to the bronze layer.
-        
-        Args:
-            items: List of raw news item dicts from scrapers
-            scraper_name: Name of the scraper that produced the items
-            
-        Returns:
-            Number of items saved
-        """
-        if not items or not self.is_available:
-            return 0
-        
-        try:
-            import hashlib
-            with self.session_scope() as session:
-                saved = 0
-                for item in items:
-                    content_hash = hashlib.sha256(
-                        (item.get('title', '') + item.get('url', '')).encode()
-                    ).hexdigest()
-                    
-                    raw = RawScrapedNews(
-                        ticker=item.get('ticker', '').upper(),
-                        source=item.get('source', scraper_name),
-                        scraper_name=scraper_name,
-                        raw_title=item.get('title', ''),
-                        raw_content=item.get('content'),
-                        raw_url=item.get('url'),
-                        raw_author=item.get('author'),
-                        raw_published_at=item.get('published_at'),
-                        content_hash=content_hash,
-                    )
-                    session.add(raw)
-                    saved += 1
-                
-                session.flush()
-                logger.info(f"Saved {saved} raw news items to bronze layer")
-                return saved
-        except Exception as e:
-            logger.error(f"Failed to save raw news: {e}")
-            return 0
     
     # =================================================================
     # Combined Analysis Save

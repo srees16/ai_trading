@@ -44,13 +44,6 @@ class DatabaseConfig:
         password = quote_plus(self.password) if self.password else ''
         auth = f"{self.username}:{password}@" if self.username else ""
         return f"postgresql+psycopg2://{auth}{self.host}:{self.port}/{self.database}"
-    
-    @property
-    def async_connection_string(self) -> str:
-        """Build async PostgreSQL connection string."""
-        password = quote_plus(self.password) if self.password else ''
-        auth = f"{self.username}:{password}@" if self.username else ""
-        return f"postgresql+asyncpg://{auth}{self.host}:{self.port}/{self.database}"
 
 
 class DatabaseManager:
