@@ -5,11 +5,15 @@ Provides a single connection factory used by all modules that need
 PostgreSQL access, eliminating duplicated psycopg2.connect() calls.
 """
 
-import sys
 import os
+import sys
+
 import psycopg2
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+# Append kite_connect to path (not insert) to avoid shadowing top-level packages
+_kite_root = os.path.dirname(os.path.dirname(__file__))
+if _kite_root not in sys.path:
+    sys.path.append(_kite_root)
 
 from core.config import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
 

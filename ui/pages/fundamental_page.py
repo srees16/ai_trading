@@ -4,8 +4,10 @@ Fundamental Analysis Page Module for Centurion Capital LLC.
 Contains the fundamental metrics analysis page rendering.
 """
 
+import logging
+from typing import Any, Dict
+
 import streamlit as st
-from typing import Dict, Any
 
 from ui.components import (
     render_page_header,
@@ -15,12 +17,33 @@ from ui.components import (
     render_score_interpretations_table,
     render_tickers_being_analyzed,
 )
-from ui.charts import render_fundamental_charts, render_fundamental_summary_metrics
-from ui.tables import render_fundamental_table
+
+logger = logging.getLogger(__name__)
+
+# Lazy-loaded at render time (pandas + plotly ~70 s on slow machines)
+render_fundamental_charts = None          # type: ignore[assignment]
+render_fundamental_summary_metrics = None  # type: ignore[assignment]
+render_fundamental_table = None           # type: ignore[assignment]
+_heavy_loaded = False
+
+
+def _ensure_heavy():
+    global _heavy_loaded
+    if _heavy_loaded:
+        return
+    from ui.charts import render_fundamental_charts as _rfc, render_fundamental_summary_metrics as _rfsm
+    from ui.tables import render_fundamental_table as _rft
+    globals()['render_fundamental_charts'] = _rfc
+    globals()['render_fundamental_summary_metrics'] = _rfsm
+    globals()['render_fundamental_table'] = _rft
+    _heavy_loaded = True
 
 
 def render_fundamental_page():
     """Render the fundamental analysis page."""
+    _ensure_heavy()
+    logger.info("[user=%s] Viewing Fundamental Analysis page",
+                st.session_state.get('username', 'unknown'))
     render_page_header(
         "📊 Fundamental Analysis",
         description="Altman Z-Score • Beneish M-Score • Piotroski F-Score"

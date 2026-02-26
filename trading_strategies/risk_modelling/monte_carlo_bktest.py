@@ -20,12 +20,13 @@ The idea presented here is very straightforward:
 - And how well Monte Carlo catches black swans
 """
 import os
-import shutil
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import yfinance as yf
 import random as rd
+import shutil
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import yfinance as yf
 from sklearn.model_selection import train_test_split
 
 #generate gradient color dynamically

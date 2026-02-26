@@ -3,40 +3,114 @@ run the app by using:
     streamlit run zerodha_live.py
 """
 
-import sys
-import os
 import json
 import logging
+import os
+import sys
 from datetime import datetime, timedelta
-import requests
+
 import streamlit as st
-import pandas as pd
 
 # Suppress harmless Tornado WebSocket closed errors during st.rerun()
 logging.getLogger("tornado.general").setLevel(logging.CRITICAL)
+logger = logging.getLogger(__name__)
 
 # Add kite_connect folder to path so we can import shared modules
-sys.path.insert(0, os.path.dirname(__file__))
+# NOTE: *append* (not insert-at-0) so the project-root 'auth' package
+# is never shadowed by kite_connect/auth/.
+_KITE_DIR = os.path.dirname(__file__)
+if _KITE_DIR not in sys.path:
+    sys.path.append(_KITE_DIR)
 # Add project root so we can import shared ui utilities
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
+elif sys.path[0] != _PROJECT_ROOT:
+    # Ensure project root stays at position 0
+    sys.path.remove(_PROJECT_ROOT)
+    sys.path.insert(0, _PROJECT_ROOT)
 
-from kiteconnect import KiteConnect, exceptions as kite_exceptions
-from core.config import REFRESH_INTERVAL
-from core.db_service import get_connection
-from auth.kite_session import create_kite_session
-from trading.order_service import place_order, get_order_book, get_positions, get_holdings, cancel_order
-from trading.rsi_strategy import scan_watchlist
-from options.option_chain import discover_expiries, fetch_option_chain, INDEX_META
-from ui.components import load_logo_base64_small
-from ui.styles import get_background_css
+# ── Heavy imports are LAZY ──────────────────────────────────────────
+# kiteconnect pulls in twisted+autobahn (~30 s on Windows).  We defer
+# all heavy imports to first actual use so the login page isn't blocked.
+from ui.components import load_logo_base64_small, render_header_bar, render_footer
+
+# Lazy singletons — populated on first call via _ensure_imports()
+_kite_mod = None
+_kite_exceptions = None
+
+# Forward-declare names that _ensure_imports() injects into globals().
+# This keeps Pylance / mypy happy while avoiding the actual imports.
+pd = None                   # type: ignore[assignment]
+requests = None             # type: ignore[assignment]
+KiteConnect = None          # type: ignore[assignment]
+kite_exceptions = None      # type: ignore[assignment]
+REFRESH_INTERVAL = None     # type: ignore[assignment]
+get_connection = None       # type: ignore[assignment]
+create_kite_session = None  # type: ignore[assignment]
+place_order = None          # type: ignore[assignment]
+get_order_book = None       # type: ignore[assignment]
+get_positions = None        # type: ignore[assignment]
+get_holdings = None         # type: ignore[assignment]
+cancel_order = None         # type: ignore[assignment]
+scan_watchlist = None       # type: ignore[assignment]
+discover_expiries = None    # type: ignore[assignment]
+fetch_option_chain = None   # type: ignore[assignment]
+INDEX_META = None           # type: ignore[assignment]
+
+
+def _ensure_imports():
+    """Import heavy kite / DB / trading modules once, on first use."""
+    global _kite_mod, _kite_exceptions
+    if _kite_mod is not None:
+        return
+    import kiteconnect as _km
+    _kite_mod = _km
+    _kite_exceptions = _km.exceptions
+    # Pull remaining heavy modules into the global module namespace
+    # so existing code keeps working via module-level references.
+    import importlib
+    glb = globals()
+    # pandas + requests are deferred because pandas alone takes ~70 s
+    # on Windows (Cython extension compilation).
+    import pandas as _pd
+    glb['pd'] = _pd
+    import requests as _req
+    glb['requests'] = _req
+    glb['KiteConnect'] = _km.KiteConnect
+    glb['kite_exceptions'] = _km.exceptions
+    from core.config import REFRESH_INTERVAL as _ri
+    glb['REFRESH_INTERVAL'] = _ri
+    from core.db_service import get_connection as _gc
+    glb['get_connection'] = _gc
+    from kite_connect.auth.kite_session import create_kite_session as _cks
+    glb['create_kite_session'] = _cks
+    from trading.order_service import (
+        place_order as _po, get_order_book as _gob,
+        get_positions as _gp, get_holdings as _gh,
+        cancel_order as _co,
+    )
+    glb['place_order'] = _po
+    glb['get_order_book'] = _gob
+    glb['get_positions'] = _gp
+    glb['get_holdings'] = _gh
+    glb['cancel_order'] = _co
+    from trading.rsi_strategy import scan_watchlist as _sw
+    glb['scan_watchlist'] = _sw
+    from options.option_chain import (
+        discover_expiries as _de, fetch_option_chain as _foc,
+        INDEX_META as _im,
+    )
+    glb['discover_expiries'] = _de
+    glb['fetch_option_chain'] = _foc
+    glb['INDEX_META'] = _im
 
 
 # ── Kite Connect Session ───────────────────────────────────────
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def get_kite_session():
     """Login to Kite Connect and return the kite instance."""
+    _ensure_imports()
     return create_kite_session()
 
 
@@ -168,29 +242,69 @@ def fetch_realtime_quotes(kite, stock_symbols):
 
 
 # ── Main App ───────────────────────────────────────────────────
-def main():
-    st.set_page_config(page_title="Live Stocks - India", page_icon="📈", layout="wide")
+def render_live_dashboard():
+    """
+    Render the live Indian stock market dashboard.
 
-    # ── Custom CSS for enterprise look ──
-    _bg_css = get_background_css()
-    _bg_block = _bg_css if _bg_css else ""
-    st.markdown(f"""
+    Can be called from the main app router (app.py) or run standalone.
+    Does NOT call st.set_page_config — the caller is responsible for that.
+    """
+
+    # ── Landing page gate: show intro until user clicks "Start Kite Session" ──
+    if not st.session_state.get("kite_session_started", False):
+        _render_landing_page()
+        return
+
+    _render_dashboard()
+
+    render_footer()
+
+
+def _render_landing_page():
+    """Show an intro landing page before the Kite session is started."""
+    render_header_bar(subtitle="Indian Equities · Zerodha Kite Connect")
+
+    st.markdown("""
     <style>
-        {_bg_block}
-        /* ── Global compact overrides ── */
-        .block-container { padding-top: 1rem; padding-bottom: 0.5rem; }
-        .stMarkdown, .stText, p, span, label, li { font-size: 0.82rem !important; line-height: 1.3 !important; }
-        h1, h2, h3, h4 { margin-top: 0 !important; margin-bottom: 0.2rem !important; }
-        /* Shrink emoji sizing globally */
-        .stMarkdown img.emoji, .stButton img.emoji { height: 0.9em !important; width: 0.9em !important; }
-        /* Reduce vertical gaps between Streamlit elements */
-        div[data-testid="stVerticalBlock"] > div { padding-top: 0 !important; padding-bottom: 0 !important; }
-        div[data-testid="stVerticalBlockBorderWrapper"] { gap: 0.25rem !important; }
-        .element-container { margin-bottom: 0.15rem !important; }
-        /* Reduce expander internal padding */
-        details[data-testid="stExpander"] summary { padding: 0.3rem 0.6rem !important; font-size: 0.8rem !important; }
-        details[data-testid="stExpander"] > div { padding: 0.3rem 0.6rem !important; }
+        .landing-card {
+            background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px;
+            padding: 0.5rem 1rem 1rem 1rem; margin: 0.6rem auto 0 auto; max-width: 720px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+        }
+        div[data-testid="column"]:has(button) { margin-top: -0.6rem; }
+        .landing-card h3 { color: #1a1a2e !important; margin-top: 0 !important; font-size: 1.15rem !important; }
+        .landing-card ul { padding-left: 1.2rem; margin: 0.8rem 0; }
+        .landing-card li { color: #2d3436 !important; font-size: 0.92rem; line-height: 1.75; }
+        .landing-card li strong { color: #0f3460; }
+    </style>
 
+    <div class="landing-card">
+        <h3>📈 Indian Equities — Live Dashboard</h3>
+        <ul>
+            <li><strong>Real-time quotes</strong> — NIFTY 50, Bank Nifty, IT &amp; Energy indices streamed via Zerodha Kite Connect</li>
+            <li><strong>Live market status</strong> — automatic detection of pre-open, live, and post-market sessions from NSE</li>
+            <li><strong>One-click order placement</strong> — place, modify, and cancel orders directly from the dashboard</li>
+        </ul>
+    </div>
+    """, unsafe_allow_html=True)
+
+    _, col_btn, _ = st.columns([3, 1, 3])
+    with col_btn:
+        if st.button("Start Kite Session", type="primary", use_container_width=True):
+            logger.info("[user=%s] Ind Stocks: Start Kite Session clicked", st.session_state.get('username', 'unknown'))
+            st.session_state["kite_session_started"] = True
+            st.rerun()
+
+    render_footer()
+
+
+def _render_dashboard():
+    """Core dashboard — called after landing-page gate."""
+    _ensure_imports()  # lazy-load kiteconnect, twisted, DB, etc.
+
+    # ── Page-specific CSS (shared base styles come from apply_custom_styles) ──
+    st.markdown("""
+    <style>
         /* Header bar styling */
         .header-bar {
             background: linear-gradient(135deg, #0d1117 0%, #161b22 40%, #0f3460 100%);
@@ -205,15 +319,18 @@ def main():
             box-shadow: 0 2px 8px rgba(0,0,0,0.25);
         }
         .header-bar h1 {
-            color: #ffffff;
+            color: #ffffff !important;
             font-size: 1.55rem !important;
             margin: 0 !important;
             font-weight: 800;
             letter-spacing: 0.3px;
             line-height: 1.3 !important;
         }
+        .header-bar h1 img {
+            filter: brightness(0) invert(1);
+        }
         .header-bar .subtitle {
-            color: #8b949e;
+            color: #8b949e !important;
             font-size: 0.72rem !important;
             margin: 0.15rem 0 0 0;
             letter-spacing: 0.6px;
@@ -334,15 +451,6 @@ def main():
             box-shadow: 0 1px 2px rgba(0,0,0,0.08);
         }
 
-        /* Button styling */
-        .stButton > button {
-            border-radius: 6px;
-            font-weight: 600;
-            font-size: 0.75rem !important;
-            padding: 0.25rem 0.7rem;
-            transition: all 0.15s;
-        }
-
         /* Move sidebar to RIGHT side of the page */
         [data-testid="stSidebar"] {
             left: auto !important;
@@ -426,27 +534,6 @@ def main():
             right: 0.5rem !important;
         }
 
-        /* Center and constrain dataframe tables */
-        [data-testid="stDataFrame"] {
-            max-width: 900px;
-            margin: 0 auto;
-        }
-        [data-testid="stDataFrame"] table {
-            font-size: 0.78rem !important;
-        }
-
-        /* Tighter input widgets */
-        .stTextInput > div, .stSelectbox > div, .stNumberInput > div {
-            margin-bottom: 0.1rem !important;
-        }
-        .stTextInput input, .stNumberInput input {
-            font-size: 0.8rem !important;
-            padding: 0.25rem 0.5rem !important;
-        }
-        .stSelectbox [data-baseweb="select"] {
-            font-size: 0.8rem !important;
-        }
-
         /* Control bar: vertically center all widgets in a row */
         .ctrl-row [data-testid="stHorizontalBlock"] { gap: 0.5rem !important; }
         .ctrl-row [data-testid="stVerticalBlock"] {
@@ -514,18 +601,14 @@ def main():
     _logo_html = load_logo_base64_small()
 
     # ── Header bar (rendered after Kite login so kite_status is available) ──
-    st.markdown(f"""
-    <div class="header-bar">
-        <div>
-            <h1>{_logo_html} 📈 Indian Stock Market</h1>
-            <p class="subtitle">Real-time data · Zerodha Kite Connect</p>
-        </div>
-        <div style="text-align:right">
-            <div class="live-pill {pill_class}"><span class="live-dot"></span> {pill_label}</div>
-            <div class="live-pill pill-open" style="margin-top:4px"><span class="live-dot"></span> Online — {kite_status}</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    _pills_html = (
+        f'<div class="live-pill {pill_class}"><span class="live-dot"></span> {pill_label}</div>'
+        f'<div class="live-pill pill-open" style="margin-top:10px"><span class="live-dot"></span> Online</div>'
+    )
+    render_header_bar(
+        subtitle="Real-time data · Zerodha Kite Connect",
+        right_html=_pills_html,
+    )
 
     try:
         conn = get_db_connection()
@@ -547,7 +630,7 @@ def main():
         with c1:
             refresh_secs = st.select_slider(
                 "Refresh interval ⏱",
-                options=[10, 15, 20, 30, 45, 60, 90, 120],
+                options=[5, 10, 15, 20, 30, 45, 60],
                 value=REFRESH_INTERVAL,
                 key="refresh_secs",
             )
@@ -557,6 +640,7 @@ def main():
 
         with c2:
             if st.button("🔄 Reconnect", width="stretch"):
+                logger.info("[user=%s] Ind Stocks: Reconnect clicked", st.session_state.get('username', 'unknown'))
                 st.cache_resource.clear()
                 st.rerun()
 
@@ -570,7 +654,7 @@ def main():
         group_stocks_map[group_id] = names
         all_stock_names.update(names)
     sorted_stock_list = sorted(all_stock_names)
-    conn.close()  # fragment opens its own connection
+    conn.close()
 
     # ── Right sidebar: Place Order panel (isolated fragment) ──
     @st.fragment
@@ -626,6 +710,8 @@ def main():
 
         btn_label = f"Place {o_txn.capitalize()} Order"
         if st.button(btn_label, width="stretch", type="primary"):
+            logger.info("[user=%s] Ind Stocks: Place Order clicked — symbol=%s, side=%s, qty=%s, type=%s, product=%s",
+                        st.session_state.get('username', 'unknown'), o_symbol, o_txn, o_qty, o_type, o_product)
             if o_symbol not in all_stock_names:
                 st.error(f"❌ **{o_symbol}** is not a valid stock.")
             else:
@@ -651,12 +737,12 @@ def main():
 
     # ── STOCKS TAB ─────────────────────────────────────────────
     with stocks_main_tab:
-        # ── Auto-refreshing data fragment ──
+        # ── Auto-refreshing stock data fragment ──
         _run_every = timedelta(seconds=refresh_secs)
 
         @st.fragment(run_every=_run_every)
-        def _live_data_panel():
-            """Fetch quotes & render tables. Runs on its own timer without full page rerun."""
+        def _stock_quotes_panel():
+            """Fetch real-time quotes & render stock data tables. Auto-refreshes independently."""
             _conn = get_db_connection()
 
             with st.spinner("Fetching real-time quotes from Kite Connect..."):
@@ -736,43 +822,49 @@ def main():
                         },
                     )
     
-                    # ── Per-stock quick-trade buttons ──
-                    with st.expander("⚡ Quick Trade", expanded=False):
-                        qt_cols = st.columns([3, 2, 2, 1.5, 1.5])
-                        qt_symbol = qt_cols[0].selectbox(
-                            "Symbol", df["Name"].tolist(),
-                            key=f"qt_sym_{group_id}",
-                            label_visibility="collapsed",
-                        )
-                        qt_qty = qt_cols[1].number_input(
-                            "Qty", min_value=1, value=1, step=1,
-                            key=f"qt_qty_{group_id}",
-                            label_visibility="collapsed",
-                        )
-                        qt_product = qt_cols[2].selectbox(
-                            "Product", ["CNC", "MIS", "NRML"],
-                            key=f"qt_prod_{group_id}",
-                            label_visibility="collapsed",
-                        )
-                        if qt_cols[3].button("🟢 BUY", key=f"qt_buy_{group_id}", width="stretch"):
-                            res = place_order(kite, qt_symbol, "NSE", "BUY", qt_qty,
-                                              order_type="MARKET", product=qt_product)
-                            if res["success"]:
-                                st.success(f"BUY order placed — ID: {res['order_id']}")
-                            else:
-                                st.error(res["error"])
-                        if qt_cols[4].button("🔴 SELL", key=f"qt_sell_{group_id}", width="stretch"):
-                            res = place_order(kite, qt_symbol, "NSE", "SELL", qt_qty,
-                                              order_type="MARKET", product=qt_product)
-                            if res["success"]:
-                                st.success(f"SELL order placed — ID: {res['order_id']}")
-                            else:
-                                st.error(res["error"])
-    
+            _conn.close()
+
+        _stock_quotes_panel()
+
+        # ── Quick Trade (not auto-refreshed) ─────────────────────
+        def _portfolio_panels():
+            """Quick Trade, Order Book, Positions, Holdings, RSI — not auto-refreshed."""
+            with st.expander("⚡ Quick Trade", expanded=False):
+                qt_cols = st.columns([3, 2, 2, 1.5, 1.5])
+                qt_symbol = qt_cols[0].selectbox(
+                    "Symbol", sorted_stock_list,
+                    key="qt_sym_global",
+                    label_visibility="collapsed",
+                )
+                qt_qty = qt_cols[1].number_input(
+                    "Qty", min_value=1, value=1, step=1,
+                    key="qt_qty_global",
+                    label_visibility="collapsed",
+                )
+                qt_product = qt_cols[2].selectbox(
+                    "Product", ["CNC", "MIS", "NRML"],
+                    key="qt_prod_global",
+                    label_visibility="collapsed",
+                )
+                if qt_cols[3].button("🟢 BUY", key="qt_buy_global", width="stretch"):
+                    res = place_order(kite, qt_symbol, "NSE", "BUY", qt_qty,
+                                      order_type="MARKET", product=qt_product)
+                    if res["success"]:
+                        st.success(f"BUY order placed — ID: {res['order_id']}")
+                    else:
+                        st.error(res["error"])
+                if qt_cols[4].button("🔴 SELL", key="qt_sell_global", width="stretch"):
+                    res = place_order(kite, qt_symbol, "NSE", "SELL", qt_qty,
+                                      order_type="MARKET", product=qt_product)
+                    if res["success"]:
+                        st.success(f"SELL order placed — ID: {res['order_id']}")
+                    else:
+                        st.error(res["error"])
+
             # ── Order Book / Positions / Holdings / RSI Strategy ──────
             st.markdown("")
             ob_tab, pos_tab, hold_tab, rsi_tab = st.tabs(["📋 Order Book", "📊 Positions", "💼 Holdings", "🧠 RSI Strategy"])
-    
+
             with ob_tab:
                 orders = get_order_book(kite)
                 if orders:
@@ -804,6 +896,7 @@ def main():
                             "Order", pending["order_id"].tolist(), label_visibility="collapsed",
                         )
                         if cancel_cols[1].button("❌ Cancel", width="stretch"):
+                            logger.info("[user=%s] Ind Stocks: Cancel Order clicked — order_id=%s", st.session_state.get('username', 'unknown'), cancel_id)
                             res = cancel_order(kite, cancel_id)
                             if res["success"]:
                                 st.success(f"Order {cancel_id} cancelled.")
@@ -969,6 +1062,7 @@ def main():
                             key="sc_multiselect",
                         )
                         if st.button("Save", key="sc_save"):
+                            logger.info("[user=%s] Ind Stocks: Save Smallcase symbols clicked — count=%d", st.session_state.get('username', 'unknown'), len(selected))
                             _save_sc_cache(set(selected))
                             st.success(f"Saved {len(selected)} Smallcase symbols.")
                             st.rerun()
@@ -998,8 +1092,10 @@ def main():
     
                 scan_btn_col, scan_status_col = st.columns([1, 3])
                 run_scan = scan_btn_col.button("🔍 Run Scan", width="stretch", key="rsi_scan_btn")
-    
+
                 if run_scan:
+                    logger.info("[user=%s] Ind Stocks: Run RSI Scan clicked — capital=%s, rsi_low=%s, rsi_high=%s, interval=%s, auto=%s",
+                                st.session_state.get('username', 'unknown'), rsi_capital, rsi_low, rsi_high, rsi_interval, rsi_auto)
                     with st.spinner("Scanning watchlist for RSI signals..."):
                         scan_results = scan_watchlist(
                             kite, list(all_stock_names),
@@ -1068,9 +1164,7 @@ def main():
                     else:
                         st.info("No data returned. Ensure market is open and stocks have sufficient history.")
     
-            _conn.close()
-
-    _live_data_panel()
+        _portfolio_panels()
 
     # ── OPTIONS TAB ────────────────────────────────────────────
     with options_main_tab:
@@ -1113,9 +1207,12 @@ def _render_option_chain_tab(kite):
     )
 
     oc_refresh = oc_c5.button("🔄 Refresh", key="oc_refresh_btn", width="stretch")
+    if oc_refresh:
+        logger.info("[user=%s] Ind Stocks: Refresh Option Chain clicked — index=%s", st.session_state.get('username', 'unknown'), oc_index)
 
     # Also add a button to re-discover expiries
     if oc_c2.button("↻ Reload expiries", key="oc_reload_exp"):
+        logger.info("[user=%s] Ind Stocks: Reload Expiries clicked — index=%s", st.session_state.get('username', 'unknown'), oc_index)
         st.session_state[f"_oc_exp_stale_{oc_index}"] = True
         st.rerun()
 
@@ -1322,4 +1419,7 @@ def _render_option_chain_tab(kite):
 
 
 if __name__ == "__main__":
-    main()
+    st.set_page_config(page_title="Live Stocks - India", page_icon="📈", layout="wide")
+    from ui.styles import apply_custom_styles
+    apply_custom_styles()
+    render_live_dashboard()

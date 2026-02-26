@@ -5,9 +5,13 @@ Contains header, footer, navigation, and other reusable UI elements.
 """
 
 import base64
-import streamlit as st
+import logging
 from pathlib import Path
-from typing import List, Dict, Optional, Any
+from typing import Any, Dict, List, Optional
+
+import streamlit as st
+
+logger = logging.getLogger(__name__)
 
 
 def load_logo_base64() -> str:
@@ -17,12 +21,18 @@ def load_logo_base64() -> str:
     Returns:
         HTML img tag with embedded base64 logo, or empty string if not found
     """
-    logo_path = Path(__file__).parent.parent / "centurion_logo.png"
+    _KEY = "_logo_b64_large"
+    if _KEY in st.session_state:
+        return st.session_state[_KEY]
+
+    logo_path = Path(__file__).parent / "assets" / "centurion_logo.png"
+    html = ""
     if logo_path.exists():
         with open(logo_path, "rb") as f:
             logo_data = base64.b64encode(f.read()).decode()
-        return f'<img src="data:image/png;base64,{logo_data}" style="height: 1.6rem; vertical-align: middle; margin-right: 0.2rem;">'
-    return ""
+        html = f'<img src="data:image/png;base64,{logo_data}" style="height: 1.6rem; vertical-align: middle; margin-right: 0.2rem;">'
+    st.session_state[_KEY] = html
+    return html
 
 
 def load_logo_base64_small() -> str:
@@ -32,49 +42,102 @@ def load_logo_base64_small() -> str:
     Returns:
         HTML img tag with embedded base64 logo (smaller), or empty string if not found
     """
-    logo_path = Path(__file__).parent.parent / "centurion_logo.png"
+    _KEY = "_logo_b64_small"
+    if _KEY in st.session_state:
+        return st.session_state[_KEY]
+
+    logo_path = Path(__file__).parent / "assets" / "centurion_logo.png"
+    html = ""
     if logo_path.exists():
         with open(logo_path, "rb") as f:
             logo_data = base64.b64encode(f.read()).decode()
-        return f'<img src="data:image/png;base64,{logo_data}" style="height: 1.4rem; vertical-align: middle; margin-right: 0.3rem;">'
-    return ""
+        html = f'<img src="data:image/png;base64,{logo_data}" style="height: 1.4rem; vertical-align: middle; margin-right: 0.3rem;">'
+    st.session_state[_KEY] = html
+    return html
+
+
+_HEADER_BAR_CSS = """
+<style>
+    .header-bar {
+        background: linear-gradient(135deg, #0d1117 0%, #161b22 40%, #0f3460 100%);
+        padding: 0.9rem 1.6rem;
+        border-radius: 10px;
+        margin-top: 0.6rem;
+        margin-bottom: 0.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-left: 4px solid #4299e1;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    }
+    .header-bar h1 {
+        color: #ffffff !important;
+        font-size: 1.55rem !important;
+        margin: 0 !important;
+        font-weight: 800;
+        letter-spacing: 0.3px;
+        line-height: 1.3 !important;
+    }
+    .header-bar h1 img {
+        filter: brightness(0) invert(1);
+    }
+    .header-bar .subtitle {
+        color: #8b949e !important;
+        font-size: 0.72rem !important;
+        margin: 0.15rem 0 0 0;
+        letter-spacing: 0.6px;
+        text-transform: uppercase;
+        font-weight: 500;
+    }
+</style>
+"""
+
+
+def render_header_bar(subtitle: str = "", right_html: str = ""):
+    """Render the dark gradient header bar used across all modules.
+
+    Args:
+        subtitle: Short uppercase subtitle shown below the company name.
+        right_html: Optional HTML placed on the right side of the bar
+                    (e.g. status pills).
+    """
+    logo_html = load_logo_base64_small()
+    right_block = f'<div style="text-align:right">{right_html}</div>' if right_html else ""
+    subtitle_block = (
+        f'<p class="subtitle" style="color: #8b949e !important;">{subtitle}</p>'
+        if subtitle else ""
+    )
+
+    st.markdown(_HEADER_BAR_CSS, unsafe_allow_html=True)
+    st.markdown(f"""
+    <div class="header-bar">
+        <div>
+            <h1 style="color: #ffffff !important;">{logo_html} Centurion Capital LLC</h1>
+            {subtitle_block}
+        </div>
+        {right_block}
+    </div>
+    """, unsafe_allow_html=True)
 
 
 def render_header():
-    """Render the main application header with logo."""
-    logo_html = load_logo_base64()
-    
-    st.markdown(
-        f'<div class="main-header">{logo_html}Centurion Capital LLC</div>',
-        unsafe_allow_html=True
-    )
+    """Render the main application header with the dark header bar."""
+    render_header_bar(subtitle="Algorithmic Trading · Event-Driven Alpha")
 
 
 def render_page_header(title: str, subtitle: Optional[str] = None, description: Optional[str] = None):
     """
-    Render a page header with logo.
-    
+    Render a page header with the dark header bar.
+
     Args:
-        title: Main page title (displayed with page-subtitle class)
+        title: Main page title (shown as subtitle on the bar)
         subtitle: Optional subtitle text
         description: Optional description text
     """
-    logo_html = load_logo_base64_small()
-    
-    # Compact: combine company name, page title, and description into fewer elements
-    title_part = f' <span style="font-size: 0.85em; font-weight: 600; color: #2d3436;">| {title}</span>' if title else ''
-    st.markdown(
-        f'<div class="main-header">{logo_html}Centurion Capital LLC{title_part}</div>',
-        unsafe_allow_html=True
-    )
-    
-    desc_parts = []
-    if subtitle:
-        desc_parts.append(subtitle)
-    if description:
-        desc_parts.append(description)
-    if desc_parts:
-        st.markdown(f'<p class="page-description">{" — ".join(desc_parts)}</p>', unsafe_allow_html=True)
+    # Build subtitle line from title / subtitle / description
+    parts = [p for p in [title, subtitle, description] if p]
+    bar_subtitle = " · ".join(parts) if parts else ""
+    render_header_bar(subtitle=bar_subtitle)
 
 
 def render_footer():
@@ -143,6 +206,9 @@ def render_navigation_buttons(
                 key=f"nav_{page_id}_{back_key_suffix}",
                 width='stretch',
             ):
+                logger.info("[user=%s] Navigation: %s -> %s",
+                            st.session_state.get('username', 'unknown'),
+                            current_page, page_id)
                 st.session_state.current_page = page_id
                 st.rerun()
 

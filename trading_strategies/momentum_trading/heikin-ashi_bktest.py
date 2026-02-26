@@ -5,15 +5,16 @@ apply some unique rules on ha Open, Close, High, Low to trade
 details of heikin ashi indicators and rules can be found in the following link
 https://quantiacs.com/Blog/Intro-to-Algorithmic-Trading-with-Heikin-Ashi.aspx
 """
-import pandas as pd
-import matplotlib.pyplot as plt
-import yfinance as yf
-import numpy as np
-import scipy.integrate
-import scipy.stats
-
 import sys
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import scipy.integrate
+import scipy.stats
+import yfinance as yf
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from backtest_utils import mdd, candlestick, portfolio, profit
 

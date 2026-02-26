@@ -16,7 +16,10 @@ import os
 import logging
 from datetime import datetime, timedelta
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+# Append (not insert-at-0) so the project-root 'auth' package is not shadowed
+_kite_dir = os.path.dirname(os.path.dirname(__file__))
+if _kite_dir not in sys.path:
+    sys.path.append(_kite_dir)
 
 from kiteconnect import KiteConnect, exceptions as kite_exceptions
 
@@ -331,7 +334,10 @@ def scan_watchlist(kite: KiteConnect, symbols: list[str],
 
 if __name__ == "__main__":
     import json
-    from auth.kite_session import create_kite_session
+    try:
+        from kite_connect.auth.kite_session import create_kite_session
+    except ImportError:
+        from auth.kite_session import create_kite_session
     from core.db_service import get_connection
 
     logging.basicConfig(level=logging.INFO)

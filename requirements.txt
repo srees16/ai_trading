@@ -12,10 +12,8 @@ transformers
 torch
 plyer
 python-dateutil
-pytz
 streamlit
 plotly
-streamlit-aggrid
 scikit-learn
 matplotlib
 statsmodels
@@ -31,3 +29,8 @@ Backtesting
 chromadb
 sentence-transformers
 PyMuPDF
+kiteconnect
+tiktoken
+webdriver-manager
+arch
+# a2a-sdk[http-server]==0.3.20

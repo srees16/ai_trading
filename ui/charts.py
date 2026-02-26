@@ -4,14 +4,15 @@ Chart Rendering Module for Centurion Capital LLC.
 Contains all visualization and chart rendering functions for Plotly charts.
 """
 
-import streamlit as st
+from collections import defaultdict
+from typing import Any, Dict, List
+
 import pandas as pd
 import plotly.express as px
-from typing import List, Dict, Any
-from collections import defaultdict
+import streamlit as st
 
-from ui.styles import DECISION_COLORS, SENTIMENT_COLORS, HEALTH_COLORS
 from ui.components import get_decision_emoji
+from ui.styles import DECISION_COLORS, HEALTH_COLORS, SENTIMENT_COLORS
 
 
 def render_decision_chart(signals: List[Any]):

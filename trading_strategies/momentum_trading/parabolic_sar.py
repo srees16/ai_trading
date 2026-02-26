@@ -17,15 +17,16 @@ Strategy Rules:
 Reference: J. Welles Wilder Jr.'s technical analysis indicator
 """
 
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from typing import Optional
-from datetime import datetime
-import time
-
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
+from typing import Optional
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from strategies.base_strategy import (

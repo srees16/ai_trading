@@ -8,9 +8,9 @@ These models are designed for:
 - Audit trails and data lineage
 """
 
+import enum
 import uuid
 from datetime import datetime
-
 
 from sqlalchemy import (
     Column, String, Float, Integer, Boolean, DateTime, Text,
@@ -19,8 +19,6 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
-
-import enum
 
 Base = declarative_base()
 

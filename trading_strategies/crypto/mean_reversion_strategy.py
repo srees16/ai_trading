@@ -34,15 +34,18 @@ Reference:
 8. https://medium.com/bluekiri/simple-stationarity-tests-on-time-series-ad227e2e6d48
 """
 
-# -- Stdlib / warnings -----------------------------------------------
 import io
-import os
-import time
-import math
-import uuid
 import logging
-import warnings
+import math
+import os
+import sys
 import tempfile
+import time
+import uuid
+import warnings
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Optional
 
 warnings.filterwarnings("ignore", category=UserWarning, message="FigureCanvasAgg is non-interactive")
 warnings.filterwarnings("ignore", category=UserWarning, message="Superimposed OHLC plot")
@@ -52,29 +55,18 @@ warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*multi-proc
 warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*If you want to use multi-process.*")
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-from datetime import datetime, timedelta
-from typing import Optional, Any
-
-# -- Matplotlib (Agg backend) ----------------------------------------
 import matplotlib
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-
-# -- Scientific / data -----------------------------------------------
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import statsmodels.api as sm
-from statsmodels.tsa.vector_ar.vecm import coint_johansen
-
-# -- Backtesting library ----------------------------------------------
 from backtesting import Strategy, Backtest
 from backtesting.lib import crossover
+from statsmodels.tsa.vector_ar.vecm import coint_johansen
 
-# -- Framework imports ------------------------------------------------
-import sys
-from pathlib import Path
 _root = str(Path(__file__).resolve().parent.parent.parent)
 if _root not in sys.path:
     sys.path.insert(0, _root)
@@ -89,8 +81,9 @@ from strategies.base_strategy import (
 )
 from strategies.registry import StrategyRegistry
 from strategies.utils import matplotlib_to_base64
-
-# -- Edge module utilities --------------------------------------------
+from trading_strategies.crypto.binance_data import (
+    fetch_crypto_prices,
+)
 from trading_strategies.statistical_arbitrage.edge_mean_reversion import (
     perform_adf_test,
     perform_hurst_exp_test,
@@ -102,11 +95,6 @@ from trading_strategies.statistical_arbitrage.edge_mean_reversion import (
 from trading_strategies.statistical_arbitrage.edge_risk_kit import (
     drawdown as erk_drawdown,
     summary_stats as erk_summary_stats,
-)
-
-# -- Binance data fetcher --------------------------------------------
-from trading_strategies.crypto.binance_data import (
-    fetch_crypto_prices,
 )
 
 # -- Storage services (optional -- graceful fallback) -----------------

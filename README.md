@@ -1,157 +1,457 @@
 # Centurion Capital LLC — Enterprise AI Trading Platform
 
-A comprehensive Python-based enterprise trading platform combining multi-source news scraping, AI-powered sentiment analysis, fundamental & technical analysis, strategy backtesting, and persistent data storage. Features an interactive Streamlit web interface, PostgreSQL database persistence, and MinIO object storage for backtest chart images.
+A Python-based enterprise trading platform combining multi-source news scraping, AI-powered sentiment analysis, fundamental & technical analysis, strategy backtesting, persistent data storage, live Indian market trading via Zerodha Kite Connect, and a RAG-powered document intelligence pipeline. Built on Streamlit with PostgreSQL persistence, MinIO object storage, ChromaDB vector search, and multi-provider LLM integration.
 
-## 🚀 Key Features
+---
 
-### Core Analysis Engine
-- **Multi-Source News Scraping**: Aggregates news from Yahoo Finance, Finviz, Investing.com, TradingView, and more
-- **AI-Powered Sentiment Analysis**: Uses DistilBERT transformer model for accurate sentiment detection
-- **Comprehensive Stock Metrics**:
-  - Fundamentals: PEG ratio, ROE, EPS, Free Cash Flow, DCF value, Intrinsic value
-  - Technicals: RSI, MACD, Fibonacci retracement, Bollinger Bands, Maximum drawdown
-  - Scoring: Altman Z-Score, Beneish M-Score, Piotroski F-Score
-- **Intelligent Decision Engine**: Weighted combination of sentiment, fundamentals, and technicals to generate trading decisions (STRONG_BUY, BUY, HOLD, SELL, STRONG_SELL)
-- **Real-Time Alerts**: Desktop popup notifications for high-confidence trading signals
-- **Async Architecture**: Concurrent scraping for optimal performance
+## Table of Contents
 
-### Strategy Backtesting
-- **11 Built-in Strategies** across three categories:
-  - **Momentum**: MACD Oscillator, Parabolic SAR, Heikin-Ashi, Awesome Oscillator
-  - **Pattern Recognition**: RSI Pattern, Bollinger Band Pattern, Shooting Star, Support & Resistance
-  - **Statistical Arbitrage**: Pairs Trading, Mean Reversion (Stocks), Crypto Mean Reversion (Z-Score)
-- **Crypto Mean Reversion Pipeline**: Full statistical arbitrage pipeline for cryptocurrency pairs via the Binance public API — includes EDA, cointegration tests (Engle-Granger & Johansen), 2- and 3-asset portfolio construction, backtesting with parameter optimisation (max equity, min drawdown, min volatility, max Sharpe), and wealth/drawdown analysis
-- **Multi-Ticker Support**: Run backtests across multiple tickers simultaneously
-- **Per-Ticker Performance Tabs**: Detailed metrics breakdown per ticker
-- **Strategy Caching**: Pre-computes and caches results for instant strategy switching
-- **Configurable Parameters**: Adjust capital, date range, and strategy-specific settings
+1. [Architecture Overview](#1-architecture-overview)
+2. [Core Analysis Engine](#2-core-analysis-engine)
+3. [Strategy Backtesting](#3-strategy-backtesting)
+4. [Live Trading — Zerodha Kite Connect](#4-live-trading--zerodha-kite-connect)
+5. [RAG Document Intelligence](#5-rag-document-intelligence)
+6. [Database Layer](#6-database-layer)
+7. [Object Storage (MinIO)](#7-object-storage-minio)
+8. [Interactive Web Interface](#8-interactive-web-interface)
+9. [Project Structure](#9-project-structure)
+10. [Installation](#10-installation)
+11. [Usage Guide](#11-usage-guide)
+12. [API Reference](#12-api-reference)
+13. [Troubleshooting](#13-troubleshooting)
+14. [Dependencies](#14-dependencies)
 
-### Database Persistence (PostgreSQL)
-- **Automatic Logging**: All analysis runs, signals, news items, and backtest results are persisted
-- **7 Database Tables**: `analysis_runs`, `stock_signals`, `news_items`, `fundamental_metrics`, `backtest_results`, `trading_signals`, `strategy_parameters`
-- **Repository Pattern**: Clean data access layer via SQLAlchemy ORM
-- **History Page**: Browse past analyses, signals, and backtests filtered by date range
+---
 
-### Object Storage (MinIO)
-- **Chart Image Persistence**: All backtest charts (matplotlib & plotly) saved to S3-compatible MinIO
-- **Organised by Run**: Images stored under `<run_id>/<ticker>/<strategy>/<filename>` paths
-- **History Integration**: Browse and view stored charts from the History page
-- **Metadata Tags**: Each image carries strategy name, chart type, and title as S3 metadata
+## 1. Architecture Overview
 
-### Interactive Web Interface
-- **Enterprise Branding**: Centurion Capital LLC logo and styling throughout
-- **Modular UI Architecture**: Separate page modules for main, analysis, fundamental, backtesting, and history
-- **Consistent Navigation**: Uniform button labels across all pages (🏠 Main, 📈 Stock Analysis, 📊 Fundamental Analysis, 🔬 Backtest Strategy, 📋 History)
-- **CSV Upload**: Upload custom ticker lists in various formats
-- **Visual Analytics**: Interactive charts, pie charts, scatter plots, and bar graphs
-- **Authentication**: YAML-based credential management
+The application follows a modular, deferred-import architecture for fast startup:
 
-## 📁 Project Structure
+```
+app.py (Streamlit Router)
+  ├── apply_custom_styles() → initialize_session_state() → check_authentication()
+  ├── Page routing via st.session_state.current_page:
+  │     main → analysis → fundamental → backtesting → crypto → history
+  └── All page imports deferred to route branches
+```
+
+### Core Pipeline
+
+```
+AlgoTradingSystem (main.py)
+  ├── NewsAggregator     → Yahoo Finance, Finviz, Investing.com, TradingView, r/WallStreetBets
+  ├── SentimentAnalyzer   → DistilBERT transformer model
+  ├── MetricsCalculator   → Fundamentals (yfinance) + Technicals (RSI, MACD, Bollinger)
+  ├── DecisionEngine      → Weighted scoring → STRONG_BUY / BUY / HOLD / SELL / STRONG_SELL
+  ├── NotificationManager → Desktop popups (plyer) + HTML email via SMTP
+  └── StorageManager      → Excel/CSV export + MinIO object storage
+```
+
+### Dual Strategy System
+
+| System | Location | Base Class | Data Source | Output |
+|--------|----------|------------|-------------|--------|
+| **Framework** | `strategies/` + `trading_strategies/` | `BaseStrategy` (ABC) | `DataService` (yfinance, cached) | `StrategyResult` (charts, tables, metrics, signals) |
+| **Standalone** | `*_bktest.py` files | None | Direct yfinance or CSV | matplotlib plots, printed stats |
+
+---
+
+## 2. Core Analysis Engine
+
+### News Scraping
+
+Five concurrent scrapers with 3-layer caching (session → scraper cache → DB freshness):
+
+| Source | Method | Limit |
+|--------|--------|-------|
+| Yahoo Finance | `yfinance` library (`Ticker.news`) | 10/ticker |
+| Finviz | HTTP scraping (optional Selenium for Elite) | 10/ticker |
+| Investing.com | HTTP with custom headers | 10/ticker |
+| TradingView | JSON API (`news-headlines.tradingview.com`) | 10/ticker |
+| r/WallStreetBets | Reddit public JSON API (8 flairs) | 50/flair |
+
+- `asyncio.Semaphore(5)` for concurrency control
+- SHA-256 content deduplication
+- Adaptive rate limiting with exponential backoff (0.5s base, 30s max)
+
+### Sentiment Analysis
+
+- **Model**: `distilbert-base-uncased-finetuned-sst-2-english` (HuggingFace)
+- **Input**: `title + ". " + summary`, truncated to 512 characters
+- **Output**: `sentiment_score` (±confidence), `sentiment_label` (POSITIVE/NEGATIVE/NEUTRAL)
+- **High-confidence threshold**: 0.85
+
+### Financial Metrics
+
+| Category | Metrics |
+|----------|---------|
+| **Technical** | RSI (14-period Wilder), MACD (12/26/9), Bollinger Bands (20, ±2σ), Fibonacci levels, Max Drawdown |
+| **Fundamental** | PEG ratio, ROE, EPS, Free Cash Flow, DCF value, Graham Intrinsic Value |
+| **Scoring** | Altman Z-Score (safe >2.99, distress <1.81), Beneish M-Score (manipulator > -2.22), Piotroski F-Score (0–9) |
+
+### Decision Engine
+
+Weighted combination of three signal components:
+
+```
+Combined Score = Sentiment × 0.4 + Fundamentals × 0.3 + Technicals × 0.3
+```
+
+| Score | Decision |
+|-------|----------|
+| ≥ 0.7 | STRONG_BUY |
+| ≥ 0.4 | BUY |
+| ≤ -0.7 | STRONG_SELL |
+| ≤ -0.4 | SELL |
+| else | HOLD |
+
+- Sentiment: raw score with 1.2x boost when confidence > 0.85, clamped to [-1, 1]
+- Fundamentals: averaged factor scores from PEG, ROE, EPS, and intrinsic/price ratio
+- Technicals: averaged factor scores from RSI, MACD histogram, Bollinger position, and drawdown
+
+---
+
+## 3. Strategy Backtesting
+
+### Registered Strategies (11)
+
+| ID | Name | Category | Key Parameters |
+|---|---|---|---|
+| `macd` | MACD Oscillator | Momentum | `ma_short=10`, `ma_long=21`, `use_ema=True` |
+| `awesome_oscillator` | Awesome Oscillator | Momentum | `ao_short=5`, `ao_long=34` |
+| `heikin_ashi` | Heikin-Ashi | Momentum | `confirmation_candles=1`, `use_ma_filter=False`, `ma_period=20` |
+| `parabolic_sar` | Parabolic SAR | Momentum | `af_start=0.02`, `af_increment=0.02`, `af_max=0.2` |
+| `rsi_pattern` | RSI Pattern | Pattern Recognition | `rsi_period=14`, `oversold=30`, `overbought=70` |
+| `shooting_star` | Shooting Star | Pattern Recognition | `lower_bound=0.2`, `body_size=0.5`, `stop=5%`, `hold=7d` |
+| `support_resistance` | Support & Resistance | Pattern Recognition | `n1=2`, `n2=2`, `back_candles=30`, `proximity=2%` |
+| `bollinger_pattern` | Bollinger Pattern | Pattern Recognition | `bb_period=20`, `bb_std=2.0`, `pattern_period=75` |
+| `pairs_trading` | Pairs Trading | Statistical Arbitrage | `bandwidth=60`, `z_entry=1.0`, `z_exit=0.0` (requires 2 tickers) |
+| `mean_reversion` | Mean Reversion (Z-Score) | Statistical Arbitrage | `lookback=30`, `threshold=2.0`, `stoploss=5%` (requires ≥2 tickers) |
+| `crypto_mean_reversion` | Crypto Mean Reversion | Crypto | Same Z-Score params + Binance API (requires ≥2 tickers) |
+
+### Standalone Scripts (6 additional)
+
+| Script | Category | Description |
+|--------|----------|-------------|
+| `london_breakout_bktest.py` | FX Intraday | London session breakout on GBP/USD minute data (Tokyo range thresholds, 50 bps stop-loss) |
+| `dual_thrust_bktest.py` | FX Intraday | Opening range breakout with configurable lookback and trigger multiplier |
+| `options_straddle_bktest.py` | Derivatives | Long straddle on AAPL options (entry when \|call−put\| < $10) |
+| `vix_calculator.py` | Derivatives | CBOE VIX methodology (variance swap formula) applied to equity options |
+| `asset_allocation.py` | Portfolio Analysis | SLSQP portfolio optimisation for Sharpe ratio & median return maximisation |
+| `monte_carlo_bktest.py` | Risk Modelling | GBM price simulation with direction prediction accuracy testing |
+
+### Strategy Framework
+
+**BaseStrategy** (ABC) provides:
+- Built-in metric calculators: Sharpe ratio, Sortino ratio, Max Drawdown
+- Portfolio calculators: long/short and long-only variants
+- Sentiment adjustment helpers: scale indicators, zero positions, filter signals
+- Risk parameters: `stop_loss=5%`, `take_profit=10%`, `max_position_size=25%`, `max_drawdown=20%`
+
+**DataService** (singleton with 1-hour cache):
+- yfinance wrapper with technical indicator overlays (SMA, EMA, RSI, MACD, Bollinger, ATR)
+- Batch preloading via `yf.download(group_by='ticker')`
+
+**Strategy auto-discovery**: `StrategyRegistry` + `StrategyLoader` scan `trading_strategies/` subdirectories and register `BaseStrategy` subclasses dynamically.
+
+### Crypto Mean Reversion Pipeline
+
+Full statistical arbitrage pipeline via the Binance public REST API (no API key required):
+1. **Data**: Paginated klines (1000/request), per-symbol CSV caching with incremental updates
+2. **EDA**: Correlation matrices, price plots, distribution analysis
+3. **Statistical tests**: ADF (stationarity), Hurst exponent (mean-reverting < 0.5), Variance Ratio, Half-Life
+4. **Cointegration**: Engle-Granger pairwise + Johansen multi-asset eigenvector
+5. **Portfolio construction**: OLS hedge ratio (2-asset) or Johansen weights (3+ assets)
+6. **Backtesting**: via `backtesting.py` library with Z-Score naive strategy
+7. **Optimisation**: Grid search over lookback/threshold/stoploss for max equity, min drawdown, min volatility, max Sharpe
+
+---
+
+## 4. Live Trading — Zerodha Kite Connect
+
+Streamlit dashboard for real-time Indian equity monitoring, order management, option chain analysis, and automated RSI trading.
+
+### Components
+
+| Module | Purpose |
+|--------|---------|
+| `zerodha_live.py` | Main dashboard (~1326 lines) — live quotes, order book, positions, holdings, RSI scanner |
+| `auth/kite_auth.py` | OAuth flow with local HTTP callback + Selenium auto-login |
+| `auth/kite_session.py` | Reusable authenticated `KiteConnect` session |
+| `core/config.py` | API credentials, DB config, index groups (NIFTY50, BANKNIFTY, NIFTYIT, NIFTYENERGY) |
+| `core/database_service.py` | PostgreSQL connection pool for `livestocks_ind` database |
+| `core/selenium_service.py` | Chrome/Edge WebDriver lifecycle management |
+| `nse/nse_csv_downloader.py` | NSE bhavcopy CSV download via Selenium |
+| `nse/nse_data_loader.py` | CSV → PostgreSQL bulk loader |
+| `options/option_chain.py` | Concurrent option chain with OI, Greeks, and IV (ThreadPoolExecutor, 20 workers) |
+| `trading/order_service.py` | Market/Limit/SL/SL-M orders, CNC/MIS/NRML products, DAY/IOC validity |
+| `trading/rsi_strategy.py` | Live RSI scanner — BUY (RSI<30 + reversal), SELL (RSI>70 + reversal), auto-order placement |
+
+### Key Features
+- Auto-refresh every 30 seconds via `@st.fragment(run_every=...)`
+- Market status pill indicators from NSE API (pre-open, live, post-market)
+- Batch quote fetching (200 symbols/batch)
+- Option chain: expiry discovery (45 days + monthly), Sensibull-style colouring, ATM highlighting, PCR metric
+
+---
+
+## 5. RAG Document Intelligence
+
+Retrieval-Augmented Generation pipeline for document Q&A with PDF ingestion, hybrid search, and multi-provider LLM generation.
+
+### 10-Stage Query Pipeline
+
+| Stage | Component | Description |
+|-------|-----------|-------------|
+| 1 | Semantic Cache | Embedding-based lookup (cosine ≥ 0.95, TTL 3600s) |
+| 2 | FAQ Fast-Path | Dedicated ChromaDB collection (similarity ≥ 0.90) |
+| 3 | Query Rewrite | LLM-powered multi-query expansion + HyDE hypothetical passage |
+| 4 | Hybrid Retrieval | BM25 (weight 0.4) + vector similarity (weight 0.6) fused via RRF |
+| 5 | Threshold + Dedup | Similarity filter + chunk-hash deduplication |
+| 6 | Metadata Boost | Regex-based snippet/section reference matching |
+| 7 | Re-ranking | `cross-encoder/ms-marco-MiniLM-L-6-v2` (score threshold 0.25) |
+| 8 | Context Assembly | Token-budget constrained chunk selection (4000 tokens) |
+| 9 | LLM Generation | Streaming with structured context and citations |
+| 10 | Cache + Log | Store response + JSONL retrieval logging |
+
+### Configuration
+
+| Component | Setting |
+|-----------|---------|
+| **Embedding** | `BAAI/bge-base-en-v1.5` (768-dim) |
+| **Vector Store** | ChromaDB HNSW cosine (M=32, ef_construction=200, ef_search=150) |
+| **Chunking** | Token-based, size=512, overlap=128 |
+| **LLM (local)** | Ollama — `mistral` (default) |
+| **LLM (cloud)** | Anthropic Claude (`claude-sonnet-4-20250514`) or OpenAI (`gpt-4o`) |
+
+### Additional Capabilities
+- **PDF Ingestion**: Structure-aware chunking via PyMuPDF with layout-aware code extraction, SHA-256 file deduplication
+- **Code Applicator**: Extracts code from RAG answers and applies to strategy files via LLM-assisted merging with `py_compile` verification and one-click revert
+- **Evaluation Suite**: IR metrics (Hit Rate, MRR, NDCG, MAP) + LLM-as-Judge faithfulness scoring (1–5)
+- **Triplet Export**: Training data generation (query, positive, negative) for embedding fine-tuning
+- **Performance Tracing**: Stage-level latency instrumentation
+
+---
+
+## 6. Database Layer
+
+### PostgreSQL Schema (12 tables)
+
+| Table | Purpose | Key Columns |
+|-------|---------|-------------|
+| `analysis_runs` | Tracks each analysis execution | status, tickers, duration, user_id |
+| `news_items` | Scraped news with sentiment | ticker, source, sentiment_label, content_hash (SHA-256 dedup) |
+| `stock_signals` | Trading signals | decision, decision_score, reasoning, technical indicators |
+| `fundamental_metrics` | Per-ticker fundamental snapshots | PE, PEG, ROE, Z-Score, M-Score, F-Score |
+| `backtest_results` | Strategy backtest outcomes | total_return, sharpe_ratio, max_drawdown, equity_curve (JSONB) |
+| `backtest_trades` | Individual trade records | entry/exit price, PnL, holding period |
+| `backtest_equity_points` | Equity curve data points | portfolio_value, drawdown, benchmark |
+| `backtest_daily_returns` | Daily return series | daily_return, cumulative_return |
+| `strategy_performance_summary` | Materialised gold layer | avg metrics across all backtests per strategy |
+| `user_watchlists` | Custom ticker lists | tickers (ARRAY), is_default |
+| `alert_configurations` | Price/signal alerts | conditions (JSONB), notification_channels |
+| `raw_scraped_news` | Bronze/raw layer | raw content, is_processed flag |
+| `data_freshness` | Cache staleness tracking | last_fetched_at, consecutive_errors |
+
+**TimescaleDB** (optional): Hypertables on `stock_signals`, `fundamental_metrics`, `news_items` with 7-day chunk interval.
+
+### Service Layer
+
+`DatabaseService` (singleton) provides a unified API:
+- Analysis lifecycle: `start_analysis_run()` → `complete_analysis_run()` / `fail_analysis_run()`
+- Persistence: `save_signals()`, `save_news_items()` (SHA-256 dedup), `save_fundamental_metrics()` (upsert)
+- Backtesting: `save_backtest_result()` with normalised detail tables + strategy summary refresh
+- Freshness: `check_freshness()`, `record_fetch()`, `record_error()`
+
+### Repository Pattern
+
+| Repository | Key Methods |
+|------------|-------------|
+| `AnalysisRepository` | `create_run`, `start_run`, `complete_run`, `fail_run`, `get_recent_runs` |
+| `SignalRepository` | `get_by_ticker`, `get_by_decision`, `get_top_signals`, `get_ticker_signal_history` |
+| `NewsRepository` | `check_duplicate` (SHA-256), `create_with_dedup`, `get_sentiment_summary` |
+| `FundamentalRepository` | `get_latest_by_ticker`, `upsert` (INSERT ON CONFLICT) |
+| `BacktestRepository` | `get_top_performers`, `get_strategy_summary`, `compare_strategies` |
+| `FreshnessRepository` | `is_stale`, `record_fetch`, `get_stale_tickers` |
+
+---
+
+## 7. Object Storage (MinIO)
+
+S3-compatible storage for backtest chart images:
+
+- **Path pattern**: `centurion-backtests/<run_id>/<TICKER>/<strategy_name>/<filename>`
+- **Metadata tags**: `x-amz-meta-run-id`, `x-amz-meta-strategy`, `x-amz-meta-ticker`, `x-amz-meta-chart-title`
+- **Formats**: matplotlib (base64 → PNG), plotly (JSON), backtesting.py (HTML)
+- **Presigned URLs**: 1-hour expiry for History page viewing
+
+```python
+from storage.minio_service import get_minio_service
+
+minio = get_minio_service()
+minio.save_backtest_image(run_id, image_data, filename, strategy_name, ticker, chart_title)
+images = minio.get_backtest_images(run_id)  # with presigned URLs
+details = minio.list_runs_detailed()         # metadata: size, chart count, strategies
+```
+
+---
+
+## 8. Interactive Web Interface
+
+### Pages
+
+| Page | Route | Description |
+|------|-------|-------------|
+| **Main** | `main` | Ticker selection (default / manual / CSV upload), output settings, Run Analysis button |
+| **Stock Analysis** | `analysis` | Multi-colour CSS spinner during analysis → 4-tab results (Overview, Detailed Table, Top Signals, Sentiment) |
+| **Fundamental** | `fundamental` | Z/M/F score interpretations, all-stocks table, three charts side-by-side |
+| **Backtesting** | `backtesting` | Auto pre-computes all strategies on first visit; config panel + per-strategy result tabs with charts |
+| **Crypto** | `crypto` | Isolated crypto strategies (default: ETH, BTC, LTC); Binance data, separate cache |
+| **History** | `history` | 3 tabs: Analysis Runs (drill-down), Trading Signals (filterable), Backtest Results (with MinIO charts) |
+| **RAG** | `rag` | PDF upload, query input with KB source selector, streaming response, code applicator |
+| **Indian Equities** | Kite Connect | Live quotes, order book, positions, holdings, option chain, RSI scanner |
+
+### Authentication
+- YAML-based credentials (`auth/credentials.yaml`)
+- SHA-256 password hashing with `hmac.compare_digest`
+- Session timeout: 60 min absolute, 30 min inactivity
+- Max 3 login attempts
+- Default users: `admin`/`admin123`, `analyst`/`analyst123`
+
+### Styling
+- Enterprise CSS: dark gradient theme with Centurion branding
+- Decision colours: STRONG_BUY `#00ff88`, BUY `#00cc44`, HOLD `#ffd700`, SELL `#ff6b6b`, STRONG_SELL `#ff0000`
+- Background image overlay, custom buttons, consistent footer
+
+---
+
+## 9. Project Structure
 
 ```
 centurion_core/
 ├── app.py                        # Streamlit application router
-├── main.py                       # Core orchestration script
-├── config.py                     # Configuration settings
-├── models.py                     # Data models and interfaces
-├── utils.py                      # CSV parsing and utilities
-├── setup_database.py             # Database schema initialization
+├── main.py                       # Core orchestration (AlgoTradingSystem)
+├── config.py                     # Configuration (~140 settings, CENTURION_* env vars)
+├── models.py                     # Data models (NewsItem, StockMetrics, TradingSignal)
+├── utils.py                      # CSV parsing and ticker validation
+├── setup_database.py             # Database schema initialisation
 ├── requirements.txt              # Python dependencies
-├── .env                          # Environment variables (DB + MinIO)
-├── .streamlit/
-│   └── config.toml               # Streamlit server config (port 9090)
 ├── sample_tickers.csv            # Example ticker list
 ├── run_streamlit.bat             # Windows quick-launch script
 │
 ├── ui/                           # Modular UI layer
-│   ├── components.py             # Reusable components (header, footer, nav)
-│   ├── charts.py                 # Chart rendering utilities
-│   ├── tables.py                 # Table rendering utilities
-│   ├── styles.py                 # CSS styling
+│   ├── components.py             # Header, footer, navigation, metrics cards
+│   ├── charts.py                 # Plotly charts (decision, sentiment, scores)
+│   ├── tables.py                 # Data tables with CSV download
+│   ├── styles.py                 # CSS styling and colour constants
+│   ├── assets/                   # Logo, background images
 │   └── pages/
 │       ├── main_page.py          # Dashboard & control panel
-│       ├── analysis_page.py      # Stock analysis results display
+│       ├── analysis_page.py      # Analysis results with CSS spinner
 │       ├── fundamental_page.py   # Fundamental analysis drill-down
-│       ├── backtesting_page.py   # Strategy backtesting with MinIO integration
-│       └── history_page.py       # Historical results browser (DB + MinIO)
+│       ├── backtesting_page.py   # Strategy backtesting + MinIO/DB integration
+│       ├── crypto_page.py        # Crypto strategy page (Binance API)
+│       └── history_page.py       # Historical results browser
 │
 ├── auth/                         # Authentication
 │   ├── authenticator.py          # Login/session management
-│   └── credentials.yaml          # User credentials
+│   └── credentials.yaml          # User credentials (SHA-256 hashed)
 │
 ├── database/                     # PostgreSQL persistence layer
-│   ├── connection.py             # SQLAlchemy engine & session management
-│   ├── models.py                 # ORM models (7 tables)
-│   ├── service.py                # High-level database service (singleton)
-│   └── repositories/
-│       ├── base.py               # Base repository class
-│       ├── analysis.py           # AnalysisRepository
-│       ├── signals.py            # SignalRepository
-│       ├── news.py               # NewsRepository
-│       ├── fundamentals.py       # FundamentalsRepository
-│       └── backtests.py          # BacktestRepository
-│
-├── storage/                      # Object storage
-│   ├── manager.py                # Excel/CSV file export
-│   └── minio_service.py          # MinIO S3 client (singleton)
+│   ├── connection.py             # SQLAlchemy engine (QueuePool, pool_pre_ping)
+│   ├── models.py                 # ORM models (12 tables)
+│   ├── service.py                # DatabaseService singleton
+│   └── repositories/             # Repository pattern (6 repos + base)
 │
 ├── scrapers/                     # News scraping modules
-│   ├── yahoo_finance.py
-│   ├── finviz.py
-│   ├── investing.py
-│   ├── tradingview.py
-│   └── aggregator.py             # Concurrent scraping coordinator
+│   ├── aggregator.py             # Concurrent coordinator (Semaphore, 3-layer cache)
+│   ├── cache.py                  # Rate limiter + content deduplicator
+│   ├── yahoo_finance.py          # yfinance library
+│   ├── finviz.py                 # HTTP + optional Selenium Elite
+│   ├── investing.py              # HTTP with custom headers
+│   ├── tradingview.py            # JSON API
+│   └── wallstreetbets.py         # Reddit public JSON (8 flairs)
 │
 ├── sentiment/                    # AI sentiment analysis
 │   └── analyzer.py               # DistilBERT implementation
 │
 ├── metrics/                      # Financial metrics
-│   └── calculator.py             # Fundamentals & technicals
+│   └── calculator.py             # Fundamentals + technicals (yfinance)
 │
 ├── decision_engine/              # Trading logic
 │   └── engine.py                 # Weighted scoring algorithm
 │
+├── services/                     # Business logic
+│   ├── analysis.py               # Analysis orchestration (async)
+│   ├── session.py                # Session state initialisation
+│   └── cache.py                  # SessionCache (TTL-aware, thread-safe)
+│
 ├── strategies/                   # Strategy framework
-│   ├── base_strategy.py          # BaseStrategy, StrategyResult, ChartData
-│   ├── registry.py               # Strategy auto-discovery
-│   ├── loader.py                 # Dynamic loading
-│   ├── data_service.py           # Market data service
-│   └── utils.py                  # Chart conversion utilities (base64, plotly JSON)
+│   ├── base_strategy.py          # BaseStrategy ABC + dataclasses (620 lines)
+│   ├── registry.py               # StrategyRegistry singleton
+│   ├── loader.py                 # Dynamic discovery + import
+│   ├── data_service.py           # DataService (yfinance + indicator overlays)
+│   └── utils.py                  # RSI, MDD, base64, plotly JSON, trading stats
 │
 ├── trading_strategies/           # Strategy implementations
-│   ├── momentum_trading/
-│   │   ├── macd_oscillator.py          # + macd_oscillator_bktest.py
-│   │   ├── parabolic_sar.py            # + parabolic_sar_bktest.py
-│   │   ├── heikin_ashi.py              # + heikin-ashi_bktest.py
-│   │   └── awesome_oscillator.py       # + awesome_oscillator_bktest.py
-│   ├── pattern_recognition/
-│   │   ├── rsi_pattern.py              # + rsi_pattern_recognize_bktest.py
-│   │   ├── bollinger_pattern.py
-│   │   ├── shooting_star.py            # + shooting_star_bktest.py
-│   │   └── support_resistance.py       # + support_resistance_bktest.py
-│   └── statistical_arbitrage/
-│       ├── pairs_trading.py            # + pairs_trading_bktest.py
-│       ├── mean_reversion.py           # Stock mean reversion adapter
-│       ├── mean_reversion_strategy.py  # Crypto mean reversion (Binance API)
-│       ├── binance_data.py             # Binance public REST API client + CSV cache
-│       ├── edge_mean_reversion.py      # ADF, Hurst, Variance Ratio, cointegration tests
-│       └── edge_risk_kit.py            # Drawdown & summary statistics helpers
+│   ├── __init__.py               # Lazy imports (11 strategies)
+│   ├── backtest_utils.py         # Shared: MDD, candlestick, portfolio
+│   ├── momentum_trading/         # MACD, Awesome Oscillator, Heikin-Ashi, Parabolic SAR
+│   ├── pattern_recognition/      # RSI Pattern, Bollinger, Shooting Star, Support/Resistance
+│   ├── statistical_arbitrage/    # Pairs Trading, Mean Reversion, edge utilities
+│   ├── crypto/                   # Crypto Mean Reversion (Binance API + backtesting.py)
+│   ├── fx_intraday/              # London Breakout, Dual Thrust (standalone)
+│   ├── derivatives/              # Options Straddle, VIX Calculator (standalone)
+│   ├── portfolio_analysis/       # Asset Allocation / SLSQP optimisation (standalone)
+│   └── risk_modelling/           # Monte Carlo / GBM simulation (standalone)
 │
-├── notifications/                # Desktop alerts
-│   └── manager.py
+├── kite_connect/                 # Zerodha live trading (Indian markets)
+│   ├── zerodha_live.py           # Main Streamlit dashboard (~1326 lines)
+│   ├── auth/                     # OAuth + Selenium 2FA login
+│   ├── core/                     # Config, PostgreSQL, Selenium service
+│   ├── nse/                      # NSE CSV download + DB loader
+│   ├── options/                  # Concurrent option chain + Greeks
+│   └── trading/                  # Order service + RSI strategy
 │
-├── services/                     # Business logic services
-│   ├── analysis.py               # Analysis orchestration
-│   └── session.py                # Session state management
+├── rag_pipeline/                 # RAG document intelligence
+│   ├── config.py                 # 60+ field configuration dataclass
+│   ├── embeddings.py             # sentence-transformers (BGE-base-en-v1.5)
+│   ├── vector_store.py           # ChromaDB HNSW cosine wrapper
+│   ├── pdf_ingestion.py          # Structure-aware PDF chunking (~1280 lines)
+│   ├── hybrid_search.py          # BM25 + vector RRF fusion
+│   ├── reranker.py               # Cross-encoder re-ranking
+│   ├── query_rewriter.py         # LLM query expansion + HyDE
+│   ├── semantic_cache.py         # Embedding-based answer cache
+│   ├── llm_service.py            # Ollama / Claude / OpenAI abstraction
+│   ├── query_engine.py           # 10-stage pipeline (~968 lines)
+│   ├── evaluation.py             # IR metrics + LLM-as-Judge
+│   ├── tiered_retrieval.py       # FAQ tier (similarity ≥ 0.90)
+│   ├── token_counter.py          # tiktoken / heuristic counter
+│   ├── triplet_export.py         # Fine-tuning triplet generator
+│   ├── code_applier.py           # RAG → strategy code applicator
+│   ├── ui_components.py          # Streamlit RAG widgets
+│   ├── rag_page.py               # RAG page entry point
+│   └── perf_trace.py             # Pipeline stage timing
+│
+├── notifications/                # Desktop + email alerts
+│   └── manager.py                # plyer popups + SMTP HTML email
+│
+├── storage/                      # Object storage
+│   ├── manager.py                # Excel/CSV file export
+│   └── minio_service.py          # MinIO S3 client (singleton)
 │
 └── deployment/                   # Deployment configs
     ├── docker-compose.yml        # App + MinIO containers
     ├── Dockerfile
-    ├── deploy.ps1 / deploy.sh
-    └── DEPLOYMENT.md
+    ├── deploy.ps1 / deploy.sh    # General deployment
+    ├── deploy-azure.ps1          # Azure deployment
+    ├── deploy-gcp.ps1            # GCP deployment
+    └── DEPLOYMENT.md             # Cloud deployment guide
 ```
 
-## 🛠️ Installation
+---
+
+## 10. Installation
 
 ### Prerequisites
 
@@ -160,31 +460,22 @@ centurion_core/
 | Python | 3.10+ | Runtime |
 | PostgreSQL | 14+ | Analysis & backtest persistence |
 | Docker | 20+ | MinIO object storage |
-| pip | Latest | Package management |
+| Ollama | Latest | Local LLM inference (RAG pipeline) |
 
-### 1. Clone & Install Dependencies
+### 1. Install Dependencies
 
 ```powershell
 cd centurion_core
-
-# Activate the virtual environment (create it first if needed)
-# python -m venv mywinenv
-.\mywinenv\Scripts\Activate.ps1
-
+python -m venv myenv
+.\myenv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-> **Note**: First run downloads the DistilBERT model (~250 MB).
+> First run downloads the DistilBERT model (~250 MB).
 
-### 2. Configure Environment Variables
+### 2. Configure Environment
 
-Copy the example and edit:
-
-```powershell
-# Create .env in the project root (see .env for all available settings)
-```
-
-Or create `.env` in the project root with the following:
+Create `.env` in the project root:
 
 ```ini
 # ─── PostgreSQL ───────────────────────────────────────────
@@ -204,19 +495,12 @@ MINIO_BUCKET=centurion-backtests
 MINIO_ENABLED=true
 ```
 
+All configuration values are overridable via `CENTURION_`-prefixed environment variables.
+
 ### 3. Set Up PostgreSQL
 
-#### Option A — Fresh Install (Windows)
-
-1. Download and install [PostgreSQL](https://www.postgresql.org/download/windows/).
-2. During installation, set a superuser password (e.g., `superadmin1`).
-
-#### Create the Database & User
-
-Open a terminal and run:
-
 ```powershell
-# Connect as superuser (adjust path to match your PostgreSQL version)
+# Connect as superuser
 & "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U postgres
 
 # Inside psql:
@@ -226,146 +510,77 @@ GRANT ALL PRIVILEGES ON DATABASE centurion_trading TO admin;
 \q
 ```
 
-#### Verify Connection
-
-```powershell
-& "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U admin -d centurion_trading -c "SELECT version();"
-```
-
-#### Initialize Tables
+Initialise tables:
 
 ```powershell
 python setup_database.py
 ```
 
-This creates all 7 tables:
+> **TimescaleDB** (optional): Hypertables are created automatically if the extension is available. Standard PostgreSQL works fine without it.
 
-| Table | Purpose |
-|---|---|
-| `analysis_runs` | Tracks each analysis execution (status, timing, parameters) |
-| `stock_signals` | Trading signals with decision, score, and reasoning |
-| `news_items` | Scraped news with sentiment labels and confidence |
-| `fundamental_metrics` | Per-ticker fundamental data snapshots |
-| `backtest_results` | Strategy backtest outcomes (return, Sharpe, drawdown) |
-| `trading_signals` | Real-time strategy signals |
-| `strategy_parameters` | Saved strategy configurations |
-
-> **TimescaleDB** (optional): If the extension is available, hypertables are created automatically for time-series queries. It is not required — standard PostgreSQL works fine.
-
-### 4. Set Up MinIO (Object Storage for Charts)
-
-MinIO stores chart images generated during backtesting so you can browse them later from the History page.
-
-#### Start MinIO via Docker Compose
+### 4. Set Up MinIO
 
 ```powershell
 cd deployment
 docker compose up -d minio
 ```
 
-This pulls the `minio/minio:latest` image and starts a container exposing:
-
 | Port | Purpose |
 |---|---|
 | `9000` | S3-compatible API |
-| `9001` | Web Console |
-
-#### Verify MinIO Is Running
-
-```powershell
-docker ps --filter name=centurion-minio
-```
-
-#### Access the Web Console
-
-Open **http://localhost:9001** in your browser.
-
-| Field | Value |
-|---|---|
-| Username | `minioadmin` |
-| Password | `minioadmin123` |
+| `9001` | Web Console (user: `minioadmin`, pass: `minioadmin123`) |
 
 The `centurion-backtests` bucket is created automatically on first use.
 
-#### Test From Python
-
-```python
-from storage.minio_service import get_minio_service
-svc = get_minio_service()
-print("Available:", svc.is_available)  # True
-```
-
-### 5. Launch the Application
+### 5. Launch
 
 ```powershell
 streamlit run app.py
 ```
 
-Opens at **http://localhost:9090** (port configured in `.streamlit/config.toml`).
+Opens at **http://localhost:9090** (configured in `.streamlit/config.toml`).
 
-## 📊 Usage Guide
+---
+
+## 11. Usage Guide
 
 ### Quick Start
 
-1. Launch the app → you land on the **Main** page.
+1. Launch the app → log in → land on the **Main** page.
 2. Select tickers (default list, manual entry, or CSV upload).
-3. Click **🚀 Run Analysis** → results appear on the **Stock Analysis** page.
-4. Navigate to **📊 Fundamental Analysis** for detailed fundamental drill-down.
-5. Navigate to **🔬 Backtest Strategy** to test any of the 11 strategies.
-6. Navigate to **📋 History** to review past runs, signals, and stored charts.
+3. Click **Run Analysis** → results appear on the **Stock Analysis** page.
+4. Navigate to **Fundamental Analysis** for Z/M/F score drill-down.
+5. Navigate to **Backtest Strategy** to test any of the 11 strategies.
+6. Navigate to **History** to review past runs, signals, and stored charts.
 
 ### Strategy Backtesting
 
-1. From the main page (or any sub-page), click **🔬 Backtest Strategy**.
-2. Select a strategy from the dropdown.
-3. Enter tickers (comma-separated) or use pre-filled tickers from analysis.
-4. Adjust period and initial capital.
-5. Click **Run Backtest**.
-6. Results include:
-   - Per-ticker performance tabs with key metrics.
-   - Interactive charts (matplotlib & plotly).
-   - Results auto-saved to **PostgreSQL** (`backtest_results` table).
-   - Charts auto-saved to **MinIO** (`centurion-backtests` bucket).
-7. Switch strategies instantly — cached results load without re-computation.
+1. Click **Backtest Strategy** from any page.
+2. Select a strategy from the dropdown (filter by category).
+3. Enter tickers and adjust period / capital / strategy-specific parameters.
+4. Click **Run Backtest** — results include:
+   - Per-ticker performance tabs with key metrics (return, Sharpe, Sortino, MDD)
+   - Interactive charts (matplotlib & plotly)
+   - Auto-persisted to PostgreSQL + MinIO
+5. Switch strategies instantly — cached results load without re-computation.
 
-#### Crypto Mean Reversion Strategy
+### Crypto Backtesting
 
-The **Crypto Mean Reversion (Z-Score)** strategy runs a full statistical arbitrage pipeline against live Binance data:
+1. Navigate to the **Crypto** page.
+2. Enter crypto tickers (e.g., `ETH, BTC, LTC`) — auto-mapped to USDT pairs.
+3. The pipeline runs: EDA → statistical tests → portfolio construction → backtesting → optimisation.
+4. With optimisation enabled (default), four targets are tested: max equity, min drawdown, min volatility, max Sharpe.
 
-1. Select the strategy from the dropdown.
-2. Enter crypto tickers (e.g., `ETH, BTC, LTC`) — these are automatically mapped to USDT pairs.
-3. The pipeline runs: EDA → statistical tests → 2-asset portfolio → 3-asset portfolio → backtesting.
-4. With **optimisation enabled** (default), four optimisation targets are tested: max equity, min drawdown, min volatility, and max Sharpe ratio.
-5. All charts (8 matplotlib PNGs) and backtest HTML plots are saved to MinIO; results are persisted to PostgreSQL.
-6. Data is fetched from the Binance public REST API (no API key required) and cached locally as CSV.
+### RAG Document Q&A
 
-### History Page
-
-The **📋 History** page has three tabs:
-
-| Tab | Content |
-|---|---|
-| **Analysis Runs** | All past analysis executions with drill-down to signals and news |
-| **Trading Signals** | Signal history filterable by ticker |
-| **Backtest Results** | Past backtest outcomes with strategy comparison chart + stored chart images from MinIO |
-
-Use the date range filter at the top to narrow results.
-
-### Navigation
-
-All pages share consistent navigation buttons:
-
-| Button | Action |
-|---|---|
-| 🏠 **Main** | Return to the main dashboard |
-| 📈 **Stock Analysis** | View analysis results (visible after running analysis) |
-| 📊 **Fundamental Analysis** | Open fundamental metrics page |
-| 🔬 **Backtest Strategy** | Open the backtesting page |
-| 📋 **History** | Open historical results browser |
+1. Navigate to the **RAG** page.
+2. Upload PDF documents to build a knowledge base.
+3. Enter a query — the 10-stage pipeline retrieves and generates an answer with citations.
+4. Use the Code Applicator to apply code snippets from RAG answers to strategy files.
 
 ### CSV Upload Format
 
-Your CSV file can use any of these formats:
+Recognised headers: `Ticker`, `Symbol`, `Stock`, `Tickers`, `Symbols`, `Stocks`.
 
 ```csv
 Ticker
@@ -374,215 +589,138 @@ MSFT
 GOOGL
 ```
 
-```csv
-Ticker,Company
-AAPL,Apple Inc.
-MSFT,Microsoft Corporation
-```
+### Navigation
 
-Recognised headers: `Ticker`, `Symbol`, `Stock`, `Tickers`, `Symbols`, `Stocks`.
+All pages share consistent navigation buttons:
 
-### Decision Algorithm
+| Button | Action |
+|---|---|
+| 🏠 **Main** | Return to the main dashboard |
+| 📈 **Stock Analysis** | View analysis results |
+| 📊 **Fundamental Analysis** | Open fundamental metrics |
+| 🔬 **Backtest Strategy** | Open backtesting |
+| 📋 **History** | Browse historical results |
 
-```
-Combined Score = (Sentiment × 0.4) + (Fundamentals × 0.3) + (Technicals × 0.3)
+---
 
-Score ≥  0.7  → STRONG_BUY
-Score ≥  0.4  → BUY
-Score ≤ -0.7  → STRONG_SELL
-Score ≤ -0.4  → SELL
-Otherwise     → HOLD
-```
+## 12. API Reference
 
-## 🗄️ Database Operations Reference
-
-### Service Layer API
+### Database Service
 
 ```python
 from database.service import get_database_service
 
 db = get_database_service()
-
-# Check connectivity
 db.is_available  # True / False
 
-# Use a session
 with db.session_scope() as session:
     from database.repositories import AnalysisRepository, BacktestRepository
     repo = AnalysisRepository(session)
     runs = repo.get_recent_runs(days=7)
 ```
 
-### Key Repository Methods
-
-| Repository | Method | Description |
-|---|---|---|
-| `AnalysisRepository` | `start_run()` / `complete_run()` | Lifecycle management |
-| `SignalRepository` | `save_signal()` | Persist a trading signal |
-| `NewsRepository` | `save_news_item()` | Persist scraped news |
-| `FundamentalsRepository` | `save_metrics()` | Persist fundamental data |
-| `BacktestRepository` | `save_result()` / `get_recent_backtests()` | Backtest CRUD |
-
-### Manual Table Reset
-
-```sql
--- Connect to centurion_trading as admin
-TRUNCATE analysis_runs, stock_signals, news_items,
-         fundamental_metrics, backtest_results,
-         trading_signals, strategy_parameters
-CASCADE;
-```
-
-## 🪣 MinIO Operations Reference
-
-### Python API
+### MinIO Service
 
 ```python
 from storage.minio_service import get_minio_service
 
 minio = get_minio_service()
-
-# Save an image
-path = minio.save_backtest_image(
-    run_id="run_b080a824_20260218_163000",
-    image_data=png_bytes,
-    filename="equity_curve.png",
-    strategy_name="MACD Oscillator",
-    ticker="AAPL",
-    chart_title="Equity Curve",
-)
-
-# Retrieve all images for a run
-images = minio.get_backtest_images(run_id="run_b080a824_20260218_163000")
-for img in images:
-    print(img["chart_title"], img["chart_type"], img["size"])
-
-# List all stored runs (basic)
-runs = minio.list_runs()
-
-# List runs with full metadata (size, chart count, tickers, strategies)
-details = minio.list_runs_detailed()
-
-# Delete all images for a run
-deleted = minio.delete_run_images(run_id="run_b080a824_20260218_163000")
+path = minio.save_backtest_image(run_id, png_bytes, "equity_curve.png", "MACD Oscillator", "AAPL", "Equity Curve")
+images = minio.get_backtest_images(run_id)
+runs = minio.list_runs_detailed()
+minio.delete_run_images(run_id)
 ```
 
-### Docker Compose Commands
+### Strategy Execution
+
+```python
+from trading_strategies import get_strategy, list_strategies
+
+# List available strategies (no imports triggered)
+for s in list_strategies():
+    print(s['id'], s['name'], s['category'])
+
+# Run a strategy
+StrategyClass = get_strategy('macd')
+strategy = StrategyClass()
+result = strategy.run(
+    tickers=['AAPL', 'MSFT'],
+    start_date='2024-01-01',
+    end_date='2025-01-01',
+    capital=10000.0
+)
+print(result.metrics)  # total_return, sharpe_ratio, max_drawdown, etc.
+```
+
+### Docker Commands
 
 ```powershell
-# Start MinIO
-cd deployment
-docker compose up -d minio
+# Start everything
+cd deployment && docker compose up -d
 
-# Stop MinIO
-docker compose down minio
+# Start only MinIO
+docker compose up -d minio
 
 # View logs
 docker logs centurion-minio
+
+# Stop
+docker compose down
 
 # Remove all data (destructive)
 docker compose down -v
 ```
 
-### Storage Path Pattern
+---
 
-```
-centurion-backtests/
-  └── <run_id>/                          # e.g. run_b080a824_20260218_163000
-       └── <TICKER>/                     # e.g. AAPL
-            └── <strategy_name>/         # e.g. macd_oscillator
-                 ├── chart_0.png         (matplotlib)
-                 ├── chart_1.json        (plotly)
-                 └── ...
-```
+## 13. Troubleshooting
 
-## 🐳 Docker Deployment
+### Database
 
-The `deployment/docker-compose.yml` defines two services:
+| Symptom | Fix |
+|---------|-----|
+| "no password supplied" | Set `CENTURION_DB_PASSWORD` in `.env` |
+| "relation analysis_runs does not exist" | Run `python setup_database.py` |
+| TimescaleDB warnings | Harmless — TimescaleDB is optional |
 
-| Service | Image | Ports | Purpose |
-|---|---|---|---|
-| `algo-trading` | Custom build | 8501 | Streamlit app |
-| `minio` | `minio/minio:latest` | 9000, 9001 | Object storage |
+### MinIO
 
-```powershell
-# Start everything
-cd deployment
-docker compose up -d
-
-# Start only MinIO (for local development)
-docker compose up -d minio
-```
-
-See [DEPLOYMENT.md](deployment/DEPLOYMENT.md) for full cloud deployment instructions (Azure, GCP).
-
-## 🔧 Troubleshooting
-
-### Database Issues
-
-**"no password supplied"**
-→ Ensure `.env` has `CENTURION_DB_PASSWORD` set and `python-dotenv` is installed.
-
-**"relation analysis_runs does not exist"**
-→ Run `python setup_database.py` to create tables.
-
-**"can't subtract offset-naive and offset-aware datetimes"**
-→ Already fixed — all timestamps use `datetime.now(timezone.utc)`.
-
-**TimescaleDB warnings in logs**
-→ Harmless — TimescaleDB is optional. The app works with standard PostgreSQL.
-
-### MinIO Issues
-
-**Charts not appearing in MinIO after backtest**
-→ Ensure Docker container is running: `docker ps --filter name=centurion-minio`.
-→ Check `.env` has `MINIO_ENABLED=true`.
-→ Verify connectivity: `python -c "from storage.minio_service import get_minio_service; print(get_minio_service().is_available)"`.
-
-**"minio module not found"**
-→ Run `pip install minio`.
-
-**Connection refused on port 9000**
-→ Start MinIO: `cd deployment && docker compose up -d minio`.
-
-### Streamlit Issues
-
-**Port already in use**
-```powershell
-streamlit run app.py --server.port 8502
-```
-
-**First run is slow**
-→ DistilBERT model downloads (~250 MB) on first launch. Subsequent runs are fast.
+| Symptom | Fix |
+|---------|-----|
+| Charts not appearing after backtest | Verify `docker ps --filter name=centurion-minio` + `MINIO_ENABLED=true` |
+| "minio module not found" | `pip install minio` |
+| Connection refused on port 9000 | `cd deployment && docker compose up -d minio` |
 
 ### General
 
-**Import errors**
-```powershell
-pip install -r requirements.txt --upgrade
-```
+| Symptom | Fix |
+|---------|-----|
+| Import errors | `pip install -r requirements.txt --upgrade` |
+| Port in use | `streamlit run app.py --server.port 8502` |
+| Slow first run | DistilBERT model download (~250 MB); subsequent runs are fast |
 
-**Virtual environment activation (Windows)**
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-.\mywinenv\Scripts\Activate.ps1
-```
+---
 
-## 📈 Dependencies
+## 14. Dependencies
 
 | Category | Packages |
 |---|---|
-| **Web Framework** | streamlit, plotly, streamlit-aggrid |
+| **Web Framework** | streamlit, plotly |
 | **Data** | pandas, numpy, openpyxl |
 | **Financial Data** | yfinance |
 | **Crypto Data** | Binance public REST API (no key required) |
-| **Scraping** | aiohttp, beautifulsoup4, lxml, requests, selenium |
+| **Live Trading** | kiteconnect (Zerodha Kite Connect SDK) |
+| **Scraping** | aiohttp, beautifulsoup4, lxml, requests, selenium, webdriver-manager |
 | **AI/ML** | transformers, torch, scikit-learn |
-| **Analysis** | matplotlib, statsmodels, backtesting (0.6+), arch |
+| **LLM Providers** | anthropic, openai (Ollama via HTTP) |
+| **RAG / Embeddings** | chromadb, sentence-transformers, PyMuPDF, tiktoken |
+| **Analysis** | matplotlib, statsmodels, backtesting (0.6+), arch, scipy, seaborn |
 | **Database** | sqlalchemy ≥ 2.0, psycopg2-binary ≥ 2.9, python-dotenv ≥ 1.0 |
 | **Object Storage** | minio ≥ 7.2 |
 | **Auth** | pyyaml ≥ 6.0 |
 | **Notifications** | plyer |
+
+---
 
 ## ⚠️ Disclaimer
 
@@ -591,5 +729,3 @@ This software is provided for **educational and informational purposes only**. I
 ---
 
 **Ready to get started? Run `streamlit run app.py` and begin analysing! 🚀📈**
-
-*Last Updated: February 2026*

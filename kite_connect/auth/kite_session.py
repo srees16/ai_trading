@@ -4,12 +4,16 @@ Shared Kite Connect session management.
 Consolidates the duplicated login logic into a single reusable function.
 """
 
-import sys
 import os
+import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+# Append (not insert-at-0) so the project-root 'auth' package is not shadowed
+_kite_dir = os.path.dirname(os.path.dirname(__file__))
+if _kite_dir not in sys.path:
+    sys.path.append(_kite_dir)
 
 from kiteconnect import KiteConnect, exceptions as kite_exceptions
+
 from core.config import API_KEY, API_SECRET, KITE_APP_FILE
 
 
@@ -48,7 +52,10 @@ def create_kite_session():
         return kite
     except (kite_exceptions.TokenException, kite_exceptions.InputException):
         # Token expired or invalid — launch login flow
-        from auth.kite_auth import fetch_request_token
+        try:
+            from kite_connect.auth.kite_auth import fetch_request_token
+        except ImportError:
+            from auth.kite_auth import fetch_request_token
 
         print("\n  [!] Token expired. Launching login flow...\n")
         new_token = fetch_request_token()

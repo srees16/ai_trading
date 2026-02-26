@@ -6,27 +6,23 @@ the Binance public API.  Crypto strategies are isolated here so the
 main backtesting page stays focused on equities.
 """
 
-import json
 import base64
-import uuid
-import streamlit as st
-import pandas as pd
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
+import json
 import logging
-from typing import Dict, Any, Optional
+import uuid
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
+
+import streamlit as st
 
 from config import Config
-from database.service import get_database_service
-from storage.minio_service import get_minio_service
-from trading_strategies import list_strategies, get_strategy
+from trading_strategies import list_strategies
 from ui.components import (
     render_page_header,
     render_footer,
     render_navigation_buttons,
     render_no_data_warning,
 )
-from ui.tables import render_backtest_signals_table
 
 logger = logging.getLogger(__name__)
 
@@ -36,12 +32,51 @@ MINIO_AVAILABLE = True
 # Default crypto tickers for Binance
 _DEFAULT_CRYPTO_TICKERS = "ETH, BTC, LTC"
 
+# Lazy heavy imports
+pd = None   # type: ignore[assignment]
+go = None   # type: ignore[assignment]
+render_backtest_signals_table = None  # type: ignore[assignment]
+_heavy_loaded = False
+
+
+def _ensure_heavy():
+    global pd, go, _heavy_loaded
+    if _heavy_loaded:
+        return
+    import pandas as _pd
+    import plotly.graph_objects as _go
+    pd = _pd
+    go = _go
+    globals()['pd'] = _pd
+    globals()['go'] = _go
+    from ui.tables import render_backtest_signals_table as _rbt
+    globals()['render_backtest_signals_table'] = _rbt
+    _heavy_loaded = True
+
+
+def _get_db_service():
+    from database.service import get_database_service
+    return get_database_service()
+
+
+def _get_minio():
+    from storage.minio_service import get_minio_service
+    return get_minio_service()
+
+
+def _get_strategy(name):
+    from trading_strategies import get_strategy
+    return get_strategy(name)
+
 
 # ====================================================================
 # Main entry point
 # ====================================================================
 def render_crypto_page():
     """Render the cryptocurrency trading strategies page."""
+    _ensure_heavy()
+    logger.info("[user=%s] Viewing Crypto page",
+                st.session_state.get('username', 'unknown'))
     render_page_header("₿ Crypto Strategies")
 
     # Navigation buttons
@@ -99,6 +134,8 @@ def _render_configuration_panel(
     if not selected_name:
         return
 
+    logger.info("[user=%s] Selected crypto strategy: %s",
+                st.session_state.get('username', 'unknown'), selected_name)
     strategy_info = strategy_options[selected_name]
     st.caption(strategy_info["description"])
 
@@ -109,7 +146,7 @@ def _render_configuration_panel(
         st.session_state.crypto_selected = selected_name
 
     # Get strategy class and parameters
-    strategy_cls = get_strategy(strategy_info["id"])
+    strategy_cls = _get_strategy(strategy_info["id"])
     params = strategy_cls.get_parameters()
 
     st.markdown("---")
@@ -138,6 +175,8 @@ def _render_configuration_panel(
         )
 
     if run_btn:
+        logger.info("[user=%s] Clicked 'Run Backtest' for crypto strategy: %s",
+                    st.session_state.get('username', 'unknown'), selected_name)
         _execute_backtest(strategy_cls, strategy_info, param_values, selected_name)
 
 
@@ -516,10 +555,10 @@ def _save_backtest_to_database(
     strategy_info: Dict, param_values: Dict, result: Any, selected_name: str
 ):
     """Save crypto backtest results to database if available."""
-    if not DB_AVAILABLE or not get_database_service:
+    if not DB_AVAILABLE:
         return
     try:
-        db_service = get_database_service()
+        db_service = _get_db_service()
         tickers_list = param_values.get("tickers", [])
         backtest_data = {
             "strategy_name": selected_name,
@@ -557,10 +596,10 @@ def _save_backtest_to_database(
 
 def _save_charts_to_minio(result: Any, strategy_name: str):
     """Save crypto backtest charts to MinIO."""
-    if not MINIO_AVAILABLE or not get_minio_service:
+    if not MINIO_AVAILABLE:
         return
     try:
-        minio_svc = get_minio_service()
+        minio_svc = _get_minio()
         if not minio_svc.is_available:
             return
         if not result.charts:

@@ -4,31 +4,150 @@ Backtesting Page Module for Centurion Capital LLC.
 Contains the strategy backtesting page rendering.
 """
 
-import json
 import base64
-import uuid
-import streamlit as st
-import pandas as pd
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
+import json
 import logging
-from typing import Dict, Any, Optional
+import uuid
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
+
+import streamlit as st
 
 from config import Config
-from database.service import get_database_service
-from storage.minio_service import get_minio_service
-from trading_strategies import list_strategies, get_strategy
+from trading_strategies import list_strategies
 from ui.components import render_page_header, render_footer, render_navigation_buttons, render_no_data_warning, render_tickers_being_analyzed
-from ui.tables import render_backtest_signals_table
 
 logger = logging.getLogger(__name__)
 
 DB_AVAILABLE = Config.is_database_configured()
 MINIO_AVAILABLE = True
 
+# Lazy heavy imports — pandas alone takes ~70 s on some machines.
+pd = None       # type: ignore[assignment]
+go = None       # type: ignore[assignment]
+
+
+def _ensure_heavy():
+    """Import pandas, plotly, and ui.tables on first use."""
+    global pd, go
+    if pd is not None:
+        return
+    import pandas as _pd
+    import plotly.graph_objects as _go
+    pd = _pd
+    go = _go
+    globals()['pd'] = _pd
+    globals()['go'] = _go
+    from ui.tables import render_backtest_signals_table as _rbt
+    globals()['render_backtest_signals_table'] = _rbt
+
+
+# Forward-declare for Pylance
+render_backtest_signals_table = None  # type: ignore[assignment]
+
+
+def _get_db_service():
+    """Lazy import of database.service (pulls in SQLAlchemy)."""
+    from database.service import get_database_service
+    return get_database_service()
+
+
+def _get_minio():
+    """Lazy import of storage.minio_service."""
+    from storage.minio_service import get_minio_service
+    return get_minio_service()
+
+
+def _get_strategy(name):
+    """Lazy import of get_strategy (pulls in the actual strategy class)."""
+    from trading_strategies import get_strategy
+    return get_strategy(name)
+
+# ── CSS-only multi-colour spinning wheel with percentage overlay ────
+_STRATEGY_SPINNER_CSS = """
+<style>
+@keyframes bt-spin {
+  0%   { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+@keyframes bt-colors {
+  0%   { border-top-color: #4fc3f7; }
+  25%  { border-top-color: #ab47bc; }
+  50%  { border-top-color: #66bb6a; }
+  75%  { border-top-color: #ffa726; }
+  100% { border-top-color: #4fc3f7; }
+}
+.bt-spinner-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2.5rem 0 1.5rem 0;
+}
+.bt-spinner-ring {
+  position: relative;
+  width: 72px;
+  height: 72px;
+}
+.bt-spinner-ring::before {
+  content: '';
+  box-sizing: border-box;
+  position: absolute;
+  inset: 0;
+  border: 5px solid rgba(255,255,255,0.10);
+  border-top: 5px solid #4fc3f7;
+  border-radius: 50%;
+  animation: bt-spin 0.8s linear infinite,
+             bt-colors 3s ease-in-out infinite;
+}
+.bt-spinner-pct {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: rgba(255,255,255,0.88);
+  letter-spacing: 0.02em;
+}
+.bt-spinner-label {
+  margin-top: 0.8rem;
+  font-size: 0.92rem;
+  color: rgba(255,255,255,0.68);
+}
+/* Green "Run Backtest" button */
+[data-testid="stMainBlockContainer"] button[kind="primary"].bt-green-btn,
+.bt-green-btn-scope button[kind="primary"] {
+    background-color: #38a169 !important;
+    border-color: #38a169 !important;
+    color: #fff !important;
+    white-space: nowrap !important;
+    font-size: 0.82rem !important;
+}
+.bt-green-btn-scope button[kind="primary"]:hover {
+    background-color: #2f855a !important;
+    border-color: #2f855a !important;
+}
+</style>
+"""
+
+def _spinner_html(pct: int, label: str) -> str:
+    return (
+        f'<div class="bt-spinner-wrap">'
+        f'  <div class="bt-spinner-ring">'
+        f'    <div class="bt-spinner-pct">{pct}%</div>'
+        f'  </div>'
+        f'  <div class="bt-spinner-label">{label}</div>'
+        f'</div>'
+    )
+
 
 def render_backtesting_page():
     """Render the strategy backtesting page."""
+    _ensure_heavy()  # lazy-load pandas, plotly, ui.tables
+    logger.info("[user=%s] Viewing Backtesting page",
+                st.session_state.get('username', 'unknown'))
     render_page_header(
         "🔬 Backtest Strategy"
     )
@@ -133,7 +252,8 @@ def _precompute_all_strategies(strategies: list):
         'tickers': list(tickers),
     }
 
-    progress_bar = st.progress(0, text="Pre-computing strategies…")
+    spinner_slot = st.empty()
+    st.markdown(_STRATEGY_SPINNER_CSS, unsafe_allow_html=True)
     total = len(eligible)
     succeeded = 0
     total_minio_saved = 0
@@ -143,13 +263,17 @@ def _precompute_all_strategies(strategies: list):
 
     for idx, s_info in enumerate(eligible):
         strategy_name = s_info['name']
-        progress_bar.progress(
-            (idx) / total,
-            text=f"Running **{strategy_name}** ({idx + 1}/{total})…"
+        pct = int(idx / total * 100)
+        logger.info("[user=%s] Pre-computing strategy %d/%d: %s",
+                    st.session_state.get('username', 'unknown'),
+                    idx + 1, total, strategy_name)
+        spinner_slot.markdown(
+            _spinner_html(pct, f"Running {strategy_name} ({idx + 1}/{total})…"),
+            unsafe_allow_html=True,
         )
 
         try:
-            strategy_cls = get_strategy(s_info['id'])
+            strategy_cls = _get_strategy(s_info['id'])
             params = strategy_cls.get_parameters()
 
             param_values = {
@@ -164,6 +288,8 @@ def _precompute_all_strategies(strategies: list):
 
             if result.success:
                 succeeded += 1
+                logger.info("[user=%s] Strategy '%s' pre-compute succeeded",
+                            st.session_state.get('username', 'unknown'), strategy_name)
                 # Save charts to MinIO during pre-computation
                 total_minio_saved += _save_charts_to_minio(
                     run_id=minio_run_id,
@@ -173,10 +299,12 @@ def _precompute_all_strategies(strategies: list):
         except Exception as e:
             logger.error(f"Pre-compute failed for {strategy_name}: {e}")
 
-    progress_bar.progress(1.0, text="All strategies computed ✅")
-
-    if total_minio_saved > 0:
-        st.toast(f"🪣 {total_minio_saved} chart(s) saved to object storage", icon="✅")
+    spinner_slot.markdown(
+        _spinner_html(100, "All strategies computed ✅"),
+        unsafe_allow_html=True,
+    )
+    import time as _time; _time.sleep(0.6)
+    spinner_slot.empty()
 
     # Persist cache metadata
     st.session_state.backtest_cache_tickers = sorted(set(t.upper() for t in tickers))
@@ -189,7 +317,9 @@ def _precompute_all_strategies(strategies: list):
         st.session_state.backtest_result = st.session_state.backtest_cache[first_name]
         st.session_state.selected_strategy = first_name
 
-    st.success(f"✅ Pre-computed {succeeded}/{total} strategies for {', '.join(tickers)}")
+    logger.info("[user=%s] Pre-computation complete: %d/%d strategies succeeded for %s",
+                st.session_state.get('username', 'unknown'),
+                succeeded, total, ', '.join(tickers))
 
 
 def _render_configuration_panel(strategies: list, strategy_options: Dict[str, Any]):
@@ -231,7 +361,7 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
             st.session_state.selected_strategy = selected_name
         
         # Get strategy class and parameters
-        strategy_cls = get_strategy(strategy_info['id'])
+        strategy_cls = _get_strategy(strategy_info['id'])
         params = strategy_cls.get_parameters()
         
         st.markdown("---")
@@ -256,16 +386,21 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
         if selected_name in cache:
             st.caption(f"📦 Cached result loaded for **{selected_name}**")
         
-        btn_col, _ = st.columns([1, 2])
+        btn_col, _ = st.columns([1.3, 1.7])
         with btn_col:
+            st.markdown('<div class="bt-green-btn-scope">', unsafe_allow_html=True)
             run_backtest = st.button(
                 "Run Backtest",
                 type="primary",
                 disabled=not param_values.get('tickers'),
-                help="Run with custom parameters (overrides cached result)"
+                help="Run with custom parameters (overrides cached result)",
+                use_container_width=True,
             )
+            st.markdown('</div>', unsafe_allow_html=True)
         
         if run_backtest:
+            logger.info("[user=%s] Clicked 'Run Backtest' for strategy: %s",
+                        st.session_state.get('username', 'unknown'), selected_name)
             _execute_backtest(strategy_cls, strategy_info, param_values, selected_name)
 
 
@@ -399,46 +534,60 @@ def _execute_backtest(strategy_cls, strategy_info: Dict, param_values: Dict, sel
         param_values: Parameter values dictionary
         selected_name: Selected strategy name
     """
-    with st.spinner("Running backtest..."):
-        try:
-            strategy = strategy_cls()
-            result = strategy.run(**param_values)
-            st.session_state.backtest_result = result
-            st.session_state.selected_strategy = selected_name
-            
-            # Update the cache so future switches are instant
-            if 'backtest_cache' not in st.session_state:
-                st.session_state.backtest_cache = {}
-            st.session_state.backtest_cache[selected_name] = result
-            
-            if result.success:
-                st.success("✅ Backtest completed!")
-                _save_backtest_to_database(
-                    strategy_info, param_values, result, selected_name
+    _user = st.session_state.get('username', 'unknown')
+    logger.info("[user=%s] Executing backtest: %s", _user, selected_name)
+
+    st.markdown(_STRATEGY_SPINNER_CSS, unsafe_allow_html=True)
+    manual_spinner = st.empty()
+    manual_spinner.markdown(
+        _spinner_html(0, f"Running {selected_name}…"),
+        unsafe_allow_html=True,
+    )
+
+    try:
+        strategy = strategy_cls()
+        result = strategy.run(**param_values)
+        st.session_state.backtest_result = result
+        st.session_state.selected_strategy = selected_name
+
+        # Update the cache so future switches are instant
+        if 'backtest_cache' not in st.session_state:
+            st.session_state.backtest_cache = {}
+        st.session_state.backtest_cache[selected_name] = result
+
+        manual_spinner.markdown(
+            _spinner_html(100, f"{selected_name} complete ✅"),
+            unsafe_allow_html=True,
+        )
+        import time as _time; _time.sleep(0.6)
+        manual_spinner.empty()
+
+        if result.success:
+            logger.info("[user=%s] Backtest completed successfully: %s",
+                        _user, selected_name)
+            _save_backtest_to_database(
+                strategy_info, param_values, result, selected_name
+            )
+            minio_run_id = st.session_state.get('backtest_minio_run_id')
+            if not minio_run_id:
+                minio_run_id = _build_minio_run_id(
+                    param_values.get('tickers', [])
                 )
-                # Save charts to MinIO independently of DB
-                # Reuse the session's run_id so manual runs land in
-                # the same folder as pre-computed charts; create one
-                # only if none exists yet.
-                minio_run_id = st.session_state.get('backtest_minio_run_id')
-                if not minio_run_id:
-                    minio_run_id = _build_minio_run_id(
-                        param_values.get('tickers', [])
-                    )
-                    st.session_state.backtest_minio_run_id = minio_run_id
-                minio_saved = _save_charts_to_minio(
-                    run_id=minio_run_id,
-                    result=result,
-                    strategy_name=selected_name,
-                )
-                if minio_saved > 0:
-                    st.toast(f"🪣 {minio_saved} chart(s) saved to object storage", icon="✅")
-            else:
-                st.error(f"❌ Failed: {result.error_message}")
-                
-        except Exception as e:
-            logger.error(f"Error running backtest: {e}")
-            st.error(f"❌ Error: {str(e)}")
+                st.session_state.backtest_minio_run_id = minio_run_id
+            _save_charts_to_minio(
+                run_id=minio_run_id,
+                result=result,
+                strategy_name=selected_name,
+            )
+        else:
+            logger.warning("[user=%s] Backtest failed: %s — %s",
+                           _user, selected_name, result.error_message)
+            st.error(f"❌ Failed: {result.error_message}")
+
+    except Exception as e:
+        manual_spinner.empty()
+        logger.error(f"Error running backtest: {e}")
+        st.error(f"❌ Error: {str(e)}")
 
 
 def _save_backtest_to_database(
@@ -448,11 +597,11 @@ def _save_backtest_to_database(
     selected_name: str
 ):
     """Save backtest results to database if available."""
-    if not DB_AVAILABLE or not get_database_service:
+    if not DB_AVAILABLE:
         return
     
     try:
-        db_service = get_database_service()
+        db_service = _get_db_service()
         tickers_list = param_values.get('tickers', [])
         
         backtest_data = {
@@ -522,11 +671,11 @@ def _save_charts_to_minio(
         result: StrategyResult containing charts
         strategy_name: Name of the strategy (used as subfolder)
     """
-    if not MINIO_AVAILABLE or not get_minio_service:
+    if not MINIO_AVAILABLE:
         return 0
 
     try:
-        minio_svc = get_minio_service()
+        minio_svc = _get_minio()
         if not minio_svc.is_available:
             return 0
 

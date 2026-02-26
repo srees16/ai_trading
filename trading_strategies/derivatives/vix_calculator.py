@@ -6,11 +6,12 @@ https://berentlunde.netlify.app/post/the-fear-index-vix-and-variance-swaps
 check this paper on the variance swap
 https://www.researchgate.net/publication/246869706_More_Than_You_Ever_Wanted_to_Know_About_Volatility_Swaps
 """
-import pandas as pd
 import datetime as dt
-import dateutil
 import decimal
+
+import dateutil
 import numpy as np
+import pandas as pd
 import yfinance as yf
 
 #fill weekend and holiday missing cmt rate

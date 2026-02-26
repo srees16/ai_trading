@@ -13,27 +13,32 @@ Public API:
     - render_knowledge_base()     → shows collection stats & management
 """
 
-import streamlit as st
 import json
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
-from rag_pipeline.config import RAGConfig
-from rag_pipeline.vector_store import VectorStoreManager
-from rag_pipeline.pdf_ingestion import PDFIngestionService
-from rag_pipeline.embeddings import EmbeddingService
-from rag_pipeline.query_engine import RAGQueryEngine, RAGResponse
-from rag_pipeline.code_applier import (
-    extract_code_blocks,
-    list_strategy_files,
-    generate_patch,
-    apply_patch,
-    revert_last_patch,
-    CodeBlock,
-    StrategyFileInfo,
-)
+import streamlit as st
+
+# Heavy RAG imports are deferred to first use so that importing this
+# module (which happens eagerly at routing time) stays near-instant.
+# Only lightweight stdlib / typing imports live at module level.
+if TYPE_CHECKING:
+    from rag_pipeline.config import RAGConfig
+    from rag_pipeline.vector_store import VectorStoreManager
+    from rag_pipeline.pdf_ingestion import PDFIngestionService
+    from rag_pipeline.embeddings import EmbeddingService
+    from rag_pipeline.query_engine import RAGQueryEngine, RAGResponse
+    from rag_pipeline.code_applier import (
+        extract_code_blocks,
+        list_strategy_files,
+        generate_patch,
+        apply_patch,
+        revert_last_patch,
+        CodeBlock,
+        StrategyFileInfo,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -72,28 +77,35 @@ def _log_feedback(
 
 # ---------------------------------------------------------------------------
 # Session-state helpers (lazy singletons)
+#
+# All heavy RAG imports are deferred to the first call of each helper
+# so the module can be imported near-instantly at routing time.
 # ---------------------------------------------------------------------------
 
-def _get_config() -> RAGConfig:
+def _get_config():
     if "rag_config" not in st.session_state:
+        from rag_pipeline.config import RAGConfig
         st.session_state["rag_config"] = RAGConfig()
     return st.session_state["rag_config"]
 
 
-def _get_vector_store() -> VectorStoreManager:
+def _get_vector_store():
     if "rag_vector_store" not in st.session_state:
+        from rag_pipeline.vector_store import VectorStoreManager
         st.session_state["rag_vector_store"] = VectorStoreManager(_get_config())
     return st.session_state["rag_vector_store"]
 
 
-def _get_embedding_service() -> EmbeddingService:
+def _get_embedding_service():
     if "rag_embedding_svc" not in st.session_state:
+        from rag_pipeline.embeddings import EmbeddingService
         st.session_state["rag_embedding_svc"] = EmbeddingService(_get_config())
     return st.session_state["rag_embedding_svc"]
 
 
-def _get_ingestion_service() -> PDFIngestionService:
+def _get_ingestion_service():
     if "rag_ingestion_svc" not in st.session_state:
+        from rag_pipeline.pdf_ingestion import PDFIngestionService
         # Wire cache invalidation: when docs change, the ingestion service
         # notifies the query engine to clear stale cache entries.
         engine = _get_query_engine()
@@ -106,8 +118,9 @@ def _get_ingestion_service() -> PDFIngestionService:
     return st.session_state["rag_ingestion_svc"]
 
 
-def _get_query_engine() -> RAGQueryEngine:
+def _get_query_engine():
     if "rag_query_engine" not in st.session_state:
+        from rag_pipeline.query_engine import RAGQueryEngine
         st.session_state["rag_query_engine"] = RAGQueryEngine(
             _get_vector_store(), _get_config(), _get_embedding_service()
         )
@@ -131,6 +144,7 @@ def render_rag_toggle() -> bool:
         "RAG",
         value=st.session_state["rag_enabled"],
         help="When enabled, queries will retrieve context from uploaded strategy documents.",
+        key="rag_pipeline_toggle",
     )
     return st.session_state["rag_enabled"]
 
@@ -353,13 +367,15 @@ def _render_answer_content(text: str) -> None:
         idx += 1
 
 
-def render_rag_response(response: RAGResponse) -> None:
+def render_rag_response(response) -> None:
     """Render a RAGResponse with LLM-generated answer, feedback buttons,
     and collapsible sources.
 
     Supports both plain text and fenced code blocks in the answer so that
     code snippets returned by the LLM are syntax-highlighted.
     """
+    from rag_pipeline.code_applier import extract_code_blocks
+
     st.markdown("### 💡 Answer")
     _render_answer_content(response.answer)
 
@@ -450,7 +466,7 @@ def render_rag_response(response: RAGResponse) -> None:
 # ---------------------------------------------------------------------------
 
 def _render_code_apply_section(
-    code_blocks: List[CodeBlock],
+    code_blocks,
     query: str,
     answer: str,
 ) -> None:
@@ -460,6 +476,12 @@ def _render_code_apply_section(
     file.  On confirmation the LLM merges the snippets into the file with
     automatic backup and syntax validation.
     """
+    from rag_pipeline.code_applier import (
+        list_strategy_files,
+        generate_patch,
+        apply_patch,
+        revert_last_patch,
+    )
     apply_key = f"apply_{hash(query + answer[:80])}"
 
     with st.expander(

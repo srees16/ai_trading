@@ -7,23 +7,14 @@ stored in the database, filtered by date/time.
 
 import base64
 import json
-import streamlit as st
-import pandas as pd
-import plotly.io as pio
 import logging
 from datetime import datetime, timedelta
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 from uuid import UUID
 
-from sqlalchemy import desc
+import streamlit as st
 
 from config import Config
-from database.service import get_database_service
-from database.repositories import (
-    AnalysisRepository, SignalRepository, BacktestRepository
-)
-from database.models import NewsItem, StockSignal
-from storage.minio_service import get_minio_service
 from ui.components import render_page_header, render_footer, render_navigation_buttons, render_tickers_being_analyzed, get_decision_emoji
 
 logger = logging.getLogger(__name__)
@@ -31,9 +22,52 @@ logger = logging.getLogger(__name__)
 DB_AVAILABLE = Config.is_database_configured()
 MINIO_AVAILABLE = True
 
+# Lazy heavy imports
+pd = None     # type: ignore[assignment]
+pio = None    # type: ignore[assignment]
+desc = None   # type: ignore[assignment]
+_heavy_loaded = False
+
+
+def _ensure_heavy():
+    global pd, pio, desc, _heavy_loaded
+    if _heavy_loaded:
+        return
+    import pandas as _pd
+    import plotly.io as _pio
+    from sqlalchemy import desc as _desc
+    pd = _pd
+    pio = _pio
+    desc = _desc
+    globals().update({'pd': _pd, 'pio': _pio, 'desc': _desc})
+    _heavy_loaded = True
+
+
+def _get_db_service():
+    from database.service import get_database_service
+    return get_database_service()
+
+
+def _get_minio():
+    from storage.minio_service import get_minio_service
+    return get_minio_service()
+
+
+def _get_repositories():
+    from database.repositories import AnalysisRepository, SignalRepository, BacktestRepository
+    return AnalysisRepository, SignalRepository, BacktestRepository
+
+
+def _get_db_models():
+    from database.models import NewsItem, StockSignal
+    return NewsItem, StockSignal
+
 
 def render_history_page():
     """Render the history page for reviewing past analysis results."""
+    _ensure_heavy()
+    logger.info("[user=%s] Viewing History page",
+                st.session_state.get('username', 'unknown'))
     render_page_header(
         title="📋 History"
     )
@@ -152,9 +186,10 @@ def _render_date_filter() -> Dict[str, Any]:
 def _render_analysis_runs(date_range: Dict[str, Any]):
     """Render past analysis runs with drill-down capability."""
     try:
-        db_service = get_database_service()
+        db_service = _get_db_service()
 
         with db_service.session_scope() as session:
+            AnalysisRepository, _, _ = _get_repositories()
             repo = AnalysisRepository(session)
             runs = repo.get_recent_runs(limit=100, days=date_range['days'])
 
@@ -241,6 +276,7 @@ def _render_run_details(session, run_id: str):
     st.markdown(f"##### 📋 Run Details — `{run_id[:8]}`")
 
     # Fetch signals for this run
+    _, SignalRepository, _ = _get_repositories()
     signal_repo = SignalRepository(session)
     signals = signal_repo.get_by_analysis_run(run_uuid)
 
@@ -267,6 +303,7 @@ def _render_run_details(session, run_id: str):
 
     # Fetch news items for this run
     try:
+        NewsItem, _ = _get_db_models()
         news_items = session.query(NewsItem).filter(
             NewsItem.analysis_run_id == run_uuid
         ).order_by(NewsItem.published_at.desc()).all()
@@ -296,7 +333,7 @@ def _render_run_details(session, run_id: str):
 def _render_signal_history(date_range: Dict[str, Any]):
     """Render historical trading signals filtered by ticker and date."""
     try:
-        db_service = get_database_service()
+        db_service = _get_db_service()
 
         # Ticker filter
         ticker_input = st.text_input(
@@ -309,6 +346,7 @@ def _render_signal_history(date_range: Dict[str, Any]):
         tickers = [t.strip().upper() for t in ticker_input.split(',') if t.strip()] if ticker_input else []
 
         with db_service.session_scope() as session:
+            _, SignalRepository, _ = _get_repositories()
             signal_repo = SignalRepository(session)
 
             all_signals = []
@@ -323,6 +361,7 @@ def _render_signal_history(date_range: Dict[str, Any]):
             else:
                 # Get all recent signals
                 cutoff = date_range['start_date']
+                _, StockSignal = _get_db_models()
                 all_signals = session.query(StockSignal).filter(
                     StockSignal.created_at >= cutoff
                 ).order_by(desc(StockSignal.created_at)).limit(500).all()
@@ -387,9 +426,10 @@ def _render_signal_history(date_range: Dict[str, Any]):
 def _render_backtest_history(date_range: Dict[str, Any]):
     """Render historical backtest results."""
     try:
-        db_service = get_database_service()
+        db_service = _get_db_service()
 
         with db_service.session_scope() as session:
+            _, _, BacktestRepository = _get_repositories()
             repo = BacktestRepository(session)
             backtests = repo.get_recent_backtests(
                 days=date_range['days'],
@@ -449,7 +489,7 @@ def _render_backtest_history(date_range: Dict[str, Any]):
                     _render_strategy_comparison(successful)
 
             # --- MinIO chart images ---
-            if MINIO_AVAILABLE and get_minio_service:
+            if MINIO_AVAILABLE:
                 _render_minio_backtest_charts()
 
     except Exception as e:
@@ -460,7 +500,7 @@ def _render_backtest_history(date_range: Dict[str, Any]):
 def _render_minio_backtest_charts():
     """Render stored backtest chart images from MinIO object storage."""
     try:
-        minio_svc = get_minio_service()
+        minio_svc = _get_minio()
         if not minio_svc.is_available:
             return
 

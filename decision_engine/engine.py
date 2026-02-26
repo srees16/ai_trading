@@ -3,8 +3,9 @@ Decision engine that combines sentiment, fundamentals, and technicals.
 """
 
 from typing import Optional
-from models import NewsItem, StockMetrics, TradingSignal, DecisionTag, SentimentLabel
+
 from config import Config
+from models import NewsItem, StockMetrics, TradingSignal, DecisionTag, SentimentLabel
 
 
 class DecisionEngine:

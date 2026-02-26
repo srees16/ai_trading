@@ -9,13 +9,19 @@ import sys
 import os
 import logging
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+# Append (not insert-at-0) so the project-root 'auth' package is not shadowed
+_kite_dir = os.path.dirname(os.path.dirname(__file__))
+if _kite_dir not in sys.path:
+    sys.path.append(_kite_dir)
 
-from auth.kite_session import create_kite_session
+try:
+    from kite_connect.auth.kite_session import create_kite_session
+except ImportError:
+    from auth.kite_session import create_kite_session
 
 # The request_token line below is kept because ``kite_auth.py``
 # updates it in-place via regex.  Do NOT remove this line.
-request_token='Jy5Q4oB7veIgUT8Vkghjb5ltvCtF8Ikl'
+request_token='63e83mMMcYYMaWbdzG5SzTr3x8Yfqtip'
 
 kite = None  # module-level reference set by zerodha_login()
 

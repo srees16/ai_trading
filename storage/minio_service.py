@@ -48,8 +48,8 @@ class MinIOConfig:
 
     def __init__(self):
         self.endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9000")
-        self.access_key = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-        self.secret_key = os.getenv("MINIO_SECRET_KEY", "minioadmin123")
+        self.access_key = os.getenv("MINIO_ACCESS_KEY", "")
+        self.secret_key = os.getenv("MINIO_SECRET_KEY", "")
         self.secure = os.getenv("MINIO_SECURE", "false").lower() == "true"
         self.bucket_name = os.getenv("MINIO_BUCKET", "centurion-backtests")
         self.enabled = os.getenv("MINIO_ENABLED", "true").lower() == "true"

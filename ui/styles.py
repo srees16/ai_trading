@@ -6,9 +6,10 @@ for the Streamlit application.
 """
 
 import base64
-import streamlit as st
 from pathlib import Path
 from typing import Optional
+
+import streamlit as st
 
 
 # Color palette constants
@@ -71,7 +72,10 @@ def get_background_base64() -> Optional[str]:
     Returns:
         Base64 encoded string or None if image doesn't exist
     """
-    bg_path = Path(__file__).parent.parent / "nature_bg.png"
+    # Prefer compressed JPEG, fall back to legacy PNG
+    bg_path = Path(__file__).parent / "assets" / "nature_bg.jpg"
+    if not bg_path.exists():
+        bg_path = Path(__file__).parent / "assets" / "nature_bg.png"
     if bg_path.exists():
         with open(bg_path, "rb") as f:
             return base64.b64encode(f.read()).decode()
@@ -93,11 +97,14 @@ def get_background_css(bg_base64: Optional[str] = None) -> str:
     
     if not bg_base64:
         return ""
-    
+
+    # Detect MIME type: JPEG starts with /9j in base64, PNG with iVBOR
+    mime = "image/jpeg" if bg_base64.startswith("/9j") else "image/png"
+
     return f"""
     /* Background image on root */
     .stApp {{
-        background-image: url("data:image/png;base64,{bg_base64}");
+        background-image: url("data:{mime};base64,{bg_base64}");
         background-size: cover;
         background-position: center;
         background-repeat: no-repeat;
@@ -150,8 +157,9 @@ def get_typography_css() -> str:
         margin-top: 0;
         margin-bottom: 0.25rem;
     }
-    /* Ensure all text is visible */
-    .stMarkdown, .stMarkdown p, .stMarkdown span, .stMarkdown li {
+    /* Ensure all text is visible — exclude .header-bar so page headers keep their own colours */
+    .stMarkdown:not(:has(.header-bar)), .stMarkdown:not(:has(.header-bar)) p,
+    .stMarkdown:not(:has(.header-bar)) span, .stMarkdown:not(:has(.header-bar)) li {
         color: #1a1a2e !important;
     }
     label, .stRadio label, .stCheckbox label {
@@ -161,6 +169,12 @@ def get_typography_css() -> str:
         margin-top: 0.25rem;
         margin-bottom: 0.25rem;
         color: #1a1a2e !important;
+    }
+    .header-bar h1, .header-bar h2, .header-bar h3 {
+        color: #ffffff !important;
+    }
+    .header-bar .subtitle {
+        color: #8b949e !important;
     }
     .stSubheader {
         margin-top: 0.25rem;
@@ -353,11 +367,20 @@ def get_complete_css(bg_base64: Optional[str] = None) -> str:
 
 
 def apply_custom_styles():
-    """Apply all custom CSS styles to the Streamlit application."""
-    bg_base64 = get_background_base64()
-    css = get_complete_css(bg_base64)
-    
-    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+    """Apply all custom CSS styles to the Streamlit application.
+
+    The compiled CSS string is cached in ``st.session_state`` so the
+    background image is only read from disk once per session rather
+    than on every Streamlit rerun.
+    """
+    if "_centurion_css" not in st.session_state:
+        bg_base64 = get_background_base64()
+        st.session_state["_centurion_css"] = get_complete_css(bg_base64)
+
+    st.markdown(
+        f"<style>{st.session_state['_centurion_css']}</style>",
+        unsafe_allow_html=True,
+    )
 
 
 def get_decision_style(decision: str) -> str:

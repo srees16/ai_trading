@@ -8,10 +8,10 @@ detected and registered without modifying core code.
 
 import importlib
 import importlib.util
+import logging
 import sys
 from pathlib import Path
 from typing import Optional, Type
-import logging
 
 from .base_strategy import BaseStrategy
 from .registry import StrategyRegistry

@@ -9,11 +9,12 @@ Default model: BAAI/bge-base-en-v1.5 (768-dim, instruction-tuned).
 """
 
 import logging
-from typing import List, Protocol
-
-import numpy as np
+from typing import List, Protocol, TYPE_CHECKING
 
 from rag_pipeline.config import RAGConfig
+
+if TYPE_CHECKING:
+    import numpy as np
 
 logger = logging.getLogger(__name__)
 

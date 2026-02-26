@@ -10,15 +10,19 @@ Strategy:
 URL: https://www.nseindia.com/market-data/live-equity-market
 """
 
+import glob
 import os
 import sys
 import time
-import glob
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
+
+# Append kite_connect to path (not insert) to avoid shadowing top-level packages
+_kite_root = os.path.dirname(os.path.dirname(__file__))
+if _kite_root not in sys.path:
+    sys.path.append(_kite_root)
 
 from core.config import NSE_URL, DOWNLOAD_DIR
 from core.selenium_service import get_driver

@@ -9,13 +9,13 @@ echo  Algo Trading Alert System - Streamlit UI
 echo ======================================================================
 echo.
 
-REM Activate the mywinenv virtual environment
-if exist "%~dp0mywinenv\Scripts\activate.bat" (
-    call "%~dp0mywinenv\Scripts\activate.bat"
-    echo Virtual environment: mywinenv activated
+REM Activate the myenv virtual environment
+if exist "%~dp0myenv\Scripts\activate.bat" (
+    call "%~dp0myenv\Scripts\activate.bat"
+    echo Virtual environment: myenv activated
 ) else (
-    echo WARNING: mywinenv not found. Run: python -m venv mywinenv
-    echo Then:    mywinenv\Scripts\activate ^& pip install -r requirements.txt
+    echo WARNING: myenv not found. Run: python -m venv myenv
+    echo Then:    myenv\Scripts\activate ^& pip install -r requirements.txt
 )
 
 echo.

@@ -13,11 +13,12 @@ Session-cache integration
   call (instead of 10).
 """
 
-import streamlit as st
 import logging
 from collections import defaultdict
 from datetime import timedelta
-from typing import List, Any, Optional, Tuple, Dict
+from typing import Any, Dict, List, Optional, Tuple
+
+import streamlit as st
 
 from config import Config
 from database.service import get_database_service
@@ -44,57 +45,52 @@ async def run_analysis_async(tickers: List[str]) -> List[Any]:
     system = AlgoTradingSystem(tickers=tickers)
     cache = get_session_cache()
     
-    # Progress tracking
-    progress_placeholder = st.empty()
+    # Status tracking
     status_placeholder = st.empty()
     
-    with st.spinner('🔄 Analyzing...'):
-        signals = await _execute_analysis(
-            system, tickers, cache,
-            progress_placeholder, status_placeholder
+    signals = await _execute_analysis(
+        system, tickers, cache,
+        status_placeholder
+    )
+
+    if not signals:
+        return []
+
+    # Persist results
+    save_path = _save_results(system, signals, tickers)
+    db_saved = _save_to_database(signals, tickers)
+
+    # Show cache diagnostics
+    stats = cache.stats
+    scraper_stats = get_scraper_cache().stats
+    logger.info("Session cache stats: %s", stats)
+    logger.info("Scraper cache stats: %s", scraper_stats)
+
+    # Clear status indicator
+    status_placeholder.empty()
+
+    if save_path:
+        st.caption(f"💾 Results saved to: {save_path}")
+
+    # Show how many API calls were saved
+    cached_news_count = len(cache.get_cached_tickers("news"))
+    scraper_cached = scraper_stats.get('cached_tickers', 0)
+    dedup_hashes = scraper_stats.get('content_hashes', 0)
+    if cached_news_count > 0 or scraper_cached > 0:
+        st.caption(
+            f"⚡ Cache: {stats['hits']} hits / {stats['misses']} misses "
+            f"({stats['hit_rate']} hit rate) — "
+            f"{cached_news_count} ticker(s) cached, "
+            f"{dedup_hashes} dedup hashes tracked"
         )
-        
-        if not signals:
-            return []
-        
-        # Persist results
-        save_path = _save_results(system, signals, tickers)
-        db_saved = _save_to_database(signals, tickers)
-        
-        # Show cache diagnostics
-        stats = cache.stats
-        scraper_stats = get_scraper_cache().stats
-        logger.info("Session cache stats: %s", stats)
-        logger.info("Scraper cache stats: %s", scraper_stats)
-        
-        # Clear progress indicators
-        progress_placeholder.progress(100)
-        progress_placeholder.empty()
-        status_placeholder.empty()
-        
-        if save_path:
-            st.caption(f"💾 Results saved to: {save_path}")
-        
-        # Show how many API calls were saved
-        cached_news_count = len(cache.get_cached_tickers("news"))
-        scraper_cached = scraper_stats.get('cached_tickers', 0)
-        dedup_hashes = scraper_stats.get('content_hashes', 0)
-        if cached_news_count > 0 or scraper_cached > 0:
-            st.caption(
-                f"⚡ Cache: {stats['hits']} hits / {stats['misses']} misses "
-                f"({stats['hit_rate']} hit rate) — "
-                f"{cached_news_count} ticker(s) cached, "
-                f"{dedup_hashes} dedup hashes tracked"
-            )
-        
-        return signals
+
+    return signals
 
 
 async def _execute_analysis(
     system: AlgoTradingSystem,
     tickers: List[str],
     cache,
-    progress_placeholder,
     status_placeholder
 ) -> List[Any]:
     """
@@ -125,8 +121,6 @@ async def _execute_analysis(
     all_news = await system.news_aggregator.fetch_news_for_tickers(
         tickers, cached_news=cached_news
     )
-    progress_placeholder.progress(20)
-    
     if not all_news:
         status_placeholder.warning("⚠️ No news found")
         return []
@@ -176,7 +170,6 @@ async def _execute_analysis(
         # Also update the news cache so next time we already have sentiments
         cache.put("news", ticker, items, ttl=news_ttl)
     
-    progress_placeholder.progress(40)
     status_placeholder.success(
         f"✓ Analyzed {len(analyzed_news)} items "
         f"({len(already_analysed)} cached, {len(newly_analysed)} new)"
@@ -210,8 +203,6 @@ async def _execute_analysis(
         except Exception:
             pass
     
-    progress_placeholder.progress(60)
-    
     # Generate signals
     signals = []
     for i, news_item in enumerate(analyzed_news):
@@ -219,9 +210,6 @@ async def _execute_analysis(
         signal = system.decision_engine.generate_signal(news_item, metrics)
         signals.append(signal)
         
-        progress = 60 + int((i + 1) / len(analyzed_news) * 30)
-        progress_placeholder.progress(min(progress, 90))
-    
     # Cache signals
     signals_by_ticker: Dict[str, list] = defaultdict(list)
     for sig in signals:

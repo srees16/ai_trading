@@ -2,21 +2,23 @@
 Finviz news scraper with Elite authentication support.
 """
 
-import os
 import logging
+import os
+import time
 from datetime import datetime, timedelta
 from typing import List, Optional
-from scrapers import BaseNewsScraper
-from models import NewsItem
-from selenium import webdriver
 
-logger = logging.getLogger(__name__)
+from selenium import webdriver
+from selenium.common.exceptions import TimeoutException
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
-import time
+from selenium.webdriver.support.ui import WebDriverWait
+
+from models import NewsItem
+from scrapers import BaseNewsScraper
+
+logger = logging.getLogger(__name__)
 
 
 class FinvizScraper(BaseNewsScraper):

@@ -3,11 +3,13 @@ TradingView news scraper.
 """
 
 import logging
-import aiohttp
 from datetime import datetime
 from typing import List
-from scrapers import BaseNewsScraper
+
+import aiohttp
+
 from models import NewsItem
+from scrapers import BaseNewsScraper
 
 logger = logging.getLogger(__name__)
 

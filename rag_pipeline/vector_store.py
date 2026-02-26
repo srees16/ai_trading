@@ -9,14 +9,20 @@ Provides a thin, project-aligned wrapper around ChromaDB for:
 """
 
 import logging
-from typing import Any, Dict, List, Optional
-
-import chromadb
-from chromadb.config import Settings as ChromaSettings
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from rag_pipeline.config import RAGConfig
 
+if TYPE_CHECKING:
+    import chromadb
+
 logger = logging.getLogger(__name__)
+
+
+def _import_chromadb():
+    """Lazy import of chromadb to avoid ~1s startup penalty."""
+    import chromadb as _chromadb
+    return _chromadb
 
 
 class VectorStoreManager:
@@ -32,16 +38,18 @@ class VectorStoreManager:
 
     def __init__(self, config: Optional[RAGConfig] = None) -> None:
         self._config = config or RAGConfig()
-        self._client: Optional[chromadb.ClientAPI] = None
-        self._collection: Optional[chromadb.Collection] = None
+        self._client = None
+        self._collection = None
 
     # ------------------------------------------------------------------
     # Lazy initialisation
     # ------------------------------------------------------------------
     @property
-    def client(self) -> chromadb.ClientAPI:
+    def client(self):
         if self._client is None:
-            self._client = chromadb.PersistentClient(
+            _chromadb = _import_chromadb()
+            from chromadb.config import Settings as ChromaSettings
+            self._client = _chromadb.PersistentClient(
                 path=self._config.chroma_persist_dir,
                 settings=ChromaSettings(
                     anonymized_telemetry=False,
@@ -55,7 +63,7 @@ class VectorStoreManager:
         return self._client
 
     @property
-    def collection(self) -> chromadb.Collection:
+    def collection(self):
         if self._collection is None:
             self._collection = self.client.get_or_create_collection(
                 name=self._config.chroma_collection_name,
