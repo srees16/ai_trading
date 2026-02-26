@@ -33,7 +33,7 @@ elif sys.path[0] != _PROJECT_ROOT:
 # ── Heavy imports are LAZY ──────────────────────────────────────────
 # kiteconnect pulls in twisted+autobahn (~30 s on Windows).  We defer
 # all heavy imports to first actual use so the login page isn't blocked.
-from ui.components import load_logo_base64_small, render_header_bar, render_footer
+from ui.components import load_logo_base64_small, render_header_bar, render_footer, spinner_html as _spinner_html
 
 # Lazy singletons — populated on first call via _ensure_imports()
 _kite_mod = None
@@ -745,8 +745,10 @@ def _render_dashboard():
             """Fetch real-time quotes & render stock data tables. Auto-refreshes independently."""
             _conn = get_db_connection()
 
-            with st.spinner("Fetching real-time quotes from Kite Connect..."):
-                quotes = fetch_realtime_quotes(kite, list(all_stock_names))
+            _quotes_spinner = st.empty()
+            _quotes_spinner.markdown(_spinner_html("Fetching real-time quotes from Kite Connect…"), unsafe_allow_html=True)
+            quotes = fetch_realtime_quotes(kite, list(all_stock_names))
+            _quotes_spinner.empty()
     
             if quotes:
                 update_stocks_in_db(_conn, quotes)
@@ -1096,15 +1098,17 @@ def _render_dashboard():
                 if run_scan:
                     logger.info("[user=%s] Ind Stocks: Run RSI Scan clicked — capital=%s, rsi_low=%s, rsi_high=%s, interval=%s, auto=%s",
                                 st.session_state.get('username', 'unknown'), rsi_capital, rsi_low, rsi_high, rsi_interval, rsi_auto)
-                    with st.spinner("Scanning watchlist for RSI signals..."):
-                        scan_results = scan_watchlist(
-                            kite, list(all_stock_names),
-                            capital=rsi_capital, max_loss=rsi_max_loss,
-                            order_limit=rsi_limit, order_type=rsi_order_type,
-                            rsi_low=rsi_low, rsi_high=rsi_high,
-                            interval=rsi_interval, lookback_days=30,
-                            auto_place=rsi_auto,
-                        )
+                    _rsi_spinner = st.empty()
+                    _rsi_spinner.markdown(_spinner_html("Scanning watchlist for RSI signals…"), unsafe_allow_html=True)
+                    scan_results = scan_watchlist(
+                        kite, list(all_stock_names),
+                        capital=rsi_capital, max_loss=rsi_max_loss,
+                        order_limit=rsi_limit, order_type=rsi_order_type,
+                        rsi_low=rsi_low, rsi_high=rsi_high,
+                        interval=rsi_interval, lookback_days=30,
+                        auto_place=rsi_auto,
+                    )
+                    _rsi_spinner.empty()
     
                     # Build results table
                     scan_rows = []
@@ -1186,9 +1190,11 @@ def _render_option_chain_tab(kite):
     # ── Expiry discovery (cached in session_state) ──
     cache_key = f"_oc_expiries_{oc_index}"
     if cache_key not in st.session_state or st.session_state.get(f"_oc_exp_stale_{oc_index}"):
-        with st.spinner("Discovering expiries..."):
-            st.session_state[cache_key] = discover_expiries(kite, oc_index)
-            st.session_state[f"_oc_exp_stale_{oc_index}"] = False
+        _exp_spinner = st.empty()
+        _exp_spinner.markdown(_spinner_html("Discovering expiries…"), unsafe_allow_html=True)
+        st.session_state[cache_key] = discover_expiries(kite, oc_index)
+        st.session_state[f"_oc_exp_stale_{oc_index}"] = False
+        _exp_spinner.empty()
 
     expiry_list = st.session_state.get(cache_key, [])
     oc_expiry = oc_c2.selectbox(
@@ -1225,11 +1231,13 @@ def _render_option_chain_tab(kite):
     need_fetch = oc_refresh or oc_cache_key not in st.session_state
 
     if need_fetch:
-        with st.spinner(f"Fetching {oc_index} option chain …"):
-            oc_data = fetch_option_chain(
-                kite, oc_index, oc_expiry, oc_strikes, oc_timeframe,
-            )
-            st.session_state[oc_cache_key] = oc_data
+        _oc_spinner = st.empty()
+        _oc_spinner.markdown(_spinner_html(f"Fetching {oc_index} option chain…"), unsafe_allow_html=True)
+        oc_data = fetch_option_chain(
+            kite, oc_index, oc_expiry, oc_strikes, oc_timeframe,
+        )
+        st.session_state[oc_cache_key] = oc_data
+        _oc_spinner.empty()
     else:
         oc_data = st.session_state[oc_cache_key]
 

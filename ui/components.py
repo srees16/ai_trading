@@ -120,6 +120,26 @@ def render_header_bar(subtitle: str = "", right_html: str = ""):
     """, unsafe_allow_html=True)
 
 
+# ── Reusable spinner HTML helper ─────────────────────────────────
+
+def spinner_html(label: str = "Processing…") -> str:
+    """Return an HTML snippet for the unified Centurion spinner.
+
+    The CSS classes (`centurion-spinner`, `spinner-wrapper`,
+    `spinner-text`) are defined globally in ``ui/styles.py`` so no
+    extra ``<style>`` block is needed.
+
+    Args:
+        label: The italic text shown next to the spinning ring.
+    """
+    return (
+        '<div class="spinner-wrapper">'
+        '  <div class="centurion-spinner"></div>'
+        f'  <span class="spinner-text">{label}</span>'
+        '</div>'
+    )
+
+
 def render_header():
     """Render the main application header with the dark header bar."""
     render_header_bar(subtitle="Algorithmic Trading · Event-Driven Alpha")

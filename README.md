@@ -497,6 +497,28 @@ MINIO_ENABLED=true
 
 All configuration values are overridable via `CENTURION_`-prefixed environment variables.
 
+#### Terminal Environment Variables (after fresh clone)
+
+If you are not using a `.env` file, set these variables in your PowerShell terminal before launching the app:
+
+```powershell
+$env:ZERODHA_API_KEY=""
+$env:ZERODHA_API_SECRET=""
+$env:KITE_DB_HOST=""
+$env:KITE_DB_PORT=""
+$env:KITE_DB_NAME=""
+$env:KITE_DB_USER=""
+$env:KITE_DB_PASSWORD=""
+$env:ZERODHA_USER_ID=""
+$env:ZERODHA_PASSWORD=""
+$env:MINIO_ENDPOINT=""
+$env:MINIO_ACCESS_KEY=""
+$env:MINIO_SECRET_KEY=""
+$env:MINIO_SECURE=""
+$env:MINIO_BUCKET=""
+$env:MINIO_ENABLED=""
+```
+
 ### 3. Set Up PostgreSQL
 
 ```powershell

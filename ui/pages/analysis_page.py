@@ -13,69 +13,17 @@ import streamlit as st
 from ui.components import (
     render_page_header,
     render_footer,
-    render_tickers_being_analyzed,
     render_metrics_cards,
     render_analysis_navigation_buttons,
+    spinner_html,
 )
 
 logger = logging.getLogger(__name__)
-
-# ── CSS-only multi-colour spinning wheel (renders instantly) ────────
-_SPINNER_CSS = """
-<style>
-@keyframes centurion-spin {
-  0%   { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-@keyframes centurion-colors {
-  0%   { border-top-color: #4fc3f7; }   /* light-blue  */
-  25%  { border-top-color: #ab47bc; }   /* purple      */
-  50%  { border-top-color: #66bb6a; }   /* green       */
-  75%  { border-top-color: #ffa726; }   /* orange      */
-  100% { border-top-color: #4fc3f7; }   /* light-blue  */
-}
-.centurion-spinner-overlay {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 4rem 0 2rem 0;
-}
-.centurion-spinner {
-  width: 40px;
-  height: 40px;
-  border: 4px solid rgba(120,120,120,0.18);
-  border-top: 4px solid #4fc3f7;
-  border-radius: 50%;
-  animation: centurion-spin 0.8s linear infinite,
-             centurion-colors 3s ease-in-out infinite;
-}
-.centurion-spinner-label {
-  margin-top: 1.1rem;
-  font-size: 1.05rem;
-  color: #4a4a5a;
-  letter-spacing: 0.03em;
-}
-</style>
-"""
-
-_SPINNER_HTML = """
-<div class="centurion-spinner-overlay">
-  <div class="centurion-spinner"></div>
-  <div class="centurion-spinner-label">Analyzing&hellip;</div>
-</div>
-"""
 
 
 def render_analysis_page():
     """Render the analysis progress and results page."""
     render_page_header("📈 US Stock Analysis")
-    
-    # Show stocks being analyzed
-    if st.session_state.tickers:
-        tickers = st.session_state.tickers
-        ticker_mode = st.session_state.get('ticker_mode', 'Default Tickers')
-        render_tickers_being_analyzed(tickers, ticker_mode)
     
     st.markdown("---")
     
@@ -89,12 +37,18 @@ def render_analysis_page():
         # the CSS animation renders in the browser while heavy
         # Python imports and network calls happen server-side.
         spinner_slot = st.empty()
-        spinner_slot.markdown(_SPINNER_CSS + _SPINNER_HTML, unsafe_allow_html=True)
+        spinner_slot.markdown(spinner_html("Analyzing… — 0%"), unsafe_allow_html=True)
+
+        def _on_progress(pct: int, label: str):
+            spinner_slot.markdown(
+                spinner_html(f"Analyzing… — {pct}%"),
+                unsafe_allow_html=True,
+            )
 
         from services.analysis import run_analysis_async   # deferred (heavy)
 
         st.session_state.signals = asyncio.run(
-            run_analysis_async(st.session_state.tickers)
+            run_analysis_async(st.session_state.tickers, progress_callback=_on_progress)
         )
         st.session_state.analysis_complete = True
         logger.info("[user=%s] Analysis completed — %d signals generated",

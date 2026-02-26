@@ -15,7 +15,7 @@ from uuid import UUID
 import streamlit as st
 
 from config import Config
-from ui.components import render_page_header, render_footer, render_navigation_buttons, render_tickers_being_analyzed, get_decision_emoji
+from ui.components import render_page_header, render_footer, render_navigation_buttons, get_decision_emoji
 
 logger = logging.getLogger(__name__)
 
@@ -71,11 +71,6 @@ def render_history_page():
     render_page_header(
         title="📋 History"
     )
-
-    # Show stocks being analyzed
-    tickers = st.session_state.get('tickers', [])
-    if tickers:
-        render_tickers_being_analyzed(tickers, st.session_state.get('ticker_mode', 'Default Tickers'))
 
     st.markdown("---")
 

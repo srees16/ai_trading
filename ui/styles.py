@@ -264,6 +264,59 @@ def get_layout_css() -> str:
     [data-testid="stSidebar"] {
         display: none;
     }
+    /* ── Centurion unified spinner (20×20 multi-colour ring) ─── */
+    @keyframes centurion-spin {
+        0%   { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    @keyframes centurion-color {
+        0%   { border-top-color: #3498db; }
+        25%  { border-top-color: #e74c3c; }
+        50%  { border-top-color: #f1c40f; }
+        75%  { border-top-color: #2ecc71; }
+        100% { border-top-color: #3498db; }
+    }
+    .centurion-spinner {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        border: 3px solid rgba(0,0,0,0.1);
+        border-top: 3px solid #3498db;
+        border-radius: 50%;
+        animation: centurion-spin 0.8s linear infinite,
+                   centurion-color 2.4s ease-in-out infinite;
+        vertical-align: middle;
+    }
+    .spinner-wrapper {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 12px 0;
+    }
+    .spinner-text {
+        font-size: 0.92rem;
+        color: #555;
+        font-weight: 500;
+        font-style: italic;
+    }
+    /* Native st.spinner() — match the centurion style */
+    [data-testid="stSpinner"],
+    [data-testid="stSpinner"] > div,
+    .stSpinner > div {
+        color: #1a1a2e !important;
+        font-weight: 500 !important;
+        font-size: 0.92rem !important;
+    }
+    [data-testid="stSpinner"] svg circle,
+    .stSpinner svg circle {
+        stroke: #3498db !important;
+    }
+    [data-testid="stStatusWidget"] [role="status"],
+    [data-testid="stSpinner"] [role="status"],
+    .stSpinner [role="status"] {
+        color: #1a1a2e !important;
+    }
     """
 
 

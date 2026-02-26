@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
+from ui.components import spinner_html
+
 import streamlit as st
 
 # Heavy RAG imports are deferred to first use so that importing this
@@ -191,45 +193,11 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
                 _cancel_btn_counter = [0]
 
                 def _show_spinner(pct: int, label: str, show_cancel: bool = True) -> None:
-                    """Render a multi-color spinner with percentage text."""
+                    """Render the unified centurion spinner with percentage text."""
                     _cancel_btn_counter[0] += 1
-                    # Gradient color based on percentage
-                    if pct < 25:
-                        ring_color = "#3498db"   # blue
-                    elif pct < 50:
-                        ring_color = "#e74c3c"   # red
-                    elif pct < 75:
-                        ring_color = "#f1c40f"   # yellow
-                    else:
-                        ring_color = "#2ecc71"   # green
+                    from ui.components import spinner_html
                     spinner_ph.markdown(
-                        f"""
-                        <div style="display:flex;align-items:center;justify-content:center;
-                                    gap:12px;padding:14px 0;">
-                            <div style="position:relative;display:inline-flex;
-                                        align-items:center;justify-content:center;">
-                                <svg width="48" height="48" viewBox="0 0 48 48">
-                                    <circle cx="24" cy="24" r="20" fill="none"
-                                            stroke="#e0e0e0" stroke-width="4"/>
-                                    <circle cx="24" cy="24" r="20" fill="none"
-                                            stroke="{ring_color}" stroke-width="4"
-                                            stroke-linecap="round"
-                                            stroke-dasharray="{pct * 1.2566:.1f} 125.66"
-                                            transform="rotate(-90 24 24)"
-                                            style="transition:stroke-dasharray .4s ease,
-                                                   stroke .4s ease;"/>
-                                </svg>
-                                <span style="position:absolute;font-size:0.7rem;
-                                             font-weight:700;color:{ring_color};">
-                                    {pct}%
-                                </span>
-                            </div>
-                            <span style="font-size:0.92rem;color:#555;
-                                         font-weight:500;font-style:italic;">
-                                {label}
-                            </span>
-                        </div>
-                        """,
+                        spinner_html(f"{label} — {pct}%"),
                         unsafe_allow_html=True,
                     )
                     if show_cancel:
@@ -527,12 +495,14 @@ def _render_code_apply_section(
                 key=f"{apply_key}_preview",
                 help="Generate a preview of the merged code without writing anything.",
             ):
-                with st.spinner("Generating preview with LLM..."):
-                    modified_source, summary = generate_patch(
-                        target_file=selected_file.path,
-                        code_blocks=code_blocks,
-                        query=query,
-                    )
+                _preview_sp = st.empty()
+                _preview_sp.markdown(spinner_html("Generating preview with LLM…"), unsafe_allow_html=True)
+                modified_source, summary = generate_patch(
+                    target_file=selected_file.path,
+                    code_blocks=code_blocks,
+                    query=query,
+                )
+                _preview_sp.empty()
                 st.session_state[f"{apply_key}_preview_src"] = modified_source
                 st.session_state[f"{apply_key}_preview_summary"] = summary
 
@@ -554,12 +524,14 @@ def _render_code_apply_section(
                 # Use preview if available, otherwise generate fresh
                 source_to_apply = st.session_state.get(f"{apply_key}_preview_src")
                 if not source_to_apply:
-                    with st.spinner("Generating merged code with LLM..."):
-                        source_to_apply, summary = generate_patch(
-                            target_file=selected_file.path,
-                            code_blocks=code_blocks,
-                            query=query,
-                        )
+                    _merge_sp = st.empty()
+                    _merge_sp.markdown(spinner_html("Generating merged code with LLM…"), unsafe_allow_html=True)
+                    source_to_apply, summary = generate_patch(
+                        target_file=selected_file.path,
+                        code_blocks=code_blocks,
+                        query=query,
+                    )
+                    _merge_sp.empty()
                     st.session_state[f"{apply_key}_preview_summary"] = summary
 
                 result = apply_patch(
@@ -661,8 +633,10 @@ def render_knowledge_base() -> None:
                  "latest chunking pipeline. Use after pipeline upgrades.",
         ):
             ingestion_svc = _get_ingestion_service()
-            with st.spinner("Re-ingesting in progress (this may take a while)..."):
-                results = ingestion_svc.reingest_all()
+            _reingest_sp = st.empty()
+            _reingest_sp.markdown(spinner_html("Re-ingesting documents…"), unsafe_allow_html=True)
+            results = ingestion_svc.reingest_all()
+            _reingest_sp.empty()
             for r in results:
                 if r["status"] == "success":
                     st.success(

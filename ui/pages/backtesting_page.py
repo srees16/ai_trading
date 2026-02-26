@@ -15,7 +15,7 @@ import streamlit as st
 
 from config import Config
 from trading_strategies import list_strategies
-from ui.components import render_page_header, render_footer, render_navigation_buttons, render_no_data_warning, render_tickers_being_analyzed
+from ui.components import render_page_header, render_footer, render_navigation_buttons, render_no_data_warning
 
 logger = logging.getLogger(__name__)
 
@@ -63,59 +63,9 @@ def _get_strategy(name):
     from trading_strategies import get_strategy
     return get_strategy(name)
 
-# ── CSS-only multi-colour spinning wheel with percentage overlay ────
+# ── Green "Run Backtest" button CSS ─────────────────────────────────
 _STRATEGY_SPINNER_CSS = """
 <style>
-@keyframes bt-spin {
-  0%   { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-@keyframes bt-colors {
-  0%   { border-top-color: #4fc3f7; }
-  25%  { border-top-color: #ab47bc; }
-  50%  { border-top-color: #66bb6a; }
-  75%  { border-top-color: #ffa726; }
-  100% { border-top-color: #4fc3f7; }
-}
-.bt-spinner-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 2.5rem 0 1.5rem 0;
-}
-.bt-spinner-ring {
-  position: relative;
-  width: 72px;
-  height: 72px;
-}
-.bt-spinner-ring::before {
-  content: '';
-  box-sizing: border-box;
-  position: absolute;
-  inset: 0;
-  border: 5px solid rgba(255,255,255,0.10);
-  border-top: 5px solid #4fc3f7;
-  border-radius: 50%;
-  animation: bt-spin 0.8s linear infinite,
-             bt-colors 3s ease-in-out infinite;
-}
-.bt-spinner-pct {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: rgba(255,255,255,0.88);
-  letter-spacing: 0.02em;
-}
-.bt-spinner-label {
-  margin-top: 0.8rem;
-  font-size: 0.92rem;
-  color: rgba(255,255,255,0.68);
-}
 /* Green "Run Backtest" button */
 [data-testid="stMainBlockContainer"] button[kind="primary"].bt-green-btn,
 .bt-green-btn-scope button[kind="primary"] {
@@ -133,14 +83,8 @@ _STRATEGY_SPINNER_CSS = """
 """
 
 def _spinner_html(pct: int, label: str) -> str:
-    return (
-        f'<div class="bt-spinner-wrap">'
-        f'  <div class="bt-spinner-ring">'
-        f'    <div class="bt-spinner-pct">{pct}%</div>'
-        f'  </div>'
-        f'  <div class="bt-spinner-label">{label}</div>'
-        f'</div>'
-    )
+    from ui.components import spinner_html
+    return spinner_html(f"{label} — {pct}%")
 
 
 def render_backtesting_page():
@@ -152,11 +96,6 @@ def render_backtesting_page():
         "🔬 Backtest Strategy"
     )
 
-    # Show stocks being analyzed
-    tickers = st.session_state.get('tickers', [])
-    if tickers:
-        render_tickers_being_analyzed(tickers, st.session_state.get('ticker_mode', 'Default Tickers'))
-    
     # Navigation buttons
     render_navigation_buttons(
         current_page='backtesting',
