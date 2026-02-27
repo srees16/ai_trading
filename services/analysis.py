@@ -2,25 +2,42 @@
 Analysis Service Module for Centurion Capital LLC.
 
 Contains the stock analysis execution logic and database persistence.
+
+Session-cache integration
+─────────────────────────
+* News, sentiment results, and stock metrics are cached per ticker in
+  ``SessionCache`` so that re-running analysis with overlapping tickers
+  only fetches data for the *new* tickers.
+* ``MetricsCalculator`` now caches per unique ticker internally, so even
+  within a single run, 10 news articles for AAPL trigger only 1 yfinance
+  call (instead of 10).
 """
 
-import streamlit as st
 import logging
-from typing import List, Any, Optional, Tuple, Dict
+from collections import defaultdict
+from datetime import timedelta
+from typing import Any, Dict, List, Optional, Tuple
+
+import streamlit as st
 
 from config import Config
 from database.service import get_database_service
 from main import AlgoTradingSystem
-from ui.components import render_completion_banner
+from services.cache import get_session_cache
+from scrapers.cache import get_scraper_cache
 
 logger = logging.getLogger(__name__)
 
 DB_AVAILABLE = Config.is_database_configured()
 
 
-async def run_analysis_async(tickers: List[str]) -> List[Any]:
+async def run_analysis_async(
+    tickers: List[str],
+    progress_callback=None,
+) -> List[Any]:
     """
-    Run the stock analysis asynchronously.
+    Run the stock analysis asynchronously, reusing cached data
+    for tickers that were already analysed in this session.
     
     Args:
         tickers: List of stock ticker symbols to analyze
@@ -29,88 +46,206 @@ async def run_analysis_async(tickers: List[str]) -> List[Any]:
         List of TradingSignal objects
     """
     system = AlgoTradingSystem(tickers=tickers)
+    cache = get_session_cache()
     
-    # Progress tracking
-    progress_placeholder = st.empty()
+    # Status tracking
     status_placeholder = st.empty()
     
-    with st.spinner('🔄 Analyzing...'):
-        # Fetch news
-        signals = await _execute_analysis(
-            system, tickers, progress_placeholder, status_placeholder
+    signals = await _execute_analysis(
+        system, tickers, cache,
+        status_placeholder,
+        progress_callback=progress_callback,
+    )
+
+    if not signals:
+        return []
+
+    # Persist results
+    save_path = _save_results(system, signals, tickers)
+    db_saved = _save_to_database(signals, tickers)
+
+    # Show cache diagnostics
+    stats = cache.stats
+    scraper_stats = get_scraper_cache().stats
+    logger.info("Session cache stats: %s", stats)
+    logger.info("Scraper cache stats: %s", scraper_stats)
+
+    # Clear status indicator
+    status_placeholder.empty()
+
+    if save_path:
+        st.caption(f"💾 Results saved to: {save_path}")
+
+    # Show how many API calls were saved
+    cached_news_count = len(cache.get_cached_tickers("news"))
+    scraper_cached = scraper_stats.get('cached_tickers', 0)
+    dedup_hashes = scraper_stats.get('content_hashes', 0)
+    if cached_news_count > 0 or scraper_cached > 0:
+        st.caption(
+            f"⚡ Cache: {stats['hits']} hits / {stats['misses']} misses "
+            f"({stats['hit_rate']} hit rate) — "
+            f"{cached_news_count} ticker(s) cached, "
+            f"{dedup_hashes} dedup hashes tracked"
         )
-        
-        if not signals:
-            return []
-        
-        # Save results
-        save_path = _save_results(system, signals, tickers)
-        db_saved = _save_to_database(signals, tickers)
-        
-        # Clear progress indicators
-        progress_placeholder.progress(100)
-        progress_placeholder.empty()
-        status_placeholder.empty()
-        
-        # Show completion banner
-        render_completion_banner(len(tickers), len(signals), db_saved)
-        
-        # Show save location if available
-        if save_path:
-            st.caption(f"💾 Results saved to: {save_path}")
-        
-        return signals
+
+    return signals
 
 
 async def _execute_analysis(
     system: AlgoTradingSystem,
     tickers: List[str],
-    progress_placeholder,
-    status_placeholder
+    cache,
+    status_placeholder,
+    progress_callback=None,
 ) -> List[Any]:
     """
-    Execute the main analysis pipeline.
+    Execute the main analysis pipeline with session-cache integration.
     
-    Args:
-        system: AlgoTradingSystem instance
-        tickers: List of tickers
-        progress_placeholder: Streamlit placeholder for progress bar
-        status_placeholder: Streamlit placeholder for status messages
-    
-    Returns:
-        List of TradingSignal objects
+    Flow:
+    1. **News** — only scrape tickers not yet in cache
+    2. **Sentiment** — only analyse news items not yet analysed
+    3. **Metrics** — MetricsCalculator has its own per-ticker cache;
+       we also persist to SessionCache for cross-run reuse
+    4. **Signals** — generated for *all* tickers (cached + new)
     """
-    # Fetch news
+    # ── Step 1: News scraping (with cache) ───────────────────────────
     status_placeholder.info("📰 Scraping news from multiple sources...")
-    all_news = await system.news_aggregator.fetch_news_for_tickers(tickers)
-    progress_placeholder.progress(20)
+    if progress_callback:
+        progress_callback(0, "Scraping news…")
     
+    # Build dict of cached news
+    cached_news: Dict[str, list] = cache.get_all("news")
+    new_tickers = cache.get_new_tickers("news", tickers)
+    
+    if cached_news:
+        cached_list = [t for t in tickers if t in cached_news]
+        if cached_list:
+            status_placeholder.info(
+                f"📰 Reusing cached news for {len(cached_list)} ticker(s), "
+                f"fetching {len(new_tickers)} new…"
+            )
+    
+    all_news = await system.news_aggregator.fetch_news_for_tickers(
+        tickers, cached_news=cached_news
+    )
     if not all_news:
         status_placeholder.warning("⚠️ No news found")
         return []
     
+    # Cache newly fetched news by ticker
+    news_ttl = timedelta(minutes=Config.NEWS_CACHE_TTL_MINUTES)
+    metrics_ttl = timedelta(minutes=Config.METRICS_CACHE_TTL_MINUTES)
+    
+    news_by_ticker: Dict[str, list] = defaultdict(list)
+    for item in all_news:
+        news_by_ticker[item.ticker].append(item)
+    for ticker, items in news_by_ticker.items():
+        if ticker not in cached_news:
+            cache.put("news", ticker, items, ttl=news_ttl)
+            # Record successful scrape in DataFreshness table
+            get_scraper_cache().record_fetch_to_db(
+                ticker, record_count=len(items),
+            )
+    
     status_placeholder.success(f"✓ Collected {len(all_news)} news items")
     
-    # Analyze sentiment
+    # ── Step 2: Sentiment analysis (with cache) ──────────────────────
     status_placeholder.info("🧠 Analyzing sentiment...")
-    analyzed_news = system.sentiment_analyzer.analyze_news_items(all_news)
-    progress_placeholder.progress(40)
-    status_placeholder.success(f"✓ Analyzed {len(analyzed_news)} items")
+    if progress_callback:
+        progress_callback(33, "Analyzing sentiment…")
     
-    # Calculate metrics and generate signals
+    # Separate already-analysed items from new ones
+    items_to_analyse = []
+    already_analysed = []
+    for item in all_news:
+        if item.sentiment_label is not None:
+            already_analysed.append(item)
+        else:
+            items_to_analyse.append(item)
+    
+    if items_to_analyse:
+        newly_analysed = system.sentiment_analyzer.analyze_news_items(items_to_analyse)
+    else:
+        newly_analysed = []
+    
+    analyzed_news = already_analysed + newly_analysed
+    
+    # Update cache with sentiment-enriched items
+    enriched_by_ticker: Dict[str, list] = defaultdict(list)
+    for item in analyzed_news:
+        enriched_by_ticker[item.ticker].append(item)
+    for ticker, items in enriched_by_ticker.items():
+        cache.put("sentiment", ticker, items, ttl=news_ttl)
+        # Also update the news cache so next time we already have sentiments
+        cache.put("news", ticker, items, ttl=news_ttl)
+    
+    status_placeholder.success(
+        f"✓ Analyzed {len(analyzed_news)} items "
+        f"({len(already_analysed)} cached, {len(newly_analysed)} new)"
+    )
+    
+    # ── Step 3: Metrics + signals ────────────────────────────────────
     status_placeholder.info("📊 Calculating metrics and generating signals...")
-    signals = []
+    if progress_callback:
+        progress_callback(66, "Calculating metrics…")
     
+    # Pre-populate MetricsCalculator cache with any previously cached metrics
+    cached_metrics = cache.get_all("metrics")
+    for ticker, m in cached_metrics.items():
+        if ticker not in system.metrics_calculator._cache:
+            system.metrics_calculator._cache[ticker] = m
+    
+    # Prefetch metrics for all unique tickers at once
+    unique_tickers = list({item.ticker for item in analyzed_news})
+    system.metrics_calculator.prefetch_metrics(unique_tickers)
+    
+    # Save back to session cache + record freshness
+    sc = get_scraper_cache()
+    for t in unique_tickers:
+        m = system.metrics_calculator.get_stock_metrics(t)
+        cache.put("metrics", t, m, ttl=metrics_ttl)
+        # Record metrics freshness so we don't re-fetch after a restart
+        try:
+            from database.service import get_database_service
+            get_database_service().record_fetch(
+                t, data_type="fundamentals",
+                refresh_minutes=Config.METRICS_CACHE_TTL_MINUTES,
+            )
+        except Exception:
+            pass
+    
+    # Generate signals
+    signals = []
     for i, news_item in enumerate(analyzed_news):
         metrics = system.metrics_calculator.get_stock_metrics(news_item.ticker)
         signal = system.decision_engine.generate_signal(news_item, metrics)
         signals.append(signal)
         
-        # Update progress
-        progress = 40 + int((i + 1) / len(analyzed_news) * 50)
-        progress_placeholder.progress(min(progress, 90))
+    # Cache signals
+    signals_by_ticker: Dict[str, list] = defaultdict(list)
+    for sig in signals:
+        signals_by_ticker[sig.news_item.ticker].append(sig)
+    for ticker, sigs in signals_by_ticker.items():
+        cache.put("signals", ticker, sigs)
     
     status_placeholder.success(f"✓ Generated {len(signals)} trading signals")
+    if progress_callback:
+        progress_callback(100, "Analysis complete ✅")
+    
+    # ── Step 4: WSB email report (auto-send when SMTP configured) ────
+    wsb_news = [n for n in analyzed_news if n.source == "WallStreetBets"]
+    if wsb_news:
+        try:
+            from notifications.manager import NotificationManager
+            sent = NotificationManager.send_wsb_email(analyzed_news, tickers)
+            if sent:
+                status_placeholder.success(
+                    f"✓ WSB email report sent ({len(wsb_news)} mentions)"
+                )
+            else:
+                logger.info("WSB email skipped (SMTP not configured)")
+        except Exception as exc:
+            logger.warning("WSB email failed: %s", exc)
     
     return signals
 

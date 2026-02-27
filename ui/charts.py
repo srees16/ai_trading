@@ -4,14 +4,15 @@ Chart Rendering Module for Centurion Capital LLC.
 Contains all visualization and chart rendering functions for Plotly charts.
 """
 
-import streamlit as st
+from collections import defaultdict
+from typing import Any, Dict, List
+
 import pandas as pd
 import plotly.express as px
-from typing import List, Dict, Any
-from collections import defaultdict
+import streamlit as st
 
-from ui.styles import DECISION_COLORS, SENTIMENT_COLORS, HEALTH_COLORS
 from ui.components import get_decision_emoji
+from ui.styles import DECISION_COLORS, HEALTH_COLORS, SENTIMENT_COLORS
 
 
 def render_decision_chart(signals: List[Any]):
@@ -56,7 +57,7 @@ def render_decision_chart(signals: List[Any]):
     )
     
     fig.update_traces(textposition='inside', textinfo='percent+label')
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
     
     # Show breakdown below the chart
     _render_decision_breakdown(decision_stocks)
@@ -142,7 +143,7 @@ def render_sentiment_chart(signals: List[Any]):
         )
         
         fig.update_layout(showlegend=True, xaxis_tickangle=-45)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     else:
         st.info("No sentiment data available")
 
@@ -183,7 +184,7 @@ def render_score_distribution(signals: List[Any]):
     
     fig.update_layout(xaxis_tickangle=-45)
     fig.add_hline(y=0, line_dash="dash", line_color="gray")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width='stretch')
 
 
 def render_fundamental_charts(stock_metrics: Dict[str, Any]):
@@ -236,7 +237,7 @@ def _render_z_score_chart(stock_metrics: Dict[str, Any]):
         fig.add_hline(y=2.99, line_dash="dash", line_color="green", annotation_text="Safe")
         fig.add_hline(y=1.81, line_dash="dash", line_color="red", annotation_text="Distress")
         fig.update_layout(xaxis_tickangle=-45, height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     else:
         st.info("No Z-Score data")
 
@@ -268,7 +269,7 @@ def _render_m_score_chart(stock_metrics: Dict[str, Any]):
         )
         fig.add_hline(y=-2.22, line_dash="dash", line_color="red", annotation_text="Threshold")
         fig.update_layout(xaxis_tickangle=-45, height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     else:
         st.info("No M-Score data")
 
@@ -301,7 +302,7 @@ def _render_f_score_chart(stock_metrics: Dict[str, Any]):
         fig.add_hline(y=8, line_dash="dash", line_color="green", annotation_text="Strong")
         fig.add_hline(y=5, line_dash="dash", line_color="orange", annotation_text="Moderate")
         fig.update_layout(xaxis_tickangle=-45, yaxis_range=[0, 10], height=400)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     else:
         st.info("No F-Score data")
 

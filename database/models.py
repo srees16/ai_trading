@@ -8,9 +8,9 @@ These models are designed for:
 - Audit trails and data lineage
 """
 
+import enum
 import uuid
 from datetime import datetime
-
 
 from sqlalchemy import (
     Column, String, Float, Integer, Boolean, DateTime, Text,
@@ -19,8 +19,6 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.sql import func
-
-import enum
 
 Base = declarative_base()
 
@@ -318,6 +316,20 @@ class BacktestResult(Base, TimestampMixin):
     execution_time_seconds = Column(Float)
     data_points_processed = Column(Integer)
     
+    # Relationships to normalised detail tables
+    trade_details = relationship(
+        'BacktestTrade', back_populates='backtest',
+        cascade='all, delete-orphan', lazy='dynamic',
+    )
+    equity_points = relationship(
+        'BacktestEquityPoint', back_populates='backtest',
+        cascade='all, delete-orphan', lazy='dynamic',
+    )
+    daily_returns = relationship(
+        'BacktestDailyReturn', back_populates='backtest',
+        cascade='all, delete-orphan', lazy='dynamic',
+    )
+    
     __table_args__ = (
         Index('idx_backtest_strategy', 'strategy_id'),
         Index('idx_backtest_tickers', 'tickers', postgresql_using='gin'),
@@ -370,4 +382,231 @@ class AlertConfiguration(Base, TimestampMixin):
     __table_args__ = (
         Index('idx_alert_user_ticker', 'user_id', 'ticker'),
         Index('idx_alert_active', 'is_active'),
+    )
+
+
+# =====================================================================
+# Bronze Layer — Raw/Unprocessed Data (Medallion Architecture)
+# =====================================================================
+
+class RawScrapedNews(Base):
+    """
+    Bronze layer: Raw scraped news items before enrichment.
+
+    Stores the unprocessed scraper output exactly as received.
+    Downstream processing promotes rows into the enriched NewsItem
+    (silver layer) after sentiment analysis, deduplication, and
+    entity extraction.
+    """
+    __tablename__ = 'raw_scraped_news'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # Source metadata
+    ticker = Column(String(20), nullable=False, index=True)
+    source = Column(String(100), nullable=False)
+    scraper_name = Column(String(100))  # e.g. 'finviz', 'yahoo_finance'
+
+    # Raw content as received
+    raw_title = Column(Text, nullable=False)
+    raw_content = Column(Text)
+    raw_url = Column(Text)
+    raw_author = Column(String(200))
+    raw_published_at = Column(DateTime(timezone=True))
+
+    # Deduplication
+    content_hash = Column(String(64), index=True)
+
+    # Processing state
+    is_processed = Column(Boolean, default=False, index=True)
+    processed_at = Column(DateTime(timezone=True))
+    enriched_news_id = Column(UUID(as_uuid=True), ForeignKey('news_items.id'), nullable=True)
+
+    # Ingestion timestamp
+    ingested_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        Index('idx_raw_news_ticker_ingested', 'ticker', 'ingested_at'),
+        Index('idx_raw_news_unprocessed', 'is_processed',
+              postgresql_where=Column('is_processed') == False),
+    )
+
+
+# =====================================================================
+# Normalized Backtest Detail Tables (JSONB Extraction)
+# =====================================================================
+
+class BacktestTrade(Base):
+    """
+    Individual trade entries extracted from BacktestResult.signals JSONB.
+    Enables SQL-level querying, filtering, and aggregation of trades.
+    """
+    __tablename__ = 'backtest_trades'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    backtest_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey('backtest_results.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+
+    # Trade details
+    trade_number = Column(Integer, nullable=False)
+    trade_type = Column(String(10), nullable=False)   # 'BUY' / 'SELL'
+    ticker = Column(String(20), nullable=False)
+    entry_date = Column(DateTime(timezone=True))
+    exit_date = Column(DateTime(timezone=True))
+    entry_price = Column(Numeric(12, 4))
+    exit_price = Column(Numeric(12, 4))
+    quantity = Column(Numeric(15, 4))
+    pnl = Column(Float)
+    pnl_pct = Column(Float)
+    holding_period_days = Column(Integer)
+
+    # Parent relationship
+    backtest = relationship('BacktestResult', back_populates='trade_details')
+
+    __table_args__ = (
+        Index('idx_bt_trade_backtest', 'backtest_id'),
+        Index('idx_bt_trade_ticker', 'ticker'),
+    )
+
+
+class BacktestEquityPoint(Base):
+    """
+    Time-series equity curve data extracted from BacktestResult.equity_curve JSONB.
+    """
+    __tablename__ = 'backtest_equity_points'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    backtest_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey('backtest_results.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+
+    point_date = Column(DateTime(timezone=True), nullable=False)
+    portfolio_value = Column(Numeric(15, 2), nullable=False)
+    drawdown = Column(Float)
+    benchmark_value = Column(Numeric(15, 2))
+
+    # Parent relationship
+    backtest = relationship('BacktestResult', back_populates='equity_points')
+
+    __table_args__ = (
+        Index('idx_bt_equity_backtest_date', 'backtest_id', 'point_date'),
+    )
+
+
+class BacktestDailyReturn(Base):
+    """
+    Daily return values extracted from BacktestResult.metrics.daily_returns JSONB.
+    """
+    __tablename__ = 'backtest_daily_returns'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    backtest_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey('backtest_results.id', ondelete='CASCADE'),
+        nullable=False,
+        index=True,
+    )
+
+    return_date = Column(DateTime(timezone=True), nullable=False)
+    daily_return = Column(Float, nullable=False)
+    cumulative_return = Column(Float)
+
+    # Parent relationship
+    backtest = relationship('BacktestResult', back_populates='daily_returns')
+
+    __table_args__ = (
+        Index('idx_bt_daily_ret_backtest_date', 'backtest_id', 'return_date'),
+    )
+
+
+# =====================================================================
+# Gold Layer — Pre-Aggregated Summary Tables
+# =====================================================================
+
+class StrategyPerformanceSummary(Base, TimestampMixin):
+    """
+    Gold layer: Pre-aggregated strategy performance metrics.
+
+    Refreshed on every new backtest completion. Enables instant
+    dashboard queries without scanning the full backtest_results table.
+    """
+    __tablename__ = 'strategy_performance_summary'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    strategy_id = Column(String(100), nullable=False, unique=True, index=True)
+    strategy_name = Column(String(200), nullable=False)
+
+    # Aggregate counts
+    total_backtests = Column(Integer, default=0)
+    successful_backtests = Column(Integer, default=0)
+
+    # Return statistics
+    avg_return = Column(Float)
+    best_return = Column(Float)
+    worst_return = Column(Float)
+    median_return = Column(Float)
+
+    # Risk statistics
+    avg_sharpe = Column(Float)
+    avg_sortino = Column(Float)
+    avg_max_drawdown = Column(Float)
+    avg_calmar = Column(Float)
+
+    # Trading statistics
+    avg_win_rate = Column(Float)
+    avg_profit_factor = Column(Float)
+    avg_total_trades = Column(Float)
+
+    # Last refresh metadata
+    last_backtest_at = Column(DateTime(timezone=True))
+    last_refreshed_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        Index('idx_strategy_perf_id', 'strategy_id'),
+    )
+
+
+# =====================================================================
+# Data Freshness Tracking
+# =====================================================================
+
+class DataFreshness(Base):
+    """
+    Tracks when each data type was last fetched per ticker.
+
+    Used to avoid redundant API/scraper calls and to surface
+    stale-data warnings in the UI.
+    """
+    __tablename__ = 'data_freshness'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ticker = Column(String(20), nullable=False)
+    data_type = Column(String(50), nullable=False)  # 'news', 'fundamentals', 'price', 'sentiment'
+
+    # Freshness timestamps
+    last_fetched_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    next_refresh_at = Column(DateTime(timezone=True))
+
+    # Statistics
+    fetch_count = Column(Integer, default=1)
+    avg_fetch_seconds = Column(Float)
+    last_fetch_seconds = Column(Float)
+    last_record_count = Column(Integer)
+
+    # Error tracking
+    consecutive_errors = Column(Integer, default=0)
+    last_error = Column(Text)
+    last_error_at = Column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint('ticker', 'data_type', name='uq_freshness_ticker_type'),
+        Index('idx_freshness_ticker', 'ticker'),
+        Index('idx_freshness_next_refresh', 'next_refresh_at'),
     )

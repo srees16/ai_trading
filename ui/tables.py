@@ -4,16 +4,17 @@ Data Tables Module for Centurion Capital LLC.
 Contains table rendering functions for signals and analysis results.
 """
 
-import streamlit as st
-import pandas as pd
-import yfinance as yf
-from datetime import datetime
-from typing import List, Dict, Any
-from collections import defaultdict
 import logging
+from collections import defaultdict
+from datetime import datetime
+from typing import Any, Dict, List
 
-from ui.styles import get_decision_style, get_signal_style
+import pandas as pd
+import streamlit as st
+import yfinance as yf
+
 from ui.components import get_decision_emoji
+from ui.styles import get_decision_style, get_signal_style
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ def render_simple_summary_table(signals: List[Any]):
     
     st.dataframe(
         df.astype(str),
-        use_container_width=True,
+        width='stretch',
         hide_index=True,
         column_config={
             "Link": st.column_config.LinkColumn(
@@ -144,7 +145,7 @@ def _render_overall_stock_signals(signals: List[Any]):
     stock_df = pd.DataFrame(stock_data)
     stock_df = stock_df.sort_values('Avg Score', ascending=False)
     
-    st.dataframe(stock_df.astype(str), use_container_width=True, hide_index=True)
+    st.dataframe(stock_df.astype(str), width='stretch', hide_index=True)
 
 
 def render_signals_table(signals: List[Any]):
@@ -205,7 +206,7 @@ def render_signals_table(signals: List[Any]):
         return get_decision_style(val)
     
     styled_df = df.style.map(highlight_decision, subset=['Decision'])
-    st.dataframe(styled_df, use_container_width=True, height=400)
+    st.dataframe(styled_df, width='stretch', height=400)
     
     # Download button
     csv = df.to_csv(index=False)
@@ -331,7 +332,7 @@ def render_fundamental_table(stock_metrics: Dict[str, Any]) -> pd.DataFrame:
         })
     
     df = pd.DataFrame(health_data)
-    st.dataframe(df.astype(str), use_container_width=True, hide_index=True)
+    st.dataframe(df.astype(str), width='stretch', hide_index=True)
     
     return df
 
@@ -351,7 +352,7 @@ def render_backtest_signals_table(signals: Any):
     if 'signal' in signals_df.columns:
         st.dataframe(
             signals_df.style.map(highlight_signals, subset=['signal']),
-            use_container_width=True
+            width='stretch'
         )
     else:
-        st.dataframe(signals_df, use_container_width=True)
+        st.dataframe(signals_df, width='stretch')

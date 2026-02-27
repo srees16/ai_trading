@@ -8,15 +8,20 @@ monitoring with YAML-based credential storage.
 import base64
 import hashlib
 import hmac
-import yaml
-import streamlit as st
+import logging
+import os
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional, Tuple
-from datetime import datetime, timedelta
-import logging
+
+import bcrypt
+import streamlit as st
+from dotenv import load_dotenv
 
 from config import Config
 from trading_strategies import list_strategies
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 
@@ -24,29 +29,78 @@ logger = logging.getLogger(__name__)
 CREDENTIALS_PATH = Path(__file__).parent / "credentials.yaml"
 
 
+# ---------------------------------------------------------------------------
+# Password hashing — bcrypt with transparent SHA-256 legacy migration
+# ---------------------------------------------------------------------------
+
 def hash_password(password: str) -> str:
-    """Hash a password using SHA-256."""
-    return hashlib.sha256(password.encode()).hexdigest()
+    """Hash a password using bcrypt (12 rounds, random salt).
+
+    Returns a UTF-8 bcrypt hash string suitable for storage.
+    """
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12)).decode()
+
+
+def _is_legacy_sha256(hashed: str) -> bool:
+    """Return True if *hashed* looks like a bare SHA-256 hex digest."""
+    return len(hashed) == 64 and all(c in '0123456789abcdef' for c in hashed)
 
 
 def verify_password(password: str, hashed: str) -> bool:
-    """Verify a password against its hash."""
-    return hmac.compare_digest(hash_password(password), hashed)
+    """Verify *password* against a stored hash.
+
+    Supports both:
+    - **bcrypt** hashes (``$2b$…`` / ``$2a$…``)
+    - **legacy SHA-256** hex digests (64 hex chars, no salt)
+
+    Legacy hashes are checked via constant-time comparison so timing
+    attacks are still mitigated.  Callers should re-hash and persist
+    the bcrypt version after a successful legacy match (see
+    ``Authenticator.authenticate``).
+    """
+    if _is_legacy_sha256(hashed):
+        # Constant-time compare against the old unsalted SHA-256
+        legacy_hash = hashlib.sha256(password.encode()).hexdigest()
+        return hmac.compare_digest(legacy_hash, hashed)
+    # bcrypt path
+    try:
+        return bcrypt.checkpw(password.encode(), hashed.encode())
+    except (ValueError, TypeError):
+        return False
 
 
 def load_credentials() -> Dict:
-    """Load credentials from YAML file."""
+    """Load credentials from YAML file.
+
+    The parsed dict is cached in ``st.session_state`` so the YAML file
+    is only read from disk once per session (called 2× per rerun
+    via ``check_authentication`` and ``render_user_menu``).
+
+    Call ``invalidate_credentials_cache()`` after programmatic changes to
+    the YAML file (e.g. password resets) to force a reload.
+    """
+    _CACHE_KEY = "_cached_credentials"
+    if _CACHE_KEY in st.session_state:
+        return st.session_state[_CACHE_KEY]
+
     if not CREDENTIALS_PATH.exists():
         # Create default credentials file
+        admin_pw = os.getenv("CENTURION_DEFAULT_ADMIN_PASSWORD", "admin123")
+        analyst_pw = os.getenv("CENTURION_DEFAULT_ANALYST_PASSWORD", "analyst123")
+        if admin_pw in ("admin123",) or analyst_pw in ("analyst123",):
+            logger.warning(
+                "Using default passwords — set CENTURION_DEFAULT_ADMIN_PASSWORD / "
+                "CENTURION_DEFAULT_ANALYST_PASSWORD env vars (or .env) for production"
+            )
         default_creds = {
             'users': {
                 'admin': {
-                    'password': hash_password('admin123'),
+                    'password': hash_password(admin_pw),
                     'name': 'Administrator',
                     'role': 'admin'
                 },
                 'analyst': {
-                    'password': hash_password('analyst123'),
+                    'password': hash_password(analyst_pw),
                     'name': 'Stock Analyst',
                     'role': 'analyst'
                 }
@@ -58,14 +112,25 @@ def load_credentials() -> Dict:
         }
         save_credentials(default_creds)
         logger.info("Created default credentials file")
+        st.session_state[_CACHE_KEY] = default_creds
         return default_creds
     
     try:
         with open(CREDENTIALS_PATH, 'r') as f:
-            return yaml.safe_load(f)
+            import yaml
+            creds = yaml.safe_load(f)
+        st.session_state[_CACHE_KEY] = creds
+        return creds
     except Exception as e:
         logger.error(f"Error loading credentials: {e}")
-        return {'users': {}, 'settings': {'session_timeout_minutes': 60}}
+        fallback = {'users': {}, 'settings': {'session_timeout_minutes': 60}}
+        st.session_state[_CACHE_KEY] = fallback
+        return fallback
+
+
+def invalidate_credentials_cache():
+    """Clear the cached credentials so the next call re-reads the YAML."""
+    st.session_state.pop("_cached_credentials", None)
 
 
 def save_credentials(credentials: Dict) -> bool:
@@ -73,7 +138,10 @@ def save_credentials(credentials: Dict) -> bool:
     try:
         CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(CREDENTIALS_PATH, 'w') as f:
+            import yaml
             yaml.dump(credentials, f, default_flow_style=False)
+        # Invalidate cache so next load_credentials() picks up changes
+        st.session_state.pop("_cached_credentials", None)
         return True
     except Exception as e:
         logger.error(f"Error saving credentials: {e}")
@@ -166,7 +234,14 @@ class Authenticator:
         st.session_state.user_name = user.get('name', username)
         st.session_state.login_time = datetime.now()
         st.session_state.login_attempts = 0
-        
+
+        # ── Auto-migrate legacy SHA-256 hash → bcrypt ────────────
+        if _is_legacy_sha256(user['password']):
+            new_hash = hash_password(password)
+            self.credentials['users'][username]['password'] = new_hash
+            save_credentials(self.credentials)
+            logger.info("Migrated password hash for '%s' from SHA-256 to bcrypt", username)
+
         logger.info(f"User '{username}' logged in successfully")
         return True, f"Welcome, {st.session_state.user_name}!"
     
@@ -225,40 +300,6 @@ class Authenticator:
             'login_time': st.session_state.login_time
         }
     
-    def add_user(self, username: str, password: str, name: str, role: str = 'analyst') -> bool:
-        """Add a new user (admin only)."""
-        if st.session_state.user_role != 'admin':
-            logger.warning("Non-admin attempted to add user")
-            return False
-        
-        if username in self.credentials['users']:
-            return False
-        
-        self.credentials['users'][username] = {
-            'password': hash_password(password),
-            'name': name,
-            'role': role
-        }
-        return save_credentials(self.credentials)
-    
-    def change_password(self, username: str, old_password: str, new_password: str) -> Tuple[bool, str]:
-        """Change user password."""
-        users = self.credentials.get('users', {})
-        
-        if username not in users:
-            return False, "User not found"
-        
-        if not verify_password(old_password, users[username]['password']):
-            return False, "Current password is incorrect"
-        
-        if len(new_password) < 6:
-            return False, "New password must be at least 6 characters"
-        
-        self.credentials['users'][username]['password'] = hash_password(new_password)
-        if save_credentials(self.credentials):
-            return True, "Password changed successfully"
-        return False, "Failed to save new password"
-    
     def render_login_form(self) -> bool:
         """
         Render a polished, enterprise-grade login form with branding.
@@ -281,15 +322,13 @@ class Authenticator:
         _, center_col, _ = st.columns([1.2, 1.6, 1.2])
         
         with center_col:
-            # Branding header
+            # Dark gradient header bar (matches module landing pages)
             st.markdown(
                 f"""
-                <div class="login-card">
-                    <div class="login-brand">
-                        {logo_html}
-                        <div class="login-title">Centurion Capital LLC</div>
-                    </div>
-                    <div class="login-divider"></div>
+                <div class="login-header-bar">
+                    {logo_html}
+                    <div class="login-header-title">Centurion Capital LLC</div>
+                    <div class="login-header-subtitle">ALGORITHMIC TRADING · EVENT-DRIVEN ALPHA</div>
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -297,31 +336,28 @@ class Authenticator:
             
             # Login form
             with st.form("login_form"):
-                st.markdown(
-                    "<p style='text-align:center; margin:0 0 1rem 0; font-size:0.95rem; color:#555;'>"
-                    "Sign in to continue</p>",
-                    unsafe_allow_html=True,
-                )
                 username = st.text_input(
-                    "Username", placeholder="Enter your username", label_visibility="collapsed"
+                    "Username", placeholder="Username", label_visibility="collapsed"
                 )
                 password = st.text_input(
-                    "Password", type="password", placeholder="Enter your password", label_visibility="collapsed"
+                    "Password", type="password", placeholder="Password", label_visibility="collapsed"
                 )
                 
-                submitted = st.form_submit_button(
-                    "Sign In", use_container_width=True, type="primary"
-                )
+                submitted = st.form_submit_button("Sign In", type="primary",
+                                                       use_container_width=True)
                 
                 if submitted:
                     if username and password:
                         success, message = self.authenticate(username, password)
                         if success:
+                            logger.info("[user=%s] Login successful", username)
                             st.success(message)
                             st.rerun()
                         else:
+                            logger.warning("[user=%s] Login failed: %s", username, message)
                             st.error(message)
                     else:
+                        logger.warning("Login attempt with empty credentials")
                         st.warning("Please enter both username and password")
             
             # Footer
@@ -339,71 +375,106 @@ class Authenticator:
 
     @staticmethod
     def _get_logo_html() -> str:
-        """Return an <img> tag with the base64-encoded logo, or empty string."""
-        logo_path = Path(__file__).parent.parent / "centurion_logo.png"
+        """Return an <img> tag with the base64-encoded logo, or empty string.
+
+        The result is cached in ``st.session_state`` so the image file is
+        only read from disk once per session.
+        """
+        _CACHE_KEY = "_login_logo_html"
+        if _CACHE_KEY in st.session_state:
+            return st.session_state[_CACHE_KEY]
+
+        logo_path = Path(__file__).parent.parent / "ui" / "assets" / "centurion_logo.png"
+        html = ""
         if logo_path.exists():
             with open(logo_path, "rb") as f:
                 data = base64.b64encode(f.read()).decode()
-            return (
+            html = (
                 f'<img src="data:image/png;base64,{data}" '
-                f'style="height:4rem; margin-bottom:0.75rem; mix-blend-mode:multiply;" />'
+                f'style="height:4rem; margin-bottom:0.75rem; '
+                f'filter:brightness(0) invert(1);" />'
             )
-        return ""
+        st.session_state[_CACHE_KEY] = html
+        return html
 
     @staticmethod
     def _get_login_css() -> str:
-        """Return all CSS specific to the login page."""
+        """Return all CSS specific to the login page.
+
+        Includes minimal layout resets (hide sidebar, reduce spacing) so
+        the login page looks correct without the heavyweight
+        ``apply_custom_styles()`` call (which base64-encodes the
+        background image).
+        """
         return """
         <style>
-        /* ---------- login page overrides ---------- */
-        .login-spacer { height: 4vh; }
+        /* ---------- minimal layout resets ---------- */
+        [data-testid="stSidebar"] { display: none; }
+        .block-container { padding-top: 0.25rem; padding-bottom: 0.5rem; }
+        [data-testid="stHeader"] { background: transparent !important; }
 
-        .login-card {
-            text-align: center;
-            padding: 0 0.5rem;
-        }
-        .login-brand {
+        /* ---------- login page overrides ---------- */
+        .login-spacer { height: 14vh; }
+
+        /* Dark gradient header bar (same as module pages) */
+        .login-header-bar {
+            background: linear-gradient(135deg, #0d1117 0%, #161b22 40%, #0f3460 100%);
+            padding: 1.5rem 1.6rem 1.2rem 1.6rem;
+            border-radius: 10px 10px 0 0;
+            margin-bottom: 0;
             display: flex;
             flex-direction: column;
             align-items: center;
+            justify-content: center;
+            border-left: 4px solid #4299e1;
+            box-shadow: 0 -2px 8px rgba(0,0,0,0.25);
+            text-align: center;
         }
-        .login-title {
-            font-size: 1.9rem;
-            font-weight: 700;
-            color: #1a1a2e;
-            letter-spacing: 0.5px;
+        .login-header-title {
+            color: #ffffff !important;
+            font-size: 1.55rem;
+            font-weight: 800;
+            letter-spacing: 0.3px;
+            line-height: 1.3;
         }
-        .login-tagline {
-            font-size: 0.85rem;
-            color: #666;
-            margin-top: 0.25rem;
-            font-weight: 400;
-        }
-        .login-divider {
-            width: 60px;
-            height: 3px;
-            background: linear-gradient(90deg, #00cc44, #00aa33);
-            border-radius: 2px;
-            margin: 1.25rem auto 0.5rem auto;
+        .login-header-subtitle {
+            color: #8b949e !important;
+            font-size: 0.72rem;
+            margin-top: 0.2rem;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
+            font-weight: 500;
         }
 
-        /* Form container polish */
+        /* Form container polish – blended into dark band */
         [data-testid="stForm"] {
-            background: rgba(255,255,255,0.98) !important;
-            border: 1px solid #e0e0e0 !important;
-            border-radius: 12px !important;
-            padding: 1.75rem 1.5rem !important;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.06) !important;
+            background: linear-gradient(180deg, #0f3460 0%, #0d1117 100%) !important;
+            border: none !important;
+            border-left: 4px solid #4299e1 !important;
+            border-radius: 0 0 10px 10px !important;
+            padding: 1.25rem 1.5rem 1.75rem 1.5rem !important;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3) !important;
         }
 
-        /* Input fields */
+        /* Input fields – dark themed */
         [data-testid="stForm"] input {
             border-radius: 8px !important;
             padding: 0.6rem 0.75rem !important;
             font-size: 0.95rem !important;
+            background: rgba(255,255,255,0.08) !important;
+            border: 1px solid rgba(255,255,255,0.15) !important;
+            color: #e2e8f0 !important;
+        }
+        [data-testid="stForm"] input::placeholder {
+            color: #718096 !important;
         }
         [data-testid="stForm"] [data-testid="stTextInput"] {
             margin-bottom: 0.5rem;
+        }
+        /* Input labels / captions in dark form */
+        [data-testid="stForm"] label,
+        [data-testid="stForm"] .stTextInput label {
+            color: #a0aec0 !important;
         }
 
         /* Hide 'Press Enter to submit form' caption */
@@ -512,45 +583,45 @@ def render_user_menu():
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 0.5rem 1rem;
-        margin: -1rem -1rem 0.5rem -1rem;
+        padding: 0.2rem 0.5rem;
+        margin: -0.5rem -0.5rem 0 -0.5rem;
         background: transparent;
     }
     .user-info-left {
         display: flex;
         align-items: center;
-        gap: 10px;
-        font-size: 14px;
+        gap: 6px;
+        font-size: 0.82rem;
         color: #1a1a2e;
         font-weight: 500;
     }
     .health-status {
-        font-size: 12px;
+        font-size: 0.72rem;
         color: #666;
-        margin-left: 10px;
+        margin-left: 6px;
     }
     /* Remove white box around user menu area */
     [data-testid="stHorizontalBlock"]:first-child {
         background: transparent !important;
-        margin-top: -10px;
+        margin-top: 28px;
     }
     </style>
     """, unsafe_allow_html=True)
     
-    # Create layout: user info left, health status center, logout right
-    col_user, col_spacer, col_logout = st.columns([2, 4, 1])
+    # Create layout: user info left, logout right — compact single row
+    col_user, col_logout = st.columns([5, 1], gap="small")
     
     with col_user:
         st.markdown(
-            f"<div style='white-space: nowrap; padding-top: 5px; margin-top: 5px; color: #1a1a2e;'>"
-            f"👤 <strong>{user_name}</strong> <em>({user_role})</em> "
-            f"<span style='font-size: 12px; margin-left: 8px;'>{health_icon} Session Active</span>"
+            f"<div style='white-space: nowrap; padding: 0; margin: 0; color: #1a1a2e; font-size: 0.82rem; line-height: 1.4;'>"
+            f"<strong>{user_name}</strong> "
+            f"<span style='font-size: 0.72rem; margin-left: 6px; opacity: 0.75;'>{health_icon}</span>"
             f"</div>",
             unsafe_allow_html=True
         )
     
     with col_logout:
-        st.markdown("<div style='margin-top: 5px;'></div>", unsafe_allow_html=True)
         if st.button("🚪 Logout", key="logout_btn", use_container_width=True):
+            logger.info("[user=%s] Logged out", st.session_state.get('username', 'unknown'))
             logout()
             st.rerun()

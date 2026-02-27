@@ -11,15 +11,18 @@ from uuid import UUID
 from contextlib import contextmanager
 
 from sqlalchemy.orm import Session
+from sqlalchemy import Integer
 
 from database.connection import DatabaseManager
 from database.models import (
     NewsItem, StockSignal, FundamentalMetric,
-    BacktestResult, AnalysisStatus, SentimentType
+    BacktestResult, AnalysisStatus, SentimentType,
+    BacktestTrade, BacktestEquityPoint,
+    BacktestDailyReturn, StrategyPerformanceSummary, DataFreshness,
 )
 from database.repositories import (
     AnalysisRepository, SignalRepository, NewsRepository,
-    FundamentalRepository, BacktestRepository
+    FundamentalRepository, BacktestRepository, FreshnessRepository,
 )
 
 logger = logging.getLogger(__name__)
@@ -385,24 +388,15 @@ class DatabaseService:
         analysis_run_id: UUID = None
     ) -> bool:
         """
-        Save a backtest result.
+        Save a backtest result with normalised detail tables.
+        
+        Persists the core BacktestResult row **and** populates the
+        normalised BacktestTrade, BacktestEquityPoint, and
+        BacktestDailyReturn tables extracted from JSONB data.
+        After saving, refreshes the StrategyPerformanceSummary.
         
         Args:
-            result: Backtest result dictionary with keys:
-                - strategy_name: Name of strategy
-                - ticker: Ticker tested
-                - start_date/end_date: Test period
-                - initial_capital: Starting capital
-                - final_value: Ending portfolio value
-                - total_return: Total return percentage
-                - annualized_return: Annualized return
-                - max_drawdown: Maximum drawdown
-                - sharpe_ratio: Sharpe ratio
-                - sortino_ratio: Sortino ratio
-                - win_rate: Win rate
-                - total_trades: Number of trades
-                - parameters: Strategy parameters
-                - daily_returns: List of daily returns
+            result: Backtest result dictionary
             analysis_run_id: Optional run ID
             
         Returns:
@@ -421,6 +415,13 @@ class DatabaseService:
                     tickers_list = [tickers_input.upper()] if tickers_input else []
                 else:
                     tickers_list = [t.upper() for t in tickers_input if t]
+                
+                # --- Separate large arrays from scalar metrics --------
+                scalar_metrics = {
+                    k: result[k]
+                    for k in ('final_value', 'largest_win', 'largest_loss')
+                    if k in result
+                }
                 
                 backtest = BacktestResult(
                     strategy_id=result.get('strategy_id', result.get('strategy_name', 'unknown').lower().replace(' ', '_')),
@@ -443,20 +444,224 @@ class DatabaseService:
                     avg_win=result.get('avg_win'),
                     avg_loss=result.get('avg_loss'),
                     parameters=result.get('parameters', {}),
-                    metrics={
-                        k: result[k]
-                        for k in ('final_value', 'largest_win', 'largest_loss',
-                                  'daily_returns', 'trade_log')
-                        if k in result
-                    },
+                    metrics=scalar_metrics,
+                    success=True,
                 )
                 repo.create(backtest)
+                
+                # --- Normalised trade signals -------------------------
+                trade_log = result.get('trade_log') or result.get('signals') or []
+                for idx, trade in enumerate(trade_log):
+                    if not isinstance(trade, dict):
+                        continue
+                    session.add(BacktestTrade(
+                        backtest_id=backtest.id,
+                        trade_number=idx + 1,
+                        trade_type=str(trade.get('type', trade.get('action', 'BUY'))).upper(),
+                        ticker=str(trade.get('ticker', tickers_list[0] if tickers_list else '')),
+                        entry_date=trade.get('entry_date'),
+                        exit_date=trade.get('exit_date'),
+                        entry_price=trade.get('entry_price'),
+                        exit_price=trade.get('exit_price'),
+                        quantity=trade.get('quantity') or trade.get('shares'),
+                        pnl=trade.get('pnl') or trade.get('profit'),
+                        pnl_pct=trade.get('pnl_pct') or trade.get('return_pct'),
+                        holding_period_days=trade.get('holding_period_days'),
+                    ))
+                
+                # --- Normalised equity curve --------------------------
+                equity_data = result.get('equity_curve') or []
+                for pt in equity_data:
+                    if not isinstance(pt, dict):
+                        continue
+                    session.add(BacktestEquityPoint(
+                        backtest_id=backtest.id,
+                        point_date=pt.get('date'),
+                        portfolio_value=pt.get('value') or pt.get('portfolio_value'),
+                        drawdown=pt.get('drawdown'),
+                        benchmark_value=pt.get('benchmark'),
+                    ))
+                
+                # --- Normalised daily returns -------------------------
+                daily_returns = result.get('daily_returns') or []
+                for dr in daily_returns:
+                    if isinstance(dr, dict):
+                        session.add(BacktestDailyReturn(
+                            backtest_id=backtest.id,
+                            return_date=dr.get('date'),
+                            daily_return=dr.get('return', dr.get('daily_return', 0)),
+                            cumulative_return=dr.get('cumulative_return'),
+                        ))
+                    elif isinstance(dr, (int, float)):
+                        # Simple list of floats — no date info available
+                        session.add(BacktestDailyReturn(
+                            backtest_id=backtest.id,
+                            return_date=None,
+                            daily_return=float(dr),
+                        ))
+                
+                session.flush()
+                
+                # --- Refresh pre-aggregated summary -------------------
+                self._refresh_strategy_summary(session, backtest.strategy_id)
+                
                 logger.info(f"Saved backtest result for {tickers_list}")
                 return True
                 
         except Exception as e:
             logger.error(f"Failed to save backtest result: {e}")
             return False
+    
+    # =================================================================
+    # Pre-Aggregated Summary Refresh
+    # =================================================================
+    
+    def _refresh_strategy_summary(self, session: Session, strategy_id: str):
+        """
+        Refresh the StrategyPerformanceSummary row for a strategy.
+        Called after each backtest save.
+        """
+        from sqlalchemy import func as sqla_func
+        
+        try:
+            row = session.query(
+                sqla_func.count(BacktestResult.id).label('total'),
+                sqla_func.sum(
+                    sqla_func.cast(BacktestResult.success == True, Integer)
+                ).label('successful'),
+                sqla_func.min(BacktestResult.strategy_name).label('name'),
+                sqla_func.avg(BacktestResult.total_return).label('avg_return'),
+                sqla_func.max(BacktestResult.total_return).label('best_return'),
+                sqla_func.min(BacktestResult.total_return).label('worst_return'),
+                sqla_func.avg(BacktestResult.sharpe_ratio).label('avg_sharpe'),
+                sqla_func.avg(BacktestResult.sortino_ratio).label('avg_sortino'),
+                sqla_func.avg(BacktestResult.max_drawdown).label('avg_mdd'),
+                sqla_func.avg(BacktestResult.calmar_ratio).label('avg_calmar'),
+                sqla_func.avg(BacktestResult.win_rate).label('avg_wr'),
+                sqla_func.avg(BacktestResult.profit_factor).label('avg_pf'),
+                sqla_func.avg(BacktestResult.total_trades).label('avg_trades'),
+                sqla_func.max(BacktestResult.created_at).label('last_bt'),
+            ).filter(
+                BacktestResult.strategy_id == strategy_id,
+                BacktestResult.success == True,
+            ).first()
+            
+            if not row or not row.total:
+                return
+            
+            summary = session.query(StrategyPerformanceSummary).filter(
+                StrategyPerformanceSummary.strategy_id == strategy_id
+            ).first()
+            
+            now = datetime.utcnow()
+            
+            if summary:
+                summary.strategy_name = row.name
+                summary.total_backtests = row.total
+                summary.successful_backtests = int(row.successful or 0)
+                summary.avg_return = float(row.avg_return) if row.avg_return else None
+                summary.best_return = float(row.best_return) if row.best_return else None
+                summary.worst_return = float(row.worst_return) if row.worst_return else None
+                summary.avg_sharpe = float(row.avg_sharpe) if row.avg_sharpe else None
+                summary.avg_sortino = float(row.avg_sortino) if row.avg_sortino else None
+                summary.avg_max_drawdown = float(row.avg_mdd) if row.avg_mdd else None
+                summary.avg_calmar = float(row.avg_calmar) if row.avg_calmar else None
+                summary.avg_win_rate = float(row.avg_wr) if row.avg_wr else None
+                summary.avg_profit_factor = float(row.avg_pf) if row.avg_pf else None
+                summary.avg_total_trades = float(row.avg_trades) if row.avg_trades else None
+                summary.last_backtest_at = row.last_bt
+                summary.last_refreshed_at = now
+            else:
+                summary = StrategyPerformanceSummary(
+                    strategy_id=strategy_id,
+                    strategy_name=row.name,
+                    total_backtests=row.total,
+                    successful_backtests=int(row.successful or 0),
+                    avg_return=float(row.avg_return) if row.avg_return else None,
+                    best_return=float(row.best_return) if row.best_return else None,
+                    worst_return=float(row.worst_return) if row.worst_return else None,
+                    avg_sharpe=float(row.avg_sharpe) if row.avg_sharpe else None,
+                    avg_sortino=float(row.avg_sortino) if row.avg_sortino else None,
+                    avg_max_drawdown=float(row.avg_mdd) if row.avg_mdd else None,
+                    avg_calmar=float(row.avg_calmar) if row.avg_calmar else None,
+                    avg_win_rate=float(row.avg_wr) if row.avg_wr else None,
+                    avg_profit_factor=float(row.avg_pf) if row.avg_pf else None,
+                    avg_total_trades=float(row.avg_trades) if row.avg_trades else None,
+                    last_backtest_at=row.last_bt,
+                    last_refreshed_at=now,
+                )
+                session.add(summary)
+            
+            session.flush()
+        except Exception as e:
+            logger.warning(f"Failed to refresh strategy summary for {strategy_id}: {e}")
+    
+    # =================================================================
+    # Data Freshness Operations
+    # =================================================================
+    
+    def check_freshness(
+        self,
+        ticker: str,
+        data_type: str,
+        max_age_minutes: int = 30
+    ) -> bool:
+        """
+        Check if data for a ticker/type needs refreshing.
+        
+        Returns:
+            True if data is fresh (no refresh needed)
+        """
+        if not self.is_available:
+            return False
+        try:
+            with self.session_scope() as session:
+                repo = FreshnessRepository(session)
+                return not repo.is_stale(ticker, data_type, max_age_minutes)
+        except Exception as e:
+            logger.warning(f"Freshness check failed: {e}")
+            return False
+    
+    def record_fetch(
+        self,
+        ticker: str,
+        data_type: str,
+        record_count: int = 0,
+        fetch_seconds: float = 0.0,
+        refresh_minutes: int = 30,
+    ):
+        """Record a successful data fetch for freshness tracking."""
+        if not self.is_available:
+            return
+        try:
+            with self.session_scope() as session:
+                repo = FreshnessRepository(session)
+                repo.record_fetch(ticker, data_type, record_count, fetch_seconds, refresh_minutes)
+        except Exception as e:
+            logger.warning(f"Failed to record fetch: {e}")
+    
+    def record_fetch_error(self, ticker: str, data_type: str, error: str):
+        """Record a failed data fetch for freshness tracking."""
+        if not self.is_available:
+            return
+        try:
+            with self.session_scope() as session:
+                repo = FreshnessRepository(session)
+                repo.record_error(ticker, data_type, error)
+        except Exception as e:
+            logger.warning(f"Failed to record fetch error: {e}")
+    
+    def get_ticker_freshness(self, ticker: str) -> List[Dict[str, Any]]:
+        """Get freshness info for all data types for a ticker."""
+        if not self.is_available:
+            return []
+        try:
+            with self.session_scope() as session:
+                repo = FreshnessRepository(session)
+                return repo.get_ticker_freshness(ticker)
+        except Exception as e:
+            logger.warning(f"Failed to get freshness: {e}")
+            return []
     
     # =================================================================
     # Combined Analysis Save

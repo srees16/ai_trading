@@ -5,15 +5,16 @@ apply some unique rules on ha Open, Close, High, Low to trade
 details of heikin ashi indicators and rules can be found in the following link
 https://quantiacs.com/Blog/Intro-to-Algorithmic-Trading-with-Heikin-Ashi.aspx
 """
-import pandas as pd
-import matplotlib.pyplot as plt
-import yfinance as yf
-import numpy as np
-import scipy.integrate
-import scipy.stats
-
 import sys
 from pathlib import Path
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import scipy.integrate
+import scipy.stats
+import yfinance as yf
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from backtest_utils import mdd, candlestick, portfolio, profit
 
@@ -119,7 +120,7 @@ def plot(df,ticker):
 
     #the second plot is the actual price with long/short positions as up/down arrows
     ax2=plt.subplot2grid((200,1), (120,0), rowspan=80,ylabel='price',xlabel='')
-    df['Close'].plot(ax=ax2,label=ticker)
+    ax2.plot(df.index,df['Close'],label=ticker)
 
     #long/short positions are attached to the real close price of the stock
     #set the line width to zero

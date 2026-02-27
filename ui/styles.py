@@ -6,9 +6,10 @@ for the Streamlit application.
 """
 
 import base64
-import streamlit as st
 from pathlib import Path
 from typing import Optional
+
+import streamlit as st
 
 
 # Color palette constants
@@ -71,7 +72,10 @@ def get_background_base64() -> Optional[str]:
     Returns:
         Base64 encoded string or None if image doesn't exist
     """
-    bg_path = Path(__file__).parent.parent / "nature_bg.png"
+    # Prefer compressed JPEG, fall back to legacy PNG
+    bg_path = Path(__file__).parent / "assets" / "nature_bg.jpg"
+    if not bg_path.exists():
+        bg_path = Path(__file__).parent / "assets" / "nature_bg.png"
     if bg_path.exists():
         with open(bg_path, "rb") as f:
             return base64.b64encode(f.read()).decode()
@@ -93,11 +97,14 @@ def get_background_css(bg_base64: Optional[str] = None) -> str:
     
     if not bg_base64:
         return ""
-    
+
+    # Detect MIME type: JPEG starts with /9j in base64, PNG with iVBOR
+    mime = "image/jpeg" if bg_base64.startswith("/9j") else "image/png"
+
     return f"""
     /* Background image on root */
     .stApp {{
-        background-image: url("data:image/png;base64,{bg_base64}");
+        background-image: url("data:{mime};base64,{bg_base64}");
         background-size: cover;
         background-position: center;
         background-repeat: no-repeat;
@@ -110,8 +117,8 @@ def get_background_css(bg_base64: Optional[str] = None) -> str:
     .main .block-container {{
         background: rgba(255, 255, 255, 0.95);
         border-radius: 10px;
-        padding: 2rem 3rem !important;
-        margin: 1rem;
+        padding: 0.75rem 2rem !important;
+        margin: 0.5rem 1rem;
     }}
     """
 
@@ -120,11 +127,12 @@ def get_typography_css() -> str:
     """Get CSS for typography styling."""
     return """
     .main-header {
-        font-size: 3rem;
+        font-size: 1.5rem;
         font-weight: bold;
         color: #1a1a2e !important;
         text-align: center;
-        margin-bottom: 0.25rem;
+        margin-bottom: 0;
+        line-height: 1.3;
     }
     .main-subtitle {
         text-align: center;
@@ -132,36 +140,44 @@ def get_typography_css() -> str:
         margin-top: 0;
         margin-bottom: 0;
         font-weight: 500;
+        font-size: 0.85rem;
     }
     .page-subtitle {
-        font-size: 2rem;
+        font-size: 1.25rem;
         font-weight: 600;
         color: #2d3436 !important;
         text-align: center;
         margin-top: 0;
-        margin-bottom: 0.5rem;
+        margin-bottom: 0.15rem;
     }
     .page-description {
         text-align: center;
         color: #444 !important;
-        font-size: 0.95rem;
+        font-size: 0.85rem;
         margin-top: 0;
-        margin-bottom: 1rem;
+        margin-bottom: 0.25rem;
     }
-    /* Ensure all text is visible */
-    .stMarkdown, .stMarkdown p, .stMarkdown span, .stMarkdown li {
+    /* Ensure all text is visible — exclude .header-bar so page headers keep their own colours */
+    .stMarkdown:not(:has(.header-bar)), .stMarkdown:not(:has(.header-bar)) p,
+    .stMarkdown:not(:has(.header-bar)) span, .stMarkdown:not(:has(.header-bar)) li {
         color: #1a1a2e !important;
     }
     label, .stRadio label, .stCheckbox label {
         color: #1a1a2e !important;
     }
     h1, h2, h3, h4, h5, h6 {
-        margin-top: 0.5rem;
-        margin-bottom: 0.5rem;
+        margin-top: 0.25rem;
+        margin-bottom: 0.25rem;
         color: #1a1a2e !important;
     }
+    .header-bar h1, .header-bar h2, .header-bar h3 {
+        color: #ffffff !important;
+    }
+    .header-bar .subtitle {
+        color: #8b949e !important;
+    }
     .stSubheader {
-        margin-top: 0.5rem;
+        margin-top: 0.25rem;
         color: #1a1a2e !important;
     }
     /* Caption text */
@@ -184,8 +200,8 @@ def get_button_css() -> str:
         white-space: nowrap;
         overflow: visible;
         text-overflow: clip;
-        padding: 0.55rem 0.85rem;
-        font-size: 1.05rem;
+        padding: 0.3rem 0.7rem;
+        font-size: 0.9rem;
         font-weight: 500;
         background-color: #f0f2f6 !important;
         color: #1a1a2e !important;
@@ -222,8 +238,8 @@ def get_layout_css() -> str:
     }
     /* Reduce default spacing */
     .block-container {
-        padding-top: 0.5rem;
-        padding-bottom: 1rem;
+        padding-top: 0.25rem;
+        padding-bottom: 0.5rem;
     }
     /* User menu bar - seamless with background */
     .stApp > header {
@@ -241,12 +257,65 @@ def get_layout_css() -> str:
         margin-bottom: 0;
     }
     hr {
-        margin: 0.75rem 0;
-        border-color: rgba(0, 0, 0, 0.2);
+        margin: 0.35rem 0;
+        border-color: rgba(0, 0, 0, 0.15);
     }
     /* Hide sidebar completely */
     [data-testid="stSidebar"] {
         display: none;
+    }
+    /* ── Centurion unified spinner (20×20 multi-colour ring) ─── */
+    @keyframes centurion-spin {
+        0%   { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+    @keyframes centurion-color {
+        0%   { border-top-color: #3498db; }
+        25%  { border-top-color: #e74c3c; }
+        50%  { border-top-color: #f1c40f; }
+        75%  { border-top-color: #2ecc71; }
+        100% { border-top-color: #3498db; }
+    }
+    .centurion-spinner {
+        display: inline-block;
+        width: 20px;
+        height: 20px;
+        border: 3px solid rgba(0,0,0,0.1);
+        border-top: 3px solid #3498db;
+        border-radius: 50%;
+        animation: centurion-spin 0.8s linear infinite,
+                   centurion-color 2.4s ease-in-out infinite;
+        vertical-align: middle;
+    }
+    .spinner-wrapper {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 12px 0;
+    }
+    .spinner-text {
+        font-size: 0.92rem;
+        color: #555;
+        font-weight: 500;
+        font-style: italic;
+    }
+    /* Native st.spinner() — match the centurion style */
+    [data-testid="stSpinner"],
+    [data-testid="stSpinner"] > div,
+    .stSpinner > div {
+        color: #1a1a2e !important;
+        font-weight: 500 !important;
+        font-size: 0.92rem !important;
+    }
+    [data-testid="stSpinner"] svg circle,
+    .stSpinner svg circle {
+        stroke: #3498db !important;
+    }
+    [data-testid="stStatusWidget"] [role="status"],
+    [data-testid="stSpinner"] [role="status"],
+    .stSpinner [role="status"] {
+        color: #1a1a2e !important;
     }
     """
 
@@ -258,9 +327,9 @@ def get_footer_css() -> str:
     .footer {
         text-align: center;
         color: #1a1a2e !important;
-        font-size: 0.85rem;
-        padding: 1.5rem 0 1rem 0;
-        margin-top: 2rem;
+        font-size: 0.8rem;
+        padding: 0.75rem 0 0.5rem 0;
+        margin-top: 1rem;
         border-top: 1px solid rgba(0, 0, 0, 0.15);
         background: transparent;
         text-shadow: 0 0 8px rgba(255, 255, 255, 0.9), 0 0 16px rgba(255, 255, 255, 0.7);
@@ -351,11 +420,20 @@ def get_complete_css(bg_base64: Optional[str] = None) -> str:
 
 
 def apply_custom_styles():
-    """Apply all custom CSS styles to the Streamlit application."""
-    bg_base64 = get_background_base64()
-    css = get_complete_css(bg_base64)
-    
-    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+    """Apply all custom CSS styles to the Streamlit application.
+
+    The compiled CSS string is cached in ``st.session_state`` so the
+    background image is only read from disk once per session rather
+    than on every Streamlit rerun.
+    """
+    if "_centurion_css" not in st.session_state:
+        bg_base64 = get_background_base64()
+        st.session_state["_centurion_css"] = get_complete_css(bg_base64)
+
+    st.markdown(
+        f"<style>{st.session_state['_centurion_css']}</style>",
+        unsafe_allow_html=True,
+    )
 
 
 def get_decision_style(decision: str) -> str:

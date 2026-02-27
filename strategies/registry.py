@@ -5,9 +5,10 @@ Provides centralized registration and discovery of trading strategies.
 Strategies are automatically registered when their modules are imported.
 """
 
-from typing import Type, Optional
-from .base_strategy import BaseStrategy, StrategyCategory
 import logging
+from typing import Optional, Type
+
+from .base_strategy import BaseStrategy, StrategyCategory
 
 logger = logging.getLogger(__name__)
 

@@ -6,13 +6,13 @@ with support for append mode and deduplication.
 """
 
 import logging
-
-import pandas as pd
 from pathlib import Path
 from typing import List, Optional
 
-from models import TradingSignal
+import pandas as pd
+
 from config import Config
+from models import TradingSignal
 
 logger = logging.getLogger(__name__)
 

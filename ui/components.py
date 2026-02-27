@@ -5,9 +5,13 @@ Contains header, footer, navigation, and other reusable UI elements.
 """
 
 import base64
-import streamlit as st
+import logging
 from pathlib import Path
-from typing import List, Dict, Optional, Any
+from typing import Any, Dict, List, Optional
+
+import streamlit as st
+
+logger = logging.getLogger(__name__)
 
 
 def load_logo_base64() -> str:
@@ -17,12 +21,18 @@ def load_logo_base64() -> str:
     Returns:
         HTML img tag with embedded base64 logo, or empty string if not found
     """
-    logo_path = Path(__file__).parent.parent / "centurion_logo.png"
+    _KEY = "_logo_b64_large"
+    if _KEY in st.session_state:
+        return st.session_state[_KEY]
+
+    logo_path = Path(__file__).parent / "assets" / "centurion_logo.png"
+    html = ""
     if logo_path.exists():
         with open(logo_path, "rb") as f:
             logo_data = base64.b64encode(f.read()).decode()
-        return f'<img src="data:image/png;base64,{logo_data}" style="height: 3rem; vertical-align: middle; margin-right: 0.2rem;">'
-    return ""
+        html = f'<img src="data:image/png;base64,{logo_data}" style="height: 1.6rem; vertical-align: middle; margin-right: 0.2rem;">'
+    st.session_state[_KEY] = html
+    return html
 
 
 def load_logo_base64_small() -> str:
@@ -32,49 +42,122 @@ def load_logo_base64_small() -> str:
     Returns:
         HTML img tag with embedded base64 logo (smaller), or empty string if not found
     """
-    logo_path = Path(__file__).parent.parent / "centurion_logo.png"
+    _KEY = "_logo_b64_small"
+    if _KEY in st.session_state:
+        return st.session_state[_KEY]
+
+    logo_path = Path(__file__).parent / "assets" / "centurion_logo.png"
+    html = ""
     if logo_path.exists():
         with open(logo_path, "rb") as f:
             logo_data = base64.b64encode(f.read()).decode()
-        return f'<img src="data:image/png;base64,{logo_data}" style="height: 2.5rem; vertical-align: middle; margin-right: 0.5rem;">'
-    return ""
+        html = f'<img src="data:image/png;base64,{logo_data}" style="height: 1.4rem; vertical-align: middle; margin-right: 0.3rem;">'
+    st.session_state[_KEY] = html
+    return html
+
+
+_HEADER_BAR_CSS = """
+<style>
+    .header-bar {
+        background: linear-gradient(135deg, #0d1117 0%, #161b22 40%, #0f3460 100%);
+        padding: 0.9rem 1.6rem;
+        border-radius: 10px;
+        margin-top: 0.6rem;
+        margin-bottom: 0.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-left: 4px solid #4299e1;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    }
+    .header-bar h1 {
+        color: #ffffff !important;
+        font-size: 1.55rem !important;
+        margin: 0 !important;
+        font-weight: 800;
+        letter-spacing: 0.3px;
+        line-height: 1.3 !important;
+    }
+    .header-bar h1 img {
+        filter: brightness(0) invert(1);
+    }
+    .header-bar .subtitle {
+        color: #8b949e !important;
+        font-size: 0.72rem !important;
+        margin: 0.15rem 0 0 0;
+        letter-spacing: 0.6px;
+        text-transform: uppercase;
+        font-weight: 500;
+    }
+</style>
+"""
+
+
+def render_header_bar(subtitle: str = "", right_html: str = ""):
+    """Render the dark gradient header bar used across all modules.
+
+    Args:
+        subtitle: Short uppercase subtitle shown below the company name.
+        right_html: Optional HTML placed on the right side of the bar
+                    (e.g. status pills).
+    """
+    logo_html = load_logo_base64_small()
+    right_block = f'<div style="text-align:right">{right_html}</div>' if right_html else ""
+    subtitle_block = (
+        f'<p class="subtitle" style="color: #8b949e !important;">{subtitle}</p>'
+        if subtitle else ""
+    )
+
+    st.markdown(_HEADER_BAR_CSS, unsafe_allow_html=True)
+    st.markdown(f"""
+    <div class="header-bar">
+        <div>
+            <h1 style="color: #ffffff !important;">{logo_html} Centurion Capital LLC</h1>
+            {subtitle_block}
+        </div>
+        {right_block}
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ── Reusable spinner HTML helper ─────────────────────────────────
+
+def spinner_html(label: str = "Processing…") -> str:
+    """Return an HTML snippet for the unified Centurion spinner.
+
+    The CSS classes (`centurion-spinner`, `spinner-wrapper`,
+    `spinner-text`) are defined globally in ``ui/styles.py`` so no
+    extra ``<style>`` block is needed.
+
+    Args:
+        label: The italic text shown next to the spinning ring.
+    """
+    return (
+        '<div class="spinner-wrapper">'
+        '  <div class="centurion-spinner"></div>'
+        f'  <span class="spinner-text">{label}</span>'
+        '</div>'
+    )
 
 
 def render_header():
-    """Render the main application header with logo."""
-    logo_html = load_logo_base64()
-    
-    st.markdown(
-        f'<div class="main-header">{logo_html}Centurion Capital LLC</div>'
-        f'<p class="main-subtitle">Enterprise AI Engine for Event-Driven Alpha</p>',
-        unsafe_allow_html=True
-    )
+    """Render the main application header with the dark header bar."""
+    render_header_bar(subtitle="Algorithmic Trading · Event-Driven Alpha")
 
 
 def render_page_header(title: str, subtitle: Optional[str] = None, description: Optional[str] = None):
     """
-    Render a page header with logo.
-    
+    Render a page header with the dark header bar.
+
     Args:
-        title: Main page title (displayed with page-subtitle class)
+        title: Main page title (shown as subtitle on the bar)
         subtitle: Optional subtitle text
         description: Optional description text
     """
-    logo_html = load_logo_base64_small()
-    
-    st.markdown(
-        f'<div class="main-header">{logo_html}Centurion Capital LLC</div>',
-        unsafe_allow_html=True
-    )
-    
-    if title:
-        st.markdown(f'<p class="page-subtitle">{title}</p>', unsafe_allow_html=True)
-    
-    if subtitle:
-        st.markdown(f'<p class="main-subtitle">{subtitle}</p>', unsafe_allow_html=True)
-    
-    if description:
-        st.markdown(f'<p class="page-description">{description}</p>', unsafe_allow_html=True)
+    # Build subtitle line from title / subtitle / description
+    parts = [p for p in [title, subtitle, description] if p]
+    bar_subtitle = " · ".join(parts) if parts else ""
+    render_header_bar(subtitle=bar_subtitle)
 
 
 def render_footer():
@@ -99,7 +182,7 @@ def render_navigation_buttons(
     Render navigation buttons for all pages.
 
     Shows a button for every page except the one the user is currently on.
-    The Analysis Results button only appears when results are available.
+    The Stock Analysis button only appears when results are available.
 
     Args:
         current_page: Current page identifier
@@ -117,6 +200,7 @@ def render_navigation_buttons(
         ('analysis',     '📈 Stock Analysis'),
         ('fundamental',  '📊 Fundamental Analysis'),
         ('backtesting',  '🔬 Backtest Strategy'),
+        ('crypto',       '₿ Crypto'),
         ('history',      '📋 History'),
     ]
 
@@ -132,8 +216,8 @@ def render_navigation_buttons(
     if n == 0:
         return
 
-    col_spec = [0.6] + [1] * n + [0.6]
-    cols = st.columns(col_spec)
+    col_spec = [0.3] + [1] * n + [0.3]
+    cols = st.columns(col_spec, gap="small")
 
     for i, (page_id, label) in enumerate(buttons):
         with cols[i + 1]:
@@ -142,6 +226,9 @@ def render_navigation_buttons(
                 key=f"nav_{page_id}_{back_key_suffix}",
                 use_container_width=True,
             ):
+                logger.info("[user=%s] Navigation: %s -> %s",
+                            st.session_state.get('username', 'unknown'),
+                            current_page, page_id)
                 st.session_state.current_page = page_id
                 st.rerun()
 
@@ -225,39 +312,6 @@ def render_tickers_being_analyzed(tickers: List[str], ticker_mode: str):
     
     st.markdown(
         f'<p class="page-description">{icon} Analyzing {len(tickers)} stock(s): {", ".join(tickers)}</p>',
-        unsafe_allow_html=True
-    )
-
-
-def render_completion_banner(
-    tickers_count: int,
-    signals_count: int,
-    db_saved: bool = False
-):
-    """
-    Render analysis completion banner.
-    
-    Args:
-        tickers_count: Number of tickers analyzed
-        signals_count: Number of signals generated
-        db_saved: Whether results were saved to database
-    """
-    db_badge = ' • 🗄️ Saved to DB' if db_saved else ''
-    
-    st.markdown(
-        f"""
-        <div style="
-            background: linear-gradient(90deg, #00cc44, #00aa33);
-            color: white;
-            padding: 0.6rem 1rem;
-            border-radius: 6px;
-            text-align: center;
-            margin: 0.5rem 0;
-        ">
-            <span style="font-weight: 600;">✅ Analysis Complete</span>
-            <span style="margin-left: 1rem;">Analyzed <strong>{tickers_count}</strong> stocks • <strong>{signals_count}</strong> signals generated{db_badge}</span>
-        </div>
-        """,
         unsafe_allow_html=True
     )
 

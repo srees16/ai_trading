@@ -48,8 +48,8 @@ class MinIOConfig:
 
     def __init__(self):
         self.endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9000")
-        self.access_key = os.getenv("MINIO_ACCESS_KEY", "minioadmin")
-        self.secret_key = os.getenv("MINIO_SECRET_KEY", "minioadmin123")
+        self.access_key = os.getenv("MINIO_ACCESS_KEY", "")
+        self.secret_key = os.getenv("MINIO_SECRET_KEY", "")
         self.secure = os.getenv("MINIO_SECURE", "false").lower() == "true"
         self.bucket_name = os.getenv("MINIO_BUCKET", "centurion-backtests")
         self.enabled = os.getenv("MINIO_ENABLED", "true").lower() == "true"
@@ -160,9 +160,12 @@ class MinIOService:
 
         self._ensure_bucket()
 
-        safe_strategy = strategy_name.lower().replace(" ", "_")
-        safe_ticker = ticker.upper() if ticker else "unknown"
-        object_name = f"{run_id}/{safe_ticker}/{safe_strategy}/{filename}"
+        safe_strategy = strategy_name.lower().replace("/", "-").replace(" ", "_")
+        if ticker:
+            safe_ticker = ticker.upper()
+            object_name = f"{run_id}/{safe_ticker}/{safe_strategy}/{filename}"
+        else:
+            object_name = f"{run_id}/{safe_strategy}/{filename}"
 
         metadata = {
             "x-amz-meta-run-id": run_id,
@@ -277,7 +280,7 @@ class MinIOService:
 
         prefix = f"{run_id}/"
         if strategy_name:
-            safe = strategy_name.lower().replace(" ", "_")
+            safe = strategy_name.lower().replace("/", "-").replace(" ", "_")
             prefix = f"{run_id}/{safe}/"
 
         results: List[Dict[str, Any]] = []

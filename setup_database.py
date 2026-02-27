@@ -59,7 +59,7 @@ def initialize_database():
         logger.info("✓ Database connection successful")
         
         # Create tables
-        if db_manager.create_tables():
+        if db_manager.initialize_database():
             logger.info("✓ Database tables created successfully")
         else:
             logger.error("Failed to create database tables")

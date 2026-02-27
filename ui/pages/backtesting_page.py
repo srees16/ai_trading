@@ -4,41 +4,98 @@ Backtesting Page Module for Centurion Capital LLC.
 Contains the strategy backtesting page rendering.
 """
 
-import json
 import base64
-import uuid
-import streamlit as st
-import pandas as pd
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
+import json
 import logging
-from typing import Dict, Any, Optional
+import uuid
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
+
+import streamlit as st
 
 from config import Config
-from database.service import get_database_service
-from storage.minio_service import get_minio_service
-from trading_strategies import list_strategies, get_strategy
-from ui.components import render_page_header, render_footer, render_navigation_buttons, render_no_data_warning, render_tickers_being_analyzed
-from ui.tables import render_backtest_signals_table
+from trading_strategies import list_strategies
+from ui.components import render_page_header, render_footer, render_navigation_buttons, render_no_data_warning
 
 logger = logging.getLogger(__name__)
 
 DB_AVAILABLE = Config.is_database_configured()
 MINIO_AVAILABLE = True
 
+# Lazy heavy imports — pandas alone takes ~70 s on some machines.
+pd = None       # type: ignore[assignment]
+go = None       # type: ignore[assignment]
+
+
+def _ensure_heavy():
+    """Import pandas, plotly, and ui.tables on first use."""
+    global pd, go
+    if pd is not None:
+        return
+    import pandas as _pd
+    import plotly.graph_objects as _go
+    pd = _pd
+    go = _go
+    globals()['pd'] = _pd
+    globals()['go'] = _go
+    from ui.tables import render_backtest_signals_table as _rbt
+    globals()['render_backtest_signals_table'] = _rbt
+
+
+# Forward-declare for Pylance
+render_backtest_signals_table = None  # type: ignore[assignment]
+
+
+def _get_db_service():
+    """Lazy import of database.service (pulls in SQLAlchemy)."""
+    from database.service import get_database_service
+    return get_database_service()
+
+
+def _get_minio():
+    """Lazy import of storage.minio_service."""
+    from storage.minio_service import get_minio_service
+    return get_minio_service()
+
+
+def _get_strategy(name):
+    """Lazy import of get_strategy (pulls in the actual strategy class)."""
+    from trading_strategies import get_strategy
+    return get_strategy(name)
+
+# ── Green "Run Backtest" button CSS ─────────────────────────────────
+_STRATEGY_SPINNER_CSS = """
+<style>
+/* Green "Run Backtest" button */
+[data-testid="stMainBlockContainer"] button[kind="primary"].bt-green-btn,
+.bt-green-btn-scope button[kind="primary"] {
+    background-color: #38a169 !important;
+    border-color: #38a169 !important;
+    color: #fff !important;
+    white-space: nowrap !important;
+    font-size: 0.82rem !important;
+}
+.bt-green-btn-scope button[kind="primary"]:hover {
+    background-color: #2f855a !important;
+    border-color: #2f855a !important;
+}
+</style>
+"""
+
+def _spinner_html(pct: int, label: str) -> str:
+    from ui.components import spinner_html
+    return spinner_html(f"{label} — {pct}%")
+
 
 def render_backtesting_page():
     """Render the strategy backtesting page."""
+    _ensure_heavy()  # lazy-load pandas, plotly, ui.tables
+    logger.info("[user=%s] Viewing Backtesting page",
+                st.session_state.get('username', 'unknown'))
     render_page_header(
-        "🔬 Backtest Strategy",
-        description="Test and analyze trading strategies with historical data"
+        "🔬 Backtest Strategy"
     )
 
-    # Show stocks being analyzed
-    tickers = st.session_state.get('tickers', [])
-    if tickers:
-        render_tickers_being_analyzed(tickers, st.session_state.get('ticker_mode', 'Default Tickers'))
-    
     # Navigation buttons
     render_navigation_buttons(
         current_page='backtesting',
@@ -57,8 +114,8 @@ def render_backtesting_page():
     if 'backtest_cache' not in st.session_state:
         st.session_state.backtest_cache = {}  # {strategy_name: StrategyResult}
     
-    # Get available strategies
-    strategies = list_strategies()
+    # Get available strategies (exclude crypto — those live on the Crypto page)
+    strategies = [s for s in list_strategies() if s.get('category') != 'crypto']
     strategy_options = {s['name']: s for s in strategies}
     
     # Pre-run all strategies once on first page visit
@@ -113,8 +170,14 @@ def _precompute_all_strategies(strategies: list):
     st.session_state.backtest_cache = {}
     st.session_state.backtest_result = None
 
-    # Determine which strategies to pre-compute (skip pairs trading)
-    eligible = [s for s in strategies if s['id'] != 'pairs_trading']
+    # Determine which strategies to pre-compute
+    # Skip strategies that need more tickers than we have (e.g. pairs
+    # trading, mean-reversion cointegration when only 1 ticker).
+    num_tickers = len(tickers)
+    eligible = [
+        s for s in strategies
+        if num_tickers >= s.get('min_tickers', 1)
+    ]
     if not eligible:
         return
 
@@ -128,7 +191,8 @@ def _precompute_all_strategies(strategies: list):
         'tickers': list(tickers),
     }
 
-    progress_bar = st.progress(0, text="Pre-computing strategies…")
+    spinner_slot = st.empty()
+    st.markdown(_STRATEGY_SPINNER_CSS, unsafe_allow_html=True)
     total = len(eligible)
     succeeded = 0
     total_minio_saved = 0
@@ -138,13 +202,17 @@ def _precompute_all_strategies(strategies: list):
 
     for idx, s_info in enumerate(eligible):
         strategy_name = s_info['name']
-        progress_bar.progress(
-            (idx) / total,
-            text=f"Running **{strategy_name}** ({idx + 1}/{total})…"
+        pct = int(idx / total * 100)
+        logger.info("[user=%s] Pre-computing strategy %d/%d: %s",
+                    st.session_state.get('username', 'unknown'),
+                    idx + 1, total, strategy_name)
+        spinner_slot.markdown(
+            _spinner_html(pct, f"Running {strategy_name} ({idx + 1}/{total})…"),
+            unsafe_allow_html=True,
         )
 
         try:
-            strategy_cls = get_strategy(s_info['id'])
+            strategy_cls = _get_strategy(s_info['id'])
             params = strategy_cls.get_parameters()
 
             param_values = {
@@ -159,6 +227,8 @@ def _precompute_all_strategies(strategies: list):
 
             if result.success:
                 succeeded += 1
+                logger.info("[user=%s] Strategy '%s' pre-compute succeeded",
+                            st.session_state.get('username', 'unknown'), strategy_name)
                 # Save charts to MinIO during pre-computation
                 total_minio_saved += _save_charts_to_minio(
                     run_id=minio_run_id,
@@ -168,10 +238,12 @@ def _precompute_all_strategies(strategies: list):
         except Exception as e:
             logger.error(f"Pre-compute failed for {strategy_name}: {e}")
 
-    progress_bar.progress(1.0, text="All strategies computed ✅")
-
-    if total_minio_saved > 0:
-        st.toast(f"🪣 {total_minio_saved} chart(s) saved to object storage", icon="✅")
+    spinner_slot.markdown(
+        _spinner_html(100, "All strategies computed ✅"),
+        unsafe_allow_html=True,
+    )
+    import time as _time; _time.sleep(0.6)
+    spinner_slot.empty()
 
     # Persist cache metadata
     st.session_state.backtest_cache_tickers = sorted(set(t.upper() for t in tickers))
@@ -184,7 +256,9 @@ def _precompute_all_strategies(strategies: list):
         st.session_state.backtest_result = st.session_state.backtest_cache[first_name]
         st.session_state.selected_strategy = first_name
 
-    st.success(f"✅ Pre-computed {succeeded}/{total} strategies for {', '.join(tickers)}")
+    logger.info("[user=%s] Pre-computation complete: %d/%d strategies succeeded for %s",
+                st.session_state.get('username', 'unknown'),
+                succeeded, total, ', '.join(tickers))
 
 
 def _render_configuration_panel(strategies: list, strategy_options: Dict[str, Any]):
@@ -226,7 +300,7 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
             st.session_state.selected_strategy = selected_name
         
         # Get strategy class and parameters
-        strategy_cls = get_strategy(strategy_info['id'])
+        strategy_cls = _get_strategy(strategy_info['id'])
         params = strategy_cls.get_parameters()
         
         st.markdown("---")
@@ -251,15 +325,21 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
         if selected_name in cache:
             st.caption(f"📦 Cached result loaded for **{selected_name}**")
         
-        run_backtest = st.button(
-            "🚀 Run Backtest",
-            type="primary",
-            use_container_width=True,
-            disabled=not param_values.get('tickers'),
-            help="Run with custom parameters (overrides cached result)"
-        )
+        btn_col, _ = st.columns([1.3, 1.7])
+        with btn_col:
+            st.markdown('<div class="bt-green-btn-scope">', unsafe_allow_html=True)
+            run_backtest = st.button(
+                "Run Backtest",
+                type="primary",
+                disabled=not param_values.get('tickers'),
+                help="Run with custom parameters (overrides cached result)",
+                use_container_width=True,
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
         
         if run_backtest:
+            logger.info("[user=%s] Clicked 'Run Backtest' for strategy: %s",
+                        st.session_state.get('username', 'unknown'), selected_name)
             _execute_backtest(strategy_cls, strategy_info, param_values, selected_name)
 
 
@@ -342,16 +422,33 @@ def _render_data_settings(strategy_info: Dict, param_values: Dict):
     # Period selection
     period = st.selectbox(
         "Data Period",
-        options=["1mo", "3mo", "6mo", "1y", "2y", "5y"],
+        options=["1mo", "3mo", "6mo", "1y", "2y", "5y", "Custom"],
         index=3
     )
     
-    end_date = datetime.now()
-    period_days = {
-        "1mo": 30, "3mo": 90, "6mo": 180,
-        "1y": 365, "2y": 730, "5y": 1825
-    }
-    start_date = end_date - timedelta(days=period_days.get(period, 365))
+    if period == "Custom":
+        date_col1, date_col2 = st.columns(2)
+        with date_col1:
+            start_date = st.date_input(
+                "Start Date",
+                value=datetime.now() - timedelta(days=365),
+                max_value=datetime.now()
+            )
+        with date_col2:
+            end_date = st.date_input(
+                "End Date",
+                value=datetime.now(),
+                max_value=datetime.now()
+            )
+        if start_date >= end_date:
+            st.warning("⚠️ Start date must be before end date.")
+    else:
+        end_date = datetime.now()
+        period_days = {
+            "1mo": 30, "3mo": 90, "6mo": 180,
+            "1y": 365, "2y": 730, "5y": 1825
+        }
+        start_date = end_date - timedelta(days=period_days.get(period, 365))
     
     param_values['start_date'] = start_date.strftime('%Y-%m-%d')
     param_values['end_date'] = end_date.strftime('%Y-%m-%d')
@@ -376,46 +473,60 @@ def _execute_backtest(strategy_cls, strategy_info: Dict, param_values: Dict, sel
         param_values: Parameter values dictionary
         selected_name: Selected strategy name
     """
-    with st.spinner("Running backtest..."):
-        try:
-            strategy = strategy_cls()
-            result = strategy.run(**param_values)
-            st.session_state.backtest_result = result
-            st.session_state.selected_strategy = selected_name
-            
-            # Update the cache so future switches are instant
-            if 'backtest_cache' not in st.session_state:
-                st.session_state.backtest_cache = {}
-            st.session_state.backtest_cache[selected_name] = result
-            
-            if result.success:
-                st.success("✅ Backtest completed!")
-                _save_backtest_to_database(
-                    strategy_info, param_values, result, selected_name
+    _user = st.session_state.get('username', 'unknown')
+    logger.info("[user=%s] Executing backtest: %s", _user, selected_name)
+
+    st.markdown(_STRATEGY_SPINNER_CSS, unsafe_allow_html=True)
+    manual_spinner = st.empty()
+    manual_spinner.markdown(
+        _spinner_html(0, f"Running {selected_name}…"),
+        unsafe_allow_html=True,
+    )
+
+    try:
+        strategy = strategy_cls()
+        result = strategy.run(**param_values)
+        st.session_state.backtest_result = result
+        st.session_state.selected_strategy = selected_name
+
+        # Update the cache so future switches are instant
+        if 'backtest_cache' not in st.session_state:
+            st.session_state.backtest_cache = {}
+        st.session_state.backtest_cache[selected_name] = result
+
+        manual_spinner.markdown(
+            _spinner_html(100, f"{selected_name} complete ✅"),
+            unsafe_allow_html=True,
+        )
+        import time as _time; _time.sleep(0.6)
+        manual_spinner.empty()
+
+        if result.success:
+            logger.info("[user=%s] Backtest completed successfully: %s",
+                        _user, selected_name)
+            _save_backtest_to_database(
+                strategy_info, param_values, result, selected_name
+            )
+            minio_run_id = st.session_state.get('backtest_minio_run_id')
+            if not minio_run_id:
+                minio_run_id = _build_minio_run_id(
+                    param_values.get('tickers', [])
                 )
-                # Save charts to MinIO independently of DB
-                # Reuse the session's run_id so manual runs land in
-                # the same folder as pre-computed charts; create one
-                # only if none exists yet.
-                minio_run_id = st.session_state.get('backtest_minio_run_id')
-                if not minio_run_id:
-                    minio_run_id = _build_minio_run_id(
-                        param_values.get('tickers', [])
-                    )
-                    st.session_state.backtest_minio_run_id = minio_run_id
-                minio_saved = _save_charts_to_minio(
-                    run_id=minio_run_id,
-                    result=result,
-                    strategy_name=selected_name,
-                )
-                if minio_saved > 0:
-                    st.toast(f"🪣 {minio_saved} chart(s) saved to object storage", icon="✅")
-            else:
-                st.error(f"❌ Failed: {result.error_message}")
-                
-        except Exception as e:
-            logger.error(f"Error running backtest: {e}")
-            st.error(f"❌ Error: {str(e)}")
+                st.session_state.backtest_minio_run_id = minio_run_id
+            _save_charts_to_minio(
+                run_id=minio_run_id,
+                result=result,
+                strategy_name=selected_name,
+            )
+        else:
+            logger.warning("[user=%s] Backtest failed: %s — %s",
+                           _user, selected_name, result.error_message)
+            st.error(f"❌ Failed: {result.error_message}")
+
+    except Exception as e:
+        manual_spinner.empty()
+        logger.error(f"Error running backtest: {e}")
+        st.error(f"❌ Error: {str(e)}")
 
 
 def _save_backtest_to_database(
@@ -425,11 +536,11 @@ def _save_backtest_to_database(
     selected_name: str
 ):
     """Save backtest results to database if available."""
-    if not DB_AVAILABLE or not get_database_service:
+    if not DB_AVAILABLE:
         return
     
     try:
-        db_service = get_database_service()
+        db_service = _get_db_service()
         tickers_list = param_values.get('tickers', [])
         
         backtest_data = {
@@ -499,11 +610,11 @@ def _save_charts_to_minio(
         result: StrategyResult containing charts
         strategy_name: Name of the strategy (used as subfolder)
     """
-    if not MINIO_AVAILABLE or not get_minio_service:
+    if not MINIO_AVAILABLE:
         return 0
 
     try:
-        minio_svc = get_minio_service()
+        minio_svc = _get_minio()
         if not minio_svc.is_available:
             return 0
 
@@ -524,33 +635,53 @@ def _save_charts_to_minio(
 
 
 def _render_results_panel():
-    """Render the backtest results panel."""
+    """Render the backtest results panel with tabs for each strategy."""
     st.subheader("📈 Results")
-    
-    result = st.session_state.backtest_result
-    
-    if result is None:
-        st.info("👈 Configure a strategy and click **Run Backtest** to see results")
+
+    cache = st.session_state.get('backtest_cache', {})
+
+    # Fall back to single-result view when cache is empty
+    if not cache:
+        result = st.session_state.get('backtest_result')
+        if result is None:
+            st.info("👈 Configure a strategy and click **Run Backtest** to see results")
+            return
+        _render_single_strategy_result(result)
         return
-    
+
+    # Determine default tab from currently selected strategy
+    strategy_names = list(cache.keys())
+    selected = st.session_state.get('selected_strategy', strategy_names[0])
+    default_idx = strategy_names.index(selected) if selected in strategy_names else 0
+
+    tabs = st.tabs(strategy_names)
+
+    for tab, name in zip(tabs, strategy_names):
+        with tab:
+            result = cache[name]
+            _render_single_strategy_result(result)
+
+
+def _render_single_strategy_result(result):
+    """Render metrics, charts, tables, and signals for a single strategy result."""
     if not result.success:
         st.error(f"❌ Backtest failed: {result.error_message}")
         return
-    
+
     # Display metrics
     if result.metrics:
         _render_performance_metrics(result.metrics)
-    
+
     st.markdown("---")
-    
+
     # Charts
     if result.charts:
         _render_charts(result.charts)
-    
+
     # Tables
     if result.tables:
         _render_tables(result.tables)
-    
+
     # Signals
     _render_signals(result.signals)
 
@@ -634,36 +765,98 @@ def _render_ticker_metric_cards(t_metrics: Dict, display_keys: list):
         st.warning(f"Error: {t_metrics['error']}")
         return
     
+    # Separate scalar vs complex (dict/list) values
+    scalar_items = []
+    complex_items = []  # (label, value)
+    
     # Collect available metrics in display order
-    items = []
     for key, label, fmt in display_keys:
         if key in t_metrics and t_metrics[key] is not None:
-            items.append((label, t_metrics[key], fmt))
+            val = t_metrics[key]
+            if isinstance(val, (dict, list)):
+                complex_items.append((label, val))
+            else:
+                scalar_items.append((label, val, fmt))
     
     # Also pick up any extra keys not in the predefined list
     shown_keys = {k for k, _, _ in display_keys}
     skip_keys = {'ticker', 'initial_capital', 'calculation_error'}
     for key, val in t_metrics.items():
         if key not in shown_keys and key not in skip_keys:
-            items.append((key.replace('_', ' ').title(), val, 'auto'))
+            label = key.replace('_', ' ').title()
+            if isinstance(val, (dict, list)):
+                complex_items.append((label, val))
+            else:
+                scalar_items.append((label, val, 'auto'))
     
-    if not items:
+    if not scalar_items and not complex_items:
         st.info("No metrics available")
         return
     
-    # Render in rows of 4
-    for row_start in range(0, len(items), 4):
-        row = items[row_start:row_start + 4]
+    # Render scalar metrics in rows of 4
+    for row_start in range(0, len(scalar_items), 4):
+        row = scalar_items[row_start:row_start + 4]
         cols = st.columns(len(row))
         for col, (label, val, fmt) in zip(cols, row):
             with col:
                 st.metric(label, _format_metric_value(val, fmt))
+    
+    # Render complex (nested dict / list) values as expandable tables
+    for label, val in complex_items:
+        _render_complex_metric(label, val)
+
+
+def _render_complex_metric(label: str, val):
+    """Render a nested dict or list metric as an expandable section."""
+    import pandas as pd
+    with st.expander(f"📋 {label}", expanded=False):
+        if isinstance(val, list):
+            if val and isinstance(val[0], dict):
+                # List of dicts → table
+                df = pd.DataFrame(val)
+                st.dataframe(df, width='stretch', hide_index=True)
+            else:
+                for item in val:
+                    st.text(str(item))
+        elif isinstance(val, dict):
+            # Separate scalar sub-values from further nested ones
+            scalar_pairs = []
+            nested_pairs = []
+            for k, v in val.items():
+                if isinstance(v, (dict, list)):
+                    nested_pairs.append((k, v))
+                else:
+                    scalar_pairs.append((k, v))
+            # Show scalar pairs as a compact table
+            if scalar_pairs:
+                rows = []
+                for k, v in scalar_pairs:
+                    display_key = k.replace('_', ' ').title()
+                    if isinstance(v, float):
+                        if 'return' in k or 'drawdown' in k or 'pct' in k:
+                            display_val = f"{v:.2f}%"
+                        else:
+                            display_val = f"{v:.4f}"
+                    elif isinstance(v, bool):
+                        display_val = "Yes" if v else "No"
+                    else:
+                        display_val = str(v)
+                    rows.append({"Metric": display_key, "Value": display_val})
+                df = pd.DataFrame(rows)
+                st.dataframe(df, width='stretch', hide_index=True)
+            # Recurse for nested items
+            for k, v in nested_pairs:
+                _render_complex_metric(k.replace('_', ' ').title(), v)
+        else:
+            st.text(str(val))
 
 
 def _format_metric_value(val, fmt: str) -> str:
     """Format a metric value for display."""
     if val is None:
         return "N/A"
+    if isinstance(val, bool):
+        return "Yes" if val else "No"
     if fmt == 'pct' and isinstance(val, (int, float)):
         return f"{val:.2f}%"
     if fmt == 'dec' and isinstance(val, (int, float)):
@@ -684,19 +877,34 @@ def _render_flat_metrics(flat_metrics: Dict):
         st.info("No metrics available")
         return
     
-    items = [(k.replace('_', ' ').title(), v) for k, v in flat_metrics.items()]
-    for row_start in range(0, len(items), 4):
-        row = items[row_start:row_start + 4]
+    scalar_items = []
+    complex_items = []
+    for k, v in flat_metrics.items():
+        label = k.replace('_', ' ').title()
+        if isinstance(v, (dict, list)):
+            complex_items.append((label, v))
+        else:
+            scalar_items.append((label, v))
+    
+    # Render scalar metrics in rows of 4
+    for row_start in range(0, len(scalar_items), 4):
+        row = scalar_items[row_start:row_start + 4]
         cols = st.columns(len(row))
         for col, (name, val) in zip(cols, row):
             with col:
-                if isinstance(val, float):
+                if isinstance(val, bool):
+                    st.metric(name, "Yes" if val else "No")
+                elif isinstance(val, float):
                     if 'return' in name.lower() or 'drawdown' in name.lower():
                         st.metric(name, f"{val:.2f}%")
                     else:
                         st.metric(name, f"{val:.4f}")
                 else:
                     st.metric(name, str(val))
+    
+    # Render complex values as expandable tables
+    for label, val in complex_items:
+        _render_complex_metric(label, val)
 
 
 def _render_charts(charts: list):
@@ -713,14 +921,14 @@ def _render_charts(charts: list):
                     if chart.data.startswith('data:')
                     else chart.data
                 )
-                st.image(base64.b64decode(img_data), use_container_width=True)
+                st.image(base64.b64decode(img_data), width='stretch')
             except Exception as e:
                 st.warning(f"Could not display chart: {e}")
                 
         elif chart.chart_type == 'plotly':
             try:
                 fig = go.Figure(json.loads(chart.data))
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
             except Exception as e:
                 st.warning(f"Could not display chart: {e}")
 
@@ -733,7 +941,7 @@ def _render_tables(tables: list):
     for table in tables:
         st.caption(table.title)
         if table.data:
-            st.dataframe(pd.DataFrame(table.data), use_container_width=True)
+            st.dataframe(pd.DataFrame(table.data), width='stretch')
 
 
 def _render_signals(signals: Optional[Any]):

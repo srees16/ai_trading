@@ -1,4 +1,6 @@
 aiohttp
+anthropic
+openai
 beautifulsoup4
 lxml
 requests
@@ -10,10 +12,8 @@ transformers
 torch
 plyer
 python-dateutil
-pytz
 streamlit
 plotly
-streamlit-aggrid
 scikit-learn
 matplotlib
 statsmodels
@@ -22,6 +22,16 @@ sqlalchemy
 psycopg2-binary
 python-dotenv
 pyyaml
+bcrypt
 minio
 scipy
+seaborn
 Backtesting
+chromadb
+sentence-transformers
+PyMuPDF
+kiteconnect
+tiktoken
+webdriver-manager
+arch
+# a2a-sdk[http-server]==0.3.20

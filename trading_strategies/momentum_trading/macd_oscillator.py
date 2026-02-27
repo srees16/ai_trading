@@ -11,15 +11,16 @@ Strategy Rules:
 Reference: Classic technical analysis indicator developed by Gerald Appel
 """
 
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from typing import Optional
-from datetime import datetime
-import time
-
 import sys
+import time
+from datetime import datetime
 from pathlib import Path
+from typing import Optional
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from strategies.base_strategy import (
@@ -158,7 +159,7 @@ class MACDOscillatorStrategy(BaseStrategy):
                 portfolio = self._calculate_portfolio(signals, capital, risk)
                 
                 # Create charts for this ticker
-                charts = self._create_charts(signals, ticker)
+                charts = self._create_charts(signals, portfolio, ticker, capital)
                 all_charts.extend(charts)
                 
                 # Calculate metrics
@@ -292,7 +293,9 @@ class MACDOscillatorStrategy(BaseStrategy):
     def _create_charts(
         self,
         signals: pd.DataFrame,
-        ticker: str
+        portfolio: pd.DataFrame,
+        ticker: str,
+        capital: float = 10000
     ) -> list[ChartData]:
         """Create visualization charts."""
         charts = []
@@ -353,6 +356,65 @@ class MACDOscillatorStrategy(BaseStrategy):
             data=matplotlib_to_base64(fig2),
             chart_type="matplotlib",
             description="Moving averages and MACD oscillator",
+            ticker=ticker
+        ))
+        
+        # Chart 3: Portfolio Equity Curve
+        fig3, ax4 = plt.subplots(figsize=(12, 6))
+        
+        ax4.plot(portfolio.index, portfolio['total_value'], label='Portfolio Value', color='blue')
+        ax4.axhline(y=capital, color='gray', linestyle='--', alpha=0.7, label=f'Initial Capital (${capital:,.0f})')
+        ax4.fill_between(
+            portfolio.index,
+            portfolio['total_value'],
+            capital,
+            where=portfolio['total_value'] >= capital,
+            alpha=0.2, color='green', label='Profit'
+        )
+        ax4.fill_between(
+            portfolio.index,
+            portfolio['total_value'],
+            capital,
+            where=portfolio['total_value'] < capital,
+            alpha=0.2, color='red', label='Loss'
+        )
+        
+        ax4.set_title(f'{ticker} - Portfolio Equity Curve')
+        ax4.set_xlabel('Date')
+        ax4.set_ylabel('Portfolio Value ($)')
+        ax4.legend(loc='best')
+        ax4.grid(True, alpha=0.3)
+        plt.tight_layout()
+        
+        charts.append(ChartData(
+            title=f"{ticker} Equity Curve",
+            data=matplotlib_to_base64(fig3),
+            chart_type="matplotlib",
+            description="Portfolio equity curve over backtest period",
+            ticker=ticker
+        ))
+        
+        # Chart 4: Drawdown Chart
+        fig4, ax5 = plt.subplots(figsize=(12, 6))
+        
+        cumulative_max = portfolio['total_value'].cummax()
+        drawdown = (portfolio['total_value'] - cumulative_max) / cumulative_max * 100
+        
+        ax5.fill_between(portfolio.index, drawdown, 0, color='red', alpha=0.4)
+        ax5.plot(portfolio.index, drawdown, color='darkred', linewidth=1)
+        ax5.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+        
+        ax5.set_title(f'{ticker} - Drawdown')
+        ax5.set_xlabel('Date')
+        ax5.set_ylabel('Drawdown (%)')
+        ax5.grid(True, alpha=0.3)
+        plt.tight_layout()
+        
+        charts.append(ChartData(
+            title=f"{ticker} Drawdown",
+            data=matplotlib_to_base64(fig4),
+            chart_type="matplotlib",
+            description="Portfolio drawdown from peak over backtest period",
             ticker=ticker
         ))
         

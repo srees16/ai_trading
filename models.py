@@ -38,16 +38,6 @@ class DecisionTag(Enum):
     SELL = "SELL"
     STRONG_SELL = "STRONG_SELL"
 
-    @property
-    def is_bullish(self) -> bool:
-        """Check if decision is bullish."""
-        return self in (DecisionTag.STRONG_BUY, DecisionTag.BUY)
-
-    @property
-    def is_bearish(self) -> bool:
-        """Check if decision is bearish."""
-        return self in (DecisionTag.STRONG_SELL, DecisionTag.SELL)
-
     def __str__(self) -> str:
         return self.value
 
