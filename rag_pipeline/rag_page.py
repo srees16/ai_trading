@@ -37,6 +37,46 @@ from ui.components import load_logo_base64_small, render_header_bar, render_foot
 logger = logging.getLogger(__name__)
 
 
+@st.cache_data(show_spinner=False)
+def _rag_page_css() -> str:
+    """Return RAG-page CSS — cached so st.markdown runs once per session."""
+    return """
+    <style>
+    /* ── Center content with max-width ── */
+    .block-container > div {
+        max-width: 720px;
+        margin: 0 auto;
+    }
+
+    /* ── Code block styling ── */
+    pre, code {
+        font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Monaco', monospace !important;
+    }
+    div[data-testid="stCode"] {
+        border-radius: 8px;
+        margin: 0.5rem 0;
+    }
+    div[data-testid="stCode"] pre {
+        padding: 1rem !important;
+        font-size: 0.88rem !important;
+        line-height: 1.5 !important;
+    }
+    /* Inline code in markdown */
+    .stMarkdown code {
+        background-color: rgba(100, 100, 100, 0.15);
+        padding: 0.15em 0.4em;
+        border-radius: 4px;
+        font-size: 0.88em;
+    }
+
+    /* Nudge the RAG spinner upward so it sits closer to the Submit button */
+    .spinner-wrapper {
+        margin-top: -1.2rem;
+    }
+    </style>
+    """
+
+
 def render_rag_page() -> None:
     """
     Full-page RAG interface.
@@ -58,39 +98,7 @@ def render_rag_page() -> None:
 
     _logo_html = load_logo_base64_small()
 
-    st.markdown(
-        """
-        <style>
-        /* ── Center content with max-width ── */
-        .block-container > div {
-            max-width: 720px;
-            margin: 0 auto;
-        }
-
-        /* ── Code block styling ── */
-        pre, code {
-            font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Monaco', monospace !important;
-        }
-        div[data-testid="stCode"] {
-            border-radius: 8px;
-            margin: 0.5rem 0;
-        }
-        div[data-testid="stCode"] pre {
-            padding: 1rem !important;
-            font-size: 0.88rem !important;
-            line-height: 1.5 !important;
-        }
-        /* Inline code in markdown */
-        .stMarkdown code {
-            background-color: rgba(100, 100, 100, 0.15);
-            padding: 0.15em 0.4em;
-            border-radius: 4px;
-            font-size: 0.88em;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    st.markdown(_rag_page_css(), unsafe_allow_html=True)
 
     render_header_bar(subtitle="Knowledge Engine")
     _user = st.session_state.get('username', 'unknown')

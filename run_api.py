@@ -28,7 +28,7 @@ logging.basicConfig(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Centurion Capital Trading API")
+    parser = argparse.ArgumentParser(description="Centurion Capital LLC API")
     parser.add_argument("--host", default="0.0.0.0", help="Bind host (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=9001, help="Port (default: 9001)")
     parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")

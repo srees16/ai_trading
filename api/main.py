@@ -83,7 +83,7 @@ def create_app() -> FastAPI:
 
     # Disable built-in docs routes — we serve our own auth-gated versions
     app = FastAPI(
-        title="Centurion Capital Trading API",
+        title="Centurion Capital LLC API",
         description=(
             "RESTful API for the Centurion Capital algorithmic trading "
             "platform — US stocks analysis, Indian stocks (Zerodha Kite), "
@@ -213,7 +213,7 @@ def create_app() -> FastAPI:
     @app.get("/", include_in_schema=False)
     async def root():
         return {
-            "message": "Centurion Capital Trading API",
+            "message": "Centurion Capital LLC API",
             "docs": "/docs",
             "redoc": "/redoc",
             "health": "/health",

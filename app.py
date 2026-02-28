@@ -124,27 +124,56 @@ def main():
         # immediately, saving an entire Streamlit round-trip (~1-2 s).
 
     # ── Route to selected application ───────────────────────────
+    _user = st.session_state.get('username', 'unknown')
+
     if selected_app == "live_stocks":
-        logger.info("[user=%s] Rendering module: Ind Stocks",
-                    st.session_state.get('username', 'unknown'))
-        from kite_connect.zerodha_live import render_live_dashboard
-        render_live_dashboard()
+        logger.info("[user=%s] Rendering module: Ind Stocks", _user)
+        _get_renderer("live_stocks")()
 
     elif selected_app == "rag_engine":
-        logger.info("[user=%s] Rendering module: RAG Engine",
-                    st.session_state.get('username', 'unknown'))
-        from rag_pipeline.rag_page import render_rag_page
-        render_rag_page()
+        logger.info("[user=%s] Rendering module: RAG Engine", _user)
+        _get_renderer("rag_engine")()
 
     elif selected_app == "crypto":
-        logger.info("[user=%s] Rendering module: Crypto",
-                    st.session_state.get('username', 'unknown'))
-        from ui.pages.crypto_page import render_crypto_page
-        render_crypto_page()
+        logger.info("[user=%s] Rendering module: Crypto", _user)
+        _get_renderer("crypto")()
 
     else:
         # Default: Trading Platform with sub-page routing
         _route_trading_platform()
+
+
+# ── Cached module importers ─────────────────────────────────────
+# @st.cache_resource ensures each render function is imported exactly
+# once per process lifetime rather than on every Streamlit rerun.
+@st.cache_resource
+def _get_renderer(module_key: str):
+    """Import and cache a module-level render function."""
+    if module_key == "live_stocks":
+        from kite_connect.zerodha_live import render_live_dashboard
+        return render_live_dashboard
+    elif module_key == "rag_engine":
+        from rag_pipeline.rag_page import render_rag_page
+        return render_rag_page
+    elif module_key == "crypto":
+        from ui.pages.crypto_page import render_crypto_page
+        return render_crypto_page
+    elif module_key == "analysis":
+        from ui.pages.analysis_page import render_analysis_page
+        return render_analysis_page
+    elif module_key == "fundamental":
+        from ui.pages.fundamental_page import render_fundamental_page
+        return render_fundamental_page
+    elif module_key == "backtesting":
+        from ui.pages.backtesting_page import render_backtesting_page
+        return render_backtesting_page
+    elif module_key == "history":
+        from ui.pages.history_page import render_history_page
+        return render_history_page
+    elif module_key == "main":
+        from ui.pages.main_page import render_main_page
+        return render_main_page
+    raise ValueError(f"Unknown module: {module_key}")
 
 
 def _route_trading_platform():
@@ -153,21 +182,10 @@ def _route_trading_platform():
     _user = st.session_state.get('username', 'unknown')
     logger.info("[user=%s] US Stocks sub-page: %s", _user, current_page)
 
-    if current_page == 'analysis':
-        from ui.pages.analysis_page import render_analysis_page
-        render_analysis_page()
-    elif current_page == 'fundamental':
-        from ui.pages.fundamental_page import render_fundamental_page
-        render_fundamental_page()
-    elif current_page == 'backtesting':
-        from ui.pages.backtesting_page import render_backtesting_page
-        render_backtesting_page()
-    elif current_page == 'history':
-        from ui.pages.history_page import render_history_page
-        render_history_page()
-    else:
-        from ui.pages.main_page import render_main_page
-        render_main_page()
+    renderer = _get_renderer(current_page if current_page in (
+        'analysis', 'fundamental', 'backtesting', 'history',
+    ) else 'main')
+    renderer()
 
 
 if __name__ == "__main__":

@@ -175,6 +175,48 @@ def get_kite_session():
     return create_kite_session()
 
 
+# ── Cached NSE market status ──────────────────────────────────
+# TTL of 2 minutes avoids a synchronous NSE API call on every render
+# while still updating reasonably often for market-open / close transitions.
+@st.cache_data(ttl=120, show_spinner=False)
+def _cached_nse_market_status():
+    """Get market status from webhook service or NSE API fallback (cached 2 min)."""
+    try:
+        svc = _get_webhook_service()
+        if svc._started:
+            return svc.get_market_status()
+    except Exception:
+        pass
+    # Fallback: direct NSE API call (only on first render before webhook boots)
+    try:
+        import requests as _req
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json",
+        }
+        sess = _req.Session()
+        sess.get("https://www.nseindia.com", headers=headers, timeout=4)
+        resp = sess.get(
+            "https://www.nseindia.com/api/marketStatus",
+            headers=headers, timeout=4,
+        )
+        resp.raise_for_status()
+        for mkt in resp.json().get("marketState", []):
+            if mkt.get("market") == "Capital Market":
+                status = (mkt.get("marketStatus") or "").lower()
+                if status in ("open", "live"):
+                    return "pill-open", "Live"
+                elif "pre" in status:
+                    return "pill-pre", "Pre-Open"
+                elif "close" in status:
+                    return "pill-closed", "Closed"
+                else:
+                    return "pill-pre", status.title()
+    except Exception:
+        pass
+    return "pill-closed", "Closed"
+
+
 # ── Database ───────────────────────────────────────────────────
 def get_db_connection():
     """Get a fresh DB connection (no caching to avoid stale connections)."""
@@ -770,43 +812,7 @@ def _render_dashboard():
     _load_slot.empty()
 
     # ── Step 3: Market session status (needs `requests`, loaded above) ──
-    def _nse_market_status():
-        """Get market status from webhook service (background monitor) or NSE API fallback."""
-        try:
-            svc = _get_webhook_service()
-            if svc._started:
-                return svc.get_market_status()
-        except Exception:
-            pass
-        # Fallback: direct NSE API call (only on first render before webhook boots)
-        try:
-            headers = {
-                "User-Agent": "Mozilla/5.0",
-                "Accept": "application/json",
-            }
-            sess = requests.Session()
-            sess.get("https://www.nseindia.com", headers=headers, timeout=4)
-            resp = sess.get(
-                "https://www.nseindia.com/api/marketStatus",
-                headers=headers, timeout=4,
-            )
-            resp.raise_for_status()
-            for mkt in resp.json().get("marketState", []):
-                if mkt.get("market") == "Capital Market":
-                    status = (mkt.get("marketStatus") or "").lower()
-                    if status in ("open", "live"):
-                        return "pill-open", "Live"
-                    elif "pre" in status:
-                        return "pill-pre", "Pre-Open"
-                    elif "close" in status:
-                        return "pill-closed", "Closed"
-                    else:
-                        return "pill-pre", status.title()
-        except Exception:
-            pass
-        return "pill-closed", "Closed"
-
-    pill_class, pill_label = _nse_market_status()
+    pill_class, pill_label = _cached_nse_market_status()
 
     _logo_html = load_logo_base64_small()
 
