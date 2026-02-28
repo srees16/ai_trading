@@ -211,13 +211,22 @@ def get_button_css() -> str:
         background-color: #e0e2e6 !important;
         border-color: #999 !important;
     }
-    /* Green Run Analysis button */
-    .stButton > button[kind="primary"] {
+    /* Green Run Analysis / primary buttons */
+    .stButton > button[kind="primary"],
+    .stButton > button[data-testid="stBaseButton-primary"],
+    .stButton > button.st-emotion-cache-primary,
+    button[data-testid="baseButton-primary"] {
         background-color: #00cc44 !important;
         border-color: #00cc44 !important;
         color: white !important;
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
     }
-    .stButton > button[kind="primary"]:hover {
+    .stButton > button[kind="primary"]:hover,
+    .stButton > button[data-testid="stBaseButton-primary"]:hover,
+    .stButton > button.st-emotion-cache-primary:hover,
+    button[data-testid="baseButton-primary"]:hover {
         background-color: #00aa33 !important;
         border-color: #00aa33 !important;
     }

@@ -20,6 +20,7 @@ A Python-based enterprise trading platform combining multi-source news scraping,
 12. [API Reference](#12-api-reference)
 13. [Troubleshooting](#13-troubleshooting)
 14. [Dependencies](#14-dependencies)
+15. [Changelog](#15-changelog)
 
 ---
 
@@ -187,11 +188,37 @@ Streamlit dashboard for real-time Indian equity monitoring, order management, op
 | `trading/order_service.py` | Market/Limit/SL/SL-M orders, CNC/MIS/NRML products, DAY/IOC validity |
 | `trading/rsi_strategy.py` | Live RSI scanner — BUY (RSI<30 + reversal), SELL (RSI>70 + reversal), auto-order placement |
 
+### Real-time Streaming Architecture
+
+Push-based tick distribution via Kite WebSocket (KiteTicker) with an internal event dispatcher:
+
+| Component | Purpose |
+|-----------|--------|
+| `webhooks/ticker.py` | `KiteWebSocketService` — manages KiteTicker connection, batch-flushes ticks every 0.5 s |
+| `webhooks/dispatcher.py` | `WebhookDispatcher` — singleton fan-out to subscribers via ThreadPoolExecutor |
+| `webhooks/handlers.py` | `DBTickHandler` (PostgreSQL), `UITickCache` (Streamlit), `NSEMarketStatusMonitor`, `SessionWatchdog` |
+| `webhooks/alert_engine.py` | `PriceAlertEngine` — evaluates price/volume/change conditions on every tick batch |
+| `webhooks/timescale_handler.py` | `TimescaleTickHandler` — writes raw ticks to a hypertable; continuous aggregates for 1m/5m/15m/1h OHLC |
+| `webhooks/service.py` | `WebhookService` — orchestrator that wires all components at startup |
+
+**Streaming endpoints** (FastAPI):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/stream/sse` | Server-Sent Events tick stream (optional `?symbols=` filter) |
+| `WS` | `/stream/ws` | WebSocket proxy — subscribe/unsubscribe/ping protocol |
+| `POST` | `/stream/postback` | Kite order postback receiver (SHA-256 checksum verification) |
+| `GET` | `/stream/ohlc/{symbol}` | OHLC bars from TimescaleDB continuous aggregates |
+| `CRUD` | `/stream/alerts` | Price alert management (create, list, delete) |
+| `GET` | `/stream/status` | Full streaming pipeline status |
+
 ### Key Features
 - Auto-refresh every 30 seconds via `@st.fragment(run_every=...)`
 - Market status pill indicators from NSE API (pre-open, live, post-market)
 - Batch quote fetching (200 symbols/batch)
 - Option chain: expiry discovery (45 days + monthly), Sensibull-style colouring, ATM highlighting, PCR metric
+- Price alerts: `price_above`, `price_below`, `change_pct_above`, `change_pct_below`, `volume_above` with desktop notifications
+- All-combinations pairs trading: C(n,2) pair analysis when >2 tickers provided
 
 ---
 
@@ -411,7 +438,15 @@ centurion_core/
 │   ├── core/                     # Config, PostgreSQL, Selenium service
 │   ├── nse/                      # NSE CSV download + DB loader
 │   ├── options/                  # Concurrent option chain + Greeks
-│   └── trading/                  # Order service + RSI strategy
+│   ├── trading/                  # Order service + RSI strategy
+│   └── webhooks/                 # Real-time streaming infrastructure
+│       ├── ticker.py             # KiteWebSocketService (KiteTicker wrapper)
+│       ├── dispatcher.py         # WebhookDispatcher (in-process event fan-out)
+│       ├── handlers.py           # DBTickHandler, UITickCache, NSEMarketStatusMonitor
+│       ├── alert_engine.py       # PriceAlertEngine (condition-based alerts)
+│       ├── timescale_handler.py  # TimescaleDB tick writer + OHLC aggregates
+│       ├── service.py            # WebhookService orchestrator
+│       └── events.py             # EventType enum, TickData, WebhookEvent
 │
 ├── rag_pipeline/                 # RAG document intelligence
 │   ├── config.py                 # 60+ field configuration dataclass
@@ -439,6 +474,25 @@ centurion_core/
 ├── storage/                      # Object storage
 │   ├── manager.py                # Excel/CSV file export
 │   └── minio_service.py          # MinIO S3 client (singleton)
+│
+├── api/                          # FastAPI REST API layer
+│   ├── main.py                   # App factory, auth-gated /docs
+│   ├── auth.py                   # Token signing, login/logout
+│   ├── dependencies.py           # Dependency injection (DB, Kite, RAG)
+│   ├── schemas/                  # Pydantic v2 request/response models
+│   │   ├── common.py             # Shared: SuccessResponse, Pagination
+│   │   ├── us_stocks.py          # Analysis, news, signals, backtest
+│   │   ├── ind_stocks.py         # Kite auth, quotes, orders, options
+│   │   ├── rag.py                # Ingest, query, evaluation
+│   │   ├── crypto.py             # Prices, backtest, strategies
+│   │   └── streaming.py          # SSE, WebSocket, Postback, OHLC, Alerts
+│   └── routers/                  # Route modules (50 endpoints)
+│       ├── health.py             # GET /health
+│       ├── us_stocks.py          # 9 endpoints
+│       ├── ind_stocks.py         # 11 endpoints
+│       ├── rag.py                # 10 endpoints
+│       ├── crypto.py             # 4 endpoints
+│       └── streaming.py          # 9 endpoints (SSE, WS, postback, OHLC, alerts, status)
 │
 └── deployment/                   # Deployment configs
     ├── docker-compose.yml        # App + MinIO containers
@@ -480,14 +534,14 @@ Create `.env` in the project root:
 ```ini
 # ─── PostgreSQL ───────────────────────────────────────────
 CENTURION_DB_HOST=localhost
-CENTURION_DB_PORT=5432
+CENTURION_DB_PORT=9003
 CENTURION_DB_NAME=centurion_trading
 CENTURION_DB_USER=admin
 CENTURION_DB_PASSWORD=admin123
 CENTURION_DB_ENABLED=true
 
 # ─── MinIO Object Storage ────────────────────────────────
-MINIO_ENDPOINT=localhost:9000
+MINIO_ENDPOINT=localhost:9004
 MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=minioadmin123
 MINIO_SECURE=false
@@ -549,18 +603,28 @@ docker compose up -d minio
 
 | Port | Purpose |
 |---|---|
-| `9000` | S3-compatible API |
-| `9001` | Web Console (user: `minioadmin`, pass: `minioadmin123`) |
+| `9004` | S3-compatible API |
+| `9002` | Web Console (user: `minioadmin`, pass: `minioadmin123`) |
 
 The `centurion-backtests` bucket is created automatically on first use.
 
 ### 5. Launch
 
+**Streamlit UI:**
+
 ```powershell
 streamlit run app.py
 ```
 
-Opens at **http://localhost:9090** (configured in `.streamlit/config.toml`).
+Opens at **http://localhost:9000** (configured in `.streamlit/config.toml`).
+
+**FastAPI REST API:**
+
+```powershell
+python run_api.py --port 9001
+```
+
+Swagger docs at **http://localhost:9001/docs** (requires login — same credentials as the Streamlit app).
 
 ---
 
@@ -626,6 +690,29 @@ All pages share consistent navigation buttons:
 ---
 
 ## 12. API Reference
+
+### REST API (FastAPI)
+
+A full REST API runs alongside the Streamlit UI on a separate port (default `9001`).
+
+**Interactive docs** — **http://localhost:9001/docs** (Swagger UI) and **http://localhost:9001/redoc** (ReDoc) are available after authenticating. On first visit you are redirected to a login page; use the same credentials as the Streamlit app (e.g. `admin` / `admin123`). A signed session cookie (8-hour TTL) keeps you logged in.
+
+| Module | Prefix | Endpoints | Examples |
+|--------|--------|-----------|----------|
+| Health | `/api/health` | 1 | DB, RAG, Kite status check |
+| US Stocks | `/api/us-stocks` | 9 | `/analysis`, `/news`, `/sentiment`, `/backtest`, `/strategies` |
+| Indian Stocks | `/api/ind-stocks` | 11 | `/auth`, `/quotes`, `/orders`, `/positions`, `/option-chain` |
+| RAG Pipeline | `/api/rag` | 10 | `/ingest`, `/query`, `/collection/stats`, `/evaluate` |
+| Crypto | `/api/crypto` | 4 | `/prices`, `/backtest`, `/strategies` |
+| Streaming | `/stream` | 9 | `/sse`, `/ws`, `/postback`, `/ohlc/{symbol}`, `/alerts`, `/status` |
+
+```powershell
+# Launch the API server
+python run_api.py --port 9001
+
+# Or via uvicorn directly
+uvicorn api.main:create_app --factory --host 0.0.0.0 --port 9001
+```
 
 ### Database Service
 
@@ -711,14 +798,14 @@ docker compose down -v
 |---------|-----|
 | Charts not appearing after backtest | Verify `docker ps --filter name=centurion-minio` + `MINIO_ENABLED=true` |
 | "minio module not found" | `pip install minio` |
-| Connection refused on port 9000 | `cd deployment && docker compose up -d minio` |
+| Connection refused on port 9004 | `cd deployment && docker compose up -d minio` |
 
 ### General
 
 | Symptom | Fix |
 |---------|-----|
 | Import errors | `pip install -r requirements.txt --upgrade` |
-| Port in use | `streamlit run app.py --server.port 8502` |
+| Port in use | `streamlit run app.py --server.port 9005` |
 | Slow first run | DistilBERT model download (~250 MB); subsequent runs are fast |
 
 ---
@@ -739,8 +826,20 @@ docker compose down -v
 | **Analysis** | matplotlib, statsmodels, backtesting (0.6+), arch, scipy, seaborn |
 | **Database** | sqlalchemy ≥ 2.0, psycopg2-binary ≥ 2.9, python-dotenv ≥ 1.0 |
 | **Object Storage** | minio ≥ 7.2 |
-| **Auth** | pyyaml ≥ 6.0 |
+| **Auth** | pyyaml ≥ 6.0, itsdangerous |
 | **Notifications** | plyer |
+| **API** | fastapi, uvicorn[standard], python-multipart |
+---
+
+## 15. Changelog
+
+### 2026-02-28
+
+- **FastAPI REST API** — 50 JSON endpoints across 6 modules with Pydantic v2 schemas, auth-gated `/docs` (signed session cookie, 8-hour TTL)
+- **Real-time Streaming** — SSE tick stream, WebSocket proxy, Kite Postback receiver, TimescaleDB OHLC aggregates (1m/5m/15m/1h), price alert engine with CRUD endpoints
+- **MinIO Auto-Bucket** — `centurion-backtests` bucket created automatically on first use; `MinIOService.ensure_bucket_ready()`
+- **Pairs Trading All-Combinations** — C(n,2) pair analysis when >2 tickers provided
+- **Lazy Sentiment Loading** — DistilBERT model deferred to first `analyze()` call (class-level singleton)
 
 ---
 

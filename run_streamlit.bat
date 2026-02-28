@@ -26,6 +26,6 @@ echo Press Ctrl+C to stop the server.
 echo ======================================================================
 echo.
 
-streamlit run app.py
+streamlit run app.py --server.port 9000
 
 pause

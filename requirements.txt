@@ -34,4 +34,8 @@ kiteconnect
 tiktoken
 webdriver-manager
 arch
+fastapi
+uvicorn[standard]
+python-multipart
+itsdangerous
 # a2a-sdk[http-server]==0.3.20

@@ -6,7 +6,7 @@
 ```powershell
 .\deployment\deploy.ps1
 ```
-Access at: http://localhost:8501
+Access at: http://localhost:9000
 
 ### Option 2: Docker Compose
 ```bash
@@ -20,7 +20,7 @@ docker-compose up -d
 docker build -f deployment/Dockerfile -t algo-trading-system:latest .
 
 # Run
-docker run -d -p 8501:8501 --name algo-trading-system algo-trading-system:latest
+docker run -d -p 9000:9000 --name algo-trading-system algo-trading-system:latest
 
 # View logs
 docker logs -f algo-trading-system
@@ -53,8 +53,8 @@ docker logs -f algo-trading-system
 ```
 
 ### Access Application
-- Local: http://localhost:8501
-- Azure: http://<dns-name>.<region>.azurecontainer.io:8501
+- Local: http://localhost:9000
+- Azure: http://<dns-name>.<region>.azurecontainer.io:9000
 - GCP: Provided after deployment
 
 ## 🛑 Stop and Clean Up

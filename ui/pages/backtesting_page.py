@@ -118,6 +118,9 @@ def render_backtesting_page():
     strategies = [s for s in list_strategies() if s.get('category') != 'crypto']
     strategy_options = {s['name']: s for s in strategies}
     
+    # Ensure MinIO bucket exists before any chart saving
+    _ensure_minio_bucket()
+
     # Pre-run all strategies once on first page visit
     _precompute_all_strategies(strategies)
     
@@ -131,6 +134,27 @@ def render_backtesting_page():
         _render_results_panel()
     
     render_footer()
+
+
+def _ensure_minio_bucket():
+    """Check (and create if missing) the MinIO 'centurion-backtests' bucket.
+
+    Called once when the backtesting page loads so that all subsequent
+    chart-save operations have a guaranteed destination bucket.
+    """
+    if not MINIO_AVAILABLE:
+        return
+    try:
+        minio_svc = _get_minio()
+        ready = minio_svc.ensure_bucket_ready()
+        if ready:
+            logger.info("MinIO bucket '%s' is ready",
+                        minio_svc._config.bucket_name)
+        else:
+            logger.warning("MinIO bucket could not be verified/created — "
+                           "charts will not be persisted this session")
+    except Exception as e:
+        logger.error("MinIO bucket pre-check failed: %s", e)
 
 
 def _precompute_all_strategies(strategies: list):
@@ -267,11 +291,16 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
     
     # Strategy category filter
     categories = sorted(list(set(s['category'] for s in strategies)))
-    selected_category = st.selectbox(
+    display_categories = {c: c.replace('_', ' ').title() for c in categories}
+    selected_display = st.selectbox(
         "Strategy Category",
-        options=["All"] + categories,
+        options=["All"] + [display_categories[c] for c in categories],
         help="Filter strategies by category"
     )
+    
+    # Map display name back to raw category
+    reverse_map = {v: k for k, v in display_categories.items()}
+    selected_category = reverse_map.get(selected_display, selected_display)
     
     # Filter strategies by category
     if selected_category != "All":

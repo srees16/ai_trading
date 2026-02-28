@@ -29,7 +29,7 @@ cd deployment
 docker-compose up -d
 ```
 
-Access at: http://localhost:8501
+Access at: http://localhost:9000
 
 ### Stop Container
 ```bash
@@ -57,7 +57,7 @@ docker stop algo-trading-system
 
 2. **Run deployment script**
 
-3. **Access your app** at: `http://<dns-name>.<region>.azurecontainer.io:8501`
+3. **Access your app** at: `http://<dns-name>.<region>.azurecontainer.io:9000`
 
 ### Cost Estimate (Azure)
 - Container Instances: ~$30-50/month (2 vCPU, 4GB RAM)
@@ -111,7 +111,7 @@ Create a `.env` file for sensitive configurations:
 # NEWS_API_KEY=your_key
 
 # Application Settings
-STREAMLIT_SERVER_PORT=8501
+STREAMLIT_SERVER_PORT=9000
 STREAMLIT_SERVER_HEADLESS=true
 ```
 
@@ -147,7 +147,7 @@ gcloud run services describe algo-trading-system --region us-central1
 docker build -f deployment/Dockerfile -t algo-trading-system:latest .
 
 # Run container
-docker run -d -p 8501:8501 --name algo-trading-system algo-trading-system:latest
+docker run -d -p 9000:9000 --name algo-trading-system algo-trading-system:latest
 
 # View logs
 docker logs -f algo-trading-system
@@ -175,10 +175,10 @@ docker logs algo-trading-system
 ### Port already in use
 ```bash
 # Windows
-netstat -ano | findstr :8501
+netstat -ano | findstr :9000
 
 # Linux/Mac
-lsof -i :8501
+lsof -i :9000
 ```
 
 ### Out of memory

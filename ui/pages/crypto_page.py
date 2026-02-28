@@ -20,7 +20,6 @@ from trading_strategies import list_strategies
 from ui.components import (
     render_page_header,
     render_footer,
-    render_navigation_buttons,
     render_no_data_warning,
     spinner_html,
 )
@@ -80,12 +79,6 @@ def render_crypto_page():
                 st.session_state.get('username', 'unknown'))
     render_page_header("₿ Crypto Strategies")
 
-    # Navigation buttons
-    render_navigation_buttons(
-        current_page="crypto",
-        back_key_suffix="from_crypto",
-    )
-
     st.markdown("---")
 
     # Get only crypto-category strategies
@@ -105,7 +98,7 @@ def render_crypto_page():
 
     # Layout: config column and results column
     outer_col1, config_col, results_col, outer_col2 = st.columns(
-        [0.3, 1.5, 3, 0.3]
+        [0.1, 5.5, 2.8, 0.1]
     )
 
     with config_col:
@@ -126,11 +119,13 @@ def _render_configuration_panel(
     """Render strategy selection, parameters, and data settings."""
     st.subheader("⚙️ Configuration")
 
-    selected_name = st.selectbox(
-        "Select Crypto Strategy",
-        options=sorted(strategy_options.keys()),
-        help="Choose a cryptocurrency backtesting strategy",
-    )
+    sel_col, _ = st.columns([2, 1])
+    with sel_col:
+        selected_name = st.selectbox(
+            "Select Crypto Strategy",
+            options=sorted(strategy_options.keys()),
+            help="Choose a cryptocurrency backtesting strategy",
+        )
 
     if not selected_name:
         return
@@ -150,30 +145,28 @@ def _render_configuration_panel(
     strategy_cls = _get_strategy(strategy_info["id"])
     params = strategy_cls.get_parameters()
 
-    st.markdown("---")
-    st.subheader("📊 Parameters")
-    param_values = _render_parameter_inputs(params)
+    params_col, data_col = st.columns([1, 1], gap="large")
+    with params_col:
+        st.subheader("📊 Parameters")
+        param_values = _render_parameter_inputs(params)
 
-    st.markdown("---")
-    st.subheader("🗂️ Data Settings")
-    _render_data_settings(param_values)
-
-    st.markdown("---")
+    with data_col:
+        st.subheader("🗂️ Data")
+        _render_data_settings(param_values)
 
     if not param_values.get("tickers"):
         st.warning("⚠️ Enter at least 2 crypto ticker symbols (e.g. ETH, BTC, LTC).")
 
+    run_btn = st.button(
+        "Run Backtest",
+        type="primary",
+        disabled=len(param_values.get("tickers", [])) < 2,
+        help="Run the crypto strategy with the parameters above",
+        key="crypto_run_backtest",
+    )
+
     if selected_name in cache:
         st.caption(f"📦 Cached result loaded for **{selected_name}**")
-
-    btn_col, _ = st.columns([1, 2])
-    with btn_col:
-        run_btn = st.button(
-            "Run Backtest",
-            type="primary",
-            disabled=len(param_values.get("tickers", [])) < 2,
-            help="Run the crypto strategy with the parameters above",
-        )
 
     if run_btn:
         logger.info("[user=%s] Clicked 'Run Backtest' for crypto strategy: %s",
@@ -333,10 +326,7 @@ def _render_results_panel():
     if not cache:
         result = st.session_state.get("crypto_result")
         if result is None:
-            st.info(
-                "👈 Select a crypto strategy, enter tickers (e.g. ETH, BTC, LTC), "
-                "and click **Run Backtest** to see results."
-            )
+            st.info("👈 Run a backtest to see results.")
             return
         _render_single_result(result)
         return

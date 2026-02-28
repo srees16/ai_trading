@@ -92,6 +92,7 @@ def main():
     APP_OPTIONS = {
         "trading_platform": "📈 US Stocks",
         "live_stocks":      "📈 Ind Stocks",
+        "crypto":           "₿ Crypto",
         "rag_engine":       "📚 RAG Engine",
     }
 
@@ -135,6 +136,12 @@ def main():
         from rag_pipeline.rag_page import render_rag_page
         render_rag_page()
 
+    elif selected_app == "crypto":
+        logger.info("[user=%s] Rendering module: Crypto",
+                    st.session_state.get('username', 'unknown'))
+        from ui.pages.crypto_page import render_crypto_page
+        render_crypto_page()
+
     else:
         # Default: Trading Platform with sub-page routing
         _route_trading_platform()
@@ -155,9 +162,6 @@ def _route_trading_platform():
     elif current_page == 'backtesting':
         from ui.pages.backtesting_page import render_backtesting_page
         render_backtesting_page()
-    elif current_page == 'crypto':
-        from ui.pages.crypto_page import render_crypto_page
-        render_crypto_page()
     elif current_page == 'history':
         from ui.pages.history_page import render_history_page
         render_history_page()

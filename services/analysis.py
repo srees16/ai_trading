@@ -74,7 +74,7 @@ async def run_analysis_async(
     status_placeholder.empty()
 
     if save_path:
-        st.caption(f"💾 Results saved to: {save_path}")
+        st.caption(f"Results saved to: {save_path}")
 
     # Show how many API calls were saved
     cached_news_count = len(cache.get_cached_tickers("news"))
@@ -82,7 +82,7 @@ async def run_analysis_async(
     dedup_hashes = scraper_stats.get('content_hashes', 0)
     if cached_news_count > 0 or scraper_cached > 0:
         st.caption(
-            f"⚡ Cache: {stats['hits']} hits / {stats['misses']} misses "
+            f"Cache: {stats['hits']} hits / {stats['misses']} misses "
             f"({stats['hit_rate']} hit rate) — "
             f"{cached_news_count} ticker(s) cached, "
             f"{dedup_hashes} dedup hashes tracked"
@@ -111,12 +111,15 @@ async def _execute_analysis(
     # ── Step 1: News scraping (with cache) ───────────────────────────
     status_placeholder.info("📰 Scraping news from multiple sources...")
     if progress_callback:
-        progress_callback(0, "Scraping news…")
+        progress_callback(2, "📰 Scraping news…")
     
     # Build dict of cached news
     cached_news: Dict[str, list] = cache.get_all("news")
     new_tickers = cache.get_new_tickers("news", tickers)
     
+    if progress_callback:
+        progress_callback(5, f"📰 Fetching news for {len(new_tickers)} new ticker(s)…")
+
     if cached_news:
         cached_list = [t for t in tickers if t in cached_news]
         if cached_list:
@@ -125,6 +128,9 @@ async def _execute_analysis(
                 f"fetching {len(new_tickers)} new…"
             )
     
+    if progress_callback:
+        progress_callback(8, "📰 Querying news sources…")
+
     all_news = await system.news_aggregator.fetch_news_for_tickers(
         tickers, cached_news=cached_news
     )
@@ -132,6 +138,9 @@ async def _execute_analysis(
         status_placeholder.warning("⚠️ No news found")
         return []
     
+    if progress_callback:
+        progress_callback(22, f"📰 Collected {len(all_news)} articles — caching…")
+
     # Cache newly fetched news by ticker
     news_ttl = timedelta(minutes=Config.NEWS_CACHE_TTL_MINUTES)
     metrics_ttl = timedelta(minutes=Config.METRICS_CACHE_TTL_MINUTES)
@@ -147,12 +156,14 @@ async def _execute_analysis(
                 ticker, record_count=len(items),
             )
     
+    if progress_callback:
+        progress_callback(28, f"✓ {len(all_news)} news items collected")
     status_placeholder.success(f"✓ Collected {len(all_news)} news items")
     
     # ── Step 2: Sentiment analysis (with cache) ──────────────────────
     status_placeholder.info("🧠 Analyzing sentiment...")
     if progress_callback:
-        progress_callback(33, "Analyzing sentiment…")
+        progress_callback(30, "🧠 Analyzing sentiment…")
     
     # Separate already-analysed items from new ones
     items_to_analyse = []
@@ -163,11 +174,17 @@ async def _execute_analysis(
         else:
             items_to_analyse.append(item)
     
+    if progress_callback:
+        progress_callback(35, f"🧠 {len(items_to_analyse)} items to analyse ({len(already_analysed)} cached)…")
+
     if items_to_analyse:
         newly_analysed = system.sentiment_analyzer.analyze_news_items(items_to_analyse)
     else:
         newly_analysed = []
     
+    if progress_callback:
+        progress_callback(48, "🧠 Caching sentiment results…")
+
     analyzed_news = already_analysed + newly_analysed
     
     # Update cache with sentiment-enriched items
@@ -179,6 +196,8 @@ async def _execute_analysis(
         # Also update the news cache so next time we already have sentiments
         cache.put("news", ticker, items, ttl=news_ttl)
     
+    if progress_callback:
+        progress_callback(52, f"✓ Sentiment done — {len(analyzed_news)} items")
     status_placeholder.success(
         f"✓ Analyzed {len(analyzed_news)} items "
         f"({len(already_analysed)} cached, {len(newly_analysed)} new)"
@@ -187,7 +206,7 @@ async def _execute_analysis(
     # ── Step 3: Metrics + signals ────────────────────────────────────
     status_placeholder.info("📊 Calculating metrics and generating signals...")
     if progress_callback:
-        progress_callback(66, "Calculating metrics…")
+        progress_callback(55, "📊 Calculating metrics…")
     
     # Pre-populate MetricsCalculator cache with any previously cached metrics
     cached_metrics = cache.get_all("metrics")
@@ -197,11 +216,17 @@ async def _execute_analysis(
     
     # Prefetch metrics for all unique tickers at once
     unique_tickers = list({item.ticker for item in analyzed_news})
+    if progress_callback:
+        progress_callback(58, f"📊 Fetching metrics for {len(unique_tickers)} ticker(s)…")
+
     system.metrics_calculator.prefetch_metrics(unique_tickers)
     
+    if progress_callback:
+        progress_callback(70, "📊 Caching metrics & recording freshness…")
+
     # Save back to session cache + record freshness
     sc = get_scraper_cache()
-    for t in unique_tickers:
+    for idx, t in enumerate(unique_tickers):
         m = system.metrics_calculator.get_stock_metrics(t)
         cache.put("metrics", t, m, ttl=metrics_ttl)
         # Record metrics freshness so we don't re-fetch after a restart
@@ -213,21 +238,37 @@ async def _execute_analysis(
             )
         except Exception:
             pass
+        if progress_callback and unique_tickers:
+            pct = 70 + int(10 * (idx + 1) / len(unique_tickers))
+            progress_callback(pct, f"📊 Metrics cached — {t}")
     
     # Generate signals
+    if progress_callback:
+        progress_callback(82, "⚡ Generating trading signals…")
+
     signals = []
+    total_news = len(analyzed_news)
     for i, news_item in enumerate(analyzed_news):
         metrics = system.metrics_calculator.get_stock_metrics(news_item.ticker)
         signal = system.decision_engine.generate_signal(news_item, metrics)
         signals.append(signal)
+        if progress_callback and total_news:
+            pct = 82 + int(10 * (i + 1) / total_news)
+            if (i + 1) % max(1, total_news // 5) == 0 or i + 1 == total_news:
+                progress_callback(pct, f"⚡ Signal {i + 1}/{total_news}…")
         
     # Cache signals
+    if progress_callback:
+        progress_callback(93, "💾 Caching signals…")
+
     signals_by_ticker: Dict[str, list] = defaultdict(list)
     for sig in signals:
         signals_by_ticker[sig.news_item.ticker].append(sig)
     for ticker, sigs in signals_by_ticker.items():
         cache.put("signals", ticker, sigs)
     
+    if progress_callback:
+        progress_callback(95, f"✓ {len(signals)} trading signals generated")
     status_placeholder.success(f"✓ Generated {len(signals)} trading signals")
     if progress_callback:
         progress_callback(100, "Analysis complete ✅")
