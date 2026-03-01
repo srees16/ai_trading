@@ -468,7 +468,10 @@ class ShootingStarStrategy(BaseStrategy):
         ax1.set_title(f'{ticker} - Shooting Star Pattern Recognition')
         ax1.set_xlabel('Date')
         ax1.set_ylabel('Price')
-        ax1.legend(loc='best')
+        # Only add legend when at least one labelled artist exists
+        handles, labels = ax1.get_legend_handles_labels()
+        if handles:
+            ax1.legend(loc='best')
         ax1.grid(True, alpha=0.3)
         
         # Set x-axis labels

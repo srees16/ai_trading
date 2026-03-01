@@ -28,7 +28,7 @@ if [ $? -eq 0 ]; then
     echo "Starting container..."
     docker run -d \
         --name algo-trading-system \
-        -p 8501:8501 \
+        -p 9000:9000 \
         -v "$PARENT_DIR/data:/app/data" \
         algo-trading-system:latest
     
@@ -36,7 +36,7 @@ if [ $? -eq 0 ]; then
         echo "✓ Container started successfully!"
         echo ""
         echo "=================================================="
-        echo "Application is running at: http://localhost:8501"
+        echo "Application is running at: http://localhost:9000"
         echo "=================================================="
         echo ""
         echo "Useful commands:"

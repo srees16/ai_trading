@@ -183,34 +183,8 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
             st.session_state["rag_ingest_cancel"] = False
 
             with col_status:
-                spinner_ph = st.empty()
-                cancel_ph = st.empty()
                 total = len(uploaded_files)
-
-                def _on_cancel():
-                    st.session_state["rag_ingest_cancel"] = True
-
-                _cancel_btn_counter = [0]
-
-                def _show_spinner(pct: int, label: str, show_cancel: bool = True) -> None:
-                    """Render the unified centurion spinner with percentage text."""
-                    _cancel_btn_counter[0] += 1
-                    from ui.components import spinner_html
-                    spinner_ph.markdown(
-                        spinner_html(f"{label} — {pct}%"),
-                        unsafe_allow_html=True,
-                    )
-                    if show_cancel:
-                        cancel_ph.button(
-                            "Cancel Ingestion",
-                            key=f"rag_cancel_ingest_{_cancel_btn_counter[0]}",
-                            on_click=_on_cancel,
-                            type="secondary",
-                        )
-                    else:
-                        cancel_ph.empty()
-
-                _show_spinner(0, "Ingesting documents…")
+                status_container = st.status("Ingesting documents…", expanded=True)
 
                 cancelled = False
                 for i, file in enumerate(uploaded_files):
@@ -219,12 +193,18 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
                         cancelled = True
                         break
 
-                    pct = int((i / total) * 100)
-                    _show_spinner(pct, f"Processing: {file.name}")
+                    def _stage_callback(stage: str, stage_pct: float) -> None:
+                        """Update status with per-stage info."""
+                        status_container.update(
+                            label=f"[{i+1}/{total}] {file.name}: {stage}"
+                        )
+
+                    _stage_callback("Reading file…", 0.0)
                     try:
                         stats = ingestion_svc.ingest_uploaded_bytes(
                             file_name=file.name,
                             file_bytes=file.read(),
+                            progress_callback=_stage_callback,
                         )
                         results.append(stats)
                     except Exception as e:
@@ -235,24 +215,16 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
 
                 if cancelled:
                     skipped_count = total - len(results)
-                    _show_spinner(
-                        int((len(results) / total) * 100),
-                        f"Cancelled — {len(results)}/{total} files processed, "
-                        f"{skipped_count} skipped",
-                        show_cancel=False,
+                    status_container.update(
+                        label=f"Cancelled — {len(results)}/{total} files processed",
+                        state="error",
                     )
-                    import time as _time; _time.sleep(1.2)
-                    spinner_ph.empty()
-                    cancel_ph.empty()
                     st.warning(
                         f"⚠️ Ingestion cancelled by user. "
                         f"**{len(results)}** of **{total}** files were processed."
                     )
                 else:
-                    _show_spinner(100, "Done!", show_cancel=False)
-                    import time as _time; _time.sleep(0.6)
-                    spinner_ph.empty()
-                    cancel_ph.empty()
+                    status_container.update(label="✓ Ingestion complete", state="complete")
 
                 # Reset cancel flag
                 st.session_state.pop("rag_ingest_cancel", None)
@@ -335,12 +307,18 @@ def _render_answer_content(text: str) -> None:
         idx += 1
 
 
-def render_rag_response(response) -> None:
+def render_rag_response(response, *, runtime_label: str | None = None) -> None:
     """Render a RAGResponse with LLM-generated answer, feedback buttons,
     and collapsible sources.
 
     Supports both plain text and fenced code blocks in the answer so that
     code snippets returned by the LLM are syntax-highlighted.
+
+    Parameters
+    ----------
+    runtime_label : str | None
+        Pre-formatted runtime string (e.g. "⏱️ Total runtime: …").
+        Displayed right below the HITL feedback buttons when provided.
     """
     from rag_pipeline.code_applier import extract_code_blocks
 
@@ -373,6 +351,10 @@ def render_rag_response(response) -> None:
                     sources=sources,
                 )
                 st.toast("📝 Feedback recorded — we'll improve!", icon="👎")
+
+    # ---- Runtime badge (right below feedback emojis) ----
+    if runtime_label:
+        st.caption(runtime_label)
 
     # ---- Re-submit query button ----
     if response.rag_enabled and response.answer:

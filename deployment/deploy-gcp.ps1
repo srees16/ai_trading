@@ -35,7 +35,7 @@ gcloud run deploy $SERVICE_NAME `
     --platform managed `
     --region $REGION `
     --allow-unauthenticated `
-    --port 8501 `
+    --port 9000 `
     --memory 4Gi `
     --cpu 2 `
     --timeout 3600 `

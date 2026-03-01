@@ -47,7 +47,7 @@ class MinIOConfig:
     """MinIO configuration from environment variables."""
 
     def __init__(self):
-        self.endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9000")
+        self.endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9004")
         self.access_key = os.getenv("MINIO_ACCESS_KEY", "")
         self.secret_key = os.getenv("MINIO_SECRET_KEY", "")
         self.secure = os.getenv("MINIO_SECURE", "false").lower() == "true"
@@ -123,6 +123,23 @@ class MinIOService:
             self._bucket_ensured = True
         except S3Error as e:
             logger.error(f"MinIO bucket error: {e}")
+
+    def ensure_bucket_ready(self) -> bool:
+        """Public helper: verify MinIO is reachable and the bucket exists.
+
+        If the bucket does not exist it is created automatically.
+
+        Returns:
+            True when the bucket is confirmed ready, False otherwise.
+        """
+        if not self.is_available:
+            logger.warning("MinIO is not reachable — cannot ensure bucket")
+            return False
+        # Reset the one-shot flag so _ensure_bucket re-checks every time
+        # this public method is called (covers bucket-deleted-externally).
+        self._bucket_ensured = False
+        self._ensure_bucket()
+        return self._bucket_ensured
 
     # ------------------------------------------------------------------
     # Save operations

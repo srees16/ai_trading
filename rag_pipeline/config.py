@@ -128,6 +128,15 @@ class RAGConfig:
     )
 
     # ------------------------------------------------------------------
+    # Fast mode (low-latency override)
+    # ------------------------------------------------------------------
+    fast_mode: bool = field(
+        default_factory=lambda: os.getenv(
+            "RAG_FAST_MODE", "false"
+        ).lower() == "true"
+    )
+
+    # ------------------------------------------------------------------
     # Hybrid search (BM25 + vector)
     # ------------------------------------------------------------------
     hybrid_search_enabled: bool = field(
@@ -182,6 +191,48 @@ class RAGConfig:
     rerank_score_threshold: float = field(
         default_factory=lambda: float(
             os.getenv("CENTURION_RAG_RERANK_SCORE_THRESHOLD", "0.25")
+        )
+    )
+
+    # ------------------------------------------------------------------
+    # Disable reranking (debug flag — Step 3)
+    # ------------------------------------------------------------------
+    disable_reranking: bool = field(
+        default_factory=lambda: os.getenv(
+            "CENTURION_RAG_DISABLE_RERANKING", "false"
+        ).lower() == "true"
+    )
+
+    # ------------------------------------------------------------------
+    # Debug retrieval (Step 7)
+    # ------------------------------------------------------------------
+    debug_retrieval: bool = field(
+        default_factory=lambda: os.getenv(
+            "CENTURION_RAG_DEBUG_RETRIEVAL", "false"
+        ).lower() == "true"
+    )
+
+    # ------------------------------------------------------------------
+    # Retrieval robustness (Steps 2 & 6)
+    # ------------------------------------------------------------------
+    minimum_return_top_k: int = field(
+        default_factory=lambda: int(
+            os.getenv("CENTURION_RAG_MIN_RETURN_TOP_K", "15")
+        )
+    )
+    fallback_top_k: int = field(
+        default_factory=lambda: int(
+            os.getenv("CENTURION_RAG_FALLBACK_TOP_K", "30")
+        )
+    )
+    fallback_min_chunks: int = field(
+        default_factory=lambda: int(
+            os.getenv("CENTURION_RAG_FALLBACK_MIN_CHUNKS", "3")
+        )
+    )
+    low_score_distance: float = field(
+        default_factory=lambda: float(
+            os.getenv("CENTURION_RAG_LOW_SCORE_DISTANCE", "0.80")
         )
     )
 
@@ -339,6 +390,25 @@ class RAGConfig:
     )
 
     # ------------------------------------------------------------------
+    # Time budget (per-query wall-clock limits)
+    # ------------------------------------------------------------------
+    query_budget_s: int = field(
+        default_factory=lambda: int(
+            os.getenv("CENTURION_RAG_QUERY_BUDGET", "120")
+        )
+    )
+    retrieval_slow_s: int = field(
+        default_factory=lambda: int(
+            os.getenv("CENTURION_RAG_RETRIEVAL_SLOW", "20")
+        )
+    )
+    llm_budget_s: int = field(
+        default_factory=lambda: int(
+            os.getenv("CENTURION_RAG_LLM_BUDGET", "90")
+        )
+    )
+
+    # ------------------------------------------------------------------
     # LLM (Ollama local inference)
     # ------------------------------------------------------------------
     llm_provider: str = field(
@@ -348,7 +418,10 @@ class RAGConfig:
     )
     llm_model: str = field(
         default_factory=lambda: os.getenv(
-            "CENTURION_RAG_LLM_MODEL", "mistral"
+            # RAG_MODEL is the short-form convenience env var;
+            # CENTURION_RAG_LLM_MODEL is the fully-qualified name.
+            "RAG_MODEL",
+            os.getenv("CENTURION_RAG_LLM_MODEL", "mistral"),
         )
     )
     llm_base_url: str = field(
@@ -358,18 +431,53 @@ class RAGConfig:
     )
     llm_temperature: float = field(
         default_factory=lambda: float(
-            os.getenv("CENTURION_RAG_LLM_TEMPERATURE", "0.1")
+            os.getenv("CENTURION_RAG_LLM_TEMPERATURE", "0.2")
+        )
+    )
+    llm_top_p: float = field(
+        default_factory=lambda: float(
+            os.getenv("CENTURION_RAG_LLM_TOP_P", "0.9")
+        )
+    )
+    llm_num_ctx: int = field(
+        default_factory=lambda: int(
+            os.getenv("CENTURION_RAG_LLM_NUM_CTX", "4096")
+        )
+    )
+    llm_num_predict: int = field(
+        default_factory=lambda: int(
+            os.getenv("CENTURION_RAG_LLM_NUM_PREDICT", "400")
+        )
+    )
+    llm_repeat_penalty: float = field(
+        default_factory=lambda: float(
+            os.getenv("CENTURION_RAG_LLM_REPEAT_PENALTY", "1.1")
         )
     )
     llm_max_tokens: int = field(
         default_factory=lambda: int(
-            os.getenv("CENTURION_RAG_LLM_MAX_TOKENS", "1024")
+            os.getenv("CENTURION_RAG_LLM_MAX_TOKENS", "400")
         )
     )
     llm_timeout: int = field(
         default_factory=lambda: int(
             os.getenv("CENTURION_RAG_LLM_TIMEOUT", "1200")
         )
+    )
+    llm_chunk_timeout: int = field(
+        default_factory=lambda: int(
+            os.getenv("CENTURION_RAG_LLM_CHUNK_TIMEOUT", "30")
+        )
+    )
+    llm_first_token_timeout: int = field(
+        default_factory=lambda: int(
+            os.getenv("CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT", "120")
+        )
+    )
+    llm_compact_prompt: bool = field(
+        default_factory=lambda: os.getenv(
+            "CENTURION_RAG_COMPACT_PROMPT", "true"
+        ).lower() == "true"
     )
 
     # ------------------------------------------------------------------

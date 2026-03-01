@@ -1,0 +1,11 @@
+[server]
+enableWebsocketCompression = false
+maxMessageSize = 400
+port = 9000
+headless = false
+[browser]
+gatherUsageStats = false
+[theme]
+primaryColor = "#00cc44"
+[runner]
+fastReruns = true

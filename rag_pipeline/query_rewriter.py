@@ -23,6 +23,83 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Step 4 — Deterministic structural query expansion
+# ---------------------------------------------------------------------------
+# Rules are {pattern: [phrases to append]}.  The original query text is
+# always preserved.  This runs BEFORE LLM-based rewriting and is zero-
+# latency.
+
+_STRUCTURAL_EXPANSIONS: List[tuple] = [
+    # Chapter references
+    (re.compile(r"\bfirst\s+chapter\b", re.I),
+     ["Chapter 1", "opening chapter", "introduction section"]),
+    (re.compile(r"\bsecond\s+chapter\b", re.I),
+     ["Chapter 2"]),
+    (re.compile(r"\bthird\s+chapter\b", re.I),
+     ["Chapter 3"]),
+    (re.compile(r"\bfourth\s+chapter\b", re.I),
+     ["Chapter 4"]),
+    (re.compile(r"\bfifth\s+chapter\b", re.I),
+     ["Chapter 5"]),
+    (re.compile(r"\bchapter\s+(\d+)\b", re.I),
+     []),  # no expansion needed for explicit chapter refs
+
+    # Thematic / abstract concepts
+    (re.compile(r"\bcentral\s+theme\b", re.I),
+     ["main idea", "primary argument", "core thesis",
+      "key concept", "main topic"]),
+    (re.compile(r"\bmain\s+(?:idea|point|argument)\b", re.I),
+     ["central theme", "core thesis", "primary concept"]),
+
+    # Structure references
+    (re.compile(r"\bintroduction\b", re.I),
+     ["preface", "opening section", "Chapter 1"]),
+    (re.compile(r"\bconclusion\b", re.I),
+     ["final chapter", "summary", "closing remarks"]),
+    (re.compile(r"\bsummary\b", re.I),
+     ["overview", "key takeaways", "recap"]),
+]
+
+
+def expand_query(query: str) -> str:
+    """Deterministic structural query expansion (Step 4).
+
+    Appends synonyms and structural references for book-style queries
+    so that vector search has broader recall.  Returns the expanded
+    query with the original text preserved at the front.
+
+    Rules:
+        * "first chapter"  → appends "Chapter 1", "opening chapter",
+          "introduction section"
+        * "central theme"  → appends "main idea", "primary argument",
+          "core thesis"
+        * etc.
+
+    If no rule matches, returns the original query unchanged.
+    """
+    expansions: List[str] = []
+    for pattern, phrases in _STRUCTURAL_EXPANSIONS:
+        if pattern.search(query):
+            expansions.extend(phrases)
+
+    if not expansions:
+        return query
+
+    # Deduplicate while preserving order
+    seen: set = set()
+    unique: List[str] = []
+    for phrase in expansions:
+        key = phrase.lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(phrase)
+
+    expanded = query + " " + " ".join(unique)
+    logger.info("expand_query: '%s' → '%s'", query, expanded)
+    return expanded
+
+
+# ---------------------------------------------------------------------------
 # Prompt templates
 # ---------------------------------------------------------------------------
 

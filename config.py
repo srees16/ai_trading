@@ -101,9 +101,9 @@ class Config:
     
     # Database connection settings (override via environment variables)
     DB_HOST = os.getenv("CENTURION_DB_HOST", "localhost")
-    DB_PORT = int(os.getenv("CENTURION_DB_PORT", "5432"))
+    DB_PORT = int(os.getenv("CENTURION_DB_PORT", "9003"))
     DB_NAME = os.getenv("CENTURION_DB_NAME", "centurion_trading")
-    DB_USER = os.getenv("CENTURION_DB_USER", "centurion")
+    DB_USER = os.getenv("CENTURION_DB_USER", "")
     DB_PASSWORD = os.getenv("CENTURION_DB_PASSWORD", "")
     
     # Connection string (can be overridden directly)

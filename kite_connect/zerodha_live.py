@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import sys
+import time
 from datetime import datetime, timedelta
 
 import streamlit as st
@@ -59,32 +60,56 @@ fetch_option_chain = None   # type: ignore[assignment]
 INDEX_META = None           # type: ignore[assignment]
 
 
-def _ensure_imports():
-    """Import heavy kite / DB / trading modules once, on first use."""
+# ── Webhook service (lazy singleton) ────────────────────────
+_webhook_service = None  # type: ignore[assignment]
+
+def _get_webhook_service():
+    """Return the webhook service singleton (lazy init)."""
+    global _webhook_service
+    if _webhook_service is None:
+        from kite_connect.webhooks.service import WebhookService
+        _webhook_service = WebhookService.get_instance()
+    return _webhook_service
+
+
+_heavy_imports_done = False  # Track whether the heavy (post-auth) imports have run
+_heavy_imports_thread = None  # Background thread for pre-loading heavy imports
+
+
+def _ensure_auth_imports():
+    """Phase 1: Import ONLY what's needed for Kite authentication.
+
+    This is the fast path — just kiteconnect + auth session.
+    Called immediately when the user clicks "Start Kite Session"
+    so the 2FA browser window appears quickly.
+    """
     global _kite_mod, _kite_exceptions
     if _kite_mod is not None:
         return
     import kiteconnect as _km
     _kite_mod = _km
     _kite_exceptions = _km.exceptions
-    # Pull remaining heavy modules into the global module namespace
-    # so existing code keeps working via module-level references.
-    import importlib
     glb = globals()
-    # pandas + requests are deferred because pandas alone takes ~70 s
-    # on Windows (Cython extension compilation).
+    glb['KiteConnect'] = _km.KiteConnect
+    glb['kite_exceptions'] = _km.exceptions
+    from kite_connect.auth.kite_session import create_kite_session as _cks
+    glb['create_kite_session'] = _cks
+
+
+def _do_heavy_imports():
+    """The actual heavy import work — called from thread or inline."""
+    global _heavy_imports_done
+    if _heavy_imports_done:
+        return
+    glb = globals()
     import pandas as _pd
     glb['pd'] = _pd
     import requests as _req
     glb['requests'] = _req
-    glb['KiteConnect'] = _km.KiteConnect
-    glb['kite_exceptions'] = _km.exceptions
     from core.config import REFRESH_INTERVAL as _ri
     glb['REFRESH_INTERVAL'] = _ri
     from core.db_service import get_connection as _gc
     glb['get_connection'] = _gc
-    from kite_connect.auth.kite_session import create_kite_session as _cks
-    glb['create_kite_session'] = _cks
     from trading.order_service import (
         place_order as _po, get_order_book as _gob,
         get_positions as _gp, get_holdings as _gh,
@@ -104,14 +129,92 @@ def _ensure_imports():
     glb['discover_expiries'] = _de
     glb['fetch_option_chain'] = _foc
     glb['INDEX_META'] = _im
+    _heavy_imports_done = True
+    logger.info("Heavy imports completed")
+
+
+def _ensure_heavy_imports():
+    """Phase 2: Ensure heavy imports are ready.
+
+    If the background pre-load thread is still running, wait for it.
+    Otherwise, run imports inline (fast if already done).
+    """
+    global _heavy_imports_thread
+    if _heavy_imports_done:
+        return
+    if _heavy_imports_thread is not None and _heavy_imports_thread.is_alive():
+        _heavy_imports_thread.join()  # wait for background thread to finish
+    else:
+        _do_heavy_imports()
+
+
+def _ensure_imports():
+    """Legacy entry point — runs both phases."""
+    _ensure_auth_imports()
+    _ensure_heavy_imports()
+
+
+# ── Kick off background pre-load immediately on module import ──
+# This starts loading pandas, requests, etc. in a daemon thread
+# while the landing page is being displayed, so by the time the
+# user clicks "Start Kite Session" they're already (or nearly) loaded.
+import threading as _threading
+_heavy_imports_thread = _threading.Thread(
+    target=_do_heavy_imports,
+    daemon=True,
+    name="heavy-imports-preload",
+)
+_heavy_imports_thread.start()
 
 
 # ── Kite Connect Session ───────────────────────────────────────
 @st.cache_resource(show_spinner=False)
 def get_kite_session():
     """Login to Kite Connect and return the kite instance."""
-    _ensure_imports()
+    _ensure_auth_imports()
     return create_kite_session()
+
+
+# ── Cached NSE market status ──────────────────────────────────
+# TTL of 2 minutes avoids a synchronous NSE API call on every render
+# while still updating reasonably often for market-open / close transitions.
+@st.cache_data(ttl=120, show_spinner=False)
+def _cached_nse_market_status():
+    """Get market status from webhook service or NSE API fallback (cached 2 min)."""
+    try:
+        svc = _get_webhook_service()
+        if svc._started:
+            return svc.get_market_status()
+    except Exception:
+        pass
+    # Fallback: direct NSE API call (only on first render before webhook boots)
+    try:
+        import requests as _req
+        headers = {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json",
+        }
+        sess = _req.Session()
+        sess.get("https://www.nseindia.com", headers=headers, timeout=4)
+        resp = sess.get(
+            "https://www.nseindia.com/api/marketStatus",
+            headers=headers, timeout=4,
+        )
+        resp.raise_for_status()
+        for mkt in resp.json().get("marketState", []):
+            if mkt.get("market") == "Capital Market":
+                status = (mkt.get("marketStatus") or "").lower()
+                if status in ("open", "live"):
+                    return "pill-open", "Live"
+                elif "pre" in status:
+                    return "pill-pre", "Pre-Open"
+                elif "close" in status:
+                    return "pill-closed", "Closed"
+                else:
+                    return "pill-pre", status.title()
+    except Exception:
+        pass
+    return "pill-closed", "Closed"
 
 
 # ── Database ───────────────────────────────────────────────────
@@ -142,38 +245,163 @@ def fetch_stock_names_by_index(conn, index_group_id):
 
 
 def update_stocks_in_db(conn, quotes_data):
-    """Update the stocks table with real-time quote data."""
+    """Upsert the stocks table with real-time quote data.
+
+    Uses INSERT … ON CONFLICT so that new symbols are created
+    automatically and existing ones are updated with fresh prices.
+    This fixes the old UPDATE-only approach that silently skipped
+    stocks not yet in the table.
+    """
     cur = conn.cursor()
     for symbol, data in quotes_data.items():
         cur.execute("""
-            UPDATE stocks
-            SET high = %s, low = %s, volume = %s, ltp = %s, change = %s, updated_at = NOW()
-            WHERE name = %s;
+            INSERT INTO stocks (name, high, low, volume, ltp, change, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (name) DO UPDATE
+            SET high = EXCLUDED.high,
+                low  = EXCLUDED.low,
+                volume = EXCLUDED.volume,
+                ltp  = EXCLUDED.ltp,
+                change = EXCLUDED.change,
+                updated_at = NOW();
         """, (
+            symbol,
             data.get("high"),
             data.get("low"),
             data.get("volume"),
             data.get("ltp"),
             data.get("change_pct"),
-            symbol,
         ))
     conn.commit()
     cur.close()
 
 
 def fetch_stocks_from_db(conn, index_group_id):
-    """Get stocks from DB for an index group (after real-time update)."""
+    """Get stocks from DB for an index group.
+
+    Uses LEFT JOIN so that stocks always appear in the tab even when
+    the market is closed and the stocks table has no price data yet.
+    Price columns will be NULL (shown as '—' in the UI).
+    """
     cur = conn.cursor()
     cur.execute("""
-        SELECT s.name, s.high, s.low, s.volume, s.ltp, s.change
-        FROM stocks s
-        INNER JOIN index_stocks ix ON ix.stock_name = s.name
+        SELECT ix.stock_name,
+               s.high,
+               s.low,
+               s.volume,
+               s.ltp,
+               s.change
+        FROM index_stocks ix
+        LEFT JOIN stocks s ON s.name = ix.stock_name
         WHERE ix.index_group_id = %s
-        ORDER BY s.name;
+        ORDER BY ix.stock_name;
     """, (index_group_id,))
     rows = cur.fetchall()
     cur.close()
     return rows
+
+
+def seed_stocks_from_kite(kite, conn):
+    """
+    Populate the stocks table and index_stocks mapping from Kite instruments.
+
+    This is the **bootstrap** step that fixes the empty-table problem:
+      • Fetches all NSE equity instruments via ``kite.instruments("NSE")``
+        (works even when the market is closed — no live data needed).
+      • Inserts every equity symbol into the ``stocks`` table (name only,
+        prices stay NULL until market opens).
+      • Seeds ``index_stocks`` with the actual NIFTY 50 / NIFTY BANK /
+        NIFTY IT / NIFTY ENERGY constituents from config.
+      • Uses ON CONFLICT so it is safe to call repeatedly (idempotent).
+
+    Called automatically on dashboard startup when index_stocks is empty.
+    """
+    from core.config import INDEX_CONSTITUENTS, INDEX_GROUPS
+
+    # Close any pending transaction so we can safely switch to autocommit.
+    conn.commit()
+    prev_autocommit = conn.autocommit
+    conn.autocommit = True
+
+    cur = conn.cursor()
+
+    # ── 1. Ensure UNIQUE constraint on stocks.name exists ──────
+    #    The original schema only has a SERIAL PK; UPSERT needs this.
+    cur.execute("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = 'stocks'::regclass
+                  AND contype = 'u'
+                  AND conname = 'stocks_name_key'
+            ) THEN
+                ALTER TABLE stocks ADD CONSTRAINT stocks_name_key UNIQUE (name);
+            END IF;
+        END $$;
+    """)
+
+    # ── 2. Fetch all NSE equity instruments from Kite ──────────
+    logger.info("Seeding stocks table from Kite instruments API…")
+    instruments = kite.instruments("NSE")
+
+    valid_names = set()
+    inserted = 0
+    for inst in instruments:
+        name = inst.get("tradingsymbol", "")
+        segment = inst.get("segment", "")
+        inst_type = inst.get("instrument_type", "")
+        # Only include equities, not indices / ETFs with odd names
+        if not name or segment == "INDICES":
+            continue
+        if inst_type not in ("EQ", "BE", "SM", "ST", ""):
+            continue
+        # Skip junk names (SDLs, government bonds, etc.)
+        if name.startswith("SDL") or name.startswith("2.5%"):
+            continue
+        valid_names.add(name)
+        cur.execute("""
+            INSERT INTO stocks (name) VALUES (%s)
+            ON CONFLICT (name) DO NOTHING;
+        """, (name,))
+        inserted += 1
+
+    logger.info("Stocks table seeded: %d instruments processed", inserted)
+
+    # ── 3. Ensure index groups exist ───────────────────────────
+    for idx_name in INDEX_GROUPS:
+        cur.execute(
+            "INSERT INTO index_groups (index_name) VALUES (%s) ON CONFLICT (index_name) DO NOTHING;",
+            (idx_name,),
+        )
+
+    # ── 4. Seed index_stocks with actual constituents ──────────
+    cur.execute("SELECT id, index_name FROM index_groups ORDER BY id;")
+    group_rows = cur.fetchall()
+
+    total_mapped = 0
+    for group_id, group_name in group_rows:
+        constituents = INDEX_CONSTITUENTS.get(group_name, [])
+        for stock_name in constituents:
+            if stock_name in valid_names:
+                cur.execute("""
+                    INSERT INTO index_stocks (index_group_id, stock_name)
+                    VALUES (%s, %s)
+                    ON CONFLICT (index_group_id, stock_name) DO NOTHING;
+                """, (group_id, stock_name))
+                total_mapped += 1
+            else:
+                logger.debug("Skipping %s for %s (not in instruments)", stock_name, group_name)
+
+    logger.info(
+        "Index mapping seeded: %d stock-group entries across %d groups",
+        total_mapped, len(group_rows),
+    )
+    cur.close()
+
+    # Restore previous autocommit state so callers are not surprised.
+    conn.autocommit = prev_autocommit
+    return total_mapped
 
 
 # ── Real-time Data Fetch ───────────────────────────────────────
@@ -300,7 +528,7 @@ def _render_landing_page():
 
 def _render_dashboard():
     """Core dashboard — called after landing-page gate."""
-    _ensure_imports()  # lazy-load kiteconnect, twisted, DB, etc.
+    _ensure_auth_imports()  # fast: just kiteconnect + auth
 
     # ── Page-specific CSS (shared base styles come from apply_custom_styles) ──
     st.markdown("""
@@ -548,55 +776,43 @@ def _render_dashboard():
     </style>
     """, unsafe_allow_html=True)
 
-    # ── Market session status (from NSE API) ──
-    def _nse_market_status():
-        """Fetch Capital Market status from NSE. Returns (pill_class, label)."""
-        try:
-            headers = {
-                "User-Agent": "Mozilla/5.0",
-                "Accept": "application/json",
-            }
-            sess = requests.Session()
-            sess.get("https://www.nseindia.com", headers=headers, timeout=4)
-            resp = sess.get(
-                "https://www.nseindia.com/api/marketStatus",
-                headers=headers, timeout=4,
-            )
-            resp.raise_for_status()
-            for mkt in resp.json().get("marketState", []):
-                if mkt.get("market") == "Capital Market":
-                    status = (mkt.get("marketStatus") or "").lower()
-                    if status in ("open", "live"):
-                        return "pill-open", "Live"
-                    elif "pre" in status:
-                        return "pill-pre", "Pre-Open"
-                    elif "close" in status:
-                        return "pill-closed", "Closed"
-                    else:
-                        return "pill-pre", status.title()
-        except Exception:
-            pass
-        return "pill-closed", "Closed"
-
-    pill_class, pill_label = _nse_market_status()
-
-    # ── Connect to Kite & DB ──
+    # ── Step 1: Connect to Kite (fast — only needs kiteconnect) ──
+    _auth_slot = st.empty()
     try:
+        _auth_slot.markdown(
+            _spinner_html("Connecting to Kite… (complete 2FA in the browser window)"),
+            unsafe_allow_html=True,
+        )
         kite = get_kite_session()
+        _auth_slot.empty()
         st.session_state["kite"] = kite          # store for the dialog
         profile = kite.profile()
         kite_status = profile.get("user_id", "Connected")
         kite_connected = True
     except kite_exceptions.TokenException:
+        _auth_slot.empty()
         st.cache_resource.clear()
         st.warning("Session expired. Reconnecting...")
         st.rerun()
         return
     except Exception as e:
+        _auth_slot.empty()
         kite_status = "Disconnected"
         st.error(f"Kite Connect login failed: {e}")
         st.info("Run `py kite_token_store.py` first to generate a valid request token, then click Reconnect.")
         return
+
+    # ── Step 2: Load remaining heavy modules (pandas, DB, trading) ──
+    _load_slot = st.empty()
+    _load_slot.markdown(
+        _spinner_html("Loading dashboard modules…"),
+        unsafe_allow_html=True,
+    )
+    _ensure_heavy_imports()
+    _load_slot.empty()
+
+    # ── Step 3: Market session status (needs `requests`, loaded above) ──
+    pill_class, pill_label = _cached_nse_market_status()
 
     _logo_html = load_logo_base64_small()
 
@@ -617,6 +833,29 @@ def _render_dashboard():
         st.error(f"Database connection failed: {e}")
         return
 
+    # ── Auto-seed: populate stocks & index mappings if empty ───
+    # This runs ONCE after 2FA login. Uses kite.instruments("NSE")
+    # which works even when market is closed (no live data needed).
+    if kite_connected and not st.session_state.get("_stocks_seeded"):
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM index_stocks;")
+            ix_count = cur.fetchone()[0]
+            cur.close()
+
+            if ix_count == 0:
+                with st.spinner("First launch — seeding stock database from Kite instruments…"):
+                    seed_stocks_from_kite(kite, conn)
+                    # Refresh groups since seed inserts groups too
+                    groups = fetch_index_groups(conn)
+                st.session_state["_stocks_seeded"] = True
+                st.rerun()  # rerun so the fresh data is picked up
+            else:
+                st.session_state["_stocks_seeded"] = True
+        except Exception as e:
+            logger.error("Auto-seed failed: %s", e)
+            st.warning(f"Could not auto-seed stock database: {e}")
+
     if not groups:
         st.warning("No index groups found. Run setup_livestocks_db.py first.")
         return
@@ -625,15 +864,43 @@ def _render_dashboard():
     ctrl_container = st.container()
     with ctrl_container:
         st.markdown('<div class="ctrl-row">', unsafe_allow_html=True)
-        c1, c_spacer, c2 = st.columns([1.5, 6, 1])
+        c1, c_ws_status, c_spacer, c2 = st.columns([1.5, 2, 4, 1])
 
         with c1:
             refresh_secs = st.select_slider(
-                "Refresh interval ⏱",
-                options=[5, 10, 15, 20, 30, 45, 60],
-                value=REFRESH_INTERVAL,
+                "UI refresh ⏱",
+                options=[2, 5, 10, 15, 20, 30, 45, 60],
+                value=5,
                 key="refresh_secs",
+                help="How often the UI re-reads from the WebSocket cache (no API calls)",
             )
+
+        with c_ws_status:
+            _svc = _get_webhook_service()
+            _mkt_open = _svc.market_is_open if _svc._started else False
+            if _svc.is_streaming:
+                _cached = _svc.quotes_count
+                if _mkt_open:
+                    st.markdown(
+                        f'<span class="status-badge badge-success">'
+                        f'🔴 WebSocket Live · {_cached} instruments'
+                        f'</span>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        f'<span class="status-badge badge-info">'
+                        f'🌙 WebSocket Connected · {_cached} instruments · Market Closed'
+                        f'</span>',
+                        unsafe_allow_html=True,
+                    )
+            else:
+                st.markdown(
+                    '<span class="status-badge badge-warn">'
+                    '📡 Polling mode (WebSocket starting…)'
+                    '</span>',
+                    unsafe_allow_html=True,
+                )
 
         with c_spacer:
             quotes_badge_slot = st.empty()
@@ -641,6 +908,12 @@ def _render_dashboard():
         with c2:
             if st.button("🔄 Reconnect", use_container_width=True):
                 logger.info("[user=%s] Ind Stocks: Reconnect clicked", st.session_state.get('username', 'unknown'))
+                # Stop webhook service so it restarts with fresh session
+                try:
+                    _get_webhook_service().stop()
+                except Exception:
+                    pass
+                st.session_state["_holdings_stale"] = True
                 st.cache_resource.clear()
                 st.rerun()
 
@@ -655,6 +928,33 @@ def _render_dashboard():
         all_stock_names.update(names)
     sorted_stock_list = sorted(all_stock_names)
     conn.close()
+
+    # ── Start webhook-based real-time streaming (replaces polling) ──
+    # This runs ONCE after 2FA auth. The WebSocket pushes ticks instead
+    # of us calling kite.quote() every N seconds.
+    svc = _get_webhook_service()
+    if not svc._started and kite_connected:
+        try:
+            def _on_session_expired(event):
+                """Callback when session expires — triggers re-auth."""
+                logger.warning("Webhook: session expired, will need re-auth")
+                st.session_state["kite_session_started"] = False
+                st.cache_resource.clear()
+
+            svc.start(
+                kite=kite,
+                stock_symbols=list(all_stock_names),
+                tick_mode="quote",          # OHLC data (no market depth)
+                enable_nse_monitor=True,    # background NSE status tracking
+                on_session_expired=_on_session_expired,
+            )
+            logger.info("Webhook streaming started for %d symbols", len(all_stock_names))
+        except Exception as e:
+            logger.error("Failed to start webhook service: %s", e)
+            st.warning(f"Real-time streaming unavailable: {e}. Falling back to polling.")
+    elif svc._started:
+        # Update subscriptions if stock list changed
+        svc._update_subscriptions(list(all_stock_names))
 
     # ── Right sidebar: Place Order panel (isolated fragment) ──
     @st.fragment
@@ -742,25 +1042,68 @@ def _render_dashboard():
 
         @st.fragment(run_every=_run_every)
         def _stock_quotes_panel():
-            """Fetch real-time quotes & render stock data tables. Auto-refreshes independently."""
+            """Read real-time quotes from webhook cache & render stock data tables.
+
+            Strategy:
+              • Market OPEN  + WS streaming → read from UITickCache (zero API calls)
+              • Market OPEN  + WS not yet connected → one-off REST kite.quote() bootstrap
+              • Market CLOSED → show last-session values from DB (zero API/WS calls)
+            """
             _conn = get_db_connection()
 
-            _quotes_spinner = st.empty()
-            _quotes_spinner.markdown(_spinner_html("Fetching real-time quotes from Kite Connect…"), unsafe_allow_html=True)
-            quotes = fetch_realtime_quotes(kite, list(all_stock_names))
-            _quotes_spinner.empty()
-    
-            if quotes:
-                update_stocks_in_db(_conn, quotes)
-                quotes_badge_slot.markdown(
-                    f'<span class="status-badge badge-info">📊 {len(quotes)} quotes</span>',
+            svc = _get_webhook_service()
+            _market_open = svc.market_is_open if svc._started else False
+
+            if svc._started and svc.is_streaming:
+                # ── WebSocket is connected ──
+                quotes = svc.get_quotes()
+                if quotes and _market_open:
+                    # Market OPEN and live ticks flowing
+                    update_stocks_in_db(_conn, quotes)
+                    _last_update = svc.last_update_time
+                    _age = time.time() - _last_update if _last_update else 0
+                    _age_str = f"{_age:.0f}s ago" if _age < 60 else f"{_age/60:.1f}m ago"
+                    quotes_badge_slot.markdown(
+                        f'<span class="status-badge badge-success">'
+                        f'🔴 Live · {len(quotes)} quotes · {_age_str}</span>',
+                        unsafe_allow_html=True,
+                    )
+                elif _market_open:
+                    # Market is open but we haven't received a tick yet
+                    quotes_badge_slot.markdown(
+                        '<span class="status-badge badge-warn">'
+                        '⏳ Waiting for first tick…</span>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    # Market is closed — WS connected but quotes are stale
+                    quotes_badge_slot.empty()
+            elif _market_open:
+                # Market is open but WS hasn't connected yet — one-off REST fallback
+                _quotes_spinner = st.empty()
+                _quotes_spinner.markdown(
+                    _spinner_html("Fetching quotes via REST API (WebSocket connecting…)"),
                     unsafe_allow_html=True,
                 )
+                quotes = fetch_realtime_quotes(kite, list(all_stock_names))
+                _quotes_spinner.empty()
+
+                if quotes:
+                    update_stocks_in_db(_conn, quotes)
+                    quotes_badge_slot.markdown(
+                        f'<span class="status-badge badge-info">'
+                        f'📊 {len(quotes)} quotes (REST bootstrap)</span>',
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    quotes_badge_slot.markdown(
+                        '<span class="status-badge badge-warn">'
+                        '⚠ Could not fetch quotes</span>',
+                        unsafe_allow_html=True,
+                    )
             else:
-                quotes_badge_slot.markdown(
-                    '<span class="status-badge badge-warn">⚠ Cached data</span>',
-                    unsafe_allow_html=True,
-                )
+                # Market is closed AND WS not connected — just show DB data
+                quotes_badge_slot.empty()
     
             # ── Display tabs ──
             tab_names = [name for _, name in groups]
@@ -771,15 +1114,31 @@ def _render_dashboard():
                     rows = fetch_stocks_from_db(_conn, group_id)
     
                     if not rows:
-                        st.info(f"No stocks found in {group_name}.")
+                        st.info(
+                            f"No stocks mapped to **{group_name}**. "
+                            f"This will auto-populate on next dashboard restart after Kite login."
+                        )
                         continue
     
                     df = pd.DataFrame(rows, columns=["Name", "High", "Low", "Volume", "LTP", "Change (%)"])
     
+                    # Detect if we have any price data at all
+                    _has_prices = df["LTP"].notna().any()
+    
+                    if not _has_prices:
+                        st.markdown(
+                            '<div style="background:#fefce8;border:1px solid #fde68a;border-radius:6px;'
+                            'padding:0.5rem 0.8rem;margin-bottom:0.5rem;font-size:0.82rem;color:#92400e">'
+                            '📴 <b>Market is closed</b> — showing stock names only. '
+                            'Prices will update automatically when the market session is active.'
+                            '</div>',
+                            unsafe_allow_html=True,
+                        )
+    
                     # Summary metrics
                     col1, col2, col3, col4 = st.columns(4)
                     col1.metric("Stocks", len(df))
-                    col2.metric("Avg LTP", f"₹{df['LTP'].mean():,.2f}" if df['LTP'].notna().any() else "—")
+                    col2.metric("Avg LTP", f"₹{df['LTP'].mean():,.2f}" if _has_prices else "—")
                     if df['Change (%)'].notna().any():
                         gainer_idx = df['Change (%)'].idxmax()
                         loser_idx  = df['Change (%)'].idxmin()
@@ -865,7 +1224,7 @@ def _render_dashboard():
 
             # ── Order Book / Positions / Holdings / RSI Strategy ──────
             st.markdown("")
-            ob_tab, pos_tab, hold_tab, rsi_tab = st.tabs(["📋 Order Book", "📊 Positions", "💼 Holdings", "🧠 RSI Strategy"])
+            hold_tab, pos_tab, ob_tab, rsi_tab = st.tabs(["💼 Holdings", "📊 Positions", "📋 Order Book", "🧠 RSI Strategy"])
 
             with ob_tab:
                 orders = get_order_book(kite)
@@ -913,6 +1272,21 @@ def _render_dashboard():
                 net = positions.get("net", [])
                 if net:
                     pos_df = pd.DataFrame(net)
+
+                    # ── Overlay real-time prices from WebSocket ──
+                    _pos_svc = _get_webhook_service()
+                    _pos_quotes = _pos_svc.get_quotes() if _pos_svc._started else {}
+                    if _pos_quotes and "tradingsymbol" in pos_df.columns:
+                        for idx, row in pos_df.iterrows():
+                            sym = row["tradingsymbol"]
+                            ws_tick = _pos_quotes.get(sym)
+                            if ws_tick and ws_tick.get("ltp"):
+                                pos_df.at[idx, "last_price"] = ws_tick["ltp"]
+                                avg = row.get("average_price", 0)
+                                qty = row.get("quantity", 0)
+                                if avg and qty:
+                                    pos_df.at[idx, "pnl"] = round((ws_tick["ltp"] - avg) * qty, 2)
+
                     display_cols = [c for c in [
                         "tradingsymbol", "exchange", "quantity", "average_price",
                         "last_price", "pnl", "product",
@@ -938,10 +1312,54 @@ def _render_dashboard():
                     st.info("No open positions.")
     
             with hold_tab:
-                holdings = get_holdings(kite)
-                if holdings:
-                    hold_df = pd.DataFrame(holdings)
-    
+                # ── Fetch holdings once per session (portfolio structure is stable intraday) ──
+                if "holdings_raw" not in st.session_state or st.session_state.get("_holdings_stale", True):
+                    _raw_holdings = get_holdings(kite)
+                    st.session_state["holdings_raw"] = _raw_holdings
+                    st.session_state["_holdings_stale"] = False
+                else:
+                    _raw_holdings = st.session_state["holdings_raw"]
+
+                if _raw_holdings:
+                    hold_df = pd.DataFrame(_raw_holdings)
+
+                    # ── Overlay real-time prices from WebSocket cache ──
+                    _ws_svc = _get_webhook_service()
+                    _ws_quotes = _ws_svc.get_quotes() if _ws_svc._started else {}
+                    _overlay_count = 0
+                    if _ws_quotes and "tradingsymbol" in hold_df.columns:
+                        for idx, row in hold_df.iterrows():
+                            sym = row["tradingsymbol"]
+                            ws_tick = _ws_quotes.get(sym)
+                            if ws_tick and ws_tick.get("ltp"):
+                                ws_ltp = ws_tick["ltp"]
+                                hold_df.at[idx, "last_price"] = ws_ltp
+                                # Recalculate P&L with real-time LTP
+                                avg = row.get("average_price", 0)
+                                qty = row.get("quantity", 0)
+                                if avg and qty:
+                                    hold_df.at[idx, "pnl"] = round((ws_ltp - avg) * qty, 2)
+                                # Recalculate day change %
+                                close = row.get("close_price", 0)
+                                if close:
+                                    hold_df.at[idx, "day_change_percentage"] = round(
+                                        ((ws_ltp - close) / close) * 100, 2
+                                    )
+                                _overlay_count += 1
+
+                    if _overlay_count > 0:
+                        st.markdown(
+                            f'<span class="status-badge badge-success">'
+                            f'🔴 Live · {_overlay_count}/{len(hold_df)} holdings updated via WebSocket</span>',
+                            unsafe_allow_html=True,
+                        )
+                    elif not _ws_svc.market_is_open if _ws_svc._started else True:
+                        st.markdown(
+                            '<span class="status-badge badge-info">'
+                            '🌙 Market Closed · showing last session values</span>',
+                            unsafe_allow_html=True,
+                        )
+
                     # ── Classify Kite vs Smallcase ─────────────────────────
                     # The holdings API does NOT include a "tag" field, so we
                     # cross-reference with the order book (which has tags)
@@ -1055,7 +1473,7 @@ def _render_dashboard():
                         )
                         all_syms = sorted(hold_df["Symbol"].tolist()) if "Symbol" in hold_df.columns else []
                         if not all_syms:
-                            all_syms = sorted(pd.DataFrame(holdings)["tradingsymbol"].tolist())
+                            all_syms = sorted(pd.DataFrame(_raw_holdings)["tradingsymbol"].tolist())
                         current_sc = _load_sc_cache()
                         selected = st.multiselect(
                             "Smallcase symbols",
