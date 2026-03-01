@@ -85,16 +85,14 @@ def load_credentials() -> Dict:
 
     if not CREDENTIALS_PATH.exists():
         # Create default credentials file
-        admin_pw = os.getenv("CENTURION_DEFAULT_ADMIN_PASSWORD", "")
-        analyst_pw = os.getenv("CENTURION_DEFAULT_ANALYST_PASSWORD", "")
-        if not admin_pw or not analyst_pw:
-            logger.error(
-                "Cannot create default credentials — set CENTURION_DEFAULT_ADMIN_PASSWORD "
-                "and CENTURION_DEFAULT_ANALYST_PASSWORD in .env"
-            )
-            raise RuntimeError(
-                "CENTURION_DEFAULT_ADMIN_PASSWORD and CENTURION_DEFAULT_ANALYST_PASSWORD "
-                "must be set in .env to bootstrap credentials"
+        _DEFAULT_ADMIN_PW = "admin123"
+        _DEFAULT_ANALYST_PW = "analyst123"
+        admin_pw = os.getenv("CENTURION_DEFAULT_ADMIN_PASSWORD", _DEFAULT_ADMIN_PW)
+        analyst_pw = os.getenv("CENTURION_DEFAULT_ANALYST_PASSWORD", _DEFAULT_ANALYST_PW)
+        if admin_pw == _DEFAULT_ADMIN_PW or analyst_pw == _DEFAULT_ANALYST_PW:
+            logger.warning(
+                "Using default bootstrap passwords — set CENTURION_DEFAULT_ADMIN_PASSWORD "
+                "and CENTURION_DEFAULT_ANALYST_PASSWORD in .env for production use."
             )
         default_creds = {
             'users': {
