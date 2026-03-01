@@ -106,7 +106,6 @@ def _warmup_ollama() -> bool:
 
 
 # Trigger warm-up at import time (first Streamlit process spin-up).
-_warmup_ollama()
 
 st.set_page_config(
     page_title="Centurion Capital LLC",
@@ -128,6 +127,9 @@ def main():
     # lightweight CSS via Authenticator._get_login_css().
     if not check_authentication():
         return
+    
+    # ── Ollama model warm-up (runs once, after login succeeds) ──
+    _warmup_ollama()
 
     # Apply full app styles (background image, typography, layout)
     apply_custom_styles()
