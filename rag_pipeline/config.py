@@ -103,17 +103,17 @@ class RAGConfig:
     # ------------------------------------------------------------------
     top_k: int = field(
         default_factory=lambda: int(
-            os.getenv("CENTURION_RAG_TOP_K", "25")
+            os.getenv("CENTURION_RAG_TOP_K", "15")
         )
     )
     similarity_threshold: float = field(
         default_factory=lambda: float(
-            os.getenv("CENTURION_RAG_SIMILARITY_THRESHOLD", "0.45")
+            os.getenv("CENTURION_RAG_SIMILARITY_THRESHOLD", "0.70")
         )
     )
     query_rewrite_enabled: bool = field(
         default_factory=lambda: os.getenv(
-            "CENTURION_RAG_QUERY_REWRITE", "true"
+            "CENTURION_RAG_QUERY_REWRITE", "false"
         ).lower() == "true"
     )
     query_rewrite_n: int = field(
@@ -160,7 +160,7 @@ class RAGConfig:
     # ------------------------------------------------------------------
     max_context_chunks: int = field(
         default_factory=lambda: int(
-            os.getenv("CENTURION_RAG_MAX_CONTEXT_CHUNKS", "5")
+            os.getenv("CENTURION_RAG_MAX_CONTEXT_CHUNKS", "8")
         )
     )
     dedup_similarity_threshold: float = field(
@@ -367,7 +367,7 @@ class RAGConfig:
     # ------------------------------------------------------------------
     context_token_budget: int = field(
         default_factory=lambda: int(
-            os.getenv("CENTURION_RAG_CONTEXT_TOKEN_BUDGET", "4000")
+            os.getenv("CENTURION_RAG_CONTEXT_TOKEN_BUDGET", "1200")
         )
     )
 
@@ -376,7 +376,7 @@ class RAGConfig:
     # ------------------------------------------------------------------
     streaming_enabled: bool = field(
         default_factory=lambda: os.getenv(
-            "CENTURION_RAG_STREAMING", "false"
+            "CENTURION_RAG_STREAMING", "true"
         ).lower() == "true"
     )
 
