@@ -35,6 +35,7 @@ tiktoken
 webdriver-manager
 arch
 fastapi
+pydantic
 uvicorn[standard]
 python-multipart
 itsdangerous

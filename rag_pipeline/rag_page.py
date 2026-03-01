@@ -125,6 +125,9 @@ def render_rag_page() -> None:
         query_text = _resubmit_query
 
     if _is_resubmit or st.button("Submit Query", type="primary", key="rag_search_btn"):
+        import time as _time
+        _wall_t0 = _time.perf_counter()
+
         logger.info("[user=%s] RAG Engine: Submit Query clicked — rag_on=%s, resubmit=%s, query='%.80s'",
                     _user, rag_on, _is_resubmit, query_text or '')
         if not query_text:
@@ -155,9 +158,59 @@ def render_rag_page() -> None:
             if _is_resubmit:
                 source_kw["skip_cache"] = True
                 st.info("🔄 Re-submitting query for a fresh response…")
-            response = engine.query(query_text, **source_kw)
+
+            # ---- Stream the LLM answer token-by-token ----
+            # query_stream() handles retrieval + LLM streaming internally.
+            # Tokens arrive every 1–2 s; we render them incrementally so
+            # the user sees output immediately instead of waiting for
+            # the full 600 s hard timeout.
+            _ttft: float | None = None  # time-to-first-token
+            answer_placeholder = st.empty()
+            collected_tokens: list[str] = []
+            for token in engine.query_stream(query_text, **source_kw):
+                # Clear spinner on first token
+                if not collected_tokens:
+                    spinner_placeholder.empty()
+                    _ttft = _time.perf_counter() - _wall_t0
+                collected_tokens.append(token)
+                # Re-render the accumulated answer so far
+                answer_placeholder.markdown(
+                    "### 💡 Answer\n\n" + "".join(collected_tokens)
+                )
+
+            full_answer = "".join(collected_tokens)
+
+            # Once streaming is done, replace the incremental render
+            # with the full response widget (includes feedback buttons,
+            # sources, code-apply, etc.).
+            answer_placeholder.empty()
             spinner_placeholder.empty()
-            render_rag_response(response)
+
+            # Build a RAGResponse for render_rag_response().  The chunks
+            # were consumed inside query_stream() so we pass an empty
+            # list; the sources expander will be hidden.
+            from rag_pipeline.query_engine import RAGResponse
+            response = RAGResponse(
+                query=query_text,
+                answer=full_answer,
+                chunks=[],
+                rag_enabled=True,
+            )
+            # --- Wall-clock runtime: terminal log + UI badge ---
+            _wall_elapsed = _time.perf_counter() - _wall_t0
+            _ttft_str = f"{_ttft:.1f}s" if _ttft is not None else "n/a"
+            logger.info(
+                "[user=%s] RAG query complete — wall_time=%.2fs, ttft=%s, query='%.80s'",
+                _user, _wall_elapsed, _ttft_str, query_text or '',
+            )
+            if _wall_elapsed < 60:
+                _elapsed_label = f"{_wall_elapsed:.1f}s"
+            else:
+                _m, _s = divmod(_wall_elapsed, 60)
+                _elapsed_label = f"{int(_m)}m {_s:.0f}s"
+            _runtime_label = f"⏱️ Total runtime: **{_elapsed_label}** · First token: **{_ttft_str}**"
+
+            render_rag_response(response, runtime_label=_runtime_label)
         else:
             # RAG disabled — pass query directly to LLM without retrieval
             from rag_pipeline.query_engine import RAGResponse
@@ -167,7 +220,13 @@ def render_rag_page() -> None:
                 chunks=[],
                 rag_enabled=False,
             )
-            render_rag_response(response)
+            _wall_elapsed = _time.perf_counter() - _wall_t0
+            logger.info(
+                "[user=%s] RAG-off query complete — wall_time=%.2fs, query='%.80s'",
+                _user, _wall_elapsed, query_text or '',
+            )
+            _runtime_label = f"⏱️ Total runtime: **{_wall_elapsed:.1f}s**"
+            render_rag_response(response, runtime_label=_runtime_label)
 
     # ---- Upload & manage sections (only when RAG is on) -----------------
     if rag_on:

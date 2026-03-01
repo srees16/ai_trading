@@ -47,11 +47,6 @@ sys.modules.setdefault('auth', _auth_pkg)
 from services.session import initialize_session_state
 from ui.styles import apply_custom_styles
 
-# NOTE: The previous background preload of numpy/pandas was removed.
-# On Windows the GIL + Cython-extension compilation made the background
-# thread *slow down* the main thread rather than helping.  Streamlit
-# loads these packages on-demand when they are first needed.
-
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -59,6 +54,59 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
+
+
+# ── Ollama model warm-up (runs exactly once per process) ────────
+@st.cache_resource(show_spinner=False)
+def _warmup_ollama() -> bool:
+    """Pre-load the RAG LLM model into Ollama's memory.
+
+    Sends a minimal ``/api/generate`` request with ``num_predict=1``
+    so the model weights are loaded into RAM/VRAM *before* the first
+    real user query.  Returns True on success, False otherwise.
+    """
+    import requests as _req
+    import time as _time
+
+    model = os.getenv(
+        "RAG_MODEL",
+        os.getenv("CENTURION_RAG_LLM_MODEL", "mistral"),
+    )
+    base_url = os.getenv(
+        "CENTURION_RAG_LLM_URL", "http://localhost:11434"
+    ).rstrip("/")
+
+    logger.info("Ollama startup warm-up: loading model '%s' …", model)
+    try:
+        t0 = _time.monotonic()
+        resp = _req.post(
+            f"{base_url}/api/generate",
+            json={
+                "model": model,
+                "prompt": "warmup",
+                "num_predict": 1,
+                "stream": False,
+            },
+            timeout=(10, 120),
+        )
+        resp.raise_for_status()
+        elapsed = _time.monotonic() - t0
+        logger.info(
+            "Ollama startup warm-up complete: model=%s loaded in %.1fs",
+            model, elapsed,
+        )
+        return True
+    except _req.ConnectionError:
+        logger.warning(
+            "Ollama startup warm-up skipped: cannot connect to %s", base_url,
+        )
+    except Exception as exc:
+        logger.warning("Ollama startup warm-up failed: %s", exc)
+    return False
+
+
+# Trigger warm-up at import time (first Streamlit process spin-up).
+_warmup_ollama()
 
 st.set_page_config(
     page_title="Centurion Capital LLC",

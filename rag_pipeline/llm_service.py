@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 # System prompt for RAG grounding
 # ---------------------------------------------------------------------------
 
-RAG_SYSTEM_PROMPT = """\
+RAG_SYSTEM_PROMPT_FULL = """\
 You are a precise document question-answering assistant.
 
 Your task is to answer the user's question using ONLY the context chunks provided below. \
@@ -91,13 +91,49 @@ in the uploaded documents."
 from the source code in the context. Do NOT rename variables or restructure the code.
 15. When presenting code from the context, wrap it in a fenced code block with the appropriate \
 language tag (e.g., ```python) and indicate its source: (Source: filename, Page N).
+16. You MUST reuse the exact function implementation from the provided context if available. \
+Do NOT rewrite it unless explicitly asked. If a full implementation exists in context, return \
+it verbatim.
 
 CONFIDENCE SIGNAL:
-16. End every answer with a confidence indicator on a new line:
+17. End every answer with a confidence indicator on a new line:
     - **High confidence** — answer is fully supported by multiple context chunks
     - **Medium confidence** — answer is supported but from limited context
-    - **Low confidence** — answer is partially supported; some gaps exist\
+    - **Low confidence** — answer is partially supported; some gaps exist
+
+OUTPUT LENGTH (mandatory):
+18. Provide concise, implementation-focused answers. \
+Limit your response to 600 tokens maximum. \
+Avoid unnecessary explanations, preambles, or filler text. \
+Get straight to the point.\
 """
+
+# ---------------------------------------------------------------------------
+# Compact system prompt for local / CPU-bound models (Ollama).
+#
+# Reduces the system prompt from ~850 tokens to ~150 tokens.  This cuts
+# prompt-evaluation time by 5–10× on CPU — the difference between a
+# 30 s response and a 200+ s timeout.  All core grounding rules are
+# preserved in condensed form.
+# ---------------------------------------------------------------------------
+
+RAG_SYSTEM_PROMPT_COMPACT = """\
+You are a document QA assistant. Answer ONLY from the provided context chunks.
+
+Rules:
+- NEVER use outside knowledge or hallucinate facts.
+- If context is insufficient, say: "I could not find sufficient information in the uploaded documents."
+- Cite every claim: (Source: filename, Page N).
+- Reproduce code/formulas EXACTLY as they appear in the context — never rewrite or invent code.
+- If a full function implementation exists in context, return it VERBATIM. Do NOT rewrite.
+- Use markdown formatting (bullets, headers, bold). Be concise.
+- End with confidence: **High** / **Medium** / **Low**.
+- Limit response to 600 tokens.\
+"""
+
+# Default: use compact prompt for speed.  Cloud backends (Claude, OpenAI)
+# can use the full prompt via CENTURION_RAG_COMPACT_PROMPT=false.
+RAG_SYSTEM_PROMPT = RAG_SYSTEM_PROMPT_COMPACT
 
 NO_CONTEXT_SYSTEM_PROMPT = """\
 IMPORTANT: No relevant documents were found in the knowledge base for this query.
@@ -127,14 +163,32 @@ def _build_user_message(query: str, context: str) -> str:
     return query
 
 
-def _pick_system_prompt(context: str) -> str:
-    """Return RAG or no-context system prompt."""
-    return RAG_SYSTEM_PROMPT if context.strip() else NO_CONTEXT_SYSTEM_PROMPT
+def _pick_system_prompt(context: str, *, compact: bool = True) -> str:
+    """Return the appropriate system prompt.
+
+    Parameters
+    ----------
+    context : str
+        The retrieved context text.  If empty, the no-context prompt
+        is returned regardless of *compact*.
+    compact : bool, default True
+        When *True* (the default for Ollama / local inference), use
+        the 150-token compact prompt.  Set *False* to use the full
+        850-token prompt (recommended for cloud LLMs like Claude or
+        OpenAI where prompt-eval is near-instant).
+    """
+    if not context.strip():
+        return NO_CONTEXT_SYSTEM_PROMPT
+    return RAG_SYSTEM_PROMPT_COMPACT if compact else RAG_SYSTEM_PROMPT_FULL
 
 
 # ---------------------------------------------------------------------------
 # Ollama backend (local, free, runs Llama 3 / Mistral / etc.)
 # ---------------------------------------------------------------------------
+
+# Default flush interval for buffered streaming (seconds).
+_STREAM_FLUSH_INTERVAL = 1.5
+
 
 class OllamaLLMBackend:
     """
@@ -143,28 +197,118 @@ class OllamaLLMBackend:
     Ollama serves models at http://localhost:11434 by default.
     Uses a persistent ``requests.Session`` to avoid TCP/TLS handshake
     overhead on every call.
+
+    Streaming behaviour
+    ~~~~~~~~~~~~~~~~~~~
+    Both ``generate()`` and ``generate_stream()`` use Ollama's
+    streaming endpoint (``"stream": True``).  Instead of a single
+    global *timeout*, each **chunk** (token batch) has its own
+    read-timeout (*chunk_timeout*, default 30 s).  If no data
+    arrives within that window the request is cancelled — this
+    prevents the old 600 s hard-hang.
+
+    ``generate_stream()`` additionally **buffers** tokens and yields
+    them every ~1–2 s so the Streamlit UI refreshes smoothly without
+    per-token overhead.
     """
+
+    # Hard ceiling — num_predict can never exceed this regardless of
+    # what the config or env var says.  Prevents runaway generation.
+    _MAX_NUM_PREDICT_CEILING = 800
+
+    # Simple-query threshold: queries shorter than this use a reduced
+    # num_predict to save latency.
+    _SIMPLE_QUERY_WORD_LIMIT = 30
+    _SIMPLE_QUERY_NUM_PREDICT = 300
 
     def __init__(
         self,
         model: str = "llama3",
         base_url: str = "http://localhost:11434",
-        temperature: float = 0.3,
-        max_tokens: int = 1024,
+        temperature: float = 0.2,
+        top_p: float = 0.9,
+        num_ctx: int = 4096,
+        num_predict: int = 400,
+        repeat_penalty: float = 1.1,
+        max_tokens: int = 400,
         timeout: int = 600,
+        chunk_timeout: int = 30,
+        first_token_timeout: int = 120,
+        warmup: bool = True,
+        compact_prompt: bool = True,
     ) -> None:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.temperature = temperature
-        self.max_tokens = max_tokens
+        self.top_p = top_p
+        self.num_ctx = num_ctx
+        # Enforce ceiling on num_predict to prevent unbounded generation
+        self.num_predict = min(num_predict, self._MAX_NUM_PREDICT_CEILING)
+        self.repeat_penalty = repeat_penalty
+        self.max_tokens = min(max_tokens, self._MAX_NUM_PREDICT_CEILING)
         self.timeout = timeout
+        self.chunk_timeout = chunk_timeout
+        self.first_token_timeout = first_token_timeout
+        self.compact_prompt = compact_prompt
         # Persistent HTTP session — keeps TCP connection alive
         self._session = requests.Session()
         self._session.headers.update({"Content-Type": "application/json"})
+        logger.info(
+            "OllamaLLMBackend initialised: model=%s, temp=%.2f, "
+            "top_p=%.2f, num_ctx=%d, num_predict=%d, repeat_penalty=%.2f, "
+            "first_token_timeout=%ds, chunk_timeout=%ds",
+            self.model, self.temperature, self.top_p,
+            self.num_ctx, self.num_predict, self.repeat_penalty,
+            self.first_token_timeout, self.chunk_timeout,
+        )
+        # Optionally warm up the model so subsequent queries skip the
+        # multi-second model-load phase.
+        if warmup:
+            self._warmup()
+
+    # ------------------------------------------------------------------ #
+    # Model warm-up (pre-load into memory)
+    # ------------------------------------------------------------------ #
+
+    def _warmup(self) -> None:
+        """Send a minimal request to pre-load the model into memory.
+
+        Ollama keeps models in RAM/VRAM after the first request, so
+        a cheap warm-up eliminates the 5–10 s load delay on the first
+        real query.  Uses ``num_predict=1`` and a tiny context window
+        to minimise overhead.
+        """
+        try:
+            t0 = time.monotonic()
+            resp = self._session.post(
+                f"{self.base_url}/api/chat",
+                json={
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "stream": False,
+                    "options": {"num_predict": 1, "num_ctx": 128},
+                },
+                timeout=(10, self.first_token_timeout),
+            )
+            resp.raise_for_status()
+            elapsed = time.monotonic() - t0
+            logger.info(
+                "Ollama warm-up complete: model=%s loaded in %.1fs",
+                self.model, elapsed,
+            )
+        except requests.ConnectionError:
+            logger.warning(
+                "Ollama warm-up skipped: cannot connect to %s",
+                self.base_url,
+            )
+        except Exception as e:
+            logger.warning("Ollama warm-up failed: %s", e)
 
     def _build_prompt(self, query: str, context: str, system_prompt: Optional[str] = None) -> str:
         """Build a single prompt string for the Ollama generate API."""
-        system_msg = system_prompt if system_prompt is not None else _pick_system_prompt(context)
+        system_msg = system_prompt if system_prompt is not None else _pick_system_prompt(
+            context, compact=self.compact_prompt
+        )
         user_msg = _build_user_message(query, context)
         return f"{system_msg}\n\n{user_msg}"
 
@@ -176,7 +320,9 @@ class OllamaLLMBackend:
         (query rewriting, HyDE, classification) that need their own
         task-specific instructions.
         """
-        sys_content = system_prompt if system_prompt is not None else _pick_system_prompt(context)
+        sys_content = system_prompt if system_prompt is not None else _pick_system_prompt(
+            context, compact=self.compact_prompt
+        )
         user_content = query if system_prompt is not None else _build_user_message(query, context)
         return [
             {"role": "system", "content": sys_content},
@@ -185,74 +331,23 @@ class OllamaLLMBackend:
 
     def generate(self, query: str, context: str, *, system_prompt: Optional[str] = None) -> str:
         """
-        Generate a response using Ollama's chat API (non-streaming).
+        Generate a response using Ollama's chat API.
 
-        Uses structured messages so the model properly separates
-        system instructions from the user query.
+        Internally uses **streaming** with a per-chunk read timeout
+        (``chunk_timeout``) to avoid the old global hard-timeout.
+        Tokens are collected and returned as a single string.
+
         Falls back to a helpful error message if Ollama is unreachable.
-
-        When *system_prompt* is provided, it overrides the default
-        RAG/no-context system prompt.  This is used by internal pipeline
-        components (query rewriter, HyDE, classifier) that need their
-        own task-specific instructions without the RAG grounding rules.
         """
-        messages = self._build_messages(query, context, system_prompt=system_prompt)
-
         try:
-            response = self._session.post(
-                f"{self.base_url}/api/chat",
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "stream": False,
-                    "options": {
-                        "temperature": self.temperature,
-                        "num_predict": self.max_tokens,
-                        "num_ctx": 8192,
-                    },
-                },
-                timeout=self.timeout,
+            tokens = list(
+                self.generate_stream(query, context, system_prompt=system_prompt)
             )
-            response.raise_for_status()
-
-            data = response.json()
-            answer = data.get("message", {}).get("content", "")
-
-            if not answer:
-                logger.warning("Ollama returned empty response: %s", data)
-                return "The LLM returned an empty response. Please try again."
-
-            logger.info(
-                "LLM response generated (model=%s, tokens=%s)",
-                self.model,
-                data.get("eval_count", "?"),
-            )
+            answer = "".join(tokens)
+            if not answer or answer.startswith("\n⚠️"):
+                # generate_stream yields error strings starting with ⚠️
+                return answer or "The LLM returned an empty response. Please try again."
             return answer
-
-        except requests.ConnectionError:
-            logger.error("Cannot connect to Ollama at %s", self.base_url)
-            return (
-                "⚠️ **Cannot connect to Ollama.**\n\n"
-                "Please ensure Ollama is running:\n"
-                "1. Install from https://ollama.com/download\n"
-                "2. Run: `ollama pull llama3` (or `mistral`)\n"
-                "3. Ollama starts automatically, or run: `ollama serve`"
-            )
-        except requests.Timeout:
-            logger.error("Ollama request timed out after %ds", self.timeout)
-            return (
-                "⚠️ **Ollama request timed out** after "
-                f"{self.timeout}s.\n\nTry a shorter query or increase "
-                "`CENTURION_RAG_LLM_TIMEOUT` in your `.env` file."
-            )
-        except requests.HTTPError as e:
-            logger.error("Ollama HTTP error: %s", e)
-            if "model" in str(e).lower() or response.status_code == 404:
-                return (
-                    f"⚠️ **Model '{self.model}' not found.**\n\n"
-                    f"Pull it first: `ollama pull {self.model}`"
-                )
-            return f"⚠️ LLM error: {e}"
         except Exception as e:
             logger.error("Unexpected LLM error: %s", e, exc_info=True)
             return f"⚠️ Unexpected error: {e}"
@@ -260,15 +355,74 @@ class OllamaLLMBackend:
     def generate_stream(
         self, query: str, context: str, *, system_prompt: Optional[str] = None
     ) -> Generator[str, None, None]:
-        """
-        Stream tokens from Ollama's chat API.
+        """Stream tokens from Ollama's chat API with **two-tier timeout**.
 
-        Yields individual text chunks as they arrive.
-        When *system_prompt* is provided, it overrides the default prompt.
+        Tokens are buffered internally and flushed to the caller every
+        ~1–2 seconds (``_STREAM_FLUSH_INTERVAL``) so the Streamlit UI
+        refreshes smoothly without per-token rerender overhead.
+
+        Two-tier timeout behaviour
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~
+        - **Connection timeout**: 10 s (fast fail if Ollama is down).
+        - **Socket read timeout**: ``self.first_token_timeout`` (default
+          120 s).  This is the socket-level deadline applied by
+          ``requests`` to each ``recv()`` call.  It must be large enough
+          to cover model loading + prompt evaluation — Ollama sends
+          **zero bytes** during those phases.
+        - **Inter-chunk gap timeout**: ``self.chunk_timeout`` (default
+          30 s).  After the first token arrives, if no new token
+          appears within this window the stream is aborted.  This
+          detects mid-generation hangs without penalising slow
+          initial start-up.
         """
         messages = self._build_messages(query, context, system_prompt=system_prompt)
 
+        # ── Query-aware num_predict ──────────────────────────────────
+        # Short queries (< 30 words) get a smaller generation budget
+        # to shave latency.  The hard ceiling is always enforced.
+        effective_num_predict = self.num_predict
+        query_words = len(query.split())
+        if query_words < self._SIMPLE_QUERY_WORD_LIMIT:
+            effective_num_predict = min(
+                effective_num_predict, self._SIMPLE_QUERY_NUM_PREDICT,
+            )
+            logger.info(
+                "Ollama: simple query (%d words < %d) → "
+                "num_predict reduced to %d",
+                query_words, self._SIMPLE_QUERY_WORD_LIMIT,
+                effective_num_predict,
+            )
+        effective_num_predict = min(
+            effective_num_predict, self._MAX_NUM_PREDICT_CEILING,
+        )
+
+        # ── Prompt-size safety guard ────────────────────────────────
+        # Estimate total input tokens.  If the prompt is too large for
+        # the configured num_ctx, truncate the user message so that
+        # prompt_eval stays within the first_token_timeout.
+        # Rule of thumb: keep input < num_ctx - num_predict - 64 (headroom)
+        _max_input = max(self.num_ctx - effective_num_predict - 64, 256)
+        total_chars = sum(len(m.get("content", "")) for m in messages)
+        _approx_tokens = total_chars // 4   # ~4 chars per token
+        if _approx_tokens > _max_input:
+            # Trim the longest message (usually the user message)
+            trim_target = int(_max_input * 4)  # back to chars
+            for m in reversed(messages):
+                if len(m.get("content", "")) > 200:
+                    m["content"] = m["content"][:trim_target] + (
+                        "\n\n[Context truncated to fit model window]"
+                    )
+                    break
+            logger.warning(
+                "Prompt truncated: ~%d tokens exceeded num_ctx=%d "
+                "(max_input=%d). Trimmed to ~%d chars.",
+                _approx_tokens, self.num_ctx, _max_input, trim_target,
+            )
+
         try:
+            # Socket timeout = (connect, read).
+            # read = first_token_timeout so the socket survives the
+            # model-load + prompt-eval phase (can be 30–90 s on CPU).
             response = self._session.post(
                 f"{self.base_url}/api/chat",
                 json={
@@ -277,28 +431,159 @@ class OllamaLLMBackend:
                     "stream": True,
                     "options": {
                         "temperature": self.temperature,
-                        "num_predict": self.max_tokens,
-                        "num_ctx": 8192,
+                        "top_p": self.top_p,
+                        "num_predict": effective_num_predict,
+                        "num_ctx": self.num_ctx,
+                        "repeat_penalty": self.repeat_penalty,
                     },
                 },
-                timeout=self.timeout,
+                timeout=(10, self.first_token_timeout),
                 stream=True,
             )
             response.raise_for_status()
+
+            buffer: list[str] = []
+            last_flush = time.monotonic()
+            stream_start = time.monotonic()
+            last_token_time = time.monotonic()
+            token_count = 0
+            first_token_received = False
 
             for line in response.iter_lines(decode_unicode=True):
                 if not line:
                     continue
                 try:
                     data = json.loads(line)
-                    token = data.get("message", {}).get("content", "")
-                    if token:
-                        yield token
-                    if data.get("done", False):
-                        break
                 except json.JSONDecodeError:
                     continue
 
+                token = data.get("message", {}).get("content", "")
+                if token:
+                    now = time.monotonic()
+
+                    # ── TTFT (time to first token) logging ───────────
+                    if not first_token_received:
+                        first_token_received = True
+                        ttft = now - stream_start
+                        logger.info(
+                            "Ollama TTFT: %.2fs (model=%s)",
+                            ttft, self.model,
+                        )
+
+                    # ── Inter-chunk gap check ────────────────────────
+                    # After the first token, abort if the gap between
+                    # consecutive tokens exceeds chunk_timeout.
+                    if first_token_received and token_count > 0:
+                        gap = now - last_token_time
+                        if gap > self.chunk_timeout:
+                            logger.warning(
+                                "Inter-chunk gap %.1fs > %ds — aborting "
+                                "stream (model=%s, tokens so far=%d).",
+                                gap, self.chunk_timeout,
+                                self.model, token_count,
+                            )
+                            if buffer:
+                                yield "".join(buffer)
+                                buffer.clear()
+                            yield (
+                                f"\n\n⚠️ Model stopped responding for "
+                                f"{int(gap)}s mid-generation — stream "
+                                f"aborted after {token_count} tokens."
+                            )
+                            response.close()
+                            return
+
+                    last_token_time = now
+                    buffer.append(token)
+                    token_count += 1
+
+                # Time-based flush: yield accumulated tokens every
+                # ~_STREAM_FLUSH_INTERVAL seconds (1–2 s) or when the
+                # model signals completion.
+                now = time.monotonic()
+                is_done = data.get("done", False)
+                if buffer and (is_done or now - last_flush >= _STREAM_FLUSH_INTERVAL):
+                    yield "".join(buffer)
+                    buffer.clear()
+                    last_flush = now
+
+                if is_done:
+                    # ── Performance logging ──────────────────────────
+                    total_s = now - stream_start
+                    # Ollama may report eval_count in the final message
+                    eval_count = data.get("eval_count", token_count)
+                    tps = eval_count / total_s if total_s > 0 else 0.0
+                    load_s = data.get("load_duration", 0) / 1e9
+                    prompt_eval_s = data.get("prompt_eval_duration", 0) / 1e9
+                    # eval_duration is generation time only (nanoseconds)
+                    eval_dur_s = data.get("eval_duration", 0) / 1e9
+                    gen_tps = (
+                        eval_count / eval_dur_s
+                        if eval_dur_s > 0 else tps
+                    )
+                    logger.info(
+                        "Ollama perf: model=%s, tokens=%d, "
+                        "time=%.2fs, tokens/sec=%.1f (gen=%.1f), "
+                        "num_predict=%d, load=%.1fs, prompt_eval=%.1fs",
+                        self.model, eval_count, total_s, tps, gen_tps,
+                        effective_num_predict, load_s, prompt_eval_s,
+                    )
+                    break
+
+            # Flush any remaining tokens left in the buffer
+            if buffer:
+                yield "".join(buffer)
+
+            # Performance log for streams that ended without done=True
+            if not token_count:
+                logger.warning(
+                    "Ollama stream ended with 0 tokens (model=%s).",
+                    self.model,
+                )
+
+        except requests.ConnectionError:
+            logger.error("Cannot connect to Ollama at %s", self.base_url)
+            yield (
+                "\n⚠️ **Cannot connect to Ollama.**\n\n"
+                "Please ensure Ollama is running:\n"
+                "1. Install from https://ollama.com/download\n"
+                "2. Run: `ollama pull llama3` (or `mistral`)\n"
+                "3. Ollama starts automatically, or run: `ollama serve`"
+            )
+        except requests.ReadTimeout:
+            logger.error(
+                "Ollama: no data received in %ds (first_token_timeout) "
+                "— cancelling request (model=%s).",
+                self.first_token_timeout, self.model,
+            )
+            yield (
+                f"\n⚠️ **No response from Ollama for "
+                f"{self.first_token_timeout}s** "
+                "— request cancelled.\n\n"
+                "The model may be loading or the context is too large.\n"
+                "Try:\n"
+                "- Increase `CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT` "
+                "in `.env`\n"
+                f"- Use a smaller model (current: `{self.model}`)\n"
+                "- Reduce `CENTURION_RAG_LLM_NUM_CTX`"
+            )
+        except requests.Timeout:
+            logger.error("Ollama connection timed out.")
+            yield (
+                "\n⚠️ **Ollama connection timed out.**\n\n"
+                "Ensure Ollama is running and reachable."
+            )
+        except requests.HTTPError as e:
+            logger.error("Ollama HTTP error: %s", e)
+            if "model" in str(e).lower() or (
+                hasattr(response, "status_code") and response.status_code == 404
+            ):
+                yield (
+                    f"\n⚠️ **Model '{self.model}' not found.**\n\n"
+                    f"Pull it first: `ollama pull {self.model}`"
+                )
+            else:
+                yield f"\n⚠️ LLM error: {e}"
         except Exception as e:
             logger.error("Ollama streaming error: %s", e, exc_info=True)
             yield f"\n⚠️ Streaming error: {e}"
@@ -380,7 +665,7 @@ class ClaudeLLMBackend:
         Retries up to 3 times on transient connection errors (e.g.
         ``APIConnectionError``, TLS resets) with exponential backoff.
         """
-        system_prompt = _pick_system_prompt(context)
+        system_prompt = _pick_system_prompt(context, compact=False)
         user_message = _build_user_message(query, context)
 
         max_retries = 3
@@ -464,7 +749,7 @@ class ClaudeLLMBackend:
 
         Uses ``client.messages.stream()`` context manager.
         """
-        system_prompt = _pick_system_prompt(context)
+        system_prompt = _pick_system_prompt(context, compact=False)
         user_message = _build_user_message(query, context)
 
         try:
@@ -547,7 +832,7 @@ class OpenAILLMBackend:
         Retries up to 3 times on transient connection errors with
         exponential backoff (mirrors Claude retry logic).
         """
-        system_prompt = _pick_system_prompt(context)
+        system_prompt = _pick_system_prompt(context, compact=False)
         user_message = _build_user_message(query, context)
 
         max_retries = 3
@@ -631,7 +916,7 @@ class OpenAILLMBackend:
 
         Uses ``stream=True`` on ``chat.completions.create()``.
         """
-        system_prompt = _pick_system_prompt(context)
+        system_prompt = _pick_system_prompt(context, compact=False)
         user_message = _build_user_message(query, context)
 
         try:
@@ -683,8 +968,15 @@ def _create_ollama_backend(config: RAGConfig) -> OllamaLLMBackend:
         model=config.llm_model,
         base_url=config.llm_base_url,
         temperature=config.llm_temperature,
+        top_p=config.llm_top_p,
+        num_ctx=config.llm_num_ctx,
+        num_predict=config.llm_num_predict,
+        repeat_penalty=config.llm_repeat_penalty,
         max_tokens=config.llm_max_tokens,
         timeout=config.llm_timeout,
+        chunk_timeout=config.llm_chunk_timeout,
+        first_token_timeout=config.llm_first_token_timeout,
+        compact_prompt=config.llm_compact_prompt,
     )
 
 
