@@ -48,9 +48,9 @@ logger = logging.getLogger(__name__)
 # Defaults (overridable via env vars or constructor)
 # ═══════════════════════════════════════════════════════════════════════════
 
-DEFAULT_QUERY_BUDGET_S = 120        # total seconds per query
-DEFAULT_RETRIEVAL_SLOW_S = 20       # retrieval threshold → FAST_MODE
-DEFAULT_LLM_BUDGET_S = 90           # max seconds for LLM generation
+DEFAULT_QUERY_BUDGET_S = 300        # total seconds per query
+DEFAULT_RETRIEVAL_SLOW_S = 30       # retrieval threshold → FAST_MODE
+DEFAULT_LLM_BUDGET_S = 300          # max seconds for LLM generation
 
 # Graceful cutoff messages
 _CUTOFF_TOTAL = (
@@ -273,11 +273,11 @@ def _run_tests() -> None:
     # ── 1. Basic construction & defaults ─────────────────────────────
     print("\n=== 1. Construction & Defaults ===")
     tb = TimeBudget()
-    check("default total_budget_s == 120", tb.total_budget_s == 120)
-    check("default retrieval_slow_s == 20", tb.retrieval_slow_s == 20)
-    check("default llm_budget_s == 90", tb.llm_budget_s == 90)
+    check("default total_budget_s == 300", tb.total_budget_s == 300)
+    check("default retrieval_slow_s == 30", tb.retrieval_slow_s == 30)
+    check("default llm_budget_s == 300", tb.llm_budget_s == 300)
     check("elapsed == 0 before start()", tb.elapsed == 0.0)
-    check("remaining == total before start()", tb.remaining == 120.0)
+    check("remaining == total before start()", tb.remaining == 300.0)
     check("not expired before start()", not tb.is_expired())
 
     # ── 2. Start & elapsed tracking ──────────────────────────────────
@@ -414,9 +414,9 @@ def _run_tests() -> None:
 
     # ── 12. Constants ───────────────────────────────────────────────
     print("\n=== 12. Constants ===")
-    check("DEFAULT_QUERY_BUDGET_S == 120", DEFAULT_QUERY_BUDGET_S == 120)
-    check("DEFAULT_RETRIEVAL_SLOW_S == 20", DEFAULT_RETRIEVAL_SLOW_S == 20)
-    check("DEFAULT_LLM_BUDGET_S == 90", DEFAULT_LLM_BUDGET_S == 90)
+    check("DEFAULT_QUERY_BUDGET_S == 300", DEFAULT_QUERY_BUDGET_S == 300)
+    check("DEFAULT_RETRIEVAL_SLOW_S == 30", DEFAULT_RETRIEVAL_SLOW_S == 30)
+    check("DEFAULT_LLM_BUDGET_S == 300", DEFAULT_LLM_BUDGET_S == 300)
 
     # ── Summary ──────────────────────────────────────────────────────
     print(f"\n{'=' * 50}")
