@@ -108,6 +108,13 @@ def render_rag_page() -> None:
     rag_on = render_rag_toggle()
     logger.info("[user=%s] RAG Engine: RAG toggle=%s", _user, rag_on)
 
+    # ---- Upload & manage sections (only when RAG is on) -----------------
+    #      Placed BEFORE the query section so users see ingestion status
+    #      and can decide which source to query.
+    if rag_on:
+        logger.info("[user=%s] RAG Engine: PDF upload section visible", _user)
+        render_pdf_uploader()
+
     # ---- Knowledge-base source selector (radio buttons) -----------------
     selected_source = None
     if rag_on:
@@ -228,11 +235,8 @@ def render_rag_page() -> None:
             _runtime_label = f"⏱️ Total runtime: **{_wall_elapsed:.1f}s**"
             render_rag_response(response, runtime_label=_runtime_label)
 
-    # ---- Upload & manage sections (only when RAG is on) -----------------
+    # ---- Knowledge Base management (only when RAG is on) ----------------
     if rag_on:
-        logger.info("[user=%s] RAG Engine: PDF upload section visible", _user)
-        render_pdf_uploader()
-
         with st.expander("Knowledge Base", expanded=False):
             render_knowledge_base()
 

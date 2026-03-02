@@ -26,6 +26,11 @@ from ui.components import (
 
 logger = logging.getLogger(__name__)
 
+
+def _compact_caption(text: str) -> None:
+    """Render a caption-like message with minimal vertical whitespace."""
+    st.markdown(f"<p style='margin:0;padding:0'>{text}</p>", unsafe_allow_html=True)
+
 DB_AVAILABLE = Config.is_database_configured()
 MINIO_AVAILABLE = True
 
@@ -166,7 +171,7 @@ def _render_configuration_panel(
     )
 
     if selected_name in cache:
-        st.caption(f"📦 Cached result loaded for **{selected_name}**")
+        _compact_caption(f"📦 Cached result loaded for **{selected_name}**")
 
     if run_btn:
         logger.info("[user=%s] Clicked 'Run Backtest' for crypto strategy: %s",
@@ -583,7 +588,7 @@ def _save_backtest_to_database(
                 }
             )
         if db_service.save_backtest_result(backtest_data):
-            st.caption("🗄️ Results saved to database")
+            _compact_caption("🗄️ Results saved to database")
     except Exception as e:
         logger.error(f"Failed to save crypto backtest to database: {e}")
 

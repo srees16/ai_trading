@@ -22,6 +22,17 @@ logger = logging.getLogger(__name__)
 DB_AVAILABLE = Config.is_database_configured()
 MINIO_AVAILABLE = True
 
+
+def _compact_caption(text: str) -> None:
+    """Render a small, tight caption without extra vertical margin.
+
+    Streamlit's ``st.caption`` adds top/bottom padding that can create
+    large gaps when used immediately above buttons or other controls.
+    This helper outputs the same text inside a zero-margin paragraph.
+    """
+
+    st.markdown(f"<p style='margin:0;padding:0'>{text}</p>", unsafe_allow_html=True)
+
 # Lazy heavy imports — pandas alone takes ~70 s on some machines.
 pd = None       # type: ignore[assignment]
 go = None       # type: ignore[assignment]
@@ -325,8 +336,8 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
         # Instantly load cached result when user switches strategy
         cache = st.session_state.get('backtest_cache', {})
         if selected_name in cache:
-            st.session_state.backtest_result = cache[selected_name]
-            st.session_state.selected_strategy = selected_name
+                st.session_state.backtest_result = cache[selected_name]
+                st.session_state.selected_strategy = selected_name
         
         # Get strategy class and parameters
         strategy_cls = _get_strategy(strategy_info['id'])
@@ -350,9 +361,9 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
         if not param_values.get('tickers'):
             st.warning("⚠️ Please enter at least one ticker symbol above.")
         
-        # Show cache status
+        # Show cache status (render with no extra vertical margin)
         if selected_name in cache:
-            st.caption(f"📦 Cached result loaded for **{selected_name}**")
+            _compact_caption(f"📦 Cached result loaded for **{selected_name}**")
         
         btn_col, _ = st.columns([1.3, 1.7])
         with btn_col:
@@ -608,7 +619,7 @@ def _save_backtest_to_database(
             })
         
         if db_service.save_backtest_result(backtest_data):
-            st.caption("🗄️ Results saved to database")
+            _compact_caption("🗄️ Results saved to database")
             
     except Exception as e:
         logger.error(f"Failed to save backtest to database: {e}")

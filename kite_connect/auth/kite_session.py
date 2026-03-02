@@ -42,7 +42,9 @@ def create_kite_session():
         An authenticated Kite instance with access_token already set.
     """
     request_token = _read_request_token()
-    kite = KiteConnect(api_key=API_KEY)
+    # configure connection pool size to avoid pool-full warnings
+    pool_cfg = {"pool_maxsize": int(os.getenv("KITE_POOL_MAXSIZE", "20"))}
+    kite = KiteConnect(api_key=API_KEY, pool=pool_cfg)
 
     try:
         data = kite.generate_session(
@@ -60,7 +62,8 @@ def create_kite_session():
         print("\n  [!] Token expired. Launching login flow...\n")
         new_token = fetch_request_token()
 
-        kite = KiteConnect(api_key=API_KEY)
+        pool_cfg = {"pool_maxsize": int(os.getenv("KITE_POOL_MAXSIZE", "20"))}
+        kite = KiteConnect(api_key=API_KEY, pool=pool_cfg)
         data = kite.generate_session(
             request_token=new_token, api_secret=API_SECRET,
         )

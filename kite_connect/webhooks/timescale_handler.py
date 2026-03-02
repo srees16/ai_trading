@@ -418,11 +418,11 @@ class TimescaleTickHandler:
         import os
         load_dotenv()
         return psycopg2.connect(
-            host=os.getenv("DB_HOST", "localhost"),
-            port=int(os.getenv("DB_PORT", "9003")),
-            dbname=os.getenv("DB_NAME", "centurion"),
-            user=os.getenv("DB_USER", ""),
-            password=os.getenv("DB_PASSWORD", ""),
+            host=os.getenv("KITE_DB_HOST", os.getenv("DB_HOST", "localhost")),
+            port=int(os.getenv("KITE_DB_PORT", os.getenv("DB_PORT", "9003"))),
+            dbname=os.getenv("KITE_DB_NAME", os.getenv("DB_NAME", "centurion")),
+            user=os.getenv("KITE_DB_USER", os.getenv("DB_USER", "")),
+            password=os.getenv("KITE_DB_PASSWORD", os.getenv("DB_PASSWORD", "")),
         )
 
     @property
