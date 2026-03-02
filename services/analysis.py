@@ -109,7 +109,7 @@ async def _execute_analysis(
     4. **Signals** — generated for *all* tickers (cached + new)
     """
     # ── Step 1: News scraping (with cache) ───────────────────────────
-    status_placeholder.info("📰 Scraping news from multiple sources...")
+    # (Spinner already shows status; skip redundant info notification)
     if progress_callback:
         progress_callback(2, "📰 Scraping news…")
     
@@ -161,7 +161,7 @@ async def _execute_analysis(
     status_placeholder.success(f"✓ Collected {len(all_news)} news items")
     
     # ── Step 2: Sentiment analysis (with cache) ──────────────────────
-    status_placeholder.info("🧠 Analyzing sentiment...")
+    # (Spinner already shows status; skip redundant info notification)
     if progress_callback:
         progress_callback(30, "🧠 Analyzing sentiment…")
     
@@ -204,7 +204,7 @@ async def _execute_analysis(
     )
     
     # ── Step 3: Metrics + signals ────────────────────────────────────
-    status_placeholder.info("📊 Calculating metrics and generating signals...")
+    # (Spinner already shows status; skip redundant info notification)
     if progress_callback:
         progress_callback(55, "📊 Calculating metrics…")
     

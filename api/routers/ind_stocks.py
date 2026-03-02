@@ -6,6 +6,7 @@ option chains, NSE data, and webhook status.
 """
 
 import logging
+import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -76,7 +77,11 @@ async def kite_login(request: KiteLoginRequest):
         from kite_connect.core.config import ZERODHA_API_KEY, ZERODHA_API_SECRET
 
         api_key = request.api_key or ZERODHA_API_KEY
-        kite = KiteConnect(api_key=api_key)
+        # create with larger pool to support concurrent requests
+        kite = KiteConnect(
+            api_key=api_key,
+            pool={"pool_maxsize": int(os.getenv("KITE_POOL_MAXSIZE", "20"))},
+        )
         data = kite.generate_session(request.request_token, api_secret=ZERODHA_API_SECRET)
         kite.set_access_token(data["access_token"])
 
