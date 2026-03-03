@@ -58,7 +58,9 @@ Copy the template from **Section 10 > Step 6** of this README. Save as `centurio
 ```powershell
 streamlit run app.py
 ```
-Opens at: **http://localhost:9000** — App login with `admin` / `admin123`, Minio login: `minioadmin` / `minioadmin123`
+Opens at: **http://localhost:9000** 
+— App login with `admin` / `admin123`
+— Minio login: `minioadmin` / `minioadmin123`
 
 **Terminal 2 (optional) — FastAPI REST API:**
 ```powershell
