@@ -827,6 +827,8 @@ def _render_dashboard():
     )
 
     try:
+        from setup.db_setup import create_table as _ensure_tables
+        _ensure_tables()  # no-op if tables already exist (CREATE TABLE IF NOT EXISTS)
         conn = get_db_connection()
         groups = fetch_index_groups(conn)
     except Exception as e:
