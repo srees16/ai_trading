@@ -60,7 +60,7 @@ streamlit run app.py
 ```
 Opens at: **http://localhost:9000** 
 — App login with `admin` / `admin123`
-— Minio login: `minioadmin` / `minioadmin123`
+— Minio login with: `minioadmin` / `minioadmin123`
 
 **Terminal 2 (optional) — FastAPI REST API:**
 ```powershell
