@@ -56,14 +56,16 @@ ollama pull qwen2.5:3b
 streamlit run app.py
 ```
 Opens at: **http://localhost:9000** 
-— App login with `admin` / `admin123`
-— Minio login with: `minioadmin` / `minioadmin123`
+login with `admin` / `admin123`
 
 **Terminal 2 (optional) — FastAPI REST API:**
 ```powershell
 python run_api.py --port 9001
 ```
-API docs at: **http://localhost:9001/docs**
+API docs at: **http://localhost:9001/docs** (auth required)
+
+Open Minio at **http://localhost:9002/login**
+login with: `minioadmin` / `minioadmin123`
 
 ### ✅ Verify Everything Works
 - [ ] Streamlit opens at http://localhost:9000
