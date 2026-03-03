@@ -13,7 +13,7 @@ Get the app running on a new machine with these commands:
 git clone https://github.com/srees16/centurion_core.git
 cd centurion_core
 python3 -m venv myenv
-.\myenv\Scripts\activate or (macOS: source venv/bin/activate)
+.\myenv\Scripts\activate or (macOS: source myenv/bin/activate)
 pip install -r requirements.txt
 ```
 
