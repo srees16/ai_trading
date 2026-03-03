@@ -50,10 +50,7 @@ curl -fsSL https://ollama.com/install.sh | sh
 ollama pull qwen2.5:3b
 ```
 
-### 6️⃣ Create `.env` File
-Copy the template from **Section 10 > Step 6** of this README. Save as `centurion_core/.env`
-
-### 7️⃣ Launch the App
+### 6️⃣ Launch the App
 **Terminal 1 — Streamlit UI:**
 ```powershell
 streamlit run app.py
