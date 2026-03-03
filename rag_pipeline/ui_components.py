@@ -210,6 +210,8 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
             )
 
     # ---- Consume completed tasks and invalidate caches -----------------
+    # Display is handled by _render_ingestion_status via get_recently_completed();
+    # here we only invalidate the query cache and collect results for callers.
     completed = mgr.pop_completed()
     results: List[Dict[str, Any]] = []
     if completed:
@@ -219,39 +221,24 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
                 results.append(task.result)
                 r = task.result
                 if r["status"] == "success":
-                    st.success(
-                        f"✅ **{r['source']}** — {r['chunks']} chunks "
-                        f"from {r['pages']} pages"
-                    )
-                    # Invalidate query cache so new docs are included
                     try:
                         engine.invalidate_cache(r["source"], "ingested")
                     except Exception:
                         pass
-                elif r.get("reason") == "already_ingested":
-                    st.info(
-                        f"📄 **{r['source']}** — already ingested "
-                        f"({r.get('chunks', '?')} chunks persisted). Skipped."
-                    )
-                elif r["status"] == "skipped":
-                    st.warning(
-                        f"⚠️ **{r['source']}** — skipped "
-                        f"({r.get('reason', '')})"
-                    )
-                else:
-                    st.error(
-                        f"❌ **{r['source']}** — "
-                        f"{r.get('error', 'unknown error')}"
-                    )
             elif task.status == TaskStatus.FAILED:
-                st.error(
-                    f"❌ **{task.file_name}** — {task.error or 'unknown error'}"
-                )
                 results.append({
                     "status": "error",
                     "source": task.file_name,
                     "error": task.error,
                 })
+
+    # ---- Auto-refresh while ingestion is running -----------------------
+    # Polls every 2 s so the progress bar stays in sync with the backend.
+    # Calls st.rerun() which stops further execution in this render cycle.
+    if mgr.has_active_tasks():
+        import time
+        time.sleep(2)
+        st.rerun()
 
     return results if results else None
 
@@ -259,8 +246,9 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
 def _render_ingestion_status(mgr) -> None:
     """Render a live status panel for active background ingestion tasks.
 
-    Includes a manual refresh button so users can poll for updates
-    without interrupting any in-progress query streaming.
+    Active tasks auto-refresh every 2 s (via the polling loop in
+    ``render_pdf_uploader``).  Recently-completed tasks are shown here
+    until they are consumed by ``pop_completed()``.
     """
     from rag_pipeline.background_ingest import TaskStatus
 
@@ -273,7 +261,7 @@ def _render_ingestion_status(mgr) -> None:
     with st.container():
         st.markdown("#### 🔄 Ingestion Status")
 
-        # Active tasks
+        # Active tasks — progress is kept in sync by the auto-refresh loop
         for task in active:
             col_name, col_stage, col_pct = st.columns([2, 3, 1])
             with col_name:
@@ -284,7 +272,7 @@ def _render_ingestion_status(mgr) -> None:
             with col_pct:
                 st.progress(task.stage_pct, text=f"{task.stage_pct:.0%}")
 
-        # Recently completed (informational, not yet consumed)
+        # Recently completed — shown until pop_completed() consumes them
         for task in recently_done:
             if task.status == TaskStatus.COMPLETED:
                 r = task.result or {}
@@ -293,20 +281,22 @@ def _render_ingestion_status(mgr) -> None:
                         f"✅ **{task.file_name}** — {r.get('chunks', '?')} chunks "
                         f"from {r.get('pages', '?')} pages"
                     )
+                elif r.get("reason") == "already_ingested":
+                    st.info(
+                        f"📄 **{task.file_name}** — already ingested "
+                        f"({r.get('chunks', '?')} chunks persisted). Skipped."
+                    )
+                elif r.get("status") == "skipped":
+                    st.warning(
+                        f"⚠️ **{task.file_name}** — skipped ({r.get('reason', '')})"
+                    )
                 else:
                     st.info(f"📄 **{task.file_name}** — {r.get('status', 'done')}")
             elif task.status == TaskStatus.FAILED:
                 st.error(f"❌ **{task.file_name}** — {task.error or 'unknown error'}")
 
         if active:
-            col_refresh, col_hint = st.columns([1, 4])
-            with col_refresh:
-                if st.button("🔄 Refresh", key="rag_ingest_refresh_btn"):
-                    st.rerun()
-            with col_hint:
-                st.caption(
-                    "💡 *Submit queries below while ingestion continues in the background.*"
-                )
+            st.caption("⏱️ *Updating automatically — submit queries below while ingestion runs.*")
 
 
 # ---------------------------------------------------------------------------
