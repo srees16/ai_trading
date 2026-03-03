@@ -74,7 +74,6 @@ API docs at: **http://localhost:9001/docs**
 
 ## Table of Contents
 
-0. [⚡ Quick Start](#-quick-start-5-minutes)
 1. [Architecture Overview](#1-architecture-overview)
 2. [Core Analysis Engine](#2-core-analysis-engine)
 3. [Strategy Backtesting](#3-strategy-backtesting)
