@@ -19,7 +19,7 @@ pip install -r requirements.txt
 
 ### 2️⃣ Start PostgreSQL (Docker)
 ```powershell
-docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15 && sleep 2 && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
 ```
 
 ### 3️⃣ Initialize Database
