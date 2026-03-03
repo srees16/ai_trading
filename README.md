@@ -19,9 +19,7 @@ pip install -r requirements.txt
 
 ### 2️⃣ Start PostgreSQL (Docker)
 ```powershell
-docker run -d --name centurion-postgres -p 9003:5432 `
-  -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 `
-  -e POSTGRES_DB=centurion_rag postgres:15
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15
 ```
 
 ### 3️⃣ Initialize Database
@@ -32,14 +30,18 @@ Expected: `✓ Database tables created successfully`
 
 ### 4️⃣ Start MinIO (Docker) — for Backtest Charts
 ```powershell
-docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 `
-  -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 `
-  minio/minio:latest server /data --console-address ":9001"
+docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"
 ```
 
 ### 5️⃣ (Optional) Install Ollama — for RAG Document Q&A
 ```powershell
 # Download from https://ollama.ai/download, then:
+ollama pull qwen2.5:3b
+
+OR
+```powershell
+curl -fsSL https://ollama.com/install.sh | sh
+# then:
 ollama pull qwen2.5:3b
 ```
 
@@ -51,7 +53,7 @@ Copy the template from **Section 10 > Step 6** of this README. Save as `centurio
 ```powershell
 streamlit run app.py
 ```
-Opens at: **http://localhost:9000** — Login with `admin` / `admin123`
+Opens at: **http://localhost:9000** — App login with `admin` / `admin123`, Minio login: `minioadmin` / `minioadmin123`
 
 **Terminal 2 (optional) — FastAPI REST API:**
 ```powershell
