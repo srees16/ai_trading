@@ -29,8 +29,8 @@ export STREAMLIT_SERVER_PORT='9000' API_PORT='9001' ZERODHA_API_KEY='qwertyuiop'
 ```
 
 ### 2️⃣ Start PostgreSQL (Docker)
-```windows powershell:
-
+windows powershell:
+```
 docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15; Start-Sleep 2; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
 ```
 MacOS:
