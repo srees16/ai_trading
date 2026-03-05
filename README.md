@@ -71,7 +71,7 @@ login with `admin` / `admin123`
 
 **Terminal 2 (optional) — FastAPI REST API:**
 ```powershell
-python run_api.py --port 9001
+python run_api.py
 ```
 API docs at: **http://localhost:9001/docs** (auth required)
 
