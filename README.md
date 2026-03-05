@@ -33,6 +33,10 @@ windows powershell:
 ```
 docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15; Start-Sleep 2; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
 ```
+*check which works in new setup*
+```
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading postgres:15; Start-Sleep 2; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
+```
 MacOS:
 ```
 docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15 && sleep 2 && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
