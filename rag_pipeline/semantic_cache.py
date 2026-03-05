@@ -144,6 +144,11 @@ class SemanticCache:
         """
         Add a query-response pair to the cache.
 
+        If a semantically near-duplicate entry already exists in the
+        same space (similarity >= threshold), it is **replaced** so
+        that re-submitted queries always store fresh answers instead
+        of leaving stale duplicates.
+
         Evicts the oldest entry (LRU) if the cache is full.
         """
         embedding = np.array(self._embed(query), dtype=np.float32)
@@ -156,6 +161,16 @@ class SemanticCache:
         )
 
         with self._lock:
+            # Remove near-duplicate entries in the same space so that
+            # a re-submit overwrites the old cached answer.
+            self._entries = [
+                e for e in self._entries
+                if not (
+                    e.space_id == space_id
+                    and self._cosine_similarity(embedding, e.embedding)
+                    >= self._threshold
+                )
+            ]
             # Evict if full
             while len(self._entries) >= self._max_entries:
                 self._entries.pop(0)  # oldest first

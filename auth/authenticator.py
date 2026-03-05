@@ -85,12 +85,14 @@ def load_credentials() -> Dict:
 
     if not CREDENTIALS_PATH.exists():
         # Create default credentials file
-        admin_pw = os.getenv("CENTURION_DEFAULT_ADMIN_PASSWORD", "admin123")
-        analyst_pw = os.getenv("CENTURION_DEFAULT_ANALYST_PASSWORD", "analyst123")
-        if admin_pw in ("admin123",) or analyst_pw in ("analyst123",):
+        _DEFAULT_ADMIN_PW = "admin123"
+        _DEFAULT_ANALYST_PW = "analyst123"
+        admin_pw = os.getenv("CENTURION_DEFAULT_ADMIN_PASSWORD", _DEFAULT_ADMIN_PW)
+        analyst_pw = os.getenv("CENTURION_DEFAULT_ANALYST_PASSWORD", _DEFAULT_ANALYST_PW)
+        if admin_pw == _DEFAULT_ADMIN_PW or analyst_pw == _DEFAULT_ANALYST_PW:
             logger.warning(
-                "Using default passwords — set CENTURION_DEFAULT_ADMIN_PASSWORD / "
-                "CENTURION_DEFAULT_ANALYST_PASSWORD env vars (or .env) for production"
+                "Using default bootstrap passwords — set CENTURION_DEFAULT_ADMIN_PASSWORD "
+                "and CENTURION_DEFAULT_ANALYST_PASSWORD in .env for production use."
             )
         default_creds = {
             'users': {
@@ -463,7 +465,13 @@ class Authenticator:
             font-size: 0.95rem !important;
             background: rgba(255,255,255,0.08) !important;
             border: 1px solid rgba(255,255,255,0.15) !important;
-            color: #e2e8f0 !important;
+            color: #1a202c !important;
+            -webkit-text-fill-color: #1a202c !important;
+        }
+        [data-testid="stForm"] input[type="password"] {
+            -webkit-text-security: disc !important;
+            color: #1a202c !important;
+            -webkit-text-fill-color: #1a202c !important;
         }
         [data-testid="stForm"] input::placeholder {
             color: #718096 !important;

@@ -97,22 +97,26 @@ def load_csv_to_db():
 
     print(f"  Rows to insert: {len(df_mapped)}")
 
-    # Insert into PostgreSQL
+    # Upsert into PostgreSQL (INSERT or UPDATE existing rows)
     conn = get_connection()
     conn.autocommit = True
     cur = conn.cursor()
 
-    # Clear existing data before loading fresh
-    cur.execute(f"TRUNCATE TABLE {TABLE_NAME} RESTART IDENTITY;")
-
-    insert_sql = f"""
-        INSERT INTO {TABLE_NAME} (name, high, low, volume, ltp, change)
-        VALUES (%s, %s, %s, %s, %s, %s)
+    upsert_sql = f"""
+        INSERT INTO {TABLE_NAME} (name, high, low, volume, ltp, change, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, NOW())
+        ON CONFLICT (name) DO UPDATE
+        SET high = EXCLUDED.high,
+            low  = EXCLUDED.low,
+            volume = EXCLUDED.volume,
+            ltp  = EXCLUDED.ltp,
+            change = EXCLUDED.change,
+            updated_at = NOW();
     """
 
-    rows_inserted = 0
+    rows_upserted = 0
     for _, row in df_mapped.iterrows():
-        cur.execute(insert_sql, (
+        cur.execute(upsert_sql, (
             row["name"],
             row["high"],
             row["low"],
@@ -120,12 +124,12 @@ def load_csv_to_db():
             row["ltp"],
             row["change"],
         ))
-        rows_inserted += 1
+        rows_upserted += 1
 
     cur.close()
     conn.close()
 
-    print(f"\n  [OK] {rows_inserted} rows inserted into {DB_NAME}.{TABLE_NAME}")
+    print(f"\n  [OK] {rows_upserted} rows upserted into {DB_NAME}.{TABLE_NAME}")
 
 
 if __name__ == "__main__":

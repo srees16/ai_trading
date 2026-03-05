@@ -22,6 +22,17 @@ logger = logging.getLogger(__name__)
 DB_AVAILABLE = Config.is_database_configured()
 MINIO_AVAILABLE = True
 
+
+def _compact_caption(text: str) -> None:
+    """Render a small, tight caption without extra vertical margin.
+
+    Streamlit's ``st.caption`` adds top/bottom padding that can create
+    large gaps when used immediately above buttons or other controls.
+    This helper outputs the same text inside a zero-margin paragraph.
+    """
+
+    st.markdown(f"<p style='margin:0;padding:0'>{text}</p>", unsafe_allow_html=True)
+
 # Lazy heavy imports — pandas alone takes ~70 s on some machines.
 pd = None       # type: ignore[assignment]
 go = None       # type: ignore[assignment]
@@ -118,6 +129,9 @@ def render_backtesting_page():
     strategies = [s for s in list_strategies() if s.get('category') != 'crypto']
     strategy_options = {s['name']: s for s in strategies}
     
+    # Ensure MinIO bucket exists before any chart saving
+    _ensure_minio_bucket()
+
     # Pre-run all strategies once on first page visit
     _precompute_all_strategies(strategies)
     
@@ -131,6 +145,27 @@ def render_backtesting_page():
         _render_results_panel()
     
     render_footer()
+
+
+def _ensure_minio_bucket():
+    """Check (and create if missing) the MinIO 'centurion-backtests' bucket.
+
+    Called once when the backtesting page loads so that all subsequent
+    chart-save operations have a guaranteed destination bucket.
+    """
+    if not MINIO_AVAILABLE:
+        return
+    try:
+        minio_svc = _get_minio()
+        ready = minio_svc.ensure_bucket_ready()
+        if ready:
+            logger.info("MinIO bucket '%s' is ready",
+                        minio_svc._config.bucket_name)
+        else:
+            logger.warning("MinIO bucket could not be verified/created — "
+                           "charts will not be persisted this session")
+    except Exception as e:
+        logger.error("MinIO bucket pre-check failed: %s", e)
 
 
 def _precompute_all_strategies(strategies: list):
@@ -267,11 +302,16 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
     
     # Strategy category filter
     categories = sorted(list(set(s['category'] for s in strategies)))
-    selected_category = st.selectbox(
+    display_categories = {c: c.replace('_', ' ').title() for c in categories}
+    selected_display = st.selectbox(
         "Strategy Category",
-        options=["All"] + categories,
+        options=["All"] + [display_categories[c] for c in categories],
         help="Filter strategies by category"
     )
+    
+    # Map display name back to raw category
+    reverse_map = {v: k for k, v in display_categories.items()}
+    selected_category = reverse_map.get(selected_display, selected_display)
     
     # Filter strategies by category
     if selected_category != "All":
@@ -296,8 +336,8 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
         # Instantly load cached result when user switches strategy
         cache = st.session_state.get('backtest_cache', {})
         if selected_name in cache:
-            st.session_state.backtest_result = cache[selected_name]
-            st.session_state.selected_strategy = selected_name
+                st.session_state.backtest_result = cache[selected_name]
+                st.session_state.selected_strategy = selected_name
         
         # Get strategy class and parameters
         strategy_cls = _get_strategy(strategy_info['id'])
@@ -321,9 +361,9 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
         if not param_values.get('tickers'):
             st.warning("⚠️ Please enter at least one ticker symbol above.")
         
-        # Show cache status
+        # Show cache status (render with no extra vertical margin)
         if selected_name in cache:
-            st.caption(f"📦 Cached result loaded for **{selected_name}**")
+            _compact_caption(f"📦 Cached result loaded for **{selected_name}**")
         
         btn_col, _ = st.columns([1.3, 1.7])
         with btn_col:
@@ -579,7 +619,7 @@ def _save_backtest_to_database(
             })
         
         if db_service.save_backtest_result(backtest_data):
-            st.caption("🗄️ Results saved to database")
+            _compact_caption("🗄️ Results saved to database")
             
     except Exception as e:
         logger.error(f"Failed to save backtest to database: {e}")

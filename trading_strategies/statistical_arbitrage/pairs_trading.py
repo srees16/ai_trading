@@ -15,6 +15,10 @@ Strategy Rules:
 - When Z-score < lower_threshold: Long Asset2, Short Asset1
 - Exit when spread returns to mean (Z-score near 0)
 
+When more than 2 tickers are provided, every unique pair combination is
+analysed independently and the results (charts, tables, metrics) are
+aggregated into a single StrategyResult.
+
 Reference: Statistical arbitrage and cointegration analysis
 """
 
@@ -22,6 +26,7 @@ import sys
 import time
 import warnings
 from datetime import datetime
+from itertools import combinations
 from pathlib import Path
 from typing import Optional
 
@@ -114,107 +119,103 @@ class PairsTradingStrategy(BaseStrategy):
     ) -> StrategyResult:
         """
         Execute the Pairs Trading backtest.
-        
+
+        When *more than 2* tickers are supplied every unique 2-ticker
+        combination is analysed.  Charts, tables and metrics for each
+        pair are aggregated into a single ``StrategyResult``.
+
         Args:
-            tickers: List of exactly 2 ticker symbols forming the pair
+            tickers: List of ticker symbols (≥ 2).  All C(n,2) pairs
+                     are tested when n > 2.
             start_date: Backtest start date (YYYY-MM-DD)
             end_date: Backtest end date (YYYY-MM-DD)
             capital: Initial capital
             sentiment_data: Optional sentiment scores from news analysis
             risk_params: Risk management parameters
-            **kwargs: Additional parameters
-        
+            **kwargs: Additional parameters (bandwidth, z_entry, z_exit)
+
         Returns:
             StrategyResult with charts, tables, and metrics
         """
         start_time = time.time()
-        
+
         # Validate inputs
         try:
             self.validate_inputs(tickers, start_date, end_date, capital)
         except ValueError as e:
-            return StrategyResult(
-                success=False,
-                error_message=str(e)
-            )
-        
-        # Pairs trading requires exactly 2 tickers
+            return StrategyResult(success=False, error_message=str(e))
+
         if len(tickers) < 2:
             return StrategyResult(
                 success=False,
-                error_message="Pairs trading requires exactly 2 tickers"
+                error_message="Pairs trading requires at least 2 tickers"
             )
-        
-        # Use first two tickers
-        ticker1, ticker2 = tickers[0], tickers[1]
-        
-        # Parse parameters
+
+        # Build all unique pair combinations
+        pairs = list(combinations(tickers, 2))
+
+        # Parse parameters once
         bandwidth = kwargs.get('bandwidth', 60)
         z_entry = kwargs.get('z_entry', 1.0)
         z_exit = kwargs.get('z_exit', 0.0)
         risk = self.get_risk_params(risk_params)
-        
-        # Initialize data service
+
+        # Accumulators
+        all_charts: list[ChartData] = []
+        all_tables: list[TableData] = []
+        all_metrics: dict = {}
+        combined_signals = pd.DataFrame()
+        combined_portfolio = pd.DataFrame()
+        pair_results: list[dict] = []
+
         data_service = DataService()
-        
-        try:
-            # Fetch data for both assets
-            df1 = data_service.get_ohlcv(ticker1, start_date, end_date)
-            df2 = data_service.get_ohlcv(ticker2, start_date, end_date)
-            
-            if df1.empty or df2.empty:
-                return StrategyResult(
-                    success=False,
-                    error_message="Failed to fetch data for one or both tickers"
+        failed_pairs: list[str] = []
+
+        for ticker1, ticker2 in pairs:
+            pair_label = f"{ticker1}/{ticker2}"
+            try:
+                result = self._run_single_pair(
+                    ticker1, ticker2,
+                    start_date, end_date,
+                    capital, bandwidth, z_entry, z_exit,
+                    risk, data_service,
                 )
-            
-            # Align dates
-            common_idx = df1.index.intersection(df2.index)
-            df1 = df1.loc[common_idx]
-            df2 = df2.loc[common_idx]
-            
-            # Need at least bandwidth + some extra for signals
-            min_required = max(bandwidth + 20, self.min_data_points)
-            if len(df1) < min_required:
-                return StrategyResult(
-                    success=False,
-                    error_message=f"Insufficient data points. Need {min_required}, got {len(df1)}. Try a longer period or smaller bandwidth."
-                )
-            
-            # Generate signals
-            signals = self._generate_signals(
-                df1, df2, ticker1, ticker2, bandwidth, z_entry, z_exit
-            )
-            
-            # Calculate portfolio
-            portfolio = self._calculate_portfolio(signals, capital, risk)
-            
-            # Create charts
-            charts = self._create_charts(signals, ticker1, ticker2)
-            
-            # Create tables
-            tables = self._create_tables(signals, ticker1, ticker2)
-            
-            # Calculate metrics
-            metrics = self.calculate_metrics(portfolio, signals, capital)
-            metrics['pair'] = f"{ticker1}/{ticker2}"
-            metrics['cointegration_periods'] = int(signals['cointegrated'].sum())
-            metrics['total_periods'] = len(signals)
-            
-        except Exception as e:
+                if result is None:
+                    failed_pairs.append(pair_label)
+                    continue
+
+                charts, tables, metrics, signals, portfolio = result
+                all_charts.extend(charts)
+                all_tables.extend(tables)
+                pair_results.append(metrics)
+
+                # Keep the last pair's signals/portfolio for the
+                # top-level StrategyResult (base-class helpers expect
+                # a single signals/portfolio frame).
+                combined_signals = signals
+                combined_portfolio = portfolio
+
+            except Exception as e:
+                failed_pairs.append(pair_label)
+
+        if not pair_results:
             return StrategyResult(
                 success=False,
-                error_message=str(e)
+                error_message="All pair combinations failed. "
+                              + (f"Failed: {', '.join(failed_pairs)}" if failed_pairs else "")
             )
-        
+
+        # Aggregate metrics across pairs
+        all_metrics = self._aggregate_metrics(pair_results, pairs, failed_pairs)
+
         execution_time = time.time() - start_time
-        
+
         return StrategyResult(
-            charts=charts,
-            tables=tables,
-            metrics=metrics,
-            signals=signals,
-            portfolio=portfolio,
+            charts=all_charts,
+            tables=all_tables,
+            metrics=all_metrics,
+            signals=combined_signals,
+            portfolio=combined_portfolio,
             success=True,
             error_message="",
             execution_time=execution_time,
@@ -223,11 +224,93 @@ class PairsTradingStrategy(BaseStrategy):
                 'parameters': {
                     'bandwidth': bandwidth,
                     'z_entry': z_entry,
-                    'z_exit': z_exit
+                    'z_exit': z_exit,
                 },
-                'pair': f"{ticker1}/{ticker2}"
+                'pairs': [f"{t1}/{t2}" for t1, t2 in pairs],
+                'failed_pairs': failed_pairs,
             }
         )
+
+    # ------------------------------------------------------------------
+    # Single-pair helpers
+    # ------------------------------------------------------------------
+
+    def _run_single_pair(
+        self,
+        ticker1: str,
+        ticker2: str,
+        start_date: str,
+        end_date: str,
+        capital: float,
+        bandwidth: int,
+        z_entry: float,
+        z_exit: float,
+        risk: RiskParams,
+        data_service: DataService,
+    ):
+        """Run the full pairs-trading pipeline for one pair.
+
+        Returns ``(charts, tables, metrics, signals, portfolio)`` on
+        success, or ``None`` if the pair cannot be analysed.
+        """
+        df1 = data_service.get_ohlcv(ticker1, start_date, end_date)
+        df2 = data_service.get_ohlcv(ticker2, start_date, end_date)
+
+        if df1.empty or df2.empty:
+            return None
+
+        # Align dates
+        common_idx = df1.index.intersection(df2.index)
+        df1 = df1.loc[common_idx]
+        df2 = df2.loc[common_idx]
+
+        min_required = max(bandwidth + 20, self.min_data_points)
+        if len(df1) < min_required:
+            return None
+
+        signals = self._generate_signals(
+            df1, df2, ticker1, ticker2, bandwidth, z_entry, z_exit
+        )
+        portfolio = self._calculate_portfolio(signals, capital, risk)
+        charts = self._create_charts(signals, ticker1, ticker2)
+        tables = self._create_tables(signals, ticker1, ticker2)
+        metrics = self.calculate_metrics(portfolio, signals, capital)
+        metrics['pair'] = f"{ticker1}/{ticker2}"
+        metrics['cointegration_periods'] = int(signals['cointegrated'].sum())
+        metrics['total_periods'] = len(signals)
+
+        return charts, tables, metrics, signals, portfolio
+
+    @staticmethod
+    def _aggregate_metrics(
+        pair_results: list[dict],
+        pairs: list[tuple[str, str]],
+        failed_pairs: list[str],
+    ) -> dict:
+        """Combine per-pair metrics into a single summary dict."""
+        aggregated: dict = {}
+
+        # Store per-pair metrics keyed by pair label
+        for pm in pair_results:
+            pair_label = pm.get('pair', '')
+            aggregated[pair_label] = pm
+
+        # Compute aggregate averages for numeric keys
+        numeric_keys = [
+            k for k in pair_results[0]
+            if isinstance(pair_results[0][k], (int, float))
+        ]
+        avg = {}
+        for key in numeric_keys:
+            vals = [pm[key] for pm in pair_results if key in pm]
+            if vals:
+                avg[key] = sum(vals) / len(vals)
+        aggregated['aggregate'] = avg
+        aggregated['pairs_analysed'] = len(pair_results)
+        aggregated['pairs_failed'] = len(failed_pairs)
+        aggregated['total_pairs'] = len(pairs)
+
+        return aggregated
     
     def _engle_granger_test(
         self,

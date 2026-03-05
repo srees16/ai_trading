@@ -4,6 +4,95 @@ A Python-based enterprise trading platform combining multi-source news scraping,
 
 ---
 
+## ⚡ Quick Start (5 Minutes)
+
+Get the app running on a new machine with these commands:
+
+### 1️⃣ Clone & Install Dependencies
+```powershell
+git clone https://github.com/srees16/centurion_core.git
+cd centurion_core
+python3 -m venv myenv
+.\myenv\Scripts\activate or (macOS: source myenv/bin/activate)
+pip install -r requirements.txt
+```
+
+### 1️⃣🅰️ Execute environment variables
+Windows powershell:
+
+```
+$env:STREAMLIT_SERVER_PORT=9000; $env:API_PORT=9001; $env:ZERODHA_API_KEY="fsdfsfd"; $env:ZERODHA_API_SECRET="sdfdsfds"; $env:ZERODHA_USER_ID="adsfsdfd"; $env:ZERODHA_PASSWORD="adfs!"; $env:KITE_DB_HOST="localhost"; $env:KITE_DB_PORT="9003"; $env:KITE_DB_NAME="livestocks_ind"; $env:KITE_DB_USER="postgres"; $env:KITE_DB_PASSWORD="superadmin1"; $env:KITE_POOL_MAXSIZE=40; $env:MINIO_ENDPOINT="localhost:9004"; $env:MINIO_ACCESS_KEY="minioadmin"; $env:MINIO_SECRET_KEY="minioadmin123"; $env:MINIO_SECURE="false"; $env:MINIO_BUCKET="centurion-backtests"; $env:MINIO_ENABLED="true"; $env:CENTURION_DB_HOST="localhost"; $env:CENTURION_DB_PORT="9003"; $env:CENTURION_DB_NAME="centurion_rag"; $env:CENTURION_DB_USER="postgres"; $env:CENTURION_DB_PASSWORD="superadmin1"; $env:CENTURION_RAG_LLM_URL="http://localhost:11434"; $env:RAG_MODEL="qwen2.5:3b"; $env:CENTURION_RAG_CHROMA_DIR="./chroma_store"; $env:CENTURION_RAG_EMBED_MODEL="BAAI/bge-base-en-v1.5"; $env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET="1200"; $env:CENTURION_RAG_MAX_CONTEXT_CHUNKS="8"; $env:CENTURION_RAG_TOP_K="15"; $env:CENTURION_RAG_SIMILARITY_THRESHOLD="0.70"; $env:CENTURION_RAG_LLM_NUM_CTX="2048"; $env:CENTURION_RAG_LLM_NUM_PREDICT="400"; $env:CENTURION_RAG_LLM_MAX_TOKENS="400"; $env:CENTURION_RAG_LLM_TEMPERATURE="0.2"; $env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT="300"; $env:CENTURION_RAG_LLM_CHUNK_TIMEOUT="30"; $env:CENTURION_RAG_QUERY_BUDGET="300"; $env:CENTURION_RAG_QUERY_REWRITE="false"; $env:CENTURION_RAG_STREAMING="true"; $env:CENTURION_RAG_FAQ_ENABLED="false"; $env:RAG_FAST_MODE="false"; $env:CENTURION_DEFAULT_ADMIN_PASSWORD="admin123"; $env:CENTURION_DEFAULT_ANALYST_PASSWORD="analyst123"
+```
+MacOS:
+```
+export STREAMLIT_SERVER_PORT='9000' API_PORT='9001' ZERODHA_API_KEY='qwertyuiop' ZERODHA_API_SECRET='asdfghjklmnbvcxz' ZERODHA_USER_ID='xyz123' ZERODHA_PASSWORD='1234509876' KITE_DB_HOST='localhost' KITE_DB_PORT='9003' KITE_DB_NAME='livestocks_ind' KITE_DB_USER='postgres' KITE_DB_PASSWORD='superadmin1' KITE_POOL_MAXSIZE='40' MINIO_ENDPOINT='localhost:9004' MINIO_ACCESS_KEY='minioadmin' MINIO_SECRET_KEY='minioadmin123' MINIO_SECURE='false' MINIO_BUCKET='centurion-backtests' MINIO_ENABLED='true' CENTURION_DB_HOST='localhost' CENTURION_DB_PORT='9003' CENTURION_DB_NAME='centurion_rag' CENTURION_DB_USER='postgres' CENTURION_DB_PASSWORD='superadmin1' CENTURION_RAG_LLM_URL='http://localhost:11434' RAG_MODEL='qwen2.5:3b' CENTURION_RAG_CHROMA_DIR='./chroma_store' CENTURION_RAG_EMBED_MODEL='BAAI/bge-base-en-v1.5' CENTURION_RAG_CONTEXT_TOKEN_BUDGET='1200' CENTURION_RAG_MAX_CONTEXT_CHUNKS='8' CENTURION_RAG_TOP_K='15' CENTURION_RAG_SIMILARITY_THRESHOLD='0.70' CENTURION_RAG_LLM_NUM_CTX='2048' CENTURION_RAG_LLM_NUM_PREDICT='400' CENTURION_RAG_LLM_MAX_TOKENS='400' CENTURION_RAG_LLM_TEMPERATURE='0.2' CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300' CENTURION_RAG_LLM_CHUNK_TIMEOUT='30' CENTURION_RAG_QUERY_BUDGET='300' CENTURION_RAG_QUERY_REWRITE='false' CENTURION_RAG_STREAMING='true' CENTURION_RAG_FAQ_ENABLED='false' RAG_FAST_MODE='false' CENTURION_DEFAULT_ADMIN_PASSWORD='admin123' CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'
+```
+
+### 2️⃣ Start PostgreSQL (Docker)
+windows powershell:
+```
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15; Start-Sleep 2; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
+```
+*check which works in new setup*
+```
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading postgres:15; Start-Sleep 2; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
+```
+MacOS:
+```
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15 && sleep 2 && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
+```
+
+### 3️⃣ Initialize Database
+```powershell
+python setup_database.py
+```
+Expected: `✓ Database tables created successfully`
+
+### 4️⃣ Start MinIO (Docker) — for Backtest Charts
+```powershell
+docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"
+```
+
+### 5️⃣ (Optional) Install Ollama — for RAG Document Q&A
+```powershell
+# Download from https://ollama.ai/download, then:
+ollama pull qwen2.5:3b
+
+OR
+```powershell
+curl -fsSL https://ollama.com/install.sh | sh
+# then:
+ollama pull qwen2.5:3b
+```
+
+### 6️⃣ Launch the App
+**Terminal 1 — Streamlit UI:**
+```powershell
+streamlit run app.py
+```
+Opens at: **http://localhost:9000** 
+login with `admin` / `admin123`
+
+**Terminal 2 (optional) — FastAPI REST API:**
+```powershell
+python run_api.py
+```
+API docs at: **http://localhost:9001/docs** (auth required)
+
+Open Minio at **http://localhost:9002/login**
+login with: `minioadmin` / `minioadmin123`
+
+### ✅ Verify Everything Works
+- [ ] Streamlit opens at http://localhost:9000
+- [ ] Login succeeds with `admin` / `admin123`
+- [ ] No database errors in console
+- [ ] Run a quick analysis with 2 tickers (AAPL, MSFT) — should complete in <2 min
+- [ ] Check **History** tab — results persist to PostgreSQL
+
+**Stuck?** Jump to **Section 13: Troubleshooting** or **Section 10: Installation** for detailed setup.
+
+---
+
 ## Table of Contents
 
 1. [Architecture Overview](#1-architecture-overview)
@@ -15,11 +104,12 @@ A Python-based enterprise trading platform combining multi-source news scraping,
 7. [Object Storage (MinIO)](#7-object-storage-minio)
 8. [Interactive Web Interface](#8-interactive-web-interface)
 9. [Project Structure](#9-project-structure)
-10. [Installation](#10-installation)
+10. [Installation (Detailed)](#10-installation)
 11. [Usage Guide](#11-usage-guide)
 12. [API Reference](#12-api-reference)
 13. [Troubleshooting](#13-troubleshooting)
 14. [Dependencies](#14-dependencies)
+15. [Changelog](#15-changelog)
 
 ---
 
@@ -187,11 +277,37 @@ Streamlit dashboard for real-time Indian equity monitoring, order management, op
 | `trading/order_service.py` | Market/Limit/SL/SL-M orders, CNC/MIS/NRML products, DAY/IOC validity |
 | `trading/rsi_strategy.py` | Live RSI scanner — BUY (RSI<30 + reversal), SELL (RSI>70 + reversal), auto-order placement |
 
+### Real-time Streaming Architecture
+
+Push-based tick distribution via Kite WebSocket (KiteTicker) with an internal event dispatcher:
+
+| Component | Purpose |
+|-----------|--------|
+| `webhooks/ticker.py` | `KiteWebSocketService` — manages KiteTicker connection, batch-flushes ticks every 0.5 s |
+| `webhooks/dispatcher.py` | `WebhookDispatcher` — singleton fan-out to subscribers via ThreadPoolExecutor |
+| `webhooks/handlers.py` | `DBTickHandler` (PostgreSQL), `UITickCache` (Streamlit), `NSEMarketStatusMonitor`, `SessionWatchdog` |
+| `webhooks/alert_engine.py` | `PriceAlertEngine` — evaluates price/volume/change conditions on every tick batch |
+| `webhooks/timescale_handler.py` | `TimescaleTickHandler` — writes raw ticks to a hypertable; continuous aggregates for 1m/5m/15m/1h OHLC |
+| `webhooks/service.py` | `WebhookService` — orchestrator that wires all components at startup |
+
+**Streaming endpoints** (FastAPI):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/stream/sse` | Server-Sent Events tick stream (optional `?symbols=` filter) |
+| `WS` | `/stream/ws` | WebSocket proxy — subscribe/unsubscribe/ping protocol |
+| `POST` | `/stream/postback` | Kite order postback receiver (SHA-256 checksum verification) |
+| `GET` | `/stream/ohlc/{symbol}` | OHLC bars from TimescaleDB continuous aggregates |
+| `CRUD` | `/stream/alerts` | Price alert management (create, list, delete) |
+| `GET` | `/stream/status` | Full streaming pipeline status |
+
 ### Key Features
 - Auto-refresh every 30 seconds via `@st.fragment(run_every=...)`
 - Market status pill indicators from NSE API (pre-open, live, post-market)
 - Batch quote fetching (200 symbols/batch)
 - Option chain: expiry discovery (45 days + monthly), Sensibull-style colouring, ATM highlighting, PCR metric
+- Price alerts: `price_above`, `price_below`, `change_pct_above`, `change_pct_below`, `volume_above` with desktop notifications
+- All-combinations pairs trading: C(n,2) pair analysis when >2 tickers provided
 
 ---
 
@@ -411,7 +527,15 @@ centurion_core/
 │   ├── core/                     # Config, PostgreSQL, Selenium service
 │   ├── nse/                      # NSE CSV download + DB loader
 │   ├── options/                  # Concurrent option chain + Greeks
-│   └── trading/                  # Order service + RSI strategy
+│   ├── trading/                  # Order service + RSI strategy
+│   └── webhooks/                 # Real-time streaming infrastructure
+│       ├── ticker.py             # KiteWebSocketService (KiteTicker wrapper)
+│       ├── dispatcher.py         # WebhookDispatcher (in-process event fan-out)
+│       ├── handlers.py           # DBTickHandler, UITickCache, NSEMarketStatusMonitor
+│       ├── alert_engine.py       # PriceAlertEngine (condition-based alerts)
+│       ├── timescale_handler.py  # TimescaleDB tick writer + OHLC aggregates
+│       ├── service.py            # WebhookService orchestrator
+│       └── events.py             # EventType enum, TickData, WebhookEvent
 │
 ├── rag_pipeline/                 # RAG document intelligence
 │   ├── config.py                 # 60+ field configuration dataclass
@@ -440,6 +564,25 @@ centurion_core/
 │   ├── manager.py                # Excel/CSV file export
 │   └── minio_service.py          # MinIO S3 client (singleton)
 │
+├── api/                          # FastAPI REST API layer
+│   ├── main.py                   # App factory, auth-gated /docs
+│   ├── auth.py                   # Token signing, login/logout
+│   ├── dependencies.py           # Dependency injection (DB, Kite, RAG)
+│   ├── schemas/                  # Pydantic v2 request/response models
+│   │   ├── common.py             # Shared: SuccessResponse, Pagination
+│   │   ├── us_stocks.py          # Analysis, news, signals, backtest
+│   │   ├── ind_stocks.py         # Kite auth, quotes, orders, options
+│   │   ├── rag.py                # Ingest, query, evaluation
+│   │   ├── crypto.py             # Prices, backtest, strategies
+│   │   └── streaming.py          # SSE, WebSocket, Postback, OHLC, Alerts
+│   └── routers/                  # Route modules (50 endpoints)
+│       ├── health.py             # GET /health
+│       ├── us_stocks.py          # 9 endpoints
+│       ├── ind_stocks.py         # 11 endpoints
+│       ├── rag.py                # 10 endpoints
+│       ├── crypto.py             # 4 endpoints
+│       └── streaming.py          # 9 endpoints (SSE, WS, postback, OHLC, alerts, status)
+│
 └── deployment/                   # Deployment configs
     ├── docker-compose.yml        # App + MinIO containers
     ├── Dockerfile
@@ -453,114 +596,389 @@ centurion_core/
 
 ## 10. Installation
 
-### Prerequisites
+Complete step-by-step setup guide for fresh machine deployment.
 
-| Requirement | Version | Purpose |
+### Prerequisites & System Check
+
+| Component | Requirement | Windows Install |
 |---|---|---|
-| Python | 3.10+ | Runtime |
-| PostgreSQL | 14+ | Analysis & backtest persistence |
-| Docker | 20+ | MinIO object storage |
-| Ollama | Latest | Local LLM inference (RAG pipeline) |
+| **Python** | 3.10+ | https://www.python.org (add to PATH) |
+| **PostgreSQL** | 14+ | https://www.postgresql.org/download OR Docker |
+| **Docker** | 20+ | https://www.docker.com/products/docker-desktop |
+| **Git** | Latest | https://git-scm.com |
+| **Ollama** (RAG only) | Latest | https://ollama.ai (optional) |
 
-### 1. Install Dependencies
+**Port Availability Check** — ensure these ports are free:
 
 ```powershell
+# Windows PowerShell (Admin)
+$ports = @(9000, 9001, 9002, 9003, 9004, 11434)
+foreach ($port in $ports) {
+    $connection = Test-NetConnection -ComputerName localhost -Port $port -InformationLevel Quiet
+    if ($connection) {
+        Write-Host "⚠️  Port $port is in use" -ForegroundColor Yellow
+    } else {
+        Write-Host "✓ Port $port is available" -ForegroundColor Green
+    }
+}
+```
+
+If ports are in use, either:
+1. Kill the process: `Get-Process -Name processname | Stop-Process`
+2. Or update `.env` to use different ports
+
+---
+
+### Step 1: Clone Repository & Setup Python Environment
+
+```powershell
+# Clone the repository
+git clone https://github.com/srees16/centurion_core.git
 cd centurion_core
+
+# Create and activate virtual environment
 python -m venv myenv
 .\myenv\Scripts\Activate.ps1
+
+# Verify Python version
+python --version  # should be 3.10+
+
+# Install Python dependencies (installs DistilBERT ~250MB on first run)
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-> First run downloads the DistilBERT model (~250 MB).
+**Expected output:**
+```
+Successfully installed streamlit==1.X.X psycopg2-binary==2.9.X ...
+```
 
-### 2. Configure Environment
+---
 
-Create `.env` in the project root:
+### Step 2: Set Up PostgreSQL Database
+
+Choose **Option A (Docker)** or **Option B (Local PostgreSQL)**.
+
+#### **Option A: PostgreSQL via Docker** (Recommended)
+
+```powershell
+# Pull and run PostgreSQL container
+docker run -d `
+  --name centurion-postgres `
+  -p 9003:5432 `
+  -e POSTGRES_USER=postgres `
+  -e POSTGRES_PASSWORD=superadmin1 `
+  -e POSTGRES_DB=centurion_rag `
+  postgres:15
+
+# Wait 5 seconds for container to start
+Start-Sleep -Seconds 5
+
+# Verify container is running
+docker ps | findstr centurion-postgres
+
+# Check logs for startup
+docker logs centurion-postgres
+```
+
+#### **Option B: Local PostgreSQL Installation**
+
+```powershell
+# Verify PostgreSQL is installed and running
+# Windows Service Status:
+Get-Service postgresql-x64-15
+
+# If not running, start it:
+Start-Service postgresql-x64-15
+
+# Or use the Windows PostgreSQL CLI:
+& "C:\Program Files\PostgreSQL\15\bin\psql.exe" -U postgres -c "SELECT version();"
+```
+
+---
+
+### Step 3: Create Database & Initialize Schema
+
+```powershell
+# Navigate to project directory
+cd centurion_core
+
+# Run the database setup script
+# This will create all tables automatically
+python setup_database.py
+```
+
+**Expected output:**
+```
+✓ Database connection successful
+✓ Database tables created successfully
+✓ Database service layer ready
+✅ Database setup completed successfully!
+```
+
+**If this fails:**
+- Check PostgreSQL is running: `docker ps | findstr centurion-postgres`
+- Verify port 9003 is listening: `Test-NetConnection -ComputerName localhost -Port 9003`
+- Check password matches in `.env`
+
+---
+
+### Step 4: Set Up MinIO Object Storage (for Backtest Charts)
+
+```powershell
+# Pull and run MinIO container
+docker run -d `
+  --name centurion-minio `
+  -p 9004:9000 `
+  -p 9002:9001 `
+  -e MINIO_ROOT_USER=minioadmin `
+  -e MINIO_ROOT_PASSWORD=minioadmin123 `
+  minio/minio:latest server /data --console-address ":9001"
+
+# Wait for startup
+Start-Sleep -Seconds 5
+
+# Verify container
+docker ps | findstr centurion-minio
+
+# Create the bucket (optional — created auto on first use)
+docker exec centurion-minio mc mb minio/centurion-backtests
+```
+
+**Access MinIO Console:**
+- **URL**: http://localhost:9002
+- **Username**: minioadmin
+- **Password**: minioadmin123
+
+---
+
+### Step 5: Set Up Ollama (Optional, for RAG Pipeline)
+
+If you plan to use the RAG document Q&A feature, install Ollama:
+
+```powershell
+# Download from https://ollama.ai/download
+# Or via PowerShell:
+Invoke-WebRequest -Uri "https://ollama.ai/download/OllamaSetup.exe" -OutFile OllamaSetup.exe
+.\OllamaSetup.exe
+
+# After installation, download the default model
+ollama pull qwen2.5:3b
+
+# Verify Ollama is running (should listen on port 11434)
+Test-NetConnection -ComputerName localhost -Port 11434
+```
+
+---
+
+### Step 6: Configure Environment Variables
+
+Create `.env` file in the `centurion_core/` root directory with **all** required variables:
 
 ```ini
-# ─── PostgreSQL ───────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════
+# CRITICAL: Copy this entire block to .env (replace /path with actual)
+# ═══════════════════════════════════════════════════════════════════
+
+# ─── Streamlit App ─────────────────────────────────────────────────
+STREAMLIT_SERVER_PORT=9000
+
+# ─── FastAPI Backend ──────────────────────────────────────────────
+API_PORT=9001
+
+# ─── PostgreSQL (US Stocks Analysis & Backtesting) ──────────────────
 CENTURION_DB_HOST=localhost
-CENTURION_DB_PORT=5432
-CENTURION_DB_NAME=centurion_trading
-CENTURION_DB_USER=admin
-CENTURION_DB_PASSWORD=admin123
+CENTURION_DB_PORT=9003
+CENTURION_DB_NAME=centurion_rag
+CENTURION_DB_USER=postgres
+CENTURION_DB_PASSWORD=superadmin1
 CENTURION_DB_ENABLED=true
 
-# ─── MinIO Object Storage ────────────────────────────────
-MINIO_ENDPOINT=localhost:9000
+# ─── Separate PostgreSQL for Kite Connect (Live Trading) ────────────
+KITE_DB_HOST=localhost
+KITE_DB_PORT=9003
+KITE_DB_NAME=livestocks_ind
+KITE_DB_USER=postgres
+KITE_DB_PASSWORD=superadmin1
+
+# ─── MinIO (S3-compatible Object Storage) ──────────────────────────
+MINIO_ENDPOINT=localhost:9004
 MINIO_ACCESS_KEY=minioadmin
 MINIO_SECRET_KEY=minioadmin123
 MINIO_SECURE=false
 MINIO_BUCKET=centurion-backtests
 MINIO_ENABLED=true
+
+# ─── Zerodha Kite Connect (Live Indian Trading) ────────────────────
+# Obtain from Zerodha – https://kite.zerodha.com/app/settings/api
+ZERODHA_API_KEY=your_api_key_here
+ZERODHA_API_SECRET=your_api_secret_here
+ZERODHA_USER_ID=your_user_id_here
+ZERODHA_PASSWORD=your_password_here
+
+# ─── KiteConnect Connection Pool ──────────────────────────────────
+KITE_POOL_MAXSIZE=40
+
+# ─── RAG Document Pipeline ────────────────────────────────────────
+CENTURION_RAG_LLM_URL=http://localhost:11434
+RAG_MODEL=qwen2.5:3b
+CENTURION_RAG_CHROMA_DIR=./chroma_store
+CENTURION_RAG_EMBED_MODEL=BAAI/bge-base-en-v1.5
+CENTURION_RAG_CONTEXT_TOKEN_BUDGET=1200
+CENTURION_RAG_MAX_CONTEXT_CHUNKS=8
+CENTURION_RAG_TOP_K=15
+CENTURION_RAG_SIMILARITY_THRESHOLD=0.70
+CENTURION_RAG_LLM_NUM_CTX=2048
+CENTURION_RAG_LLM_NUM_PREDICT=400
+CENTURION_RAG_LLM_MAX_TOKENS=400
+CENTURION_RAG_LLM_TEMPERATURE=0.2
+CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT=300
+CENTURION_RAG_LLM_CHUNK_TIMEOUT=30
+CENTURION_RAG_QUERY_BUDGET=300
+CENTURION_RAG_QUERY_REWRITE=false
+CENTURION_RAG_STREAMING=true
+CENTURION_RAG_FAQ_ENABLED=false
+RAG_FAST_MODE=false
+
+# ─── Authentication ───────────────────────────────────────────────
+CENTURION_DEFAULT_ADMIN_PASSWORD=admin123
+CENTURION_DEFAULT_ANALYST_PASSWORD=analyst123
+
+# ─── Optional: Cloud LLM (Alternative to Ollama) ───────────────────
+# Uncomment to use Claude or OpenAI instead of Ollama
+# CENTURION_RAG_LLM_PROVIDER=anthropic  # or "openai"
+# ANTHROPIC_API_KEY=your_claude_key_here
+# OPENAI_API_KEY=your_openai_key_here
 ```
 
-All configuration values are overridable via `CENTURION_`-prefixed environment variables.
-
-#### Terminal Environment Variables (after fresh clone)
-
-If you are not using a `.env` file, set these variables in your PowerShell terminal before launching the app:
-
+**Verify .env is in the correct location:**
 ```powershell
-$env:ZERODHA_API_KEY=""
-$env:ZERODHA_API_SECRET=""
-$env:KITE_DB_HOST=""
-$env:KITE_DB_PORT=""
-$env:KITE_DB_NAME=""
-$env:KITE_DB_USER=""
-$env:KITE_DB_PASSWORD=""
-$env:ZERODHA_USER_ID=""
-$env:ZERODHA_PASSWORD=""
-$env:MINIO_ENDPOINT=""
-$env:MINIO_ACCESS_KEY=""
-$env:MINIO_SECRET_KEY=""
-$env:MINIO_SECURE=""
-$env:MINIO_BUCKET=""
-$env:MINIO_ENABLED=""
+Test-Path centurion_core\.env  # Should return True
 ```
 
-### 3. Set Up PostgreSQL
+---
+
+### Step 7: Verify All Services Are Running
 
 ```powershell
-# Connect as superuser
-& "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U postgres
+# Check containers
+docker ps
 
-# Inside psql:
-CREATE USER admin WITH PASSWORD 'admin123';
-CREATE DATABASE centurion_trading OWNER admin;
-GRANT ALL PRIVILEGES ON DATABASE centurion_trading TO admin;
-\q
+# Expected output:
+# centurion-postgres     postgres:15      Up 2 minutes    0.0.0.0:9003->5432/tcp
+# centurion-minio        minio:latest     Up 2 minutes    0.0.0.0:9004->9000/tcp, 0.0.0.0:9002->9001/tcp
+
+# Test PostgreSQL connection
+python -c "
+import psycopg2
+try:
+    conn = psycopg2.connect('host=localhost port=9003 user=postgres password=superadmin1 dbname=centurion_rag')
+    print('✓ PostgreSQL connection successful')
+    conn.close()
+except Exception as e:
+    print(f'✗ PostgreSQL error: {e}')
+"
+
+# Test MinIO connection
+python -c "
+from minio import Minio
+try:
+    client = Minio('localhost:9004', access_key='minioadmin', secret_key='minioadmin123', secure=False)
+    client.bucket_exists('centurion-backtests')
+    print('✓ MinIO connection successful')
+except Exception as e:
+    print(f'✗ MinIO error: {e}')
+"
+
+# Test Ollama (if using RAG)
+# Test-NetConnection -ComputerName localhost -Port 11434
 ```
 
-Initialise tables:
+---
+
+### Step 8: Launch the Application
+
+**Terminal 1 — Streamlit UI:**
 
 ```powershell
-python setup_database.py
-```
-
-> **TimescaleDB** (optional): Hypertables are created automatically if the extension is available. Standard PostgreSQL works fine without it.
-
-### 4. Set Up MinIO
-
-```powershell
-cd deployment
-docker compose up -d minio
-```
-
-| Port | Purpose |
-|---|---|
-| `9000` | S3-compatible API |
-| `9001` | Web Console (user: `minioadmin`, pass: `minioadmin123`) |
-
-The `centurion-backtests` bucket is created automatically on first use.
-
-### 5. Launch
-
-```powershell
+cd centurion_core
+.\myenv\Scripts\Activate.ps1
 streamlit run app.py
 ```
 
-Opens at **http://localhost:9090** (configured in `.streamlit/config.toml`).
+Opens at: **http://localhost:9000**
+
+**Terminal 2 — FastAPI REST API (optional):**
+
+```powershell
+cd centurion_core
+.\myenv\Scripts\Activate.ps1
+python run_api.py --port 9001
+```
+
+API docs at: **http://localhost:9001/docs** (login required)
+
+---
+
+### Step 9: Login & Verify Application
+
+1. Open http://localhost:9000 in your browser
+2. Login with default credentials:
+   - **Username**: `admin`
+   - **Password**: `admin123`
+3. Navigate to **Main** page — ensure no error messages appear
+4. Try a quick analysis with 2-3 tickers (e.g., AAPL, MSFT, GOOGL)
+5. Check **History** → **Analysis Runs** to verify database persistence
+
+**Expected UI state:**
+- No red error boxes
+- Database health check passes
+- Tickers load from cache successfully
+- Analysis completes within 2 minutes for 3 tickers
+
+---
+
+### Troubleshooting Setup Issues
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `connection to server ... failed` | PostgreSQL not running | `docker ps` and check container status |
+| `database "centurion_rag" does not exist` | Setup script didn't run | Run `python setup_database.py` again |
+| `[Errno 48] Address already in use` | Port conflict (9000/9004) | Check `Test-NetConnection` or change `.env` ports |
+| `ModuleNotFoundError: No module named 'streamlit'` | Dependencies not installed | Run `pip install -r requirements.txt` |
+| `Connection refused to port 9003` | PostgreSQL password mismatch | Verify `CENTURION_DB_PASSWORD=superadmin1` in `.env` |
+| `MinIO bucket not found` | Bucket not created | Run `docker exec centurion-minio mc mb minio/centurion-backtests` |
+| `SSL: CERTIFICATE_VERIFY_FAILED` | SSL cert issue (news scraping) | Usually auto-resolved; check internet connection |
+| `No module named 'torch'` | Heavy dependencies download | First run is slow (~5 min); be patient or pre-install: `pip install torch` |
+
+---
+
+### Optional: Stop Services
+
+```powershell
+# Stop containers (keep data)
+docker stop centurion-postgres centurion-minio
+
+# Remove containers (lose data)
+docker rm centurion-postgres centurion-minio
+
+# Remove images
+docker rmi postgres:15 minio/minio:latest
+
+# Deactivate virtual environment
+deactivate
+```
+
+---
+
+### Production Deployment
+
+For production, see [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md) for:
+- AWS EC2 / Azure VM setup
+- Kubernetes (k8s) manifests
+- SSL/TLS certificates
+- Database backups and recovery
+- Load balancing & horizontal scaling
 
 ---
 
@@ -626,6 +1044,29 @@ All pages share consistent navigation buttons:
 ---
 
 ## 12. API Reference
+
+### REST API (FastAPI)
+
+A full REST API runs alongside the Streamlit UI on a separate port (default `9001`).
+
+**Interactive docs** — **http://localhost:9001/docs** (Swagger UI) and **http://localhost:9001/redoc** (ReDoc) are available after authenticating. On first visit you are redirected to a login page; use the same credentials as the Streamlit app (e.g. `admin` / `admin123`). A signed session cookie (8-hour TTL) keeps you logged in.
+
+| Module | Prefix | Endpoints | Examples |
+|--------|--------|-----------|----------|
+| Health | `/api/health` | 1 | DB, RAG, Kite status check |
+| US Stocks | `/api/us-stocks` | 9 | `/analysis`, `/news`, `/sentiment`, `/backtest`, `/strategies` |
+| Indian Stocks | `/api/ind-stocks` | 11 | `/auth`, `/quotes`, `/orders`, `/positions`, `/option-chain` |
+| RAG Pipeline | `/api/rag` | 10 | `/ingest`, `/query`, `/collection/stats`, `/evaluate` |
+| Crypto | `/api/crypto` | 4 | `/prices`, `/backtest`, `/strategies` |
+| Streaming | `/stream` | 9 | `/sse`, `/ws`, `/postback`, `/ohlc/{symbol}`, `/alerts`, `/status` |
+
+```powershell
+# Launch the API server
+python run_api.py --port 9001
+
+# Or via uvicorn directly
+uvicorn api.main:create_app --factory --host 0.0.0.0 --port 9001
+```
 
 ### Database Service
 
@@ -711,14 +1152,14 @@ docker compose down -v
 |---------|-----|
 | Charts not appearing after backtest | Verify `docker ps --filter name=centurion-minio` + `MINIO_ENABLED=true` |
 | "minio module not found" | `pip install minio` |
-| Connection refused on port 9000 | `cd deployment && docker compose up -d minio` |
+| Connection refused on port 9004 | `cd deployment && docker compose up -d minio` |
 
 ### General
 
 | Symptom | Fix |
 |---------|-----|
 | Import errors | `pip install -r requirements.txt --upgrade` |
-| Port in use | `streamlit run app.py --server.port 8502` |
+| Port in use | `streamlit run app.py --server.port 9005` |
 | Slow first run | DistilBERT model download (~250 MB); subsequent runs are fast |
 
 ---
@@ -739,8 +1180,20 @@ docker compose down -v
 | **Analysis** | matplotlib, statsmodels, backtesting (0.6+), arch, scipy, seaborn |
 | **Database** | sqlalchemy ≥ 2.0, psycopg2-binary ≥ 2.9, python-dotenv ≥ 1.0 |
 | **Object Storage** | minio ≥ 7.2 |
-| **Auth** | pyyaml ≥ 6.0 |
+| **Auth** | pyyaml ≥ 6.0, itsdangerous |
 | **Notifications** | plyer |
+| **API** | fastapi, uvicorn[standard], python-multipart |
+---
+
+## 15. Changelog
+
+### 2026-02-28
+
+- **FastAPI REST API** — 50 JSON endpoints across 6 modules with Pydantic v2 schemas, auth-gated `/docs` (signed session cookie, 8-hour TTL)
+- **Real-time Streaming** — SSE tick stream, WebSocket proxy, Kite Postback receiver, TimescaleDB OHLC aggregates (1m/5m/15m/1h), price alert engine with CRUD endpoints
+- **MinIO Auto-Bucket** — `centurion-backtests` bucket created automatically on first use; `MinIOService.ensure_bucket_ready()`
+- **Pairs Trading All-Combinations** — C(n,2) pair analysis when >2 tickers provided
+- **Lazy Sentiment Loading** — DistilBERT model deferred to first `analyze()` call (class-level singleton)
 
 ---
 

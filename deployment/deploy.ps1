@@ -24,14 +24,14 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "Starting container..." -ForegroundColor Yellow
     docker run -d `
         --name algo-trading-system `
-        -p 8501:8501 `
+        -p 9000:9000 `
         -v "${parentDir}/data:/app/data" `
         algo-trading-system:latest
     
     if ($LASTEXITCODE -eq 0) {
         Write-Host "`n✓ Container started successfully!" -ForegroundColor Green
         Write-Host "`n==================================================" -ForegroundColor Cyan
-        Write-Host "Application is running at: http://localhost:8501" -ForegroundColor Green
+        Write-Host "Application is running at: http://localhost:9000" -ForegroundColor Green
         Write-Host "==================================================" -ForegroundColor Cyan
         Write-Host "`nUseful commands:" -ForegroundColor Yellow
         Write-Host "  View logs:     docker logs -f algo-trading-system"

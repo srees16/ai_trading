@@ -47,11 +47,6 @@ sys.modules.setdefault('auth', _auth_pkg)
 from services.session import initialize_session_state
 from ui.styles import apply_custom_styles
 
-# NOTE: The previous background preload of numpy/pandas was removed.
-# On Windows the GIL + Cython-extension compilation made the background
-# thread *slow down* the main thread rather than helping.  Streamlit
-# loads these packages on-demand when they are first needed.
-
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -59,6 +54,58 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
+
+
+# ── Ollama model warm-up (runs exactly once per process) ────────
+@st.cache_resource(show_spinner=False)
+def _warmup_ollama() -> bool:
+    """Pre-load the RAG LLM model into Ollama's memory.
+
+    Sends a minimal ``/api/generate`` request with ``num_predict=1``
+    so the model weights are loaded into RAM/VRAM *before* the first
+    real user query.  Returns True on success, False otherwise.
+    """
+    import requests as _req
+    import time as _time
+
+    model = os.getenv(
+        "RAG_MODEL",
+        os.getenv("CENTURION_RAG_LLM_MODEL", "mistral"),
+    )
+    base_url = os.getenv(
+        "CENTURION_RAG_LLM_URL", "http://localhost:11434"
+    ).rstrip("/")
+
+    logger.info("Ollama startup warm-up: loading model '%s' …", model)
+    try:
+        t0 = _time.monotonic()
+        resp = _req.post(
+            f"{base_url}/api/generate",
+            json={
+                "model": model,
+                "prompt": "warmup",
+                "num_predict": 1,
+                "stream": False,
+            },
+            timeout=(10, 120),
+        )
+        resp.raise_for_status()
+        elapsed = _time.monotonic() - t0
+        logger.info(
+            "Ollama startup warm-up complete: model=%s loaded in %.1fs",
+            model, elapsed,
+        )
+        return True
+    except _req.ConnectionError:
+        logger.warning(
+            "Ollama startup warm-up skipped: cannot connect to %s", base_url,
+        )
+    except Exception as exc:
+        logger.warning("Ollama startup warm-up failed: %s", exc)
+    return False
+
+
+# Trigger warm-up at import time (first Streamlit process spin-up).
 
 st.set_page_config(
     page_title="Centurion Capital LLC",
@@ -80,6 +127,9 @@ def main():
     # lightweight CSS via Authenticator._get_login_css().
     if not check_authentication():
         return
+    
+    # ── Ollama model warm-up (runs once, after login succeeds) ──
+    _warmup_ollama()
 
     # Apply full app styles (background image, typography, layout)
     apply_custom_styles()
@@ -92,6 +142,7 @@ def main():
     APP_OPTIONS = {
         "trading_platform": "📈 US Stocks",
         "live_stocks":      "📈 Ind Stocks",
+        "crypto":           "₿ Crypto",
         "rag_engine":       "📚 RAG Engine",
     }
 
@@ -123,21 +174,56 @@ def main():
         # immediately, saving an entire Streamlit round-trip (~1-2 s).
 
     # ── Route to selected application ───────────────────────────
+    _user = st.session_state.get('username', 'unknown')
+
     if selected_app == "live_stocks":
-        logger.info("[user=%s] Rendering module: Ind Stocks",
-                    st.session_state.get('username', 'unknown'))
-        from kite_connect.zerodha_live import render_live_dashboard
-        render_live_dashboard()
+        logger.info("[user=%s] Rendering module: Ind Stocks", _user)
+        _get_renderer("live_stocks")()
 
     elif selected_app == "rag_engine":
-        logger.info("[user=%s] Rendering module: RAG Engine",
-                    st.session_state.get('username', 'unknown'))
-        from rag_pipeline.rag_page import render_rag_page
-        render_rag_page()
+        logger.info("[user=%s] Rendering module: RAG Engine", _user)
+        _get_renderer("rag_engine")()
+
+    elif selected_app == "crypto":
+        logger.info("[user=%s] Rendering module: Crypto", _user)
+        _get_renderer("crypto")()
 
     else:
         # Default: Trading Platform with sub-page routing
         _route_trading_platform()
+
+
+# ── Cached module importers ─────────────────────────────────────
+# @st.cache_resource ensures each render function is imported exactly
+# once per process lifetime rather than on every Streamlit rerun.
+@st.cache_resource
+def _get_renderer(module_key: str):
+    """Import and cache a module-level render function."""
+    if module_key == "live_stocks":
+        from kite_connect.zerodha_live import render_live_dashboard
+        return render_live_dashboard
+    elif module_key == "rag_engine":
+        from rag_pipeline.rag_page import render_rag_page
+        return render_rag_page
+    elif module_key == "crypto":
+        from ui.pages.crypto_page import render_crypto_page
+        return render_crypto_page
+    elif module_key == "analysis":
+        from ui.pages.analysis_page import render_analysis_page
+        return render_analysis_page
+    elif module_key == "fundamental":
+        from ui.pages.fundamental_page import render_fundamental_page
+        return render_fundamental_page
+    elif module_key == "backtesting":
+        from ui.pages.backtesting_page import render_backtesting_page
+        return render_backtesting_page
+    elif module_key == "history":
+        from ui.pages.history_page import render_history_page
+        return render_history_page
+    elif module_key == "main":
+        from ui.pages.main_page import render_main_page
+        return render_main_page
+    raise ValueError(f"Unknown module: {module_key}")
 
 
 def _route_trading_platform():
@@ -146,24 +232,10 @@ def _route_trading_platform():
     _user = st.session_state.get('username', 'unknown')
     logger.info("[user=%s] US Stocks sub-page: %s", _user, current_page)
 
-    if current_page == 'analysis':
-        from ui.pages.analysis_page import render_analysis_page
-        render_analysis_page()
-    elif current_page == 'fundamental':
-        from ui.pages.fundamental_page import render_fundamental_page
-        render_fundamental_page()
-    elif current_page == 'backtesting':
-        from ui.pages.backtesting_page import render_backtesting_page
-        render_backtesting_page()
-    elif current_page == 'crypto':
-        from ui.pages.crypto_page import render_crypto_page
-        render_crypto_page()
-    elif current_page == 'history':
-        from ui.pages.history_page import render_history_page
-        render_history_page()
-    else:
-        from ui.pages.main_page import render_main_page
-        render_main_page()
+    renderer = _get_renderer(current_page if current_page in (
+        'analysis', 'fundamental', 'backtesting', 'history',
+    ) else 'main')
+    renderer()
 
 
 if __name__ == "__main__":

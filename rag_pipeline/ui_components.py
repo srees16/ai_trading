@@ -157,11 +157,23 @@ def render_rag_toggle() -> bool:
 
 def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
     """
-    Render a multi-file PDF uploader and ingest on submit.
+    Render a multi-file PDF uploader with **background ingestion**.
 
-    Returns ingestion stats list or None if nothing was uploaded.
+    Files are submitted to ``BackgroundIngestionManager`` and processed
+    asynchronously so the user can continue submitting queries while
+    ingestion runs.  A live-updating status panel shows progress.
+
+    Returns ingestion stats list for newly completed tasks, or None.
     """
-    col_upload, col_status = st.columns([1, 2])
+    from rag_pipeline.background_ingest import get_ingestion_manager, TaskStatus
+
+    mgr = get_ingestion_manager()
+
+    # ---- Show live status for active / recently-completed tasks --------
+    _render_ingestion_status(mgr)
+
+    # ---- File upload + submit button ------------------------------------
+    col_upload, col_hint = st.columns([1, 2])
     with col_upload:
         uploaded_files = st.file_uploader(
             "Upload PDFs",
@@ -176,106 +188,115 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
             return None
 
         if st.button("Ingest Documents", type="primary", key="rag_ingest_btn"):
-            ingestion_svc = _get_ingestion_service()
-            results: List[Dict[str, Any]] = []
+            submitted_count = 0
+            for file in uploaded_files:
+                file_bytes = file.read()
+                mgr.submit(file.name, file_bytes)
+                submitted_count += 1
+                logger.info("Queued background ingestion for %s", file.name)
 
-            # Initialise cancel flag
-            st.session_state["rag_ingest_cancel"] = False
+            st.toast(
+                f"📤 {submitted_count} file(s) submitted for background ingestion. "
+                "You can continue querying while they process.",
+                icon="🚀",
+            )
+            st.rerun()  # rerun to show the status panel immediately
 
-            with col_status:
-                spinner_ph = st.empty()
-                cancel_ph = st.empty()
-                total = len(uploaded_files)
+    with col_hint:
+        if mgr.has_active_tasks():
+            st.info(
+                "⏳ **Ingestion in progress** — you can submit queries "
+                "for previously ingested documents while new files are processing."
+            )
 
-                def _on_cancel():
-                    st.session_state["rag_ingest_cancel"] = True
-
-                _cancel_btn_counter = [0]
-
-                def _show_spinner(pct: int, label: str, show_cancel: bool = True) -> None:
-                    """Render the unified centurion spinner with percentage text."""
-                    _cancel_btn_counter[0] += 1
-                    from ui.components import spinner_html
-                    spinner_ph.markdown(
-                        spinner_html(f"{label} — {pct}%"),
-                        unsafe_allow_html=True,
-                    )
-                    if show_cancel:
-                        cancel_ph.button(
-                            "Cancel Ingestion",
-                            key=f"rag_cancel_ingest_{_cancel_btn_counter[0]}",
-                            on_click=_on_cancel,
-                            type="secondary",
-                        )
-                    else:
-                        cancel_ph.empty()
-
-                _show_spinner(0, "Ingesting documents…")
-
-                cancelled = False
-                for i, file in enumerate(uploaded_files):
-                    # Check cancel flag before processing next file
-                    if st.session_state.get("rag_ingest_cancel", False):
-                        cancelled = True
-                        break
-
-                    pct = int((i / total) * 100)
-                    _show_spinner(pct, f"Processing: {file.name}")
+    # ---- Consume completed tasks and invalidate caches -----------------
+    # Display is handled by _render_ingestion_status via get_recently_completed();
+    # here we only invalidate the query cache and collect results for callers.
+    completed = mgr.pop_completed()
+    results: List[Dict[str, Any]] = []
+    if completed:
+        engine = _get_query_engine()
+        for task in completed:
+            if task.status == TaskStatus.COMPLETED and task.result:
+                results.append(task.result)
+                r = task.result
+                if r["status"] == "success":
                     try:
-                        stats = ingestion_svc.ingest_uploaded_bytes(
-                            file_name=file.name,
-                            file_bytes=file.read(),
-                        )
-                        results.append(stats)
-                    except Exception as e:
-                        logger.error("Failed to ingest %s: %s", file.name, e)
-                        results.append(
-                            {"status": "error", "source": file.name, "error": str(e)}
-                        )
+                        engine.invalidate_cache(r["source"], "ingested")
+                    except Exception:
+                        pass
+            elif task.status == TaskStatus.FAILED:
+                results.append({
+                    "status": "error",
+                    "source": task.file_name,
+                    "error": task.error,
+                })
 
-                if cancelled:
-                    skipped_count = total - len(results)
-                    _show_spinner(
-                        int((len(results) / total) * 100),
-                        f"Cancelled — {len(results)}/{total} files processed, "
-                        f"{skipped_count} skipped",
-                        show_cancel=False,
+    # ---- Auto-refresh while ingestion is running -----------------------
+    # Polls every 2 s so the progress bar stays in sync with the backend.
+    # Calls st.rerun() which stops further execution in this render cycle.
+    if mgr.has_active_tasks():
+        import time
+        time.sleep(2)
+        st.rerun()
+
+    return results if results else None
+
+
+def _render_ingestion_status(mgr) -> None:
+    """Render a live status panel for active background ingestion tasks.
+
+    Active tasks auto-refresh every 2 s (via the polling loop in
+    ``render_pdf_uploader``).  Recently-completed tasks are shown here
+    until they are consumed by ``pop_completed()``.
+    """
+    from rag_pipeline.background_ingest import TaskStatus
+
+    active = mgr.get_active_tasks()
+    recently_done = mgr.get_recently_completed(max_age_s=60)
+
+    if not active and not recently_done:
+        return
+
+    with st.container():
+        st.markdown("#### 🔄 Ingestion Status")
+
+        # Active tasks — progress is kept in sync by the auto-refresh loop
+        for task in active:
+            col_name, col_stage, col_pct = st.columns([2, 3, 1])
+            with col_name:
+                status_icon = "⏳" if task.status == TaskStatus.PENDING else "🔄"
+                st.markdown(f"{status_icon} **{task.file_name}**")
+            with col_stage:
+                st.caption(task.stage or "Queued…")
+            with col_pct:
+                st.progress(task.stage_pct, text=f"{task.stage_pct:.0%}")
+
+        # Recently completed — shown until pop_completed() consumes them
+        for task in recently_done:
+            if task.status == TaskStatus.COMPLETED:
+                r = task.result or {}
+                if r.get("status") == "success":
+                    st.success(
+                        f"✅ **{task.file_name}** — {r.get('chunks', '?')} chunks "
+                        f"from {r.get('pages', '?')} pages"
                     )
-                    import time as _time; _time.sleep(1.2)
-                    spinner_ph.empty()
-                    cancel_ph.empty()
+                elif r.get("reason") == "already_ingested":
+                    st.info(
+                        f"📄 **{task.file_name}** — already ingested "
+                        f"({r.get('chunks', '?')} chunks persisted). Skipped."
+                    )
+                elif r.get("status") == "skipped":
                     st.warning(
-                        f"⚠️ Ingestion cancelled by user. "
-                        f"**{len(results)}** of **{total}** files were processed."
+                        f"⚠️ **{task.file_name}** — skipped ({r.get('reason', '')})"
                     )
                 else:
-                    _show_spinner(100, "Done!", show_cancel=False)
-                    import time as _time; _time.sleep(0.6)
-                    spinner_ph.empty()
-                    cancel_ph.empty()
+                    st.info(f"📄 **{task.file_name}** — {r.get('status', 'done')}")
+            elif task.status == TaskStatus.FAILED:
+                st.error(f"❌ **{task.file_name}** — {task.error or 'unknown error'}")
 
-                # Reset cancel flag
-                st.session_state.pop("rag_ingest_cancel", None)
-
-                # Display results
-                for r in results:
-                    if r["status"] == "success":
-                        st.success(
-                            f"✅ **{r['source']}** — {r['chunks']} chunks from {r['pages']} pages"
-                        )
-                    elif r.get("reason") == "already_ingested":
-                        st.info(
-                            f"📄 **{r['source']}** — already ingested "
-                            f"({r.get('chunks', '?')} chunks persisted). Skipped."
-                        )
-                    elif r["status"] == "skipped":
-                        st.warning(f"⚠️ **{r['source']}** — skipped ({r.get('reason', '')})")
-                    else:
-                        st.error(f"❌ **{r['source']}** — {r.get('error', 'unknown error')}")
-
-            return results
-
-    return None
+        if active:
+            st.caption("⏱️ *Updating automatically — submit queries below while ingestion runs.*")
 
 
 # ---------------------------------------------------------------------------
@@ -335,12 +356,18 @@ def _render_answer_content(text: str) -> None:
         idx += 1
 
 
-def render_rag_response(response) -> None:
+def render_rag_response(response, *, runtime_label: str | None = None) -> None:
     """Render a RAGResponse with LLM-generated answer, feedback buttons,
     and collapsible sources.
 
     Supports both plain text and fenced code blocks in the answer so that
     code snippets returned by the LLM are syntax-highlighted.
+
+    Parameters
+    ----------
+    runtime_label : str | None
+        Pre-formatted runtime string (e.g. "⏱️ Total runtime: …").
+        Displayed right below the HITL feedback buttons when provided.
     """
     from rag_pipeline.code_applier import extract_code_blocks
 
@@ -373,6 +400,10 @@ def render_rag_response(response) -> None:
                     sources=sources,
                 )
                 st.toast("📝 Feedback recorded — we'll improve!", icon="👎")
+
+    # ---- Runtime badge (right below feedback emojis) ----
+    if runtime_label:
+        st.caption(runtime_label)
 
     # ---- Re-submit query button ----
     if response.rag_enabled and response.answer:

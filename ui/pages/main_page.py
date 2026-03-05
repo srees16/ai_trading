@@ -26,18 +26,49 @@ def render_main_page():
     logger.info("[user=%s] Viewing US Stocks main page",
                 st.session_state.get('username', 'unknown'))
     render_header()
-    
-    st.markdown("---")
-    
+
+    # Navigation buttons — directly below the header bar
+    render_navigation_buttons(
+        current_page='main',
+        back_key_suffix='from_main',
+    )
+
+    # Tighten the gap between nav buttons and control panel
+    st.markdown(
+        '<div style="margin-top: -0.6rem;"></div>',
+        unsafe_allow_html=True,
+    )
+
     # Render control panel
     render_control_panel()
-    
+
     # Footer on main page
     render_footer()
 
 
 def render_control_panel():
     """Render the control panel with stock selection and settings."""
+    # Tighten vertical gaps inside the two-column control area
+    st.markdown(
+        """<style>
+        /* Reduce whitespace around radio buttons, expanders, and text areas */
+        [data-testid="stRadio"] { margin-bottom: -0.6rem; }
+        [data-testid="stExpander"] { margin-top: -0.4rem; margin-bottom: -0.4rem; }
+        [data-testid="stTextArea"] { margin-top: -0.4rem; }
+        [data-testid="stFileUploader"] { margin-top: -0.4rem; }
+        [data-testid="stSelectbox"] { margin-bottom: -0.6rem; }
+        [data-testid="stCheckbox"] { margin-top: -0.4rem; margin-bottom: -0.4rem; }
+
+        /* Collapse the gap between the two-column panel and the Run button */
+        [data-testid="stHorizontalBlock"] + [data-testid="stElementContainer"],
+        [data-testid="stHorizontalBlock"] + div {
+            margin-top: -1.2rem !important;
+        }
+        /* Also tighten the warning / button row itself */
+        [data-testid="stAlert"] { margin-top: -0.4rem !important; margin-bottom: -0.4rem !important; }
+        </style>""",
+        unsafe_allow_html=True,
+    )
     col1, col2 = st.columns([1, 1])
     
     tickers = []
@@ -51,7 +82,7 @@ def render_control_panel():
     st.session_state.tickers = tickers
     
     # Run Analysis section — full width below the settings (tighter spacing)
-    st.markdown('<div style="margin-top: -1.5rem;"></div>', unsafe_allow_html=True)
+    st.markdown('<div style="margin-top: -2.5rem;"></div>', unsafe_allow_html=True)
     run_clicked = _render_run_controls(tickers)
     
     if run_clicked and len(tickers) > 0:
@@ -219,7 +250,7 @@ def _render_output_settings():
 
 def _render_run_controls(tickers: List[str]) -> bool:
     """
-    Render run analysis and navigation controls.
+    Render run analysis controls.
     
     Args:
         tickers: List of selected tickers
@@ -239,11 +270,5 @@ def _render_run_controls(tickers: List[str]) -> bool:
             type="primary",
             disabled=len(tickers) == 0
         )
-    
-    # Navigation buttons
-    render_navigation_buttons(
-        current_page='main',
-        back_key_suffix='from_main'
-    )
     
     return run_button

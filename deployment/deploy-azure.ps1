@@ -42,7 +42,7 @@ az container create `
     --name $CONTAINER_NAME `
     --image "$ACR_NAME.azurecr.io/algo-trading-system:latest" `
     --dns-name-label $DNS_NAME `
-    --ports 8501 `
+    --ports 9000 `
     --cpu 2 `
     --memory 4 `
     --registry-login-server "$ACR_NAME.azurecr.io" `
@@ -57,5 +57,5 @@ Write-Host "`n==================================================" -ForegroundCol
 Write-Host "Deployment Complete!" -ForegroundColor Green
 Write-Host "==================================================" -ForegroundColor Green
 Write-Host "`nYour application is available at:" -ForegroundColor Yellow
-Write-Host "http://${FQDN}:8501" -ForegroundColor Cyan
+Write-Host "http://${FQDN}:9000" -ForegroundColor Cyan
 Write-Host "`n==================================================" -ForegroundColor Green

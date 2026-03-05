@@ -23,9 +23,9 @@ class DatabaseConfig:
     
     def __init__(self):
         self.host = os.getenv('CENTURION_DB_HOST', os.getenv('DB_HOST', 'localhost'))
-        self.port = int(os.getenv('CENTURION_DB_PORT', os.getenv('DB_PORT', '5432')))
+        self.port = int(os.getenv('CENTURION_DB_PORT', os.getenv('DB_PORT', '9003')))
         self.database = os.getenv('CENTURION_DB_NAME', os.getenv('DB_NAME', 'centurion_trading'))
-        self.username = os.getenv('CENTURION_DB_USER', os.getenv('DB_USER', 'centurion'))
+        self.username = os.getenv('CENTURION_DB_USER', os.getenv('DB_USER', ''))
         self.password = os.getenv('CENTURION_DB_PASSWORD', os.getenv('DB_PASSWORD', ''))
         self.pool_size = int(os.getenv('CENTURION_DB_POOL_SIZE', os.getenv('DB_POOL_SIZE', '10')))
         self.max_overflow = int(os.getenv('CENTURION_DB_MAX_OVERFLOW', os.getenv('DB_MAX_OVERFLOW', '20')))

@@ -50,7 +50,7 @@ def create_table():
     cur.execute(f"""
         CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
             id         SERIAL PRIMARY KEY,
-            name       VARCHAR(255) NOT NULL,
+            name       VARCHAR(255) NOT NULL UNIQUE,
             high       NUMERIC(18, 4),
             low        NUMERIC(18, 4),
             volume     BIGINT,
@@ -60,6 +60,22 @@ def create_table():
         );
     """)
     print(f"[OK] Table '{TABLE_NAME}' created (or already exists).")
+
+    # Ensure UNIQUE constraint exists on name (for existing tables)
+    cur.execute("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint
+                WHERE conrelid = 'stocks'::regclass
+                  AND contype = 'u'
+                  AND conname = 'stocks_name_key'
+            ) THEN
+                ALTER TABLE stocks ADD CONSTRAINT stocks_name_key UNIQUE (name);
+            END IF;
+        END $$;
+    """)
+    print("[OK] UNIQUE constraint on stocks.name ensured.")
 
     # Index groups table
     cur.execute("""

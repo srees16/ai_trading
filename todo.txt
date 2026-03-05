@@ -4,11 +4,8 @@ feedback:
         name the tables on UI and under holdings
 
 1. Verify tables and results that can be saved to db
-2. Explore API implemention
-3. kite app has hardcoded credentials and api key details, access them via .env
-4. login page must have US stocks, Ind stocks, crypto radio button and same workflow/pipeline for cross-market isolation
-5. collate common utilities like strategies, UI, auth, db persistence (minio & postgresql) and branch out US stocks, Ind stocks but they need to import above from common location
-6. Explore Agentic implementation - types of agents:
+2. collate common utilities like strategies, UI, auth, db persistence (minio & postgresql) and branch out US stocks, Ind stocks but they need to import above from common location
+3. Explore Agentic implementation - types of agents:
     planner agent - planner
     supervisor agent - supervisor
     webscraping agent - scraper

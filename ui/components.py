@@ -200,7 +200,6 @@ def render_navigation_buttons(
         ('analysis',     '📈 Stock Analysis'),
         ('fundamental',  '📊 Fundamental Analysis'),
         ('backtesting',  '🔬 Backtest Strategy'),
-        ('crypto',       '₿ Crypto'),
         ('history',      '📋 History'),
     ]
 
