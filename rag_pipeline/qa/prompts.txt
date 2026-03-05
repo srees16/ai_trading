@@ -10,3 +10,6 @@ how can i expand getEvents to incorporate meta-labelling (p.50, snippet 3.6)
 
 what does the chapter on "Pathways to Power" emphasize on? what can we learn from the author regarding power? (ch 4)
 how did human rights violations affect the school of the americas? give a glimpse on cold war atrocities (ch 6)
+
+~~~~ generic test prompts~~~~
+what does the second chapter emphasize on? what can we learn from the author regarding the disussed topic?
