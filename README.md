@@ -18,12 +18,63 @@ pip install -r requirements.txt
 ```
 
 ### 1️⃣🅰️ Execute environment variables
-```powershell
+```Windows powershell:
+
+$env:STREAMLIT_SERVER_PORT=9000
+$env:API_PORT=9001 
+$env:ZERODHA_API_KEY="fsdfsfd"
+$env:ZERODHA_API_SECRET="sdfdsfds"
+$env:ZERODHA_USER_ID="adsfsdfd"
+$env:ZERODHA_PASSWORD="adfs!"
+$env:KITE_DB_HOST="localhost"
+$env:KITE_DB_PORT="9003"
+$env:KITE_DB_NAME="livestocks_ind"
+$env:KITE_DB_USER="postgres"
+$env:KITE_DB_PASSWORD="superadmin1"
+$env:KITE_POOL_MAXSIZE=40
+$env:MINIO_ENDPOINT="localhost:9004"
+$env:MINIO_ACCESS_KEY="minioadmin"
+$env:MINIO_SECRET_KEY="minioadmin123"
+$env:MINIO_SECURE="false"
+$env:MINIO_BUCKET="centurion-backtests"
+$env:MINIO_ENABLED="true"
+$env:CENTURION_DB_HOST="localhost"
+$env:CENTURION_DB_PORT="9003"
+$env:CENTURION_DB_NAME="centurion_rag"
+$env:CENTURION_DB_USER="postgres"
+$env:CENTURION_DB_PASSWORD="superadmin1"
+$env:CENTURION_RAG_LLM_URL="http://localhost:11434"
+$env:RAG_MODEL="qwen2.5:3b"
+$env:CENTURION_RAG_CHROMA_DIR="./chroma_store"
+$env:CENTURION_RAG_EMBED_MODEL="BAAI/bge-base-en-v1.5"
+$env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET="1200"
+$env:CENTURION_RAG_MAX_CONTEXT_CHUNKS="8"
+$env:CENTURION_RAG_TOP_K="15"
+$env:CENTURION_RAG_SIMILARITY_THRESHOLD="0.70"
+$env:CENTURION_RAG_LLM_NUM_CTX="2048"
+$env:CENTURION_RAG_LLM_NUM_PREDICT="400"
+$env:CENTURION_RAG_LLM_MAX_TOKENS="400"
+$env:CENTURION_RAG_LLM_TEMPERATURE="0.2"
+$env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT="300"
+$env:CENTURION_RAG_LLM_CHUNK_TIMEOUT="30"
+$env:CENTURION_RAG_QUERY_BUDGET="300"
+$env:CENTURION_RAG_QUERY_REWRITE="false"
+$env:CENTURION_RAG_STREAMING="true"
+$env:CENTURION_RAG_FAQ_ENABLED="false"
+$env:RAG_FAST_MODE="false"
+$env:CENTURION_DEFAULT_ADMIN_PASSWORD="admin123"
+$env:CENTURION_DEFAULT_ANALYST_PASSWORD="analyst123"
+
+MacOS:
 export STREAMLIT_SERVER_PORT='9000' API_PORT='9001' ZERODHA_API_KEY='qwertyuiop' ZERODHA_API_SECRET='asdfghjklmnbvcxz' ZERODHA_USER_ID='xyz123' ZERODHA_PASSWORD='1234509876' KITE_DB_HOST='localhost' KITE_DB_PORT='9003' KITE_DB_NAME='livestocks_ind' KITE_DB_USER='postgres' KITE_DB_PASSWORD='superadmin1' KITE_POOL_MAXSIZE='40' MINIO_ENDPOINT='localhost:9004' MINIO_ACCESS_KEY='minioadmin' MINIO_SECRET_KEY='minioadmin123' MINIO_SECURE='false' MINIO_BUCKET='centurion-backtests' MINIO_ENABLED='true' CENTURION_DB_HOST='localhost' CENTURION_DB_PORT='9003' CENTURION_DB_NAME='centurion_rag' CENTURION_DB_USER='postgres' CENTURION_DB_PASSWORD='superadmin1' CENTURION_RAG_LLM_URL='http://localhost:11434' RAG_MODEL='qwen2.5:3b' CENTURION_RAG_CHROMA_DIR='./chroma_store' CENTURION_RAG_EMBED_MODEL='BAAI/bge-base-en-v1.5' CENTURION_RAG_CONTEXT_TOKEN_BUDGET='1200' CENTURION_RAG_MAX_CONTEXT_CHUNKS='8' CENTURION_RAG_TOP_K='15' CENTURION_RAG_SIMILARITY_THRESHOLD='0.70' CENTURION_RAG_LLM_NUM_CTX='2048' CENTURION_RAG_LLM_NUM_PREDICT='400' CENTURION_RAG_LLM_MAX_TOKENS='400' CENTURION_RAG_LLM_TEMPERATURE='0.2' CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300' CENTURION_RAG_LLM_CHUNK_TIMEOUT='30' CENTURION_RAG_QUERY_BUDGET='300' CENTURION_RAG_QUERY_REWRITE='false' CENTURION_RAG_STREAMING='true' CENTURION_RAG_FAQ_ENABLED='false' RAG_FAST_MODE='false' CENTURION_DEFAULT_ADMIN_PASSWORD='admin123' CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'
 ```
 
 ### 2️⃣ Start PostgreSQL (Docker)
-```powershell
+```windows powershell:
+
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15; Start-Sleep 2; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
+
+MacOS:
 docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15 && sleep 2 && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
 ```
 
