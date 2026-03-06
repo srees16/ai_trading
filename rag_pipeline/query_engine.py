@@ -1180,11 +1180,41 @@ class RAGQueryEngine:
         top_k: int,
         where: Optional[Dict[str, Any]],
     ) -> List[RetrievedChunk]:
-        """Embed a single query variant and retrieve chunks."""
+        """Embed a single query variant and retrieve chunks.
+
+        If the filtered query fails (e.g. ChromaDB index corruption),
+        automatically retries without metadata filters so retrieval
+        degrades gracefully instead of returning zero results.
+        """
         query_embedding = self._embedder.embed_query(query_text)
 
+        try:
+            results = self._run_search(
+                query_text, query_embedding, top_k, where,
+            )
+        except Exception as exc:
+            if where is not None:
+                logger.warning(
+                    "Filtered retrieval failed (%s) — retrying without "
+                    "metadata filter.", exc,
+                )
+                results = self._run_search(
+                    query_text, query_embedding, top_k, None,
+                )
+            else:
+                raise
+        return self._parse_results(results)
+
+    def _run_search(
+        self,
+        query_text: str,
+        query_embedding: List[float],
+        top_k: int,
+        where: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Execute a single vector (or hybrid) search."""
         if self._hybrid:
-            results = self._hybrid.search(
+            return self._hybrid.search(
                 query_text=query_text,
                 query_embedding=query_embedding,
                 top_k=top_k,
@@ -1192,14 +1222,12 @@ class RAGQueryEngine:
                 bm25_weight=self._config.hybrid_bm25_weight,
                 vector_weight=self._config.hybrid_vector_weight,
             )
-        else:
-            results = self._vs.query(
-                query_embeddings=[query_embedding],
-                n_results=top_k,
-                where=where,
-                include=["documents", "metadatas", "distances"],
-            )
-        return self._parse_results(results)
+        return self._vs.query(
+            query_embeddings=[query_embedding],
+            n_results=top_k,
+            where=where,
+            include=["documents", "metadatas", "distances"],
+        )
 
     def _build_where_filter(
         self,

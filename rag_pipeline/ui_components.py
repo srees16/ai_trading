@@ -371,7 +371,7 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
     """
     from rag_pipeline.code_applier import extract_code_blocks
 
-    st.markdown("### 💡 Answer")
+    st.markdown("### Answer")
     _render_answer_content(response.answer)
 
     # ---- Feedback buttons (thumbs up / thumbs down) ----

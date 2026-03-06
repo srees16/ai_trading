@@ -15,6 +15,8 @@ from ui.components import (
     render_header,
     render_footer,
     render_navigation_buttons,
+    render_vix_indicator,
+    render_stock_ticker_ribbon,
 )
 from utils import parse_ticker_csv, validate_tickers, create_sample_csv
 
@@ -27,7 +29,13 @@ def render_main_page():
                 st.session_state.get('username', 'unknown'))
     render_header()
 
-    # Navigation buttons — directly below the header bar
+    # Scrolling ribbon — top 10 US stocks by market cap
+    render_stock_ticker_ribbon(market="US")
+
+    # VIX indicator bar
+    render_vix_indicator(market="US")
+
+    # Navigation buttons
     render_navigation_buttons(
         current_page='main',
         back_key_suffix='from_main',

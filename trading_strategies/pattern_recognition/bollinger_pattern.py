@@ -335,9 +335,12 @@ class BollingerPatternStrategy(BaseStrategy):
                     mid_j = signals['mid_band'].iloc[j]
                     upper_i = signals['upper_band'].iloc[i]
                     
-                    # Condition 2: Price near mid band and mid band near current upper
+                    # Condition 2: Price near mid band and mid band in the
+                    # vicinity of the current upper band (use wider tolerance
+                    # for the cross-time comparison so real W-bottoms aren't
+                    # filtered out by a 1 % window).
                     if (abs(mid_j - price_j) < alpha * price_j and 
-                        abs(mid_j - upper_i) < alpha * upper_i):
+                        abs(mid_j - upper_i) < 5 * alpha * upper_i):
                         
                         # Find node K (first bottom - touches lower band)
                         for k in range(j, i - pattern_period, -1):

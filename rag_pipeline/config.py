@@ -185,12 +185,12 @@ class RAGConfig:
     )
     rerank_top_n: int = field(
         default_factory=lambda: int(
-            os.getenv("CENTURION_RAG_RERANK_TOP_N", "5")
+            os.getenv("CENTURION_RAG_RERANK_TOP_N", "8")
         )
     )
     rerank_score_threshold: float = field(
         default_factory=lambda: float(
-            os.getenv("CENTURION_RAG_RERANK_SCORE_THRESHOLD", "0.25")
+            os.getenv("CENTURION_RAG_RERANK_SCORE_THRESHOLD", "0.10")
         )
     )
 

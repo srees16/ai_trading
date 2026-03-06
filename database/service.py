@@ -90,7 +90,8 @@ class DatabaseService:
         run_type: str,
         tickers: List[str],
         parameters: Dict[str, Any] = None,
-        user_id: str = None
+        user_id: str = None,
+        market: str = 'US',
     ) -> Optional[UUID]:
         """
         Start a new analysis run and return its ID for tracking.
@@ -100,6 +101,7 @@ class DatabaseService:
             tickers: List of tickers to analyze
             parameters: Analysis parameters
             user_id: Optional user identifier
+            market: Market identifier ('US' or 'IND')
             
         Returns:
             Run ID for tracking, or None if database unavailable
@@ -115,7 +117,8 @@ class DatabaseService:
                     run_type=run_type,
                     tickers=tickers,
                     parameters=parameters,
-                    user_id=user_id
+                    user_id=user_id,
+                    market=market,
                 )
                 repo.start_run(run.id)
                 return run.id
@@ -178,7 +181,8 @@ class DatabaseService:
     def save_signals(
         self,
         signals: List[Dict[str, Any]],
-        analysis_run_id: UUID = None
+        analysis_run_id: UUID = None,
+        market: str = 'US',
     ) -> int:
         """
         Save trading signals to database.
@@ -212,6 +216,7 @@ class DatabaseService:
                     
                     signal = StockSignal(
                         analysis_run_id=analysis_run_id,
+                        market=market,
                         ticker=sig.get('ticker', '').upper(),
                         decision=decision_str,
                         decision_score=sig.get('confidence', 0.0) / 100.0 if sig.get('confidence', 0) > 1 else sig.get('confidence', 0.0),
@@ -237,7 +242,8 @@ class DatabaseService:
     def save_news_items(
         self,
         news_items: List[Dict[str, Any]],
-        analysis_run_id: UUID = None
+        analysis_run_id: UUID = None,
+        market: str = 'US',
     ) -> int:
         """
         Save news items to database with deduplication.
@@ -290,6 +296,7 @@ class DatabaseService:
 
                     news = NewsItem(
                         analysis_run_id=analysis_run_id,
+                        market=market,
                         ticker=item.get('ticker', '').upper(),
                         title=headline,
                         content=item.get('summary', item.get('content', '')),
@@ -317,7 +324,8 @@ class DatabaseService:
     def save_fundamental_metrics(
         self,
         metrics: List[Dict[str, Any]],
-        analysis_run_id: UUID = None
+        analysis_run_id: UUID = None,
+        market: str = 'US',
     ) -> int:
         """
         Save fundamental metrics with upsert logic.
@@ -340,6 +348,7 @@ class DatabaseService:
                 for m in metrics:
                     # Create FundamentalMetric object
                     metric = FundamentalMetric(
+                        market=market,
                         ticker=m.get('ticker', '').upper(),
                         recorded_at=datetime.utcnow(),
                         current_price=m.get('current_price'),
@@ -385,7 +394,8 @@ class DatabaseService:
     def save_backtest_result(
         self,
         result: Dict[str, Any],
-        analysis_run_id: UUID = None
+        analysis_run_id: UUID = None,
+        market: str = 'US',
     ) -> bool:
         """
         Save a backtest result with normalised detail tables.
@@ -424,6 +434,7 @@ class DatabaseService:
                 }
                 
                 backtest = BacktestResult(
+                    market=market,
                     strategy_id=result.get('strategy_id', result.get('strategy_name', 'unknown').lower().replace(' ', '_')),
                     strategy_name=result.get('strategy_name', 'unknown'),
                     tickers=tickers_list,
@@ -675,7 +686,8 @@ class DatabaseService:
         fundamental_metrics: List[Dict[str, Any]] = None,
         backtest_results: List[Dict[str, Any]] = None,
         parameters: Dict[str, Any] = None,
-        run_type: str = 'stock_analysis'
+        run_type: str = 'stock_analysis',
+        market: str = 'US',
     ) -> Tuple[UUID, Dict[str, int]]:
         """
         Save complete analysis results in a single transaction.
@@ -709,25 +721,26 @@ class DatabaseService:
         run_id = self.start_analysis_run(
             run_type=run_type,
             tickers=tickers,
-            parameters=parameters
+            parameters=parameters,
+            market=market,
         )
         
         try:
             # Save all components
             if signals:
-                counts['signals'] = self.save_signals(signals, run_id)
+                counts['signals'] = self.save_signals(signals, run_id, market=market)
             
             if news_items:
-                counts['news'] = self.save_news_items(news_items, run_id)
+                counts['news'] = self.save_news_items(news_items, run_id, market=market)
             
             if fundamental_metrics:
                 counts['fundamentals'] = self.save_fundamental_metrics(
-                    fundamental_metrics, run_id
+                    fundamental_metrics, run_id, market=market
                 )
             
             if backtest_results:
                 for result in backtest_results:
-                    if self.save_backtest_result(result, run_id):
+                    if self.save_backtest_result(result, run_id, market=market):
                         counts['backtests'] += 1
             
             # Complete the run

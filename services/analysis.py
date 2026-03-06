@@ -45,7 +45,8 @@ async def run_analysis_async(
     Returns:
         List of TradingSignal objects
     """
-    system = AlgoTradingSystem(tickers=tickers)
+    market = st.session_state.get("current_market", "US")
+    system = AlgoTradingSystem(tickers=tickers, market=market)
     cache = get_session_cache()
     
     # Status tracking
@@ -202,6 +203,46 @@ async def _execute_analysis(
         f"✓ Analyzed {len(analyzed_news)} items "
         f"({len(already_analysed)} cached, {len(newly_analysed)} new)"
     )
+
+    # ── Step 2b: Macro-economic indicators ───────────────────────────
+    if progress_callback:
+        progress_callback(53, "🌐 Fetching macro-economic indicators…")
+
+    market = system.market
+    try:
+        macro_snap = system.macro_indicators.fetch(market=market)
+        system.decision_engine.set_macro_snapshot(macro_snap)
+        logger.info(
+            "Macro sentiment: %s (%.2f)",
+            macro_snap.macro_sentiment_label or "n/a",
+            macro_snap.macro_sentiment_score or 0,
+        )
+    except Exception as exc:
+        logger.warning("Macro indicators unavailable: %s", exc)
+
+    if progress_callback:
+        progress_callback(55, "✓ Macro indicators loaded")
+
+    # ── Step 2c: Google search public sentiment ──────────────────────
+    if progress_callback:
+        progress_callback(56, "🔍 Analyzing public sentiment (Google)…")
+
+    try:
+        unique_tickers_for_gs = list({item.ticker for item in analyzed_news})
+        public_sentiments = await system.broader_sentiment.analyze_multiple(
+            unique_tickers_for_gs
+        )
+        system.decision_engine.set_public_sentiments(public_sentiments)
+        for t, ps in public_sentiments.items():
+            logger.info(
+                "Public sentiment %s: %s (%.2f, %d pages)",
+                t, ps.sentiment_label, ps.avg_sentiment_score, ps.results_analyzed,
+            )
+    except Exception as exc:
+        logger.warning("Google public sentiment unavailable: %s", exc)
+
+    if progress_callback:
+        progress_callback(58, "✓ Public sentiment analyzed")
     
     # ── Step 3: Metrics + signals ────────────────────────────────────
     # (Spinner already shows status; skip redundant info notification)
@@ -327,6 +368,9 @@ def _save_to_database(signals: List[Any], tickers: List[str]) -> bool:
     try:
         db_service = get_database_service()
         
+        # Determine market from session state
+        market = st.session_state.get('current_market', 'US')
+        
         # Prepare data for database
         signal_data, news_data, fundamental_data = _prepare_database_data(signals)
         
@@ -336,8 +380,9 @@ def _save_to_database(signals: List[Any], tickers: List[str]) -> bool:
             signals=signal_data,
             news_items=news_data,
             fundamental_metrics=fundamental_data,
-            parameters={'analysis_type': 'stock_analysis'},
-            run_type='stock_analysis'
+            parameters={'analysis_type': 'stock_analysis', 'market': market},
+            run_type='stock_analysis',
+            market=market,
         )
         
         if run_id:

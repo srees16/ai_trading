@@ -1,6 +1,7 @@
 # .gitignore for Algo Trading Alert System
 # ============================================
 
+# ============ Python Bytecode & Build Artifacts ============
 __pycache__/
 *.py[cod]
 *$py.class
@@ -21,6 +22,8 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+
+# ============ Virtual Environments ============
 venv/
 ENV/
 env/
@@ -28,12 +31,16 @@ env/
 myenv/
 mywinenv/
 *env/
+
+# ============ IDE & Editor ============
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 *.sublime-*
+
+# ============ Data Files (generated at runtime) ============
 *.xlsx
 *.csv
 *.json
@@ -41,6 +48,9 @@ mywinenv/
 !sample_tickers.csv
 *.log
 logs/
+*.jsonl
+
+# ============ OS Files ============
 .DS_Store
 .DS_Store?
 ._*
@@ -49,13 +59,19 @@ logs/
 ehthumbs.db
 Thumbs.db
 desktop.ini
+
+# ============ Jupyter ============
 .ipynb_checkpoints/
 *.ipynb
+
+# ============ ML Models & Serialised Data ============
 .cache/
 models/
 *.h5
 *.pkl
 *.joblib
+
+# ============ Secrets & Credentials ============
 .env
 .env.*
 *.pem
@@ -63,8 +79,24 @@ models/
 secrets/
 auth/credentials.yaml
 credentials.txt
+
+# ============ ChromaDB / Vector Stores (runtime-generated) ============
+chroma_store/
+data/chroma_db/
+
+# ============ RAG Pipeline Runtime Data ============
+data/retrieval_log.jsonl
+rag_pipeline/data/retrieval_log.jsonl
+data/rag_uploads/
+
+# ============ SQLite Databases ============
+*.sqlite3
+
+# ============ Backup & Temp Files ============
 *_backup*
 *.bak
+
+# ============ Testing & Docs ============
 .pytest_cache/
 .coverage
 htmlcov/

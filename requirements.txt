@@ -2,6 +2,7 @@ aiohttp
 anthropic
 openai
 beautifulsoup4
+fake-useragent
 lxml
 requests
 pandas
@@ -40,3 +41,4 @@ uvicorn[standard]
 python-multipart
 itsdangerous
 # a2a-sdk[http-server]==0.3.20
+sensibull-quotes

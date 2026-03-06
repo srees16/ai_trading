@@ -114,7 +114,7 @@ app.py (Streamlit Router)
 
 ```
 AlgoTradingSystem (main.py)
-  ├── NewsAggregator     → Yahoo Finance, Finviz, Investing.com, TradingView, r/WallStreetBets
+  ├── USNewsAggregator   → Yahoo Finance, Finviz, Investing.com, TradingView, r/WallStreetBets
   ├── SentimentAnalyzer   → DistilBERT transformer model
   ├── MetricsCalculator   → Fundamentals (yfinance) + Technicals (RSI, MACD, Bollinger)
   ├── DecisionEngine      → Weighted scoring → STRONG_BUY / BUY / HOLD / SELL / STRONG_SELL

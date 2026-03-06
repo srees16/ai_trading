@@ -15,19 +15,31 @@ Full integration with ``ScraperCache`` for:
 import logging
 import asyncio
 import time
+from datetime import datetime
 from typing import Dict, List, Set
 
+import pandas as pd
+
 from scrapers import BaseNewsScraper
-from scrapers.yahoo_finance import YahooFinanceScraper
-from scrapers.finviz import FinvizScraper
-from scrapers.investing import InvestingScraper
-from scrapers.tradingview import TradingViewScraper
-from scrapers.wallstreetbets import WallStreetBetsScraper
+from scrapers.us_news.yahoo_finance import YahooFinanceScraper
+from scrapers.us_news.finviz import FinvizScraper
+from scrapers.us_news.investing import InvestingScraper
+from scrapers.us_news.tradingview import TradingViewScraper
+from scrapers.us_news.wallstreetbets import WallStreetBetsScraper
 from scrapers.cache import ScraperCache, get_scraper_cache
 from models import NewsItem
 from config import Config
 
 logger = logging.getLogger(__name__)
+
+# Source reliability weights for importance ranking (0-1 scale)
+_SOURCE_WEIGHTS: Dict[str, float] = {
+    "Yahoo Finance": 0.9,
+    "Finviz": 0.8,
+    "Investing.com": 0.75,
+    "TradingView": 0.7,
+    "WallStreetBets": 0.4,
+}
 
 
 class NewsAggregator:
@@ -250,3 +262,96 @@ class NewsAggregator:
             total_cached, len(fetch_list),
         )
         return all_news
+
+    # ── ranking & convenience ────────────────────────────────────────
+
+    @staticmethod
+    def _rank_items(
+        items: List[NewsItem],
+        ticker: str,
+        company: str = "",
+    ) -> List[NewsItem]:
+        """
+        Compute ``relevance_score`` and assign ``importance_rank`` to each item.
+
+        Importance combines:
+        * Source reliability weight  (40 %)
+        * Relevance score            (35 %)
+        * Recency                    (25 %)
+
+        Items are sorted descending by composite importance; ``importance_rank``
+        is 1-based (1 = most important).
+        """
+        now = datetime.now()
+
+        for item in items:
+            # Relevance score (keyword-based)
+            item.relevance_score = BaseNewsScraper.compute_relevance_score(
+                item, ticker, company,
+            )
+
+            # Source weight
+            src_w = _SOURCE_WEIGHTS.get(item.source, 0.5)
+
+            # Recency: 1.0 for now → 0.0 for articles > 7 days old
+            age_hours = max((now - item.timestamp).total_seconds() / 3600.0, 0.0)
+            recency = max(1.0 - age_hours / (7 * 24), 0.0)
+
+            # Composite score (used only for sorting — not stored)
+            item._importance = (
+                0.40 * src_w
+                + 0.35 * (item.relevance_score or 0.0)
+                + 0.25 * recency
+            )
+
+        items.sort(key=lambda x: x._importance, reverse=True)
+
+        for rank, item in enumerate(items, start=1):
+            item.importance_rank = rank
+            # Clean up transient attribute
+            del item._importance
+
+        return items
+
+    async def get_stock_news(
+        self,
+        ticker: str,
+        company: str = "",
+    ) -> pd.DataFrame:
+        """
+        High-level convenience method: fetch, rank, and return a sorted DataFrame.
+
+        Args:
+            ticker: Stock ticker symbol (e.g. ``"AAPL"``).
+            company: Optional human-readable company name for relevance scoring.
+
+        Returns:
+            ``pandas.DataFrame`` sorted by ``importance_rank`` (ascending)
+            with columns: title, summary, url, timestamp, source, ticker,
+            category, sentiment_score, sentiment_label, sentiment_confidence,
+            relevance_score, importance_rank.
+        """
+        items = await self.fetch_all_news(ticker)
+        items = self._rank_items(items, ticker, company)
+
+        if not items:
+            return pd.DataFrame()
+
+        rows = [
+            {
+                "title": it.title,
+                "summary": it.summary,
+                "url": it.url,
+                "timestamp": it.timestamp,
+                "source": it.source,
+                "ticker": it.ticker,
+                "category": str(it.category),
+                "sentiment_score": it.sentiment_score,
+                "sentiment_label": str(it.sentiment_label) if it.sentiment_label else None,
+                "sentiment_confidence": it.sentiment_confidence,
+                "relevance_score": it.relevance_score,
+                "importance_rank": it.importance_rank,
+            }
+            for it in items
+        ]
+        return pd.DataFrame(rows).sort_values("importance_rank")

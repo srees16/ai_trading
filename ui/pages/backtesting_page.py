@@ -15,7 +15,7 @@ import streamlit as st
 
 from config import Config
 from trading_strategies import list_strategies
-from ui.components import render_page_header, render_footer, render_navigation_buttons, render_no_data_warning
+from ui.components import render_page_header, render_footer, render_navigation_buttons, render_ind_navigation_buttons, render_stock_ticker_ribbon, render_no_data_warning
 
 logger = logging.getLogger(__name__)
 
@@ -103,15 +103,22 @@ def render_backtesting_page():
     _ensure_heavy()  # lazy-load pandas, plotly, ui.tables
     logger.info("[user=%s] Viewing Backtesting page",
                 st.session_state.get('username', 'unknown'))
+    market = st.session_state.get('current_market', 'US')
+    market_label = "Indian" if market == 'IND' else "US"
     render_page_header(
-        "🔬 Backtest Strategy"
+        f"🔬 {market_label} Backtest Strategy"
     )
 
     # Navigation buttons
-    render_navigation_buttons(
-        current_page='backtesting',
-        back_key_suffix='from_backtest'
-    )
+    if market == 'IND':
+        render_stock_ticker_ribbon(market="IND")
+        render_ind_navigation_buttons(current_page='backtesting', back_key_suffix='from_backtest')
+    else:
+        render_stock_ticker_ribbon(market="US")
+        render_navigation_buttons(
+            current_page='backtesting',
+            back_key_suffix='from_backtest'
+        )
     
     st.markdown("---")
 
@@ -618,7 +625,7 @@ def _save_backtest_to_database(
                 'final_value': m.get('final_value'),
             })
         
-        if db_service.save_backtest_result(backtest_data):
+        if db_service.save_backtest_result(backtest_data, market=st.session_state.get('current_market', 'US')):
             _compact_caption("🗄️ Results saved to database")
             
     except Exception as e:
@@ -667,10 +674,17 @@ def _save_charts_to_minio(
             strategy_name=strategy_name,
         )
 
-        return len(saved) if saved else 0
+        count = len(saved) if saved else 0
+        if count:
+            logger.info("Saved %d chart(s) to MinIO for %s", count, strategy_name)
+        else:
+            logger.warning("No charts saved to MinIO for %s (charts=%d)",
+                           strategy_name, len(result.charts))
+        return count
 
     except Exception as e:
         logger.error(f"Failed to save charts to MinIO: {e}")
+        st.warning(f"⚠️ Could not save charts to MinIO: {e}")
         return 0
 
 

@@ -15,6 +15,8 @@ from ui.components import (
     render_footer,
     render_metrics_cards,
     render_analysis_navigation_buttons,
+    render_ind_navigation_buttons,
+    render_stock_ticker_ribbon,
     spinner_html,
 )
 
@@ -23,7 +25,9 @@ logger = logging.getLogger(__name__)
 
 def render_analysis_page():
     """Render the analysis progress and results page."""
-    render_page_header("📈 US Stock Analysis")
+    market = st.session_state.get('current_market', 'US')
+    market_label = "Indian" if market == 'IND' else "US"
+    render_page_header(f"📈 {market_label} Stock Analysis")
     
     st.markdown("---")
     
@@ -92,7 +96,13 @@ def _render_analysis_results(
         render_*: Lazily-imported rendering callables
     """
     # Navigation buttons
-    render_analysis_navigation_buttons()
+    market = st.session_state.get('current_market', 'US')
+    if market == 'IND':
+        render_stock_ticker_ribbon(market="IND")
+        render_ind_navigation_buttons(current_page='analysis', back_key_suffix='from_analysis')
+    else:
+        render_stock_ticker_ribbon(market="US")
+        render_analysis_navigation_buttons()
     
     st.markdown("---")
     

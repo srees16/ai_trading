@@ -13,6 +13,8 @@ from ui.components import (
     render_page_header,
     render_footer,
     render_navigation_buttons,
+    render_ind_navigation_buttons,
+    render_stock_ticker_ribbon,
     render_no_data_warning,
     render_score_interpretations_table,
 )
@@ -43,16 +45,23 @@ def render_fundamental_page():
     _ensure_heavy()
     logger.info("[user=%s] Viewing Fundamental Analysis page",
                 st.session_state.get('username', 'unknown'))
+    market = st.session_state.get('current_market', 'US')
+    market_label = "Indian" if market == 'IND' else "US"
     render_page_header(
-        "📊 Fundamental Analysis",
+        f"📊 {market_label} Fundamental Analysis",
         description="Altman Z-Score • Beneish M-Score • Piotroski F-Score"
     )
 
     # Navigation buttons
-    render_navigation_buttons(
-        current_page='fundamental',
-        back_key_suffix='from_fundamental'
-    )
+    if market == 'IND':
+        render_stock_ticker_ribbon(market="IND")
+        render_ind_navigation_buttons(current_page='fundamental', back_key_suffix='from_fundamental')
+    else:
+        render_stock_ticker_ribbon(market="US")
+        render_navigation_buttons(
+            current_page='fundamental',
+            back_key_suffix='from_fundamental'
+        )
     
     st.markdown("---")
     

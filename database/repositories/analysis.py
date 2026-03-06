@@ -29,7 +29,8 @@ class AnalysisRepository(BaseRepository[AnalysisRun]):
         tickers: List[str],
         parameters: Dict[str, Any] = None,
         user_id: str = None,
-        source: str = 'web'
+        source: str = 'web',
+        market: str = 'US',
     ) -> AnalysisRun:
         """
         Create a new analysis run.
@@ -40,6 +41,7 @@ class AnalysisRepository(BaseRepository[AnalysisRun]):
             parameters: Analysis parameters
             user_id: User who initiated the run
             source: Source of the run ('web', 'api', 'scheduled')
+            market: Market identifier ('US' or 'IND')
             
         Returns:
             Created AnalysisRun
@@ -50,7 +52,8 @@ class AnalysisRepository(BaseRepository[AnalysisRun]):
             tickers=[t.upper() for t in tickers],
             parameters=parameters or {},
             user_id=user_id,
-            source=source
+            source=source,
+            market=market,
         )
         return self.create(run)
     
@@ -131,7 +134,8 @@ class AnalysisRepository(BaseRepository[AnalysisRun]):
         self,
         run_type: str = None,
         limit: int = 50,
-        days: int = 7
+        days: int = 7,
+        market: str = None,
     ) -> List[AnalysisRun]:
         """
         Get recent analysis runs.
@@ -140,6 +144,7 @@ class AnalysisRepository(BaseRepository[AnalysisRun]):
             run_type: Filter by run type
             limit: Maximum results
             days: Days back to look
+            market: Filter by market ('US', 'IND')
             
         Returns:
             List of runs
@@ -152,5 +157,8 @@ class AnalysisRepository(BaseRepository[AnalysisRun]):
         
         if run_type:
             query = query.filter(AnalysisRun.run_type == run_type)
+        
+        if market:
+            query = query.filter(AnalysisRun.market == market)
         
         return query.order_by(desc(AnalysisRun.created_at)).limit(limit).all()

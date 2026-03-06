@@ -55,7 +55,7 @@ async def run_analysis(request: AnalysisRequest):
     """Execute the complete analysis pipeline for the given tickers."""
     try:
         from main import AlgoTradingSystem
-        from scrapers.aggregator import NewsAggregator
+        from scrapers.us_aggregator import USNewsAggregator
         from sentiment import SentimentAnalyzer
         from metrics import MetricsCalculator
         from decision_engine import DecisionEngine
@@ -133,9 +133,9 @@ async def run_analysis(request: AnalysisRequest):
 async def scrape_news(request: ScrapeNewsRequest):
     """Scrape news articles from multiple sources for the given tickers."""
     try:
-        from scrapers.aggregator import NewsAggregator
+        from scrapers.us_aggregator import USNewsAggregator
 
-        aggregator = NewsAggregator()
+        aggregator = USNewsAggregator()
         items = await aggregator.fetch_news_for_tickers(request.tickers)
 
         return ScrapeNewsResponse(

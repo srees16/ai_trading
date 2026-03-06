@@ -34,7 +34,7 @@ elif sys.path[0] != _PROJECT_ROOT:
 # ── Heavy imports are LAZY ──────────────────────────────────────────
 # kiteconnect pulls in twisted+autobahn (~30 s on Windows).  We defer
 # all heavy imports to first actual use so the login page isn't blocked.
-from ui.components import load_logo_base64_small, render_header_bar, render_footer, spinner_html as _spinner_html
+from ui.components import load_logo_base64_small, render_header_bar, render_footer, render_ind_navigation_buttons, spinner_html as _spinner_html
 
 # Lazy singletons — populated on first call via _ensure_imports()
 _kite_mod = None
@@ -478,10 +478,11 @@ def render_live_dashboard():
     Does NOT call st.set_page_config — the caller is responsible for that.
     """
 
-    # ── Landing page gate: show intro until user clicks "Start Kite Session" ──
+    # ── Auto-start Kite session (no landing page) ──
     if not st.session_state.get("kite_session_started", False):
-        _render_landing_page()
-        return
+        logger.info("[user=%s] Ind Stocks: Kite session auto-started",
+                    st.session_state.get('username', 'unknown'))
+        st.session_state["kite_session_started"] = True
 
     _render_dashboard()
 
@@ -491,6 +492,9 @@ def render_live_dashboard():
 def _render_landing_page():
     """Show an intro landing page before the Kite session is started."""
     render_header_bar(subtitle="Indian Equities · Zerodha Kite Connect")
+
+    # Navigation buttons for Ind Stocks module
+    render_ind_navigation_buttons(current_page='ind_kite', back_key_suffix='from_kite_landing')
 
     st.markdown("""
     <style>
@@ -819,12 +823,14 @@ def _render_dashboard():
     # ── Header bar (rendered after Kite login so kite_status is available) ──
     _pills_html = (
         f'<div class="live-pill {pill_class}"><span class="live-dot"></span> {pill_label}</div>'
-        f'<div class="live-pill pill-open" style="margin-top:10px"><span class="live-dot"></span> Online</div>'
     )
     render_header_bar(
         subtitle="Real-time data · Zerodha Kite Connect",
         right_html=_pills_html,
     )
+
+    # Navigation buttons for Ind Stocks module
+    render_ind_navigation_buttons(current_page='ind_kite', back_key_suffix='from_kite_dash')
 
     try:
         from setup.db_setup import create_table as _ensure_tables
@@ -1107,87 +1113,84 @@ def _render_dashboard():
                 # Market is closed AND WS not connected — just show DB data
                 quotes_badge_slot.empty()
     
-            # ── Display tabs ──
-            tab_names = [name for _, name in groups]
-            tabs = st.tabs(tab_names)
-    
-            for tab, (group_id, group_name) in zip(tabs, groups):
-                with tab:
-                    rows = fetch_stocks_from_db(_conn, group_id)
-    
-                    if not rows:
-                        st.info(
-                            f"No stocks mapped to **{group_name}**. "
-                            f"This will auto-populate on next dashboard restart after Kite login."
-                        )
-                        continue
-    
-                    df = pd.DataFrame(rows, columns=["Name", "High", "Low", "Volume", "LTP", "Change (%)"])
-    
-                    # Detect if we have any price data at all
-                    _has_prices = df["LTP"].notna().any()
-    
-                    if not _has_prices:
-                        st.markdown(
-                            '<div style="background:#fefce8;border:1px solid #fde68a;border-radius:6px;'
-                            'padding:0.5rem 0.8rem;margin-bottom:0.5rem;font-size:0.82rem;color:#92400e">'
-                            '📴 <b>Market is closed</b> — showing stock names only. '
-                            'Prices will update automatically when the market session is active.'
-                            '</div>',
-                            unsafe_allow_html=True,
-                        )
-    
-                    # Summary metrics
-                    col1, col2, col3, col4 = st.columns(4)
-                    col1.metric("Stocks", len(df))
-                    col2.metric("Avg LTP", f"₹{df['LTP'].mean():,.2f}" if _has_prices else "—")
-                    if df['Change (%)'].notna().any():
-                        gainer_idx = df['Change (%)'].idxmax()
-                        loser_idx  = df['Change (%)'].idxmin()
-                        col3.metric(
-                            "Top Gainer",
-                            df.loc[gainer_idx, 'Name'],
-                            f"{df['Change (%)'].max():+.2f}%",
-                        )
-                        col4.metric(
-                            "Top Loser",
-                            df.loc[loser_idx, 'Name'],
-                            f"{df['Change (%)'].min():+.2f}%",
-                            delta_color="inverse",
-                        )
-    
-                    # Style the dataframe
-                    def color_change(val):
-                        if val is None or pd.isna(val):
-                            return ""
-                        return "color: #38a169; font-weight:600" if val > 0 \
-                            else "color: #e53e3e; font-weight:600" if val < 0 else ""
-    
-                    styled_df = df.style.map(color_change, subset=["Change (%)"])
-                    styled_df = styled_df.format({
-                        "High":  "₹{:,.2f}",
-                        "Low":   "₹{:,.2f}",
-                        "LTP":   "₹{:,.2f}",
-                        "Volume": "{:,.0f}",
-                        "Change (%)": "{:+.2f}%",
-                    }, na_rep="—")
-    
-                    st.dataframe(
-                        styled_df,
-                        hide_index=True,
-                        column_config={
-                            "Name":       st.column_config.TextColumn("Name", width="medium"),
-                            "High":       st.column_config.TextColumn("High", width="small"),
-                            "Low":        st.column_config.TextColumn("Low", width="small"),
-                            "Volume":     st.column_config.TextColumn("Volume", width="small"),
-                            "LTP":        st.column_config.TextColumn("LTP", width="small"),
-                            "Change (%)": st.column_config.TextColumn("Change (%)", width="small"),
-                        },
+            # ── Display all stocks in a single table ──
+            all_rows = []
+            for group_id, group_name in groups:
+                rows = fetch_stocks_from_db(_conn, group_id)
+                if rows:
+                    all_rows.extend(rows)
+
+            if not all_rows:
+                st.info(
+                    "No stocks found. "
+                    "This will auto-populate on next dashboard restart after Kite login."
+                )
+            else:
+                df = pd.DataFrame(all_rows, columns=["Name", "High", "Low", "Volume", "LTP", "Change (%)"])
+                df = df.drop_duplicates(subset=["Name"])
+
+                # Detect if we have any price data at all
+                _has_prices = df["LTP"].notna().any()
+
+                if not _has_prices:
+                    st.markdown(
+                        '<div style="background:#fefce8;border:1px solid #fde68a;border-radius:6px;'
+                        'padding:0.5rem 0.8rem;margin-bottom:0.5rem;font-size:0.82rem;color:#92400e">'
+                        '📴 <b>Market is closed</b> — showing stock names only. '
+                        'Prices will update automatically when the market session is active.'
+                        '</div>',
+                        unsafe_allow_html=True,
                     )
+
+                # Summary metrics
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Stocks", len(df))
+                col2.metric("Avg LTP", f"₹{df['LTP'].mean():,.2f}" if _has_prices else "—")
+                if df['Change (%)'].notna().any():
+                    gainer_idx = df['Change (%)'].idxmax()
+                    loser_idx  = df['Change (%)'].idxmin()
+                    col3.metric(
+                        "Top Gainer",
+                        df.loc[gainer_idx, 'Name'],
+                        f"{df['Change (%)'].max():+.2f}%",
+                    )
+                    col4.metric(
+                        "Top Loser",
+                        df.loc[loser_idx, 'Name'],
+                        f"{df['Change (%)'].min():+.2f}%",
+                        delta_color="inverse",
+                    )
+
+                # Style the dataframe
+                def color_change(val):
+                    if val is None or pd.isna(val):
+                        return ""
+                    return "color: #38a169; font-weight:600" if val > 0 \
+                        else "color: #e53e3e; font-weight:600" if val < 0 else ""
+
+                styled_df = df.style.map(color_change, subset=["Change (%)"])
+                styled_df = styled_df.format({
+                    "High":  "₹{:,.2f}",
+                    "Low":   "₹{:,.2f}",
+                    "LTP":   "₹{:,.2f}",
+                    "Volume": "{:,.0f}",
+                    "Change (%)": "{:+.2f}%",
+                }, na_rep="—")
+
+                st.dataframe(
+                    styled_df,
+                    hide_index=True,
+                    column_config={
+                        "Name":       st.column_config.TextColumn("Name", width="medium"),
+                        "High":       st.column_config.TextColumn("High", width="small"),
+                        "Low":        st.column_config.TextColumn("Low", width="small"),
+                        "Volume":     st.column_config.TextColumn("Volume", width="small"),
+                        "LTP":        st.column_config.TextColumn("LTP", width="small"),
+                        "Change (%)": st.column_config.TextColumn("Change (%)", width="small"),
+                    },
+                )
     
             _conn.close()
-
-        _stock_quotes_panel()
 
         # ── Quick Trade (not auto-refreshed) ─────────────────────
         def _portfolio_panels():
@@ -1589,6 +1592,8 @@ def _render_dashboard():
                         st.info("No data returned. Ensure market is open and stocks have sufficient history.")
     
         _portfolio_panels()
+
+        _stock_quotes_panel()
 
     # ── OPTIONS TAB ────────────────────────────────────────────
     with options_main_tab:

@@ -15,7 +15,7 @@ from uuid import UUID
 import streamlit as st
 
 from config import Config
-from ui.components import render_page_header, render_footer, render_navigation_buttons, get_decision_emoji
+from ui.components import render_page_header, render_footer, render_navigation_buttons, render_ind_navigation_buttons, render_stock_ticker_ribbon, get_decision_emoji
 
 logger = logging.getLogger(__name__)
 
@@ -68,17 +68,24 @@ def render_history_page():
     _ensure_heavy()
     logger.info("[user=%s] Viewing History page",
                 st.session_state.get('username', 'unknown'))
+    market = st.session_state.get('current_market', 'US')
+    market_label = "Indian" if market == 'IND' else "US"
     render_page_header(
-        title="📋 History"
+        title=f"📋 {market_label} History"
     )
 
     st.markdown("---")
 
     # Navigation
-    render_navigation_buttons(
-        current_page='history',
-        back_key_suffix="history"
-    )
+    if market == 'IND':
+        render_stock_ticker_ribbon(market="IND")
+        render_ind_navigation_buttons(current_page='history', back_key_suffix='history')
+    else:
+        render_stock_ticker_ribbon(market="US")
+        render_navigation_buttons(
+            current_page='history',
+            back_key_suffix="history"
+        )
 
     st.markdown("")
 
@@ -182,11 +189,12 @@ def _render_analysis_runs(date_range: Dict[str, Any]):
     """Render past analysis runs with drill-down capability."""
     try:
         db_service = _get_db_service()
+        market = st.session_state.get('current_market', 'US')
 
         with db_service.session_scope() as session:
             AnalysisRepository, _, _ = _get_repositories()
             repo = AnalysisRepository(session)
-            runs = repo.get_recent_runs(limit=100, days=date_range['days'])
+            runs = repo.get_recent_runs(limit=100, days=date_range['days'], market=market)
 
             if not runs:
                 st.info("No analysis runs found for the selected period.")
@@ -357,8 +365,10 @@ def _render_signal_history(date_range: Dict[str, Any]):
                 # Get all recent signals
                 cutoff = date_range['start_date']
                 _, StockSignal = _get_db_models()
+                market = st.session_state.get('current_market', 'US')
                 all_signals = session.query(StockSignal).filter(
-                    StockSignal.created_at >= cutoff
+                    StockSignal.created_at >= cutoff,
+                    StockSignal.market == market,
                 ).order_by(desc(StockSignal.created_at)).limit(500).all()
 
             if not all_signals:
@@ -422,13 +432,15 @@ def _render_backtest_history(date_range: Dict[str, Any]):
     """Render historical backtest results."""
     try:
         db_service = _get_db_service()
+        market = st.session_state.get('current_market', 'US')
 
         with db_service.session_scope() as session:
             _, _, BacktestRepository = _get_repositories()
             repo = BacktestRepository(session)
             backtests = repo.get_recent_backtests(
                 days=date_range['days'],
-                limit=100
+                limit=100,
+                market=market,
             )
 
             if not backtests:

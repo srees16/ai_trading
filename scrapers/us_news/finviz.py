@@ -1,0 +1,167 @@
+"""
+Finviz news scraper with Elite authentication support.
+"""
+
+import logging
+import os
+import time
+from datetime import datetime, timedelta
+from typing import List, Optional
+
+from selenium import webdriver
+from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
+
+from models import NewsItem
+from scrapers import BaseNewsScraper
+
+logger = logging.getLogger(__name__)
+
+
+class FinvizScraper(BaseNewsScraper):
+    """Scraper for Finviz news with Elite authentication."""
+    
+    def __init__(self, use_elite: bool = False):
+        super().__init__("Finviz", "https://finviz.com/quote.ashx?t={}")
+        self.use_elite = use_elite
+        self.driver: Optional[webdriver.Chrome] = None
+        self._authenticated = False
+        
+        # Load credentials from environment variables
+        self.finviz_username = os.getenv('FINVIZ_USERNAME', '')
+        self.finviz_password = os.getenv('FINVIZ_PASSWORD', '')
+    
+    def _init_selenium_driver(self):
+        """Initialize Selenium driver for Elite access."""
+        if self.driver is not None:
+            return
+        
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--no-sandbox")
+        
+        self.driver = webdriver.Chrome(options=chrome_options)
+    
+    def _authenticate_elite(self):
+        """Authenticate with Finviz Elite."""
+        if self._authenticated or not self.use_elite:
+            return True
+        
+        try:
+            self._init_selenium_driver()
+            self.driver.get("https://elite.finviz.com/login.ashx")
+            time.sleep(3)
+            
+            wait = WebDriverWait(self.driver, 15)
+            email_input = wait.until(EC.presence_of_element_located((By.NAME, "email")))
+            password_input = wait.until(EC.presence_of_element_located((By.NAME, "password")))
+            
+            email_input.send_keys(self.finviz_username)
+            password_input.send_keys(self.finviz_password)
+            password_input.submit()
+            
+            wait.until(EC.presence_of_element_located((By.ID, "screener-content")))
+            self._authenticated = True
+            # Finviz Elite authenticated successfully
+            return True
+            
+        except TimeoutException:
+            # Elite authentication timed out
+            return False
+        except Exception:
+            # Elite authentication failed
+            return False
+    
+    def __del__(self):
+        """Cleanup Selenium driver."""
+        if self.driver:
+            try:
+                self.driver.quit()
+            except:
+                pass
+    
+    async def fetch_news(self, ticker: str) -> List[NewsItem]:
+        """Fetch news from Finviz (with optional Elite authentication)."""
+        news_items = []
+        
+        # Authenticate if Elite is enabled
+        if self.use_elite and not self._authenticated:
+            self._authenticate_elite()
+        
+        url = self.base_url.format(ticker)
+        
+        logger.info(f"Finviz: Fetching news for {ticker}...")
+        html = await self._fetch_html(url)
+        if not html:
+            logger.warning(f"Finviz: Could not fetch data for {ticker}")
+            return news_items
+        
+        soup = self._parse_html(html)
+        news_table = soup.find('table', class_='fullview-news-outer')
+        if not news_table:
+            logger.info(f"Finviz: No news table found for {ticker}")
+            return news_items
+        
+        rows = news_table.find_all('tr')
+        
+        for row in rows[:10]:
+            try:
+                cells = row.find_all('td')
+                if len(cells) < 2:
+                    continue
+                
+                time_cell = self._extract_text(cells[0])
+                timestamp = self._parse_timestamp(time_cell)
+                
+                link = cells[1].find('a')
+                if not link:
+                    continue
+                
+                title = self._extract_text(link)
+                article_url = link.get('href', '')
+                
+                category = self._categorize_news(title)
+                
+                news_item = NewsItem(
+                    title=title,
+                    summary=title,
+                    url=article_url,
+                    timestamp=timestamp,
+                    source=self.source_name,
+                    ticker=ticker,
+                    category=category
+                )
+                news_items.append(news_item)
+            except Exception:
+                # Skip articles that fail to parse
+                continue
+        
+        if news_items:
+            logger.info(f"Finviz: Fetched {len(news_items)} articles for {ticker}")
+        else:
+            logger.info(f"Finviz: No articles parsed for {ticker}")
+        
+        return news_items
+    
+    def _parse_timestamp(self, time_str: str) -> datetime:
+        """Parse Finviz timestamp format."""
+        try:
+            now = datetime.now()
+            
+            if 'Today' in time_str or 'AM' in time_str or 'PM' in time_str:
+                # Today's news - use current date
+                return now
+            else:
+                # Parse date like "Nov-28-23"
+                parts = time_str.split()
+                if parts:
+                    # Try to parse, fallback to now
+                    return now - timedelta(days=1)
+        except:
+            pass
+        
+        return datetime.now()
