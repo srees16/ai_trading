@@ -14,7 +14,7 @@ The cross-encoder model ``cross-encoder/ms-marco-MiniLM-L-6-v2`` is:
     - Runs locally, no API key required
 
 Usage:
-    from rag_pipeline.reranker import CrossEncoderReranker
+    from rag_pipeline.core.reranker import CrossEncoderReranker
 
     reranker = CrossEncoderReranker()
     reranked = reranker.rerank(query, chunks, top_n=5)
@@ -124,7 +124,6 @@ class CrossEncoderReranker:
         chunks: list,
         top_n: Optional[int] = None,
         score_threshold: Optional[float] = None,
-        code_mode: bool = False,
     ) -> list:
         """
         Re-rank a list of RetrievedChunk objects and filter by relevance.
@@ -135,9 +134,6 @@ class CrossEncoderReranker:
             top_n:  Number of top results to return after re-ranking.
             score_threshold: Minimum cross-encoder score to keep a chunk.
                 If None, uses the configured default.
-            code_mode: When True, code chunks (chunk_type=="code") use a
-                lower score threshold (threshold * 0.4) to prevent the
-                prose-trained cross-encoder from filtering them out.
 
         Returns:
             Re-ranked list of RetrievedChunk, filtered by score threshold
@@ -158,21 +154,11 @@ class CrossEncoderReranker:
         filtered_out = 0
         for idx, score in ranked:
             # Apply relevance score threshold — drop chunks the
-            # cross-encoder considers irrelevant to the query.
-            # In code_mode, code chunks use a much lower threshold
-            # because the prose-trained cross-encoder systematically
-            # underscores code passages.
-            chunk = chunks[idx]
-            is_code_chunk = (
-                chunk.metadata.get("chunk_type") == "code"
-                or chunk.metadata.get("contains_code", False)
-            )
-            effective_threshold = (
-                threshold * 0.4 if (code_mode and is_code_chunk) else threshold
-            )
-            if score < effective_threshold:
+            # cross-encoder considers irrelevant to the query
+            if score < threshold:
                 filtered_out += 1
                 continue
+            chunk = chunks[idx]
             chunk.metadata["rerank_score"] = round(score, 4)
             reranked.append(chunk)
             if len(reranked) >= top_n:

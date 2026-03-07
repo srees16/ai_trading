@@ -17,7 +17,7 @@ Switching providers:
         ``ollama`` | ``claude`` | ``openai``
 
 Usage:
-    from rag_pipeline.llm_service import create_llm_backend
+    from rag_pipeline.llm.llm_service import create_llm_backend
     from rag_pipeline.config import RAGConfig
 
     llm = create_llm_backend(RAGConfig())
@@ -97,9 +97,9 @@ it verbatim.
 
 CONFIDENCE SIGNAL:
 17. End every answer with a confidence indicator on a new line:
-    - **High confidence** — answer is fully supported by multiple context chunks
-    - **Medium confidence** — answer is supported but from limited context
-    - **Low confidence** — answer is partially supported; some gaps exist
+    - 🟢 **High confidence** — answer is fully supported by multiple context chunks
+    - 🟡 **Medium confidence** — answer is supported but from limited context
+    - 🔴 **Low confidence** — answer is partially supported; some gaps exist
 
 OUTPUT LENGTH (mandatory):
 18. Provide concise, implementation-focused answers. \
@@ -120,15 +120,15 @@ Get straight to the point.\
 RAG_SYSTEM_PROMPT_COMPACT = """\
 You are a document QA assistant. Answer ONLY from the provided context chunks.
 
-Rules (in priority order):
-1. NEVER generate code from your training data. The ONLY code you may include is code that appears word-for-word in the context chunks below.
-2. If a function implementation exists in context, return it VERBATIM — same variable names, indentation, and logic. Do NOT rewrite, simplify, or substitute with a generic version.
-3. NEVER use outside knowledge or hallucinate facts. If context is insufficient, say: "I could not find sufficient information in the uploaded documents."
-4. Cite every claim: (Source: filename, Page N). When a Snippet number is provided in the chunk header, include it: (Snippet X.Y, Page N).
-5. When context contains code marked with ⚠, copy it character-for-character inside a ```python code fence. Preserve all indentation, line breaks, and variable names exactly.
-6. Use markdown formatting (headers, bullets, **bold**, ```python fences for code). Be concise.
-7. End with confidence: **High** / **Medium** / **Low**.
-8. Limit response to 600 tokens.\
+Rules:
+- NEVER use outside knowledge or hallucinate facts.
+- If context is insufficient, say: "I could not find sufficient information in the uploaded documents."
+- Cite every claim: (Source: filename, Page N).
+- Reproduce code/formulas EXACTLY as they appear in the context — never rewrite or invent code.
+- If a full function implementation exists in context, return it VERBATIM. Do NOT rewrite.
+- Use markdown formatting (bullets, headers, bold). Be concise.
+- End with confidence: 🟢 **High** / 🟡 **Medium** / 🔴 **Low**.
+- Limit response to 600 tokens.\
 """
 
 # Default: use compact prompt for speed.  Cloud backends (Claude, OpenAI)
@@ -219,7 +219,7 @@ class OllamaLLMBackend:
     # Simple-query threshold: queries shorter than this use a reduced
     # num_predict to save latency.
     _SIMPLE_QUERY_WORD_LIMIT = 30
-    _SIMPLE_QUERY_NUM_PREDICT = 500
+    _SIMPLE_QUERY_NUM_PREDICT = 300
 
     def __init__(
         self,
@@ -293,16 +293,16 @@ class OllamaLLMBackend:
             resp.raise_for_status()
             elapsed = time.monotonic() - t0
             logger.info(
-                "Ollama warm-up complete: model=%s loaded in %.1fs",
+                "🔥 Ollama warm-up complete: model=%s loaded in %.1fs",
                 self.model, elapsed,
             )
         except requests.ConnectionError:
             logger.warning(
-                "Ollama warm-up skipped: cannot connect to %s",
+                "⚠️ Ollama warm-up skipped: cannot connect to %s",
                 self.base_url,
             )
         except Exception as e:
-            logger.warning("Ollama warm-up failed: %s", e)
+            logger.warning("⚠️ Ollama warm-up failed: %s", e)
 
     def _build_prompt(self, query: str, context: str, system_prompt: Optional[str] = None) -> str:
         """Build a single prompt string for the Ollama generate API."""
@@ -344,13 +344,13 @@ class OllamaLLMBackend:
                 self.generate_stream(query, context, system_prompt=system_prompt)
             )
             answer = "".join(tokens)
-            if not answer or answer.startswith("\n⚠️"):
-                # generate_stream yields error strings starting with ⚠️
+            if not answer or answer.startswith("\n"):
+                # generate_stream yields error strings starting with 
                 return answer or "The LLM returned an empty response. Please try again."
             return answer
         except Exception as e:
             logger.error("Unexpected LLM error: %s", e, exc_info=True)
-            return f"⚠️ Unexpected error: {e}"
+            return f"Unexpected error: {e}"
 
     def generate_stream(
         self, query: str, context: str, *, system_prompt: Optional[str] = None
@@ -486,7 +486,7 @@ class OllamaLLMBackend:
                                 yield "".join(buffer)
                                 buffer.clear()
                             yield (
-                                f"\n\n⚠️ Model stopped responding for "
+                                f"\n\nModel stopped responding for "
                                 f"{int(gap)}s mid-generation — stream "
                                 f"aborted after {token_count} tokens."
                             )
@@ -544,7 +544,7 @@ class OllamaLLMBackend:
         except requests.ConnectionError:
             logger.error("Cannot connect to Ollama at %s", self.base_url)
             yield (
-                "\n⚠️ **Cannot connect to Ollama.**\n\n"
+                "\n**Cannot connect to Ollama.**\n\n"
                 "Please ensure Ollama is running:\n"
                 "1. Install from https://ollama.com/download\n"
                 "2. Run: `ollama pull llama3` (or `mistral`)\n"
@@ -557,7 +557,7 @@ class OllamaLLMBackend:
                 self.first_token_timeout, self.model,
             )
             yield (
-                f"\n⚠️ **No response from Ollama for "
+                f"\n**No response from Ollama for "
                 f"{self.first_token_timeout}s** "
                 "— request cancelled.\n\n"
                 "The model may be loading or the context is too large.\n"
@@ -570,7 +570,7 @@ class OllamaLLMBackend:
         except requests.Timeout:
             logger.error("Ollama connection timed out.")
             yield (
-                "\n⚠️ **Ollama connection timed out.**\n\n"
+                "\n**Ollama connection timed out.**\n\n"
                 "Ensure Ollama is running and reachable."
             )
         except requests.HTTPError as e:
@@ -579,14 +579,14 @@ class OllamaLLMBackend:
                 hasattr(response, "status_code") and response.status_code == 404
             ):
                 yield (
-                    f"\n⚠️ **Model '{self.model}' not found.**\n\n"
+                    f"\n**Model '{self.model}' not found.**\n\n"
                     f"Pull it first: `ollama pull {self.model}`"
                 )
             else:
-                yield f"\n⚠️ LLM error: {e}"
+                yield f"\nLLM error: {e}"
         except Exception as e:
             logger.error("Ollama streaming error: %s", e, exc_info=True)
-            yield f"\n⚠️ Streaming error: {e}"
+            yield f"\nStreaming error: {e}"
 
     def is_available(self) -> bool:
         """Check if Ollama is running and the model is available."""
@@ -985,9 +985,9 @@ def create_llm_backend(config: Optional[RAGConfig] = None):
     Instantiate the appropriate LLM backend based on ``config.llm_provider``.
 
     Supported providers:
-        - ``ollama``  — Local inference (default)
-        - ``claude``  — Anthropic Messages API (with Ollama fallback)
-        - ``openai``  — OpenAI Chat Completions API (with Ollama fallback)
+      - ``ollama``  — local Ollama inference (default)
+      - ``claude``  — Anthropic Claude API (with Ollama fallback)
+      - ``openai``  — OpenAI API (with Ollama fallback)
 
     Returns an object with ``.generate(query, context) -> str`` and
     ``.generate_stream(query, context)`` methods.
@@ -1000,9 +1000,9 @@ def create_llm_backend(config: Optional[RAGConfig] = None):
         if not config.claude_api_key:
             logger.warning(
                 "Claude selected but ANTHROPIC_API_KEY is not set — "
-                "falling back to Ollama."
+                "falling back to default backend."
             )
-            return _create_ollama_backend(config)
+            return _FallbackLLMBackend("claude", "ANTHROPIC_API_KEY")
         primary = ClaudeLLMBackend(
             api_key=config.claude_api_key,
             model=config.claude_model,
@@ -1010,10 +1010,6 @@ def create_llm_backend(config: Optional[RAGConfig] = None):
             max_tokens=config.claude_max_tokens,
         )
         fallback = _create_ollama_backend(config)
-        logger.info(
-            "LLM provider: Claude (%s) with Ollama fallback",
-            config.claude_model,
-        )
         return _FallbackChainBackend(primary, fallback)
 
     # --- OpenAI ---
@@ -1021,9 +1017,9 @@ def create_llm_backend(config: Optional[RAGConfig] = None):
         if not config.openai_api_key:
             logger.warning(
                 "OpenAI selected but OPENAI_API_KEY is not set — "
-                "falling back to Ollama."
+                "falling back to default backend."
             )
-            return _create_ollama_backend(config)
+            return _FallbackLLMBackend("openai", "OPENAI_API_KEY")
         primary = OpenAILLMBackend(
             api_key=config.openai_api_key,
             model=config.openai_model,
@@ -1032,17 +1028,13 @@ def create_llm_backend(config: Optional[RAGConfig] = None):
             timeout=config.llm_timeout,
         )
         fallback = _create_ollama_backend(config)
-        logger.info(
-            "LLM provider: OpenAI (%s) with Ollama fallback",
-            config.openai_model,
-        )
         return _FallbackChainBackend(primary, fallback)
 
     # --- Ollama (default) ---
     if provider != "ollama":
         logger.warning(
-            "Unknown LLM provider '%s'. Falling back to Ollama.",
-            provider,
+            "Unknown LLM provider '%s'. Supported: %s. Falling back to Ollama.",
+            provider, ", ".join(_PROVIDERS),
         )
     return _create_ollama_backend(config)
 
@@ -1055,7 +1047,7 @@ class _FallbackChainBackend:
     """
     Wraps a primary LLM backend with an Ollama fallback.
 
-    If ``primary.generate()`` returns an error message (starts with ⚠️)
+    If ``primary.generate()`` returns an error message (starts with )
     or raises an exception, the request is transparently forwarded to
     the fallback (Ollama) backend.
     """

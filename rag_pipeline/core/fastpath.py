@@ -18,7 +18,7 @@ through to the normal RAG pipeline.
 
 Usage::
 
-    from rag_pipeline.fastpath import try_fastpath
+    from rag_pipeline.core.fastpath import try_fastpath
 
     answer = try_fastpath(query_text)
     if answer is not None:
@@ -34,7 +34,7 @@ import logging
 import re
 from typing import Dict, List, Optional, Tuple
 
-from rag_pipeline.query_classifier import classify_query
+from rag_pipeline.core.query_classifier import classify_query
 
 logger = logging.getLogger(__name__)
 
@@ -583,7 +583,7 @@ def _match_trigger(query: str) -> Optional[str]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Inline unit tests  (run: python -m rag_pipeline.fastpath)
+# Inline unit tests  (run: python -m rag_pipeline.core.fastpath)
 # ═══════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":

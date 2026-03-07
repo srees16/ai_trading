@@ -28,11 +28,11 @@ import streamlit as st
 # Only lightweight stdlib / typing imports live at module level.
 if TYPE_CHECKING:
     from rag_pipeline.config import RAGConfig
-    from rag_pipeline.vector_store import VectorStoreManager
-    from rag_pipeline.pdf_ingestion import PDFIngestionService
-    from rag_pipeline.embeddings import EmbeddingService
-    from rag_pipeline.query_engine import RAGQueryEngine, RAGResponse
-    from rag_pipeline.code_applier import (
+    from rag_pipeline.storage.vector_store import VectorStoreManager
+    from rag_pipeline.ingestion.pdf_ingestion import PDFIngestionService
+    from rag_pipeline.storage.embeddings import EmbeddingService
+    from rag_pipeline.core.query_engine import RAGQueryEngine, RAGResponse
+    from rag_pipeline.llm.code_applier import (
         extract_code_blocks,
         list_strategy_files,
         generate_patch,
@@ -93,21 +93,21 @@ def _get_config():
 
 def _get_vector_store():
     if "rag_vector_store" not in st.session_state:
-        from rag_pipeline.vector_store import VectorStoreManager
+        from rag_pipeline.storage.vector_store import VectorStoreManager
         st.session_state["rag_vector_store"] = VectorStoreManager(_get_config())
     return st.session_state["rag_vector_store"]
 
 
 def _get_embedding_service():
     if "rag_embedding_svc" not in st.session_state:
-        from rag_pipeline.embeddings import EmbeddingService
+        from rag_pipeline.storage.embeddings import EmbeddingService
         st.session_state["rag_embedding_svc"] = EmbeddingService(_get_config())
     return st.session_state["rag_embedding_svc"]
 
 
 def _get_ingestion_service():
     if "rag_ingestion_svc" not in st.session_state:
-        from rag_pipeline.pdf_ingestion import PDFIngestionService
+        from rag_pipeline.ingestion.pdf_ingestion import PDFIngestionService
         # Wire cache invalidation: when docs change, the ingestion service
         # notifies the query engine to clear stale cache entries.
         engine = _get_query_engine()
@@ -122,7 +122,7 @@ def _get_ingestion_service():
 
 def _get_query_engine():
     if "rag_query_engine" not in st.session_state:
-        from rag_pipeline.query_engine import RAGQueryEngine
+        from rag_pipeline.core.query_engine import RAGQueryEngine
         st.session_state["rag_query_engine"] = RAGQueryEngine(
             _get_vector_store(), _get_config(), _get_embedding_service()
         )
@@ -143,7 +143,7 @@ def render_rag_toggle() -> bool:
         st.session_state["rag_enabled"] = _get_config().rag_enabled
 
     st.session_state["rag_enabled"] = st.toggle(
-        "RAG",
+        "🧠 RAG",
         value=st.session_state["rag_enabled"],
         help="When enabled, queries will retrieve context from uploaded strategy documents.",
         key="rag_pipeline_toggle",
@@ -165,7 +165,7 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
 
     Returns ingestion stats list for newly completed tasks, or None.
     """
-    from rag_pipeline.background_ingest import get_ingestion_manager, TaskStatus
+    from rag_pipeline.ingestion.background_ingest import get_ingestion_manager, TaskStatus
 
     mgr = get_ingestion_manager()
 
@@ -176,7 +176,7 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
     col_upload, col_hint = st.columns([1, 2])
     with col_upload:
         uploaded_files = st.file_uploader(
-            "Upload PDFs",
+            "📄 Upload PDFs",
             type=["pdf"],
             accept_multiple_files=True,
             help="Upload one or more PDF documents to build the knowledge base.",
@@ -187,7 +187,7 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
         if not uploaded_files:
             return None
 
-        if st.button("Ingest Documents", type="primary", key="rag_ingest_btn"):
+        if st.button("📥 Ingest Documents", type="primary", key="rag_ingest_btn"):
             submitted_count = 0
             for file in uploaded_files:
                 file_bytes = file.read()
@@ -196,16 +196,16 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
                 logger.info("Queued background ingestion for %s", file.name)
 
             st.toast(
-                f"📤 {submitted_count} file(s) submitted for background ingestion. "
+                f"{submitted_count} file(s) submitted for background ingestion. "
                 "You can continue querying while they process.",
-                icon="🚀",
+                icon="📥",
             )
             st.rerun()  # rerun to show the status panel immediately
 
     with col_hint:
         if mgr.has_active_tasks():
             st.info(
-                "⏳ **Ingestion in progress** — you can submit queries "
+                "**Ingestion in progress** — you can submit queries "
                 "for previously ingested documents while new files are processing."
             )
 
@@ -216,56 +216,21 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
     results: List[Dict[str, Any]] = []
     if completed:
         engine = _get_query_engine()
-        success_count = 0
-        fail_count = 0
-        total_chunks = 0
-        total_pages = 0
         for task in completed:
             if task.status == TaskStatus.COMPLETED and task.result:
                 results.append(task.result)
                 r = task.result
                 if r["status"] == "success":
-                    success_count += 1
-                    total_chunks += r.get("chunks", 0)
-                    total_pages += r.get("pages", 0)
                     try:
                         engine.invalidate_cache(r["source"], "ingested")
                     except Exception:
                         pass
-                elif r.get("reason") == "already_ingested":
-                    success_count += 1
-                    total_chunks += r.get("chunks", 0)
             elif task.status == TaskStatus.FAILED:
-                fail_count += 1
                 results.append({
                     "status": "error",
                     "source": task.file_name,
                     "error": task.error,
                 })
-
-        # Show a prominent completion notification when no more tasks are pending
-        if not mgr.has_active_tasks():
-            if success_count and not fail_count:
-                st.balloons()
-                st.success(
-                    f"🎉 **Ingestion complete!** {success_count} document(s) ingested "
-                    f"successfully — {total_chunks} chunks from {total_pages} pages. "
-                    "You can now query the knowledge base.",
-                    icon="✅",
-                )
-            elif success_count and fail_count:
-                st.warning(
-                    f"⚠️ **Ingestion finished with errors.** "
-                    f"{success_count} succeeded, {fail_count} failed. "
-                    "Check the status details above.",
-                    icon="⚠️",
-                )
-            elif fail_count:
-                st.error(
-                    f"❌ **Ingestion failed.** {fail_count} document(s) could not "
-                    "be processed. Check the error details above.",
-                    icon="❌",
-                )
 
     # ---- Auto-refresh while ingestion is running -----------------------
     # Polls every 2 s so the progress bar stays in sync with the backend.
@@ -285,7 +250,7 @@ def _render_ingestion_status(mgr) -> None:
     ``render_pdf_uploader``).  Recently-completed tasks are shown here
     until they are consumed by ``pop_completed()``.
     """
-    from rag_pipeline.background_ingest import TaskStatus
+    from rag_pipeline.ingestion.background_ingest import TaskStatus
 
     active = mgr.get_active_tasks()
     recently_done = mgr.get_recently_completed(max_age_s=60)
@@ -294,13 +259,13 @@ def _render_ingestion_status(mgr) -> None:
         return
 
     with st.container():
-        st.markdown("#### 🔄 Ingestion Status")
+        st.markdown("#### 📥 Ingestion Status")
 
         # Active tasks — progress is kept in sync by the auto-refresh loop
         for task in active:
             col_name, col_stage, col_pct = st.columns([2, 3, 1])
             with col_name:
-                status_icon = "⏳" if task.status == TaskStatus.PENDING else "🔄"
+                status_icon = "⏳" if task.status == TaskStatus.PENDING else "⚙️"
                 st.markdown(f"{status_icon} **{task.file_name}**")
             with col_stage:
                 st.caption(task.stage or "Queued…")
@@ -313,25 +278,25 @@ def _render_ingestion_status(mgr) -> None:
                 r = task.result or {}
                 if r.get("status") == "success":
                     st.success(
-                        f"✅ **{task.file_name}** — {r.get('chunks', '?')} chunks "
+                        f"**{task.file_name}** — {r.get('chunks', '?')} chunks "
                         f"from {r.get('pages', '?')} pages"
                     )
                 elif r.get("reason") == "already_ingested":
                     st.info(
-                        f"📄 **{task.file_name}** — already ingested "
+                        f"**{task.file_name}** — already ingested "
                         f"({r.get('chunks', '?')} chunks persisted). Skipped."
                     )
                 elif r.get("status") == "skipped":
                     st.warning(
-                        f"⚠️ **{task.file_name}** — skipped ({r.get('reason', '')})"
+                        f"**{task.file_name}** — skipped ({r.get('reason', '')})"
                     )
                 else:
-                    st.info(f"📄 **{task.file_name}** — {r.get('status', 'done')}")
+                    st.info(f"**{task.file_name}** — {r.get('status', 'done')}")
             elif task.status == TaskStatus.FAILED:
-                st.error(f"❌ **{task.file_name}** — {task.error or 'unknown error'}")
+                st.error(f"**{task.file_name}** — {task.error or 'unknown error'}")
 
         if active:
-            st.caption("⏱️ *Updating automatically — submit queries above while ingestion runs.*")
+            st.caption("*Updating automatically — submit queries below while ingestion runs.*")
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +310,7 @@ def render_query_input() -> Optional[str]:
     Returns the query string or None if empty.
     """
     query = st.text_input(
-        "Ask a question",
+        "🔍 Ask a question",
         placeholder="e.g. What are the entry and exit rules for the momentum strategy?",
         key="rag_query_input",
     )
@@ -401,12 +366,12 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
     Parameters
     ----------
     runtime_label : str | None
-        Pre-formatted runtime string (e.g. "⏱️ Total runtime: …").
+        Pre-formatted runtime string (e.g. "Total runtime: …").
         Displayed right below the HITL feedback buttons when provided.
     """
-    from rag_pipeline.code_applier import extract_code_blocks
+    from rag_pipeline.llm.code_applier import extract_code_blocks
 
-    st.markdown("### Answer")
+    st.markdown("### 💬 Answer")
     _render_answer_content(response.answer)
 
     # ---- Feedback buttons (thumbs up / thumbs down) ----
@@ -423,7 +388,7 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
                     feedback="positive",
                     sources=sources,
                 )
-                st.toast("✅ Thanks for the feedback!", icon="👍")
+                st.toast("Thanks for the feedback!", icon="✅")
 
         with fb_col2:
             if st.button("👎", key=f"{feedback_key}_down", help="Poor answer"):
@@ -434,7 +399,7 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
                     feedback="negative",
                     sources=sources,
                 )
-                st.toast("📝 Feedback recorded — we'll improve!", icon="👎")
+                st.toast("Feedback recorded — we'll improve!", icon="📝")
 
     # ---- Runtime badge (right below feedback emojis) ----
     if runtime_label:
@@ -454,7 +419,7 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
                 st.session_state["rag_resubmit_query"] = response.query
                 st.rerun()
         with rs_col2:
-            st.caption("Not happy with this answer? Re-submit to get a fresh response.")
+            st.caption("💡 Not happy with this answer? Re-submit to get a fresh response.")
 
     # ---- Apply Code Suggestion section ----
     if response.rag_enabled and response.answer:
@@ -464,7 +429,7 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
 
     if response.chunks:
         with st.expander(
-            f"📚 Retrieved Sources ({len(response.chunks)} chunks)",
+            f"Retrieved Sources ({len(response.chunks)} chunks)",
             expanded=False,
         ):
             for i, chunk in enumerate(response.chunks, 1):
@@ -510,7 +475,7 @@ def _render_code_apply_section(
     file.  On confirmation the LLM merges the snippets into the file with
     automatic backup and syntax validation.
     """
-    from rag_pipeline.code_applier import (
+    from rag_pipeline.llm.code_applier import (
         list_strategy_files,
         generate_patch,
         apply_patch,
@@ -519,7 +484,7 @@ def _render_code_apply_section(
     apply_key = f"apply_{hash(query + answer[:80])}"
 
     with st.expander(
-        f"🔧 Apply Code Suggestion ({len(code_blocks)} snippet"
+        f"Apply Code Suggestion ({len(code_blocks)} snippet"
         f"{'s' if len(code_blocks) != 1 else ''})",
         expanded=False,
     ):
@@ -557,7 +522,7 @@ def _render_code_apply_section(
         # ---- Preview button ----
         with col_preview:
             if st.button(
-                "👁️ Preview",
+                "Preview",
                 key=f"{apply_key}_preview",
                 help="Generate a preview of the merged code without writing anything.",
             ):
@@ -577,13 +542,13 @@ def _render_code_apply_section(
         preview_summary = st.session_state.get(f"{apply_key}_preview_summary")
         if preview_src:
             st.info(f"**Preview summary:** {preview_summary}")
-            with st.expander("📝 Preview — merged file", expanded=False):
+            with st.expander("Preview — merged file", expanded=False):
                 st.code(preview_src, language="python")
 
         # ---- Apply button ----
         with col_apply:
             if st.button(
-                "✅ Apply",
+                "Apply",
                 key=f"{apply_key}_apply",
                 help="Apply the code snippet to the selected strategy file (backup created automatically).",
             ):
@@ -607,7 +572,7 @@ def _render_code_apply_section(
                 )
                 if result.success:
                     st.success(
-                        f"✅ **Code applied** to `{selected_file.rel_path}`\n\n"
+                        f"**Code applied** to `{selected_file.rel_path}`\n\n"
                         f"{result.diff_summary}\n\n"
                         f"Backup: `{Path(result.backup_file).name}`"
                     )
@@ -615,20 +580,20 @@ def _render_code_apply_section(
                     st.session_state.pop(f"{apply_key}_preview_src", None)
                     st.session_state.pop(f"{apply_key}_preview_summary", None)
                 else:
-                    st.error(f"❌ {result.message}")
+                    st.error(f"{result.message}")
 
         # ---- Revert button ----
         with col_revert:
             if st.button(
-                "↩️ Revert",
+                "↩Revert",
                 key=f"{apply_key}_revert",
                 help="Undo the last applied change and restore the backup.",
             ):
                 result = revert_last_patch(selected_file.path)
                 if result.success:
-                    st.success(f"↩️ {result.message}")
+                    st.success(f"↩{result.message}")
                 else:
-                    st.warning(f"⚠️ {result.message}")
+                    st.warning(f"{result.message}")
 
 
 # ---------------------------------------------------------------------------
@@ -677,32 +642,17 @@ def render_knowledge_base() -> None:
     col3.metric("Collection", stats["collection_name"])
 
     if stats["sources"]:
-        per_source = vs.get_per_source_stats()
         st.markdown("**Indexed Sources:**")
         for src in stats["sources"]:
-            info = per_source.get(src, {})
-            chunks = info.get("chunks", 0)
-            pages = info.get("page_count", 0)
-            size_bytes = info.get("file_size", 0)
-            if size_bytes >= 1_048_576:
-                size_str = f"{size_bytes / 1_048_576:.1f} MB"
-            elif size_bytes >= 1024:
-                size_str = f"{size_bytes / 1024:.1f} KB"
-            elif size_bytes > 0:
-                size_str = f"{size_bytes} B"
-            else:
-                size_str = "n/a"
             col_a, col_b = st.columns([4, 1])
-            col_a.write(
-                f"📄 **{src}**  ·  {chunks} chunks  ·  {pages} pages  ·  {size_str}"
-            )
+            col_a.write(f"📄 {src}")
             if col_b.button("🗑️", key=f"del_{src}", help=f"Remove {src}"):
                 ingestion_svc = _get_ingestion_service()
                 removed = ingestion_svc.delete_source(src)
-                st.success(f"Removed {removed} chunks from **{src}**")
+                st.success(f"✅ Removed {removed} chunks from **{src}**")
                 st.rerun()
     else:
-        st.info("No documents indexed yet. Upload PDFs above to get started.")
+        st.info("ℹ️ No documents indexed yet. Upload PDFs above to get started.")
 
     st.divider()
     col_reingest, col_reset = st.columns(2)
@@ -721,13 +671,13 @@ def render_knowledge_base() -> None:
             for r in results:
                 if r["status"] == "success":
                     st.success(
-                        f"✅ **{r['source']}** — {r['chunks']} chunks from {r['pages']} pages"
+                        f"**{r['source']}** — {r['chunks']} chunks from {r['pages']} pages"
                     )
                 else:
-                    st.warning(f"⚠️ **{r.get('source', '?')}** — {r.get('status', 'unknown')}")
+                    st.warning(f"**{r.get('source', '?')}** — {r.get('status', 'unknown')}")
             st.rerun()
     with col_reset:
-        if st.button("⚠️ Reset Knowledge Base", type="secondary"):
+        if st.button("🗑️ Reset Knowledge Base", type="secondary"):
             vs.reset_collection()
-            st.warning("Knowledge base has been reset.")
+            st.warning("⚠️ Knowledge base has been reset.")
             st.rerun()

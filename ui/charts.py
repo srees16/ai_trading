@@ -65,27 +65,27 @@ def render_decision_chart(signals: List[Any]):
 
 def _render_decision_breakdown(decision_stocks: Dict[str, set]):
     """Render stocks grouped by decision type."""
-    st.markdown("**Stocks by Decision:**")
+    st.markdown("📊 **Stocks by Decision:**")
     
     col1, col2, col3 = st.columns(3)
     
     # Buy signals
     buy_stocks = decision_stocks.get('STRONG_BUY', set()) | decision_stocks.get('BUY', set())
     with col1:
-        st.markdown("🟢 **BUY**")
+        st.markdown("📈 **BUY**")
         if buy_stocks:
             for stock in sorted(buy_stocks):
                 if stock in decision_stocks.get('STRONG_BUY', set()):
-                    st.markdown(f"- `{stock}` 🟢🟢")
+                    st.markdown(f"- `{stock}` ")
                 else:
-                    st.markdown(f"- `{stock}` 🟢")
+                    st.markdown(f"- `{stock}` ")
         else:
             st.caption("None")
     
     # Hold signals
     hold_stocks = decision_stocks.get('HOLD', set())
     with col2:
-        st.markdown("🟡 **HOLD**")
+        st.markdown("⚖️ **HOLD**")
         if hold_stocks:
             for stock in sorted(hold_stocks):
                 st.markdown(f"- `{stock}`")
@@ -95,13 +95,13 @@ def _render_decision_breakdown(decision_stocks: Dict[str, set]):
     # Sell signals
     sell_stocks = decision_stocks.get('STRONG_SELL', set()) | decision_stocks.get('SELL', set())
     with col3:
-        st.markdown("🔴 **SELL**")
+        st.markdown("📉 **SELL**")
         if sell_stocks:
             for stock in sorted(sell_stocks):
                 if stock in decision_stocks.get('STRONG_SELL', set()):
-                    st.markdown(f"- `{stock}` 🔴🔴")
+                    st.markdown(f"- `{stock}` ")
                 else:
-                    st.markdown(f"- `{stock}` 🔴")
+                    st.markdown(f"- `{stock}` ")
         else:
             st.caption("None")
 
@@ -158,7 +158,7 @@ def render_score_distribution(signals: List[Any]):
     if not signals:
         return
     
-    st.subheader("📈 Score Distribution")
+    st.subheader("📊 Score Distribution")
     
     # Extract scores
     score_data = []
@@ -211,13 +211,13 @@ def render_fundamental_charts(stock_metrics: Dict[str, Any]):
 
 def _render_z_score_chart(stock_metrics: Dict[str, Any]):
     """Render Altman Z-Score bar chart."""
-    st.subheader("📉 Altman Z-Score")
+    st.subheader("🏦 Altman Z-Score")
     
     z_data = []
     for ticker, metrics in stock_metrics.items():
         if metrics.altman_z_score is not None:
             z_score = metrics.altman_z_score
-            risk = 'Safe' if z_score > 2.99 else ('Grey Zone' if z_score > 1.81 else 'Distress')
+            risk = '✅ Safe' if z_score > 2.99 else ('⚠️ Grey Zone' if z_score > 1.81 else '🔴 Distress')
             z_data.append({
                 'Stock': ticker,
                 'Z-Score': z_score,
@@ -250,7 +250,7 @@ def _render_m_score_chart(stock_metrics: Dict[str, Any]):
     for ticker, metrics in stock_metrics.items():
         if metrics.beneish_m_score is not None:
             m_score = metrics.beneish_m_score
-            risk = 'Likely Manipulator' if m_score > -2.22 else 'Unlikely'
+            risk = '🔴 Likely Manipulator' if m_score > -2.22 else '✅ Unlikely'
             m_data.append({
                 'Stock': ticker,
                 'M-Score': m_score,
@@ -282,7 +282,7 @@ def _render_f_score_chart(stock_metrics: Dict[str, Any]):
     for ticker, metrics in stock_metrics.items():
         if metrics.piotroski_f_score is not None:
             f_score = metrics.piotroski_f_score
-            health = 'Strong' if f_score >= 8 else ('Moderate' if f_score >= 5 else 'Weak')
+            health = '✅ Strong' if f_score >= 8 else ('⚠️ Moderate' if f_score >= 5 else '🔴 Weak')
             f_data.append({
                 'Stock': ticker,
                 'F-Score': f_score,
@@ -314,7 +314,7 @@ def render_fundamental_summary_metrics(stock_metrics: Dict[str, Any]):
     Args:
         stock_metrics: Dictionary mapping ticker to metrics object
     """
-    st.subheader("📊 Summary")
+    st.subheader("Summary")
     
     total = len(stock_metrics)
     safe_count = sum(1 for m in stock_metrics.values() if m.altman_z_score and m.altman_z_score > 2.99)
@@ -323,8 +323,8 @@ def render_fundamental_summary_metrics(stock_metrics: Dict[str, Any]):
     
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("🟢 Safe (Z-Score)", f"{safe_count}/{total}")
+        st.metric("Safe (Z-Score)", f"{safe_count}/{total}")
     with col2:
-        st.metric("💪 Strong (F-Score)", f"{strong_count}/{total}")
+        st.metric("Strong (F-Score)", f"{strong_count}/{total}")
     with col3:
-        st.metric("✅ Clean (M-Score)", f"{clean_count}/{total}")
+        st.metric("Clean (M-Score)", f"{clean_count}/{total}")

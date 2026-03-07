@@ -15,7 +15,7 @@ same vocabulary drives both chunk tagging *and* query routing.
 
 Usage::
 
-    from rag_pipeline.query_classifier import classify_query
+    from rag_pipeline.core.query_classifier import classify_query
 
     result = classify_query("Write a function to calculate Sharpe ratio")
     # {
@@ -382,7 +382,7 @@ def classify_query(query: str) -> Dict[str, Any]:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 5. Unit tests (run with ``python -m rag_pipeline.query_classifier``)
+# 5. Unit tests (run with ``python -m rag_pipeline.core.query_classifier``)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _run_tests() -> None:

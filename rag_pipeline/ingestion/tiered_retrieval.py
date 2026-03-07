@@ -13,7 +13,7 @@ The FAQ collection can be populated manually or auto-populated from
 repeat queries that produce high-confidence answers.
 
 Usage:
-    from rag_pipeline.tiered_retrieval import TieredRetriever
+    from rag_pipeline.ingestion.tiered_retrieval import TieredRetriever
 
     tiered = TieredRetriever(vector_store, embedding_service, config)
 
@@ -31,8 +31,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from rag_pipeline.config import RAGConfig
-from rag_pipeline.embeddings import EmbeddingService
-from rag_pipeline.vector_store import VectorStoreManager
+from rag_pipeline.storage.embeddings import EmbeddingService
+from rag_pipeline.storage.vector_store import VectorStoreManager
 
 logger = logging.getLogger(__name__)
 

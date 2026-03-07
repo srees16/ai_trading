@@ -1118,36 +1118,6 @@ class VectorStoreManager:
             "hnsw_ef_search": self._config.hnsw_ef_search,
         }
 
-    def get_per_source_stats(self) -> Dict[str, Dict[str, Any]]:
-        """Return per-source stats: chunk count, page count, file size."""
-        from pathlib import Path as _Path
-
-        all_data = self.collection.get(include=["metadatas"])
-        metadatas = all_data.get("metadatas") or []
-
-        source_stats: Dict[str, Dict[str, Any]] = {}
-        for meta in metadatas:
-            if not meta or "source" not in meta:
-                continue
-            src = meta["source"]
-            if src not in source_stats:
-                source_stats[src] = {"chunks": 0, "page_count": 0}
-            source_stats[src]["chunks"] += 1
-            pc = meta.get("page_count", 0)
-            if isinstance(pc, (int, float)) and int(pc) > source_stats[src]["page_count"]:
-                source_stats[src]["page_count"] = int(pc)
-
-        # Resolve file sizes from disk
-        upload_dir = _Path(self._config.pdf_upload_dir)
-        for src, info in source_stats.items():
-            pdf_path = upload_dir / src
-            if pdf_path.is_file():
-                info["file_size"] = pdf_path.stat().st_size
-            else:
-                info["file_size"] = 0
-
-        return source_stats
-
     # ------------------------------------------------------------------
     # Maintenance
     # ------------------------------------------------------------------

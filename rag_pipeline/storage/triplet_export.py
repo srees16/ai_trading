@@ -10,7 +10,7 @@ Export formats:
     - CSV    — query,positive,negative columns
 
 Usage:
-    from rag_pipeline.triplet_export import TripletExporter
+    from rag_pipeline.storage.triplet_export import TripletExporter
 
     exporter = TripletExporter(vector_store)
     triplets = exporter.generate_from_eval_dataset(dataset)
@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from rag_pipeline.vector_store import VectorStoreManager
+from rag_pipeline.storage.vector_store import VectorStoreManager
 
 logger = logging.getLogger(__name__)
 

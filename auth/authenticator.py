@@ -345,7 +345,7 @@ class Authenticator:
                     "Password", type="password", placeholder="Password", label_visibility="collapsed"
                 )
                 
-                submitted = st.form_submit_button("Sign In", type="primary",
+                submitted = st.form_submit_button("🔐 Sign In", type="primary",
                                                        use_container_width=True)
                 
                 if submitted:
@@ -365,7 +365,7 @@ class Authenticator:
             # Footer
             st.markdown(
                 "<p style='text-align:center; margin-top:1.5rem; font-size:0.75rem; color:#999;'>"
-                "© 2026 Centurion Capital LLC · All rights reserved</p>",
+                "🏛️ © 2026 Centurion Capital LLC · All rights reserved</p>",
                 unsafe_allow_html=True,
             )
         
@@ -582,7 +582,7 @@ def render_user_menu():
     # Check system health
     health = check_system_health()
     all_healthy = all(health.values())
-    health_icon = "🟢" if all_healthy else "🟡"
+    health_icon = "" if all_healthy else ""
     
     # Custom CSS for seamless user menu (no white background)
     st.markdown("""
@@ -629,7 +629,7 @@ def render_user_menu():
         )
     
     with col_logout:
-        if st.button("🚪 Logout", key="logout_btn", use_container_width=True):
+        if st.button("Logout", key="logout_btn", use_container_width=True):
             logger.info("[user=%s] Logged out", st.session_state.get('username', 'unknown'))
             logout()
             st.rerun()

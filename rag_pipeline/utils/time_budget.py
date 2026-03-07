@@ -14,7 +14,7 @@ hang indefinitely.  Thresholds:
 
 Usage::
 
-    from rag_pipeline.time_budget import TimeBudget
+    from rag_pipeline.utils.time_budget import TimeBudget
 
     budget = TimeBudget()        # uses defaults (120 / 20 / 90)
     budget.start()
@@ -55,7 +55,7 @@ DEFAULT_LLM_BUDGET_S = 300          # max seconds for LLM generation
 # Graceful cutoff messages
 _CUTOFF_TOTAL = (
     "\n\n---\n"
-    "⏱️ **Response truncated** — the total processing time exceeded "
+    "⚠️ **Response truncated** — the total processing time exceeded "
     "the allowed budget ({budget}s).  The answer above may be "
     "incomplete.  Please try a more specific query or enable "
     "FAST_MODE for quicker results."
@@ -63,7 +63,7 @@ _CUTOFF_TOTAL = (
 
 _CUTOFF_LLM = (
     "\n\n---\n"
-    "⏱️ **Response truncated** — the language model took longer than "
+    "⚠️ **Response truncated** — the language model took longer than "
     "{budget}s.  The partial answer above contains the tokens "
     "generated so far.  Try shortening your query or reducing the "
     "context window."
@@ -250,7 +250,7 @@ def create_time_budget(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Unit tests  (run: python -m rag_pipeline.time_budget)
+# Unit tests  (run: python -m rag_pipeline.utils.time_budget)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _run_tests() -> None:

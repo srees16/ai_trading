@@ -6,7 +6,7 @@ search queries before embedding.  Supports multi-query expansion
 (generates several reformulations, retrieves for each, then merges).
 
 Usage:
-    from rag_pipeline.query_rewriter import QueryRewriter
+    from rag_pipeline.core.query_rewriter import QueryRewriter
     rewriter = QueryRewriter(config)
     expanded = rewriter.rewrite("RSI strategy")
     # → ["What are the RSI-based trading strategy rules and entry criteria?",
@@ -195,7 +195,7 @@ class QueryRewriter:
     @property
     def llm(self):
         if self._llm is None:
-            from rag_pipeline.llm_service import create_llm_backend
+            from rag_pipeline.llm.llm_service import create_llm_backend
             self._llm = create_llm_backend(self._config)
         return self._llm
 

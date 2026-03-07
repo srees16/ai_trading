@@ -17,6 +17,7 @@ from ui.components import (
     render_footer,
     render_ind_navigation_buttons,
     render_stock_ticker_ribbon,
+    render_vix_indicator,
 )
 
 logger = logging.getLogger(__name__)
@@ -132,11 +133,13 @@ def render_options_page():
     )
 
     render_page_header(
-        "📊 Options & Derivatives",
+        "Options & Derivatives",
         subtitle="Live Derivative Prices · Option Chains · Index Quotes",
     )
 
     render_stock_ticker_ribbon(market="IND")
+
+    render_vix_indicator(market="IND")
 
     render_ind_navigation_buttons(
         current_page="options",
@@ -147,9 +150,9 @@ def render_options_page():
 
     # Tabs for different sections
     tab_quotes, tab_live, tab_chain, tab_lookup = st.tabs([
-        "📈 Index Quotes",
-        "🔴 Live Derivative Prices",
-        "📋 Option Chain",
+        "📊 Index Quotes",
+        "🟢 Live Derivative Prices",
+        "🔗 Option Chain",
         "🔍 Token Lookup",
     ])
 
@@ -172,7 +175,7 @@ def render_options_page():
 
 def _render_index_quotes(quotes):
     """Fetch and display quotes for major indices."""
-    st.markdown("##### Index Quotes")
+    st.markdown("##### 📊 Index Quotes")
     st.caption("Real-time quotes for major Indian derivatives indices.")
 
     col_sel, col_btn = st.columns([3, 1])
@@ -185,7 +188,7 @@ def _render_index_quotes(quotes):
         )
     with col_btn:
         st.markdown('<div style="margin-top:1.6rem;"></div>', unsafe_allow_html=True)
-        refresh = st.button("🔄 Refresh", key="opt_quotes_refresh")
+        refresh = st.button("Refresh", key="opt_quotes_refresh")
 
     if not selected:
         st.info("Select at least one index above.")
@@ -232,7 +235,7 @@ def _render_index_quotes(quotes):
 
 def _render_live_derivative_prices(quotes):
     """Fetch and display live derivative prices for a selected index."""
-    st.markdown("##### Live Derivative Prices")
+    st.markdown("##### 🟢 Live Derivative Prices")
     st.caption(
         "Select an index to view live derivative prices across all expiries — "
         "including ATM strike, IV, futures price, and max OI."
@@ -256,7 +259,7 @@ def _render_live_derivative_prices(quotes):
         )
     with col_btn:
         st.markdown('<div style="margin-top:1.6rem;"></div>', unsafe_allow_html=True)
-        fetch = st.button("🔴 Fetch Live", key="opt_live_fetch", type="primary")
+        fetch = st.button("Fetch Live", key="opt_live_fetch", type="primary")
 
     if not fetch and "opt_live_data" not in st.session_state:
         st.info("Click **Fetch Live** to load derivative prices.")
@@ -290,7 +293,7 @@ def _render_live_derivative_prices(quotes):
 
     for exp_data in expiries:
         expiry_label = exp_data.get("expiry", "Unknown")
-        with st.expander(f"📅 Expiry: {expiry_label}", expanded=(exp_data == expiries[0])):
+        with st.expander(f"Expiry: {expiry_label}", expanded=(exp_data == expiries[0])):
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("ATM Strike", exp_data.get("atm_strike", "—"))
             c2.metric("ATM IV", f"{exp_data.get('atm_iv', '—')}%"
@@ -311,13 +314,13 @@ def _render_live_derivative_prices(quotes):
 
                 left, right = st.columns(2)
                 with left:
-                    st.markdown("**Calls (CE)**")
+                    st.markdown("📈 **Calls (CE)**")
                     st.dataframe(
                         ce_df, use_container_width=True, hide_index=True,
                         height=min(35 * len(ce_df) + 38, 400),
                     )
                 with right:
-                    st.markdown("**Puts (PE)**")
+                    st.markdown("📉 **Puts (PE)**")
                     st.dataframe(
                         pe_df, use_container_width=True, hide_index=True,
                         height=min(35 * len(pe_df) + 38, 400),
@@ -330,7 +333,7 @@ def _render_live_derivative_prices(quotes):
 
 def _render_option_chain(quotes):
     """Display a consolidated option chain table for a chosen index."""
-    st.markdown("##### Option Chain")
+    st.markdown("##### 🔗 Option Chain")
     st.caption(
         "Select an index and an expiry to load the full option chain "
         "with CE and PE data side by side."
@@ -345,7 +348,7 @@ def _render_option_chain(quotes):
         )
     with col_btn:
         st.markdown('<div style="margin-top:1.6rem;"></div>', unsafe_allow_html=True)
-        load = st.button("📋 Load Chain", key="opt_chain_load", type="primary")
+        load = st.button("Load Chain", key="opt_chain_load", type="primary")
 
     token = _DEFAULT_INDICES.get(index_name, 260105)
 
@@ -457,7 +460,7 @@ def _render_option_chain(quotes):
 
 def _render_token_lookup(quotes):
     """Look up a trading symbol from an instrument token."""
-    st.markdown("##### Instrument Token Lookup")
+    st.markdown("##### 🔍 Instrument Token Lookup")
     st.caption(
         "Enter an instrument token to find the corresponding trading symbol, "
         "or search derivatives data by symbol prefix."
@@ -477,7 +480,7 @@ def _render_token_lookup(quotes):
             step=1,
             key="opt_lookup_token",
         )
-        if st.button("🔍 Lookup", key="opt_lookup_btn"):
+        if st.button("Lookup", key="opt_lookup_btn"):
             with st.spinner("Resolving…"):
                 try:
                     symbol = quotes.get_tradingsymbol(int(token_input))
@@ -490,7 +493,7 @@ def _render_token_lookup(quotes):
 
     else:
         st.markdown("Refresh the full derivatives instrument list from Sensibull.")
-        if st.button("📥 Fetch Derivatives Data", key="opt_fetch_deriv"):
+        if st.button("📊 Fetch Derivatives Data", key="opt_fetch_deriv"):
             with st.spinner("Fetching derivatives data…"):
                 result = _safe_fetch_derivatives(quotes)
                 if result:

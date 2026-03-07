@@ -105,7 +105,7 @@ class RetrievalEvaluator:
     Usage::
 
         from database.connection import DatabaseManager
-        from rag_pipeline.retrieval_evaluator import RetrievalEvaluator
+        from rag_pipeline.utils.retrieval_evaluator import RetrievalEvaluator
 
         db = DatabaseManager()
         evaluator = RetrievalEvaluator(db)
@@ -423,7 +423,7 @@ def fetch_logs(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 5. Unit tests (run with ``python -m rag_pipeline.retrieval_evaluator``)
+# 5. Unit tests (run with ``python -m rag_pipeline.utils.retrieval_evaluator``)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _run_tests() -> None:

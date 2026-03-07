@@ -50,7 +50,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from rag_pipeline.token_counter import count_tokens
+from rag_pipeline.utils.token_counter import count_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -211,7 +211,7 @@ def _trim_code_preserving_defs(
         return result
 
     # Absolute fallback: token-level truncation (preserves top def lines)
-    from rag_pipeline.token_counter import truncate_to_budget
+    from rag_pipeline.utils.token_counter import truncate_to_budget
     return truncate_to_budget(result, max_tokens)
 
 
@@ -288,8 +288,8 @@ def build_prompt_context(
 
     Example::
 
-        from rag_pipeline.retriever import Retriever
-        from rag_pipeline.context_builder import build_prompt_context
+        from rag_pipeline.core.retriever import Retriever
+        from rag_pipeline.core.context_builder import build_prompt_context
 
         ctx = retriever.retrieve_context("Explain Sharpe ratio")
         prompt_block = build_prompt_context(ctx, max_tokens=2500)
@@ -498,7 +498,7 @@ def build_prompt_context(
             # Preserve function definitions even in last-resort trim
             result = _trim_code_preserving_defs(result, max_tokens)
         else:
-            from rag_pipeline.token_counter import truncate_to_budget
+            from rag_pipeline.utils.token_counter import truncate_to_budget
             result = truncate_to_budget(result, max_tokens)
         result_tokens = count_tokens(result)
 
@@ -520,7 +520,7 @@ def build_prompt_context(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Unit tests (run with ``python -m rag_pipeline.context_builder``)
+# Unit tests (run with ``python -m rag_pipeline.core.context_builder``)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _run_tests() -> None:

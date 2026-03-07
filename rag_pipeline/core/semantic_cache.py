@@ -15,7 +15,7 @@ Architecture:
     - Maximum cache size is bounded; LRU eviction when full.
 
 Usage:
-    from rag_pipeline.semantic_cache import SemanticCache
+    from rag_pipeline.core.semantic_cache import SemanticCache
 
     cache = SemanticCache(embedding_service, config)
 

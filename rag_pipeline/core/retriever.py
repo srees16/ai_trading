@@ -32,9 +32,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple
 
 from rag_pipeline.config import RAGConfig
-from rag_pipeline.query_classifier import classify_query
-from rag_pipeline.token_counter import count_tokens
-from rag_pipeline.vector_store import DualIndexStore, EmbeddingFn
+from rag_pipeline.core.query_classifier import classify_query
+from rag_pipeline.utils.token_counter import count_tokens
+from rag_pipeline.storage.vector_store import DualIndexStore, EmbeddingFn
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +184,7 @@ def _log_code_retrieval(
     # Explicit check for a specific expected function
     if expected_fn and expected_fn not in top_n_fns:
         logger.warning(
-            "CODE_RETRIEVAL_LOG: ⚠ Expected implementation '%s' "
+            "CODE_RETRIEVAL_LOG: Expected implementation '%s' "
             "not retrieved in top %d results. Retrieved functions: %s",
             expected_fn, _EXPECTED_WARN_TOP_N, top_fns,
         )
@@ -193,7 +193,7 @@ def _log_code_retrieval(
     missing = _EXPECTED_FUNCTIONS - top_n_fns
     if missing:
         logger.warning(
-            "CODE_RETRIEVAL_LOG: ⚠ Expected implementation not retrieved "
+            "CODE_RETRIEVAL_LOG: Expected implementation not retrieved "
             "in top %d — missing: %s",
             _EXPECTED_WARN_TOP_N, sorted(missing),
         )
@@ -577,7 +577,7 @@ class Retriever:
             ``id``, ``content``, ``metadata``, ``scores``.
         """
         if not query or not query.strip():
-            logger.warning("retrieve() called with empty query.")
+            logger.warning("⚠️ retrieve() called with empty query.")
             return []
 
         query = query.strip()
@@ -867,7 +867,7 @@ class Retriever:
         )
         if total > _RETRIEVAL_TIMEOUT_WARN:
             logger.warning(
-                "Retriever: total retrieval %.2fs exceeds %.1fs threshold!",
+                "⚠️ Retriever: total retrieval %.2fs exceeds %.1fs threshold!",
                 total, _RETRIEVAL_TIMEOUT_WARN,
             )
 
@@ -1409,7 +1409,7 @@ def retrieve_context(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 7. Unit tests (run with ``python -m rag_pipeline.retriever``)
+# 7. Unit tests (run with ``python -m rag_pipeline.core.retriever``)
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _run_tests() -> None:
@@ -2795,7 +2795,7 @@ def _run_tests() -> None:
     # ══════════════════════════════════════════════════════════════════
     print("\n=== 17. Pre-Embedding Normalisation ===")
 
-    from rag_pipeline.vector_store import _normalize_for_embedding
+    from rag_pipeline.storage.vector_store import _normalize_for_embedding
 
     # Test 1: trailing comments removed
     code1 = "x = 1  # set x to one\ny = 2  # set y"

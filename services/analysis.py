@@ -75,7 +75,7 @@ async def run_analysis_async(
     status_placeholder.empty()
 
     if save_path:
-        st.caption(f"Results saved to: {save_path}")
+        st.caption(f"💾 Results saved to: {save_path}")
 
     # Show how many API calls were saved
     cached_news_count = len(cache.get_cached_tickers("news"))
@@ -83,7 +83,7 @@ async def run_analysis_async(
     dedup_hashes = scraper_stats.get('content_hashes', 0)
     if cached_news_count > 0 or scraper_cached > 0:
         st.caption(
-            f"Cache: {stats['hits']} hits / {stats['misses']} misses "
+            f"📦 Cache: {stats['hits']} hits / {stats['misses']} misses "
             f"({stats['hit_rate']} hit rate) — "
             f"{cached_news_count} ticker(s) cached, "
             f"{dedup_hashes} dedup hashes tracked"
@@ -123,24 +123,21 @@ async def _execute_analysis(
 
     if cached_news:
         cached_list = [t for t in tickers if t in cached_news]
-        if cached_list:
-            status_placeholder.info(
-                f"📰 Reusing cached news for {len(cached_list)} ticker(s), "
-                f"fetching {len(new_tickers)} new…"
-            )
+        if cached_list and progress_callback:
+            progress_callback(5, f"📦 Reusing cache for {len(cached_list)} ticker(s), fetching {len(new_tickers)} new…")
     
     if progress_callback:
-        progress_callback(8, "📰 Querying news sources…")
+        progress_callback(8, "🌐 Querying news sources…")
 
     all_news = await system.news_aggregator.fetch_news_for_tickers(
         tickers, cached_news=cached_news
     )
     if not all_news:
-        status_placeholder.warning("⚠️ No news found")
+        status_placeholder.warning("\u26a0\ufe0f No news found")
         return []
     
     if progress_callback:
-        progress_callback(22, f"📰 Collected {len(all_news)} articles — caching…")
+        progress_callback(22, f"✅ Collected {len(all_news)} articles — caching…")
 
     # Cache newly fetched news by ticker
     news_ttl = timedelta(minutes=Config.NEWS_CACHE_TTL_MINUTES)
@@ -158,8 +155,7 @@ async def _execute_analysis(
             )
     
     if progress_callback:
-        progress_callback(28, f"✓ {len(all_news)} news items collected")
-    status_placeholder.success(f"✓ Collected {len(all_news)} news items")
+        progress_callback(28, f"📰 {len(all_news)} news items collected")
     
     # ── Step 2: Sentiment analysis (with cache) ──────────────────────
     # (Spinner already shows status; skip redundant info notification)
@@ -184,7 +180,7 @@ async def _execute_analysis(
         newly_analysed = []
     
     if progress_callback:
-        progress_callback(48, "🧠 Caching sentiment results…")
+        progress_callback(48, "📦 Caching sentiment results…")
 
     analyzed_news = already_analysed + newly_analysed
     
@@ -198,11 +194,8 @@ async def _execute_analysis(
         cache.put("news", ticker, items, ttl=news_ttl)
     
     if progress_callback:
-        progress_callback(52, f"✓ Sentiment done — {len(analyzed_news)} items")
-    status_placeholder.success(
-        f"✓ Analyzed {len(analyzed_news)} items "
-        f"({len(already_analysed)} cached, {len(newly_analysed)} new)"
-    )
+        progress_callback(52, f"✅ Sentiment done — {len(analyzed_news)} items")
+
 
     # ── Step 2b: Macro-economic indicators ───────────────────────────
     if progress_callback:
@@ -221,7 +214,7 @@ async def _execute_analysis(
         logger.warning("Macro indicators unavailable: %s", exc)
 
     if progress_callback:
-        progress_callback(55, "✓ Macro indicators loaded")
+        progress_callback(55, "\u2705 Macro indicators loaded")
 
     # ── Step 2c: Google search public sentiment ──────────────────────
     if progress_callback:
@@ -242,7 +235,7 @@ async def _execute_analysis(
         logger.warning("Google public sentiment unavailable: %s", exc)
 
     if progress_callback:
-        progress_callback(58, "✓ Public sentiment analyzed")
+        progress_callback(58, "\u2705 Public sentiment analyzed")
     
     # ── Step 3: Metrics + signals ────────────────────────────────────
     # (Spinner already shows status; skip redundant info notification)
@@ -263,7 +256,7 @@ async def _execute_analysis(
     system.metrics_calculator.prefetch_metrics(unique_tickers)
     
     if progress_callback:
-        progress_callback(70, "📊 Caching metrics & recording freshness…")
+        progress_callback(70, "📦 Caching metrics & recording freshness…")
 
     # Save back to session cache + record freshness
     sc = get_scraper_cache()
@@ -281,11 +274,11 @@ async def _execute_analysis(
             pass
         if progress_callback and unique_tickers:
             pct = 70 + int(10 * (idx + 1) / len(unique_tickers))
-            progress_callback(pct, f"📊 Metrics cached — {t}")
+            progress_callback(pct, f"✅ Metrics cached — {t}")
     
     # Generate signals
     if progress_callback:
-        progress_callback(82, "⚡ Generating trading signals…")
+        progress_callback(82, "🎯 Generating trading signals…")
 
     signals = []
     total_news = len(analyzed_news)
@@ -296,11 +289,11 @@ async def _execute_analysis(
         if progress_callback and total_news:
             pct = 82 + int(10 * (i + 1) / total_news)
             if (i + 1) % max(1, total_news // 5) == 0 or i + 1 == total_news:
-                progress_callback(pct, f"⚡ Signal {i + 1}/{total_news}…")
+                progress_callback(pct, f"🎯 Signal {i + 1}/{total_news}…")
         
     # Cache signals
     if progress_callback:
-        progress_callback(93, "💾 Caching signals…")
+        progress_callback(93, "📦 Caching signals…")
 
     signals_by_ticker: Dict[str, list] = defaultdict(list)
     for sig in signals:
@@ -309,10 +302,9 @@ async def _execute_analysis(
         cache.put("signals", ticker, sigs)
     
     if progress_callback:
-        progress_callback(95, f"✓ {len(signals)} trading signals generated")
-    status_placeholder.success(f"✓ Generated {len(signals)} trading signals")
+        progress_callback(95, f"\u2705 {len(signals)} trading signals generated")
     if progress_callback:
-        progress_callback(100, "Analysis complete ✅")
+        progress_callback(100, "🚀 Analysis complete ")
     
     # ── Step 4: WSB email report (auto-send when SMTP configured) ────
     wsb_news = [n for n in analyzed_news if n.source == "WallStreetBets"]
@@ -321,9 +313,7 @@ async def _execute_analysis(
             from notifications.manager import NotificationManager
             sent = NotificationManager.send_wsb_email(analyzed_news, tickers)
             if sent:
-                status_placeholder.success(
-                    f"✓ WSB email report sent ({len(wsb_news)} mentions)"
-                )
+                logger.info("WSB email report sent (%d mentions)", len(wsb_news))
             else:
                 logger.info("WSB email skipped (SMTP not configured)")
         except Exception as exc:

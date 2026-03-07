@@ -11,7 +11,7 @@ Architecture:
     4. Merged list is sent to the cross-encoder re-ranker
 
 Usage:
-    from rag_pipeline.hybrid_search import HybridSearcher
+    from rag_pipeline.core.hybrid_search import HybridSearcher
 
     searcher = HybridSearcher(vector_store, embedding_service, config)
     chunks = searcher.search("RSI momentum strategy", top_k=40)
@@ -24,8 +24,8 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 from rag_pipeline.config import RAGConfig
-from rag_pipeline.embeddings import EmbeddingService
-from rag_pipeline.vector_store import VectorStoreManager
+from rag_pipeline.storage.embeddings import EmbeddingService
+from rag_pipeline.storage.vector_store import VectorStoreManager
 
 logger = logging.getLogger(__name__)
 

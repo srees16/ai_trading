@@ -19,7 +19,7 @@ Architecture
 
 Usage (from ``ui_components.py``)::
 
-    from rag_pipeline.background_ingest import get_ingestion_manager
+    from rag_pipeline.ingestion.background_ingest import get_ingestion_manager
 
     mgr = get_ingestion_manager()
     mgr.submit(file_name, file_bytes)    # non-blocking
@@ -219,9 +219,9 @@ class BackgroundIngestionManager:
         try:
             # ---- Create isolated services for this thread ----
             from rag_pipeline.config import RAGConfig
-            from rag_pipeline.vector_store import VectorStoreManager
-            from rag_pipeline.embeddings import EmbeddingService
-            from rag_pipeline.pdf_ingestion import PDFIngestionService
+            from rag_pipeline.storage.vector_store import VectorStoreManager
+            from rag_pipeline.storage.embeddings import EmbeddingService
+            from rag_pipeline.ingestion.pdf_ingestion import PDFIngestionService
 
             config = RAGConfig()
             vs = VectorStoreManager(config)

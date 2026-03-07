@@ -34,8 +34,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, TypedDict
 
 from rag_pipeline.config import RAGConfig
-from rag_pipeline.embeddings import EmbeddingService
-from rag_pipeline.vector_store import VectorStoreManager, _normalize_for_embedding
+from rag_pipeline.storage.embeddings import EmbeddingService
+from rag_pipeline.storage.vector_store import VectorStoreManager, _normalize_for_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -43,13 +43,11 @@ logger = logging.getLogger(__name__)
 # Type definitions
 # ═══════════════════════════════════════════════════════════════════════════
 
-class StructuredBlock(TypedDict, total=False):
+class StructuredBlock(TypedDict):
     """A single block in the structured ingestion output."""
-    page: int  # type: ignore[misc]
-    block_type: str  # "code" | "text"  # type: ignore[misc]
-    content: str  # type: ignore[misc]
-    snippet_id: str
-    snippet_title: str
+    page: int
+    block_type: str  # "code" | "text"
+    content: str
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1087,56 +1085,11 @@ def ingest_pdf_structured(pdf_path: str) -> List[StructuredBlock]:
                 content=block["content"],
             ))
 
-    # ── Post-process: detect snippet labels and tag code blocks ──
-    _attach_snippet_ids(results)
-
     logger.info(
         "Structured ingestion complete: %d blocks from %d pages (%s).",
         len(results), total_pages, metadata["source"],
     )
     return results
-
-
-def _attach_snippet_ids(blocks: List[StructuredBlock]) -> None:
-    """Scan text blocks for snippet labels and tag the next code block.
-
-    Handles two patterns:
-    - A text block whose last non-empty line matches a snippet heading
-      (e.g. "Snippet 3.1  getDailyVol Function") → tag the **next** code block.
-    - A code block whose first line matches a snippet heading → tag itself.
-    """
-    pending_snippet_id = ""
-    pending_snippet_title = ""
-
-    for i, block in enumerate(blocks):
-        content = block.get("content", "")
-        btype = block.get("block_type", "text")
-
-        if btype == "text":
-            # Check last non-empty line for a snippet label
-            for line in reversed(content.split("\n")):
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                m = _SNIPPET_BLOCK_RE.match(stripped)
-                if m:
-                    pending_snippet_id = m.group(1)
-                    pending_snippet_title = m.group(2).strip()
-                break  # only check the last non-empty line
-        elif btype == "code":
-            # If a preceding text block set a pending snippet, apply it
-            if pending_snippet_id:
-                block["snippet_id"] = pending_snippet_id
-                block["snippet_title"] = pending_snippet_title
-                pending_snippet_id = ""
-                pending_snippet_title = ""
-            else:
-                # Check if the code block's first line is itself a snippet label
-                first_line = content.split("\n", 1)[0].strip()
-                m = _SNIPPET_BLOCK_RE.match(first_line)
-                if m:
-                    block["snippet_id"] = m.group(1)
-                    block["snippet_title"] = m.group(2).strip()
 
 
 # ═══════════════════════════════════════════════════════════════════════════

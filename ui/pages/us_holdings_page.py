@@ -14,7 +14,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from ui.components import render_header_bar, render_footer, render_navigation_buttons, render_stock_ticker_ribbon
+from ui.components import render_header_bar, render_footer, render_navigation_buttons, render_stock_ticker_ribbon, render_vix_indicator
 
 logger = logging.getLogger(__name__)
 
@@ -67,8 +67,9 @@ def render_us_holdings_page():
     _user = st.session_state.get("username", "unknown")
     logger.info("[user=%s] Viewing Holdings page", _user)
 
-    render_header_bar(subtitle="Holdings · DriveWealth")
+    render_header_bar(subtitle="💼 Holdings · DriveWealth")
     render_stock_ticker_ribbon(market="US")
+    render_vix_indicator(market="US")
     render_navigation_buttons(current_page="us_holdings", back_key_suffix="from_us_holdings")
 
     saved = _load_saved_creds()
@@ -104,7 +105,7 @@ def render_us_holdings_page():
     # ── 3. Disconnect button ────────────────────────────────
     dc1, dc2 = st.columns([6, 1])
     with dc2:
-        if st.button("🔌 Disconnect", use_container_width=True, key="dw_disconnect"):
+        if st.button("🔴 Disconnect", use_container_width=True, key="dw_disconnect"):
             logger.info("[user=%s] Disconnecting DriveWealth account", _user)
             _clear_creds()
             for k in list(st.session_state.keys()):
@@ -115,7 +116,7 @@ def render_us_holdings_page():
 
     # ── 4. Dashboard tabs ───────────────────────────────────
     tab_summary, tab_positions, tab_orders, tab_txns = st.tabs(
-        ["💰 Account Summary", "📊 Positions", "📋 Orders", "📜 Transactions"]
+        ["📊 Account Summary", "💼 Positions", "📝 Orders", "💸 Transactions"]
     )
 
     with tab_summary:
@@ -179,7 +180,7 @@ def _render_auth_form(saved: dict):
     with st.form("dw_auth_form"):
         st.markdown(
             '<p style="font-size:0.92rem;font-weight:700;margin-bottom:0.3rem;">'
-            '🔐 Connect DriveWealth Account</p>',
+            'Connect DriveWealth Account</p>',
             unsafe_allow_html=True,
         )
         r1c1, r1c2, r1c3 = st.columns(3)
@@ -209,7 +210,7 @@ def _render_auth_form(saved: dict):
         )
         fc1, fc2 = st.columns([3, 1])
         remember = fc1.checkbox("Save credentials locally", value=bool(saved))
-        submitted = fc2.form_submit_button("🔗 Connect", use_container_width=True, type="primary")
+        submitted = fc2.form_submit_button("Connect", use_container_width=True, type="primary")
 
     if submitted:
         if not client_id or not client_secret or not app_key:
@@ -224,7 +225,7 @@ def _render_auth_form(saved: dict):
                 st.error(f"Authentication failed: {exc}")
                 return
 
-        st.success("✅ Authenticated successfully!")
+        st.success("Authenticated successfully!")
         st.session_state["dw_authenticated"] = True
         st.session_state["dw_client_id"] = client_id
         st.session_state["dw_client_secret"] = client_secret
@@ -245,7 +246,7 @@ def _render_auth_form(saved: dict):
 
 def _render_account_linking(dw, user_id: str):
     """Let the user pick from their DriveWealth accounts or enter an ID."""
-    st.markdown("### 📎 Link a Trading Account")
+    st.markdown("### 🔗 Link a Trading Account")
 
     accounts = []
     if user_id:
@@ -318,7 +319,7 @@ def _render_account_summary(dw, account_id: str):
     c4.metric("Leverage", f"{acc.get('leverage', 1)}x")
 
     # Cash balances
-    st.markdown("#### 💵 Cash Balances")
+    st.markdown("#### 💰 Cash Balances")
     try:
         cash = dw.get_account_cash(account_id)
         cash_data = cash.get("cash", cash)
@@ -336,14 +337,14 @@ def _render_account_summary(dw, account_id: str):
     # BOD snapshot from account response
     bod = acc.get("bod")
     if bod and isinstance(bod, dict):
-        st.markdown("#### 📊 Beginning of Day")
+        st.markdown("#### 🌅 Beginning of Day")
         bd1, bd2, bd3 = st.columns(3)
         bd1.metric("Cash Balance", f"${bod.get('cashBalance', 0):,.2f}")
         bd2.metric("Equity Value", f"${bod.get('equityValue', 0):,.2f}")
         bd3.metric("Money Market", f"${bod.get('moneyMarket', 0):,.2f}")
 
     # Raw account summary (collapsible)
-    with st.expander("🔎 Raw Account Data"):
+    with st.expander("Raw Account Data"):
         st.json(acc)
 
 
@@ -358,7 +359,7 @@ def _render_positions(dw, account_id: str):
     positions = resp if isinstance(resp, list) else resp.get("equityPositions", resp.get("positions", []))
 
     if not positions:
-        st.info("No open positions in this account.")
+        st.info("💼 No open positions in this account.")
         return
 
     import pandas as pd
@@ -415,7 +416,7 @@ def _render_orders(dw, account_id: str):
 
     orders = resp if isinstance(resp, list) else resp.get("orders", [])
     if not orders:
-        st.info("No resting orders.")
+        st.info("📝 No resting orders.")
         return
 
     import pandas as pd
@@ -445,7 +446,7 @@ def _render_transactions(dw, account_id: str):
 
     txns = resp if isinstance(resp, list) else resp.get("transactions", [])
     if not txns:
-        st.info("No transactions found.")
+        st.info("💸 No transactions found.")
         return
 
     import pandas as pd

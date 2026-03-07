@@ -6,7 +6,7 @@ Each ``PipelineTrace`` instance captures wall-clock timings so that
 bottlenecks are visible in logs and can be surfaced in the UI.
 
 Usage:
-    from rag_pipeline.perf_trace import PipelineTrace
+    from rag_pipeline.utils.perf_trace import PipelineTrace
 
     trace = PipelineTrace()
     with trace.span("embedding"):

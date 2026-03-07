@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from rag_pipeline.config import RAGConfig
-from rag_pipeline.llm_service import create_llm_backend
+from rag_pipeline.llm.llm_service import create_llm_backend
 
 logger = logging.getLogger(__name__)
 

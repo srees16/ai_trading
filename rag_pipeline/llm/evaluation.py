@@ -14,7 +14,7 @@ Also provides:
     - ``run_evaluation()`` — batch-evaluates a query engine against a dataset
 
 Usage:
-    from rag_pipeline.evaluation import (
+    from rag_pipeline.llm.evaluation import (
         EvalDataset,
         EvalQuery,
         RetrievalLogger,
@@ -416,7 +416,7 @@ def evaluate_faithfulness(
     )
 
     if llm_backend is None:
-        from rag_pipeline.llm_service import create_llm_backend
+        from rag_pipeline.llm.llm_service import create_llm_backend
         from rag_pipeline.config import RAGConfig
         llm_backend = create_llm_backend(RAGConfig())
 

@@ -34,21 +34,20 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Generator, List, Optional, Protocol
 
 from rag_pipeline.config import RAGConfig
-from rag_pipeline.embeddings import EmbeddingService
-from rag_pipeline.evaluation import RetrievalLogger
-from rag_pipeline.hybrid_search import HybridSearcher
-from rag_pipeline.llm_service import create_llm_backend
-from rag_pipeline.perf_trace import PipelineTrace
-from rag_pipeline.query_rewriter import QueryRewriter, expand_query
-from rag_pipeline.reranker import CrossEncoderReranker
-from rag_pipeline.retriever import is_fast_mode, is_simple_query
-from rag_pipeline.query_classifier import classify_query as _classify_query
-from rag_pipeline.semantic_cache import SemanticCache
-from rag_pipeline.tiered_retrieval import TieredRetriever
-from rag_pipeline.fastpath import try_fastpath
-from rag_pipeline.time_budget import create_time_budget
-from rag_pipeline.token_counter import budget_chunks, count_tokens
-from rag_pipeline.vector_store import VectorStoreManager
+from rag_pipeline.storage.embeddings import EmbeddingService
+from rag_pipeline.llm.evaluation import RetrievalLogger
+from rag_pipeline.core.hybrid_search import HybridSearcher
+from rag_pipeline.llm.llm_service import create_llm_backend
+from rag_pipeline.utils.perf_trace import PipelineTrace
+from rag_pipeline.core.query_rewriter import QueryRewriter, expand_query
+from rag_pipeline.core.reranker import CrossEncoderReranker
+from rag_pipeline.core.retriever import is_fast_mode, is_simple_query
+from rag_pipeline.core.semantic_cache import SemanticCache
+from rag_pipeline.ingestion.tiered_retrieval import TieredRetriever
+from rag_pipeline.core.fastpath import try_fastpath
+from rag_pipeline.utils.time_budget import create_time_budget
+from rag_pipeline.utils.token_counter import budget_chunks, count_tokens
+from rag_pipeline.storage.vector_store import VectorStoreManager
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +143,7 @@ class DefaultLLMBackend:
     def generate(self, query: str, context: str) -> str:
         if not context.strip():
             return (
-                "No relevant documents found in the knowledge base. "
+                "⚠️ No relevant documents found in the knowledge base. "
                 "Please upload strategy PDFs first."
             )
         return (
@@ -357,21 +356,9 @@ class RAGQueryEngine:
                 )
 
         # --- Step 2b: Fastpath bypass (short quant questions) ---
-        # Skip fastpath when the knowledge base has documents — the
-        # full RAG pipeline should always be used so answers come
-        # from the actual ingested content, not generic templates.
         _t_cls = time.time()
-        _kb_has_docs = self._vs.count() > 0
-        if _kb_has_docs:
-            fastpath_answer = None
-            logger.info(
-                "Fastpath SKIPPED — knowledge base has %d documents; "
-                "using full RAG pipeline.",
-                self._vs.count(),
-            )
-        else:
-            with trace.span("fastpath_check"):
-                fastpath_answer = try_fastpath(query_text)
+        with trace.span("fastpath_check"):
+            fastpath_answer = try_fastpath(query_text)
         _timings["classification"] = time.time() - _t_cls
         if fastpath_answer is not None:
             logger.info("Fastpath HIT — bypassing full RAG pipeline.")
@@ -553,15 +540,6 @@ class RAGQueryEngine:
         # --- Simple-query detection (used to skip heavy stages) ---
         _simple_q = is_simple_query(query_text)
 
-        # --- Query classification (code-mode detection) ---
-        _classification = _classify_query(query_text)
-        _code_mode = _classification.get("strict_code_mode", False)
-        if _code_mode:
-            logger.info(
-                "Code-mode detected for query — reranker will protect "
-                "code chunks from threshold filtering."
-            )
-
         # --- Step 5b: Metadata boost (exact match on snippet/section) ---
         _t_expand = time.time()
         if chunks and not _simple_q:
@@ -598,8 +576,7 @@ class RAGQueryEngine:
         elif self._reranker and chunks:
             with trace.span("rerank", n_candidates=len(chunks)):
                 chunks = self._reranker.rerank(
-                    query_text, chunks, top_n=self._config.rerank_top_n,
-                    code_mode=_code_mode,
+                    query_text, chunks, top_n=self._config.rerank_top_n
                 )
             if not chunks:
                 logger.warning(
@@ -821,19 +798,9 @@ class RAGQueryEngine:
                 return
 
         # Fastpath bypass (short quant questions)
-        # Skip when KB has documents — full RAG pipeline takes priority.
         _t_cls_s = time.time()
-        _kb_has_docs_s = self._vs.count() > 0
-        if _kb_has_docs_s:
-            fastpath_answer = None
-            logger.info(
-                "Fastpath SKIPPED (stream) — knowledge base has %d "
-                "documents; using full RAG pipeline.",
-                self._vs.count(),
-            )
-        else:
-            with trace.span("fastpath_check"):
-                fastpath_answer = try_fastpath(query_text)
+        with trace.span("fastpath_check"):
+            fastpath_answer = try_fastpath(query_text)
         _timings["classification"] = time.time() - _t_cls_s
         if fastpath_answer is not None:
             logger.info("Fastpath HIT (stream) — bypassing full RAG pipeline.")
@@ -963,15 +930,6 @@ class RAGQueryEngine:
         # --- Simple-query detection (used to skip heavy stages) ---
         _simple_q_s = is_simple_query(query_text)
 
-        # --- Query classification (code-mode detection) ---
-        _classification_s = _classify_query(query_text)
-        _code_mode_s = _classification_s.get("strict_code_mode", False)
-        if _code_mode_s:
-            logger.info(
-                "Code-mode detected (stream) — reranker will protect "
-                "code chunks from threshold filtering."
-            )
-
         # Metadata boost (exact match on snippet/section)
         _t_expand_s = time.time()
         if chunks and not _simple_q_s:
@@ -1004,8 +962,7 @@ class RAGQueryEngine:
         elif self._reranker and chunks:
             with trace.span("rerank", n_candidates=len(chunks)):
                 chunks = self._reranker.rerank(
-                    query_text, chunks, top_n=self._config.rerank_top_n,
-                    code_mode=_code_mode_s,
+                    query_text, chunks, top_n=self._config.rerank_top_n
                 )
             if not chunks:
                 logger.warning(
@@ -1585,16 +1542,13 @@ class RAGQueryEngine:
         formatted: List[str] = []
         for i, chunk in enumerate(chunks, 1):
             meta = chunk.metadata
-            page = meta.get("page_number") or meta.get("page", "?")
+            page = meta.get("page_number", "?")
             section = meta.get("section", "")
             similarity = 1.0 - chunk.distance
             rerank_score = meta.get("rerank_score")
             title = meta.get("title", chunk.source)
             word_count = meta.get("word_count", len(chunk.text.split()))
-            contains_code = (
-                meta.get("contains_code", False)
-                or meta.get("chunk_type") == "code"
-            )
+            contains_code = meta.get("contains_code", False)
 
             # Structured header with all available metadata
             header_parts = [
@@ -1628,11 +1582,6 @@ class RAGQueryEngine:
                 if snippet_title:
                     snip_label += f" — {snippet_title}"
                 header_parts.append(snip_label)
-            func_names = meta.get("function_names", [])
-            if func_names:
-                header_parts.append(
-                    f"Functions: {', '.join(func_names)}"
-                )
 
             header_parts.append(f"Vector Similarity: {similarity:.1%}")
             if rerank_score is not None:
@@ -1640,17 +1589,12 @@ class RAGQueryEngine:
             header_parts.append(f"Word Count: {word_count}")
             if contains_code:
                 header_parts.append(
-                    "⚠ THIS CHUNK CONTAINS SOURCE CODE — reproduce it "
-                    "EXACTLY as written inside a ```python code fence. "
-                    "Do NOT rewrite, paraphrase, or generate alternative code."
+                    "THIS CHUNK CONTAINS SOURCE CODE — reproduce it "
+                    "EXACTLY as written. Do NOT rewrite, paraphrase, or "
+                    "generate alternative code."
                 )
             header_parts.append(f"--- Content Start ---")
-            if contains_code:
-                header_parts.append("```python")
-                header_parts.append(chunk.text)
-                header_parts.append("```")
-            else:
-                header_parts.append(chunk.text)
+            header_parts.append(chunk.text)
             header_parts.append(f"--- Content End ---")
 
             formatted.append("\n".join(header_parts))

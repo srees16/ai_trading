@@ -21,6 +21,8 @@ from ui.components import (
     render_page_header,
     render_footer,
     render_no_data_warning,
+    render_stock_ticker_ribbon,
+    render_vix_indicator,
     spinner_html,
 )
 
@@ -83,7 +85,8 @@ def render_crypto_page():
     logger.info("[user=%s] Viewing Crypto page",
                 st.session_state.get('username', 'unknown'))
     render_page_header("₿ Crypto Strategies")
-
+    render_stock_ticker_ribbon(market="US")
+    render_vix_indicator(market="US")
     st.markdown("---")
 
     # Get only crypto-category strategies
@@ -152,18 +155,18 @@ def _render_configuration_panel(
 
     params_col, data_col = st.columns([1, 1], gap="large")
     with params_col:
-        st.subheader("📊 Parameters")
+        st.subheader("🔧 Parameters")
         param_values = _render_parameter_inputs(params)
 
     with data_col:
-        st.subheader("🗂️ Data")
+        st.subheader("📊 Data")
         _render_data_settings(param_values)
 
     if not param_values.get("tickers"):
         st.warning("⚠️ Enter at least 2 crypto ticker symbols (e.g. ETH, BTC, LTC).")
 
     run_btn = st.button(
-        "Run Backtest",
+        "🚀 Run Backtest",
         type="primary",
         disabled=len(param_values.get("tickers", [])) < 2,
         help="Run the crypto strategy with the parameters above",
@@ -171,7 +174,7 @@ def _render_configuration_panel(
     )
 
     if selected_name in cache:
-        _compact_caption(f"📦 Cached result loaded for **{selected_name}**")
+        _compact_caption(f"Cached result loaded for **{selected_name}**")
 
     if run_btn:
         logger.info("[user=%s] Clicked 'Run Backtest' for crypto strategy: %s",
@@ -265,7 +268,7 @@ def _render_data_settings(param_values: Dict):
                 max_value=datetime.now(),
             )
         if start_date >= end_date:
-            st.warning("⚠️ Start date must be before end date.")
+            st.warning("Start date must be before end date.")
     else:
         end_date = datetime.now()
         period_days = {"1y": 365, "2y": 730, "3y": 1095, "5y": 1825}
@@ -305,18 +308,18 @@ def _execute_backtest(
         st.session_state.crypto_cache[selected_name] = result
 
         if result.success:
-            st.success("✅ Crypto backtest completed!")
+            st.success("Crypto backtest completed!")
             _save_backtest_to_database(
                 strategy_info, param_values, result, selected_name
             )
             _save_charts_to_minio(result, selected_name)
         else:
-            st.error(f"❌ Failed: {result.error_message}")
+            st.error(f"Failed: {result.error_message}")
 
     except Exception as e:
         _crypto_sp.empty()
         logger.error(f"Error running crypto backtest: {e}")
-        st.error(f"❌ Error: {str(e)}")
+        st.error(f"Error: {str(e)}")
 
 
 # ====================================================================
@@ -324,14 +327,14 @@ def _execute_backtest(
 # ====================================================================
 def _render_results_panel():
     """Render crypto backtest results."""
-    st.subheader("📈 Results")
+    st.subheader("📊 Results")
 
     cache = st.session_state.get("crypto_cache", {})
 
     if not cache:
         result = st.session_state.get("crypto_result")
         if result is None:
-            st.info("👈 Run a backtest to see results.")
+            st.info("📈 Run a backtest to see results.")
             return
         _render_single_result(result)
         return
@@ -351,7 +354,7 @@ def _render_results_panel():
 def _render_single_result(result):
     """Render a single strategy result."""
     if not result.success:
-        st.error(f"❌ Backtest failed: {result.error_message}")
+        st.error(f"Backtest failed: {result.error_message}")
         return
 
     # Metrics
@@ -376,7 +379,7 @@ def _render_single_result(result):
         )
         if has:
             st.markdown("---")
-            st.markdown("#### Trading Signals")
+            st.markdown("#### 🎯 Trading Signals")
             render_backtest_signals_table(result.signals)
 
 
@@ -385,7 +388,7 @@ def _render_single_result(result):
 # ====================================================================
 def _render_metrics(metrics: Dict):
     """Render performance metrics."""
-    st.markdown("#### Performance Metrics")
+    st.markdown("#### 📊 Performance Metrics")
 
     st.markdown(
         """
@@ -415,7 +418,7 @@ def _render_metrics(metrics: Dict):
         return
 
     if aggregate_metrics and len(ticker_metrics) > 1:
-        st.markdown("##### 📊 Aggregate Summary")
+        st.markdown("##### Aggregate Summary")
         agg_cols = st.columns(min(4, len(aggregate_metrics)))
         for i, (key, val) in enumerate(aggregate_metrics.items()):
             with agg_cols[i % len(agg_cols)]:
@@ -588,7 +591,7 @@ def _save_backtest_to_database(
                 }
             )
         if db_service.save_backtest_result(backtest_data):
-            _compact_caption("🗄️ Results saved to database")
+            _compact_caption("Results saved to database")
     except Exception as e:
         logger.error(f"Failed to save crypto backtest to database: {e}")
 
@@ -611,7 +614,7 @@ def _save_charts_to_minio(result: Any, strategy_name: str):
         )
         if saved:
             st.toast(
-                f"🪣 {len(saved)} chart(s) saved to object storage", icon="✅"
+                f"🪣 {len(saved)} chart(s) saved to object storage", icon=""
             )
     except Exception as e:
         logger.error(f"Failed to save crypto charts to MinIO: {e}")

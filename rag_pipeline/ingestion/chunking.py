@@ -953,20 +953,13 @@ def chunk_structured_blocks(
         # Deterministic parent_id: 16-char SHA-256 hex of the raw block content
         parent_id = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
 
-        snippet_id = block.get("snippet_id", "")
-        snippet_title = block.get("snippet_title", "")
-
         if block_type == "code":
-            _process_code_block(
-                content, page, enriched, parent_id,
-                snippet_id=snippet_id, snippet_title=snippet_title,
-            )
+            _process_code_block(content, page, enriched, parent_id)
         else:
             _process_text_block(
                 content, page, enriched,
                 text_min_tokens, text_max_tokens,
                 parent_id=parent_id,
-                snippet_id=snippet_id, snippet_title=snippet_title,
             )
 
     logger.info(
@@ -981,9 +974,6 @@ def _process_code_block(
     page: int,
     enriched: List[Dict[str, Any]],
     parent_id: str = "",
-    *,
-    snippet_id: str = "",
-    snippet_title: str = "",
 ) -> None:
     """Process a single code block into enriched chunks.
 
@@ -992,8 +982,6 @@ def _process_code_block(
         page: Source page number.
         enriched: Output list (appended to in-place).
         parent_id: Deterministic ID of the parent block (SHA-256 hex, 16 chars).
-        snippet_id: Detected snippet number (e.g. "3.1").
-        snippet_title: Detected snippet title (e.g. "getDailyVol Function").
     """
     code_chunks = _chunk_code_block(content)
 
@@ -1013,9 +1001,6 @@ def _process_code_block(
             "pipeline_stage": infer_stage(chunk_content),
             "chapter": detect_chapter(chunk_content),
         }
-        if snippet_id:
-            metadata["snippet_id"] = snippet_id
-            metadata["snippet_title"] = snippet_title
 
         enriched.append({
             "content": chunk_content,
@@ -1031,8 +1016,6 @@ def _process_text_block(
     max_tokens: int,
     *,
     parent_id: str = "",
-    snippet_id: str = "",
-    snippet_title: str = "",
 ) -> None:
     """Process a single text block into enriched chunks.
 
@@ -1043,8 +1026,6 @@ def _process_text_block(
         min_tokens: Minimum token target.
         max_tokens: Maximum token target.
         parent_id: Deterministic ID of the parent block (SHA-256 hex, 16 chars).
-        snippet_id: Detected snippet number (e.g. "3.1").
-        snippet_title: Detected snippet title (e.g. "getDailyVol Function").
     """
     text_chunks = _chunk_text_block(content, min_tokens, max_tokens)
 
@@ -1061,9 +1042,6 @@ def _process_text_block(
             "pipeline_stage": infer_stage(tc),
             "summary": generate_2_line_summary(tc),
         }
-        if snippet_id:
-            metadata["snippet_id"] = snippet_id
-            metadata["snippet_title"] = snippet_title
 
         enriched.append({
             "content": tc,
@@ -1095,7 +1073,7 @@ def chunk_pdf(
         List of enriched chunk dicts (same format as
         ``chunk_structured_blocks``).
     """
-    from rag_pipeline.pdf_ingestion import ingest_pdf_structured
+    from rag_pipeline.ingestion.pdf_ingestion import ingest_pdf_structured
 
     logger.info("chunk_pdf: extracting structured blocks from %s", pdf_path)
     blocks = ingest_pdf_structured(pdf_path)

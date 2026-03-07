@@ -56,11 +56,11 @@ def initialize_database():
             logger.error("Make sure PostgreSQL is running and credentials are correct")
             return False
         
-        logger.info("✓ Database connection successful")
+        logger.info("✅ Database connection successful")
         
         # Create tables
         if db_manager.initialize_database():
-            logger.info("✓ Database tables created successfully")
+            logger.info("✅ Database tables created successfully")
         else:
             logger.error("Failed to create database tables")
             return False
@@ -68,7 +68,7 @@ def initialize_database():
         # Test the service layer
         service = get_database_service()
         if service.is_available:
-            logger.info("✓ Database service layer ready")
+            logger.info("Database service layer ready")
         
         return True
         
@@ -100,7 +100,7 @@ def show_table_info():
         tables = [row[0] for row in result]
         
         if tables:
-            logger.info("\n📋 Database Tables:")
+            logger.info("\n🗃️ Database Tables:")
             for table in tables:
                 logger.info(f"   • {table}")
         
@@ -118,7 +118,7 @@ def show_table_info():
                 for ht in hypertables:
                     logger.info(f"   • {ht}")
         except:
-            logger.info("\n⚠️ TimescaleDB hypertables not found (extension may not be enabled)")
+            logger.info("\nTimescaleDB hypertables not found (extension may not be enabled)")
         
         session.close()
         
@@ -129,17 +129,17 @@ def show_table_info():
 def main():
     """Main setup function."""
     print("\n" + "=" * 60)
-    print("  Centurion Capital LLC - Database Setup")
+    print("  🏛️ Centurion Capital LLC - Database Setup")
     print("=" * 60 + "\n")
     
     # Check configuration
     if not check_configuration():
-        print("\n❌ Setup aborted. Please configure database settings.")
+        print("\nSetup aborted. Please configure database settings.")
         return 1
     
     # Initialize database
     if not initialize_database():
-        print("\n❌ Database initialization failed.")
+        print("\nDatabase initialization failed.")
         return 1
     
     # Show table info
@@ -148,8 +148,8 @@ def main():
     print("\n" + "=" * 60)
     print("  ✅ Database setup completed successfully!")
     print("=" * 60)
-    print("\nYou can now run: streamlit run app.py")
-    print("Analysis results will be automatically saved to the database.\n")
+    print("\n🚀 You can now run: streamlit run app.py")
+    print("💾 Analysis results will be automatically saved to the database.\n")
     
     return 0
 

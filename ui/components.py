@@ -60,10 +60,10 @@ _HEADER_BAR_CSS = """
 <style>
     .header-bar {
         background: linear-gradient(135deg, #0d1117 0%, #161b22 40%, #0f3460 100%);
-        padding: 0.9rem 1.6rem;
+        padding: 0.55rem 1.6rem;
         border-radius: 10px;
-        margin-top: 0.6rem;
-        margin-bottom: 0.5rem;
+        margin-top: 0.4rem;
+        margin-bottom: 0.1rem;
         display: flex;
         align-items: center;
         justify-content: space-between;
@@ -142,7 +142,7 @@ def spinner_html(label: str = "Processing…") -> str:
 
 def render_header():
     """Render the main application header with the dark header bar."""
-    render_header_bar(subtitle="Algorithmic Trading · Event-Driven Alpha")
+    render_header_bar(subtitle="💻 Algorithmic Trading · Event-Driven Alpha")
 
 
 def render_page_header(title: str, subtitle: Optional[str] = None, description: Optional[str] = None):
@@ -173,6 +173,46 @@ def render_footer():
     )
 
 
+def _inject_nav_button_css():
+    """Inject CSS so navigation buttons shrink text to fit without overflow."""
+    st.markdown(
+        """<style>
+        /* Eliminate Streamlit's implicit element container gaps */
+        .vix-bar { margin-bottom: 0 !important; }
+        .ribbon-wrap { margin-bottom: 0 !important; }
+
+        /* Collapse Streamlit element wrappers around VIX / ribbon / nav */
+        [data-testid="stElementContainer"]:has(.vix-bar),
+        [data-testid="stElementContainer"]:has(.ribbon-wrap) {
+            margin-bottom: 0 !important;
+            padding-bottom: 0 !important;
+        }
+
+        /* Navigation button row: compact, no overflow */
+        [data-testid="stHorizontalBlock"] button[kind="secondary"] {
+            font-size: 0.78rem !important;
+            padding: 0.25rem 0.15rem !important;
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
+            min-width: 0 !important;
+            margin-top: 0 !important;
+            margin-bottom: 0 !important;
+        }
+        /* On narrow screens allow text to wrap instead of truncate */
+        @media (max-width: 900px) {
+            [data-testid="stHorizontalBlock"] button[kind="secondary"] {
+                white-space: normal !important;
+                font-size: 0.72rem !important;
+                line-height: 1.2 !important;
+                padding: 0.2rem 0.1rem !important;
+            }
+        }
+        </style>""",
+        unsafe_allow_html=True,
+    )
+
+
 def render_navigation_buttons(
     current_page: str,
     back_key_suffix: str = "",
@@ -189,6 +229,7 @@ def render_navigation_buttons(
             ('main', 'analysis', 'fundamental', 'backtesting', 'history')
         back_key_suffix: Suffix for button keys to avoid duplicates
     """
+    _inject_nav_button_css()
     has_results = (
         st.session_state.get('analysis_complete', False)
         and st.session_state.get('signals')
@@ -197,10 +238,10 @@ def render_navigation_buttons(
     # All possible navigation targets (id, label)
     all_pages = [
         ('main',         '🏠 Main'),
-        ('analysis',     '📈 Stock Analysis'),
-        ('fundamental',  '📊 Fundamental Analysis'),
-        ('backtesting',  '🔬 Backtest Strategy'),
-        ('history',      '📋 History'),
+        ('analysis',     '📊 Stock Analysis'),
+        ('fundamental',  '🔬 Fundamental Analysis'),
+        ('backtesting',  '📈 Backtest Strategy'),
+        ('history',      '📜 History'),
         ('us_holdings',  '💼 Holdings'),
     ]
 
@@ -252,6 +293,7 @@ def render_ind_navigation_buttons(
         current_page: Current page identifier
         back_key_suffix: Suffix for button keys to avoid duplicates
     """
+    _inject_nav_button_css()
     has_results = (
         st.session_state.get('analysis_complete', False)
         and st.session_state.get('signals')
@@ -259,12 +301,12 @@ def render_ind_navigation_buttons(
 
     all_pages = [
         ('main',         '🏠 Main'),
-        ('analysis',     '📈 Stock Analysis'),
-        ('fundamental',  '📊 Fundamental Analysis'),
-        ('backtesting',  '🔬 Backtest Strategy'),
-        ('history',      '📋 History'),
-        ('options',      '📊 Options'),
-        ('ind_kite',     '🔗 Kite Session'),
+        ('analysis',     '📊 Analysis'),
+        ('fundamental',  '🔬 Fundamentals'),
+        ('backtesting',  '📈 Backtest'),
+        ('history',      '📜 History'),
+        ('options',      '🎯 Options'),
+        ('ind_kite',     '🪁 Fly Kite'),
     ]
 
     buttons = [
@@ -329,7 +371,7 @@ def render_metrics_cards(signals: List[Any]):
     
     with col3:
         st.metric(
-            "⏸️ HOLD",
+            "⚖️ HOLD",
             decision_counts.get('HOLD', 0),
             help="Stocks to hold"
         )
@@ -343,7 +385,7 @@ def render_metrics_cards(signals: List[Any]):
     
     with col5:
         st.metric(
-            "⚠️ STRONG SELL",
+            "🔴 STRONG SELL",
             decision_counts.get('STRONG_SELL', 0),
             help="Stocks with strong sell signals"
         )
@@ -362,10 +404,10 @@ def render_tickers_being_analyzed(tickers: List[str], ticker_mode: str):
     
     source_icons = {
         "Default Tickers": "📋",
-        "Manual Entry": "✏️",
-        "Upload CSV": "📁"
+        "Manual Entry": "✍️",
+        "Upload CSV": "📂"
     }
-    icon = source_icons.get(ticker_mode, "📊")
+    icon = source_icons.get(ticker_mode, "")
     
     st.markdown(
         f'<p class="page-description">{icon} Analyzing {len(tickers)} stock(s): {", ".join(tickers)}</p>',
@@ -375,26 +417,26 @@ def render_tickers_being_analyzed(tickers: List[str], ticker_mode: str):
 
 def render_features_section():
     """Render the features section on the main page."""
-    st.markdown("### 🎯 Features")
+    st.markdown("### ✨ Features")
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown("**📰 Multi-Source News**")
+        st.markdown("📰 **Multi-Source News**")
         st.caption("Aggregates from Yahoo Finance, Finviz, Investing.com, and more")
     
     with col2:
-        st.markdown("**🧠 AI Sentiment Analysis**")
+        st.markdown("🧠 **AI Sentiment Analysis**")
         st.caption("DistilBERT-powered sentiment classification")
     
     with col3:
-        st.markdown("**📊 Comprehensive Metrics**")
+        st.markdown("📊 **Comprehensive Metrics**")
         st.caption("Fundamentals + Technicals analysis")
 
 
 def render_how_to_use_section():
     """Render the how to use section on the main page."""
-    st.markdown("### 📋 How to Use")
+    st.markdown("### 📖 How to Use")
     st.markdown("""
     1. **Select Input Method**: Choose default tickers, enter manually, or upload a CSV
     2. **Configure Settings**: Select output format and append mode
@@ -537,8 +579,8 @@ def render_stock_ticker_ribbon(market: str = "IND"):
             background: #f8fafc;
             border-bottom: 1px solid #e2e8f0;
             border-top: 1px solid #e2e8f0;
-            padding: 0.35rem 0;
-            margin-bottom: 0.4rem;
+            padding: 0.2rem 0;
+            margin-bottom: 0.05rem;
             border-radius: 6px;
         }}
         .ribbon-track {{
@@ -667,9 +709,9 @@ def render_vix_indicator(market: str = "US"):
     <style>
         .vix-bar {{
             background: #ffffff;
-            padding: 0.55rem 1.2rem;
+            padding: 0.35rem 1.2rem;
             border-radius: 8px;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0rem;
             display: flex;
             align-items: center;
             flex-wrap: wrap;
@@ -704,7 +746,7 @@ def render_score_interpretations_table():
     <div style="display: flex; justify-content: center;">
     <div>
     
-    ### 📖 Score Interpretations
+    ### Score Interpretations
     
     | Score | What it Measures | Interpretation |
     |-------|------------------|----------------|
@@ -728,10 +770,10 @@ def get_decision_emoji(decision: str) -> str:
         Emoji string
     """
     emoji_map = {
-        'STRONG_BUY': '🟢🟢',
-        'BUY': '🟢',
-        'HOLD': '🟡',
-        'SELL': '🔴',
-        'STRONG_SELL': '🔴🔴',
+        'STRONG_BUY': '',
+        'BUY': '',
+        'HOLD': '',
+        'SELL': '',
+        'STRONG_SELL': '',
     }
-    return emoji_map.get(decision, '⚪')
+    return emoji_map.get(decision, '')

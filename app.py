@@ -35,6 +35,7 @@ if os.getcwd() != _PROJECT_ROOT:
     os.chdir(_PROJECT_ROOT)
 
 import logging
+import time as _time
 
 import streamlit as st
 
@@ -54,6 +55,17 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
+
+_LOG_INTERVAL = 5  # seconds
+_last_module_log_ts: float = 0.0
+
+def _throttled_module_info(msg: str, *args) -> None:
+    """Log module-rendering messages at most once every _LOG_INTERVAL seconds."""
+    global _last_module_log_ts
+    now = _time.monotonic()
+    if now - _last_module_log_ts >= _LOG_INTERVAL:
+        logger.info(msg, *args)
+        _last_module_log_ts = now
 
 
 # ── Ollama model warm-up (runs exactly once per process) ────────
@@ -109,7 +121,7 @@ def _warmup_ollama() -> bool:
 
 st.set_page_config(
     page_title="Centurion Capital LLC",
-    page_icon="📈",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -181,7 +193,7 @@ def main():
         _route_ind_stocks()
 
     elif selected_app == "rag_engine":
-        logger.info("[user=%s] Rendering module: RAG Engine", _user)
+        _throttled_module_info("[user=%s] Rendering module: RAG Engine", _user)
         _get_renderer("rag_engine")()
 
     elif selected_app == "crypto":

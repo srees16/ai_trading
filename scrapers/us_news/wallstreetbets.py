@@ -90,7 +90,7 @@ class WallStreetBetsScraper(BaseNewsScraper):
             "Accept": "application/json",
         }
 
-        logger.info("WallStreetBets: Fetching posts mentioning %s…", ticker)
+        logger.info("🦍 WallStreetBets: Fetching posts mentioning %s…", ticker)
 
         timeout = aiohttp.ClientTimeout(total=Config.REQUEST_TIMEOUT + 5)
 
@@ -208,7 +208,7 @@ class WallStreetBetsScraper(BaseNewsScraper):
         score = post.get("score", 0)
         num_comments = post.get("num_comments", 0)
         enriched_title = (
-            f"[WSB/{flair}] {title}  (↑{score}, 💬{num_comments})"
+            f"[WSB/{flair}] {title}  (↑{score}, {num_comments})"
         )
 
         category = self._categorize_news(f"{title} {summary}")

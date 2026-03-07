@@ -38,7 +38,7 @@ async def health_check():
     # RAG / ChromaDB
     rag_ok = False
     try:
-        from rag_pipeline.vector_store import VectorStoreManager
+        from rag_pipeline.storage.vector_store import VectorStoreManager
         vs = VectorStoreManager()
         stats = vs.get_stats()
         rag_ok = stats is not None

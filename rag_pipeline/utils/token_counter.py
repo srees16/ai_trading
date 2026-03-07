@@ -9,7 +9,7 @@ Strategies (in order of preference):
     2. Whitespace heuristic — ``len(text.split())`` × 1.3 factor
 
 Usage:
-    from rag_pipeline.token_counter import count_tokens, truncate_to_budget
+    from rag_pipeline.utils.token_counter import count_tokens, truncate_to_budget
 
     n = count_tokens("Hello world, this is a test.")
     trimmed = truncate_to_budget("long text …", max_tokens=2000)

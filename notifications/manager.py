@@ -61,7 +61,7 @@ class NotificationManager:
     def _console_notification(self, title: str, message: str):
         """Print notification to console as fallback."""
         print("\n" + "="*60)
-        print(f"🔔 ALERT: {title}")
+        print(f"ALERT: {title}")
         print("-"*60)
         print(message)
         print("="*60 + "\n")
@@ -85,7 +85,7 @@ class NotificationManager:
             self.send_notification(title, message)
         
         elif news_item.is_highly_negative():
-            title = f"⚠️ STRONG SELL SIGNAL: {news_item.ticker}"
+            title = f"🔴 STRONG SELL SIGNAL: {news_item.ticker}"
             message = (
                 f"Highly negative news detected!\n\n"
                 f"Title: {news_item.title[:100]}...\n"
@@ -120,7 +120,7 @@ class NotificationManager:
             signal: TradingSignal object
         """
         if signal.decision.value in ['STRONG_BUY', 'STRONG_SELL']:
-            emoji = "🚀" if signal.decision.value == 'STRONG_BUY' else "⚠️"
+            emoji = "📈" if signal.decision.value == 'STRONG_BUY' else "📉"
             title = f"{emoji} {signal.decision.value}: {signal.news_item.ticker}"
             message = (
                 f"Decision: {signal.decision.value}\n"
@@ -234,7 +234,7 @@ class NotificationManager:
 
         # ── Send ─────────────────────────────────────────────────────
         msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"WSB Mentions — {', '.join(tickers)} — {now}"
+        msg["Subject"] = f"🦍 WSB Mentions — {', '.join(tickers)} — {now}"
         msg["From"] = smtp_user
         msg["To"] = ", ".join(recipients)
         msg.attach(MIMEText(html, "html"))
