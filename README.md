@@ -41,7 +41,7 @@ docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -
 ```
 
 ### 3⃣ Initialize Database
-Windows powershell:
+Windows powershell & MacOS:
 ```
 python setup_database.py
 ```
@@ -66,7 +66,7 @@ ollama pull qwen2.5:3b
 
 ### 6⃣ Launch the App
 **Terminal 1 — Streamlit UI:**
-Windows powershell:
+Windows powershell & MacOS:
 ```
 streamlit run app.py
 ```
@@ -74,7 +74,7 @@ Opens at: **http://localhost:9000**
 login with `admin` / `admin123`
 
 **Terminal 2 (optional) — FastAPI REST API:**
-Windows powershell:
+Windows powershell & MacOS:
 ```
 python run_api.py
 ```
