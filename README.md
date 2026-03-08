@@ -31,7 +31,7 @@ export STREAMLIT_SERVER_PORT=9000 API_PORT=9001 ZERODHA_API_KEY="YOUR_KEY_HERE" 
 ### 2️⃣ Start PostgreSQL (Docker)
 windows powershell:
 ```
-docker rm -f centurion-postgres; docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15; Start-Sleep 3; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;"; python setup_database.py
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15; Start-Sleep 3; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;"; python setup_database.py
 ```
 
 MacOS:
