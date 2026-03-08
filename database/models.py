@@ -119,8 +119,8 @@ class NewsItem(Base, TimestampMixin):
     source = Column(String(100), nullable=False)
     author = Column(String(200))
     
-    # Timestamps
-    published_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    # Timestamps - published_at is part of PK for TimescaleDB hypertable partitioning
+    published_at = Column(DateTime(timezone=True), primary_key=True, nullable=False, index=True)
     scraped_at = Column(DateTime(timezone=True), default=func.now())
     
     # Sentiment analysis results
@@ -137,12 +137,12 @@ class NewsItem(Base, TimestampMixin):
     
     # Relationships
     analysis_run = relationship("AnalysisRun", back_populates="news_items")
-    signal = relationship("StockSignal", back_populates="news_item", uselist=False)
+    signal = relationship("StockSignal", back_populates="news_item", uselist=False, primaryjoin="NewsItem.id == foreign(StockSignal.news_item_id)", viewonly=True)
     
     __table_args__ = (
         Index('idx_news_ticker_date', 'ticker', 'published_at'),
         Index('idx_news_source', 'source'),
-        UniqueConstraint('content_hash', 'ticker', name='uq_news_content_ticker'),
+        UniqueConstraint('content_hash', 'ticker', 'published_at', name='uq_news_content_ticker'),
     )
 
 
@@ -154,8 +154,11 @@ class StockSignal(Base, TimestampMixin):
     __tablename__ = 'stock_signals'
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # Override created_at from mixin to include in PK for TimescaleDB hypertable partitioning
+    created_at = Column(DateTime(timezone=True), primary_key=True, server_default=func.now(), nullable=False)
     analysis_run_id = Column(UUID(as_uuid=True), ForeignKey('analysis_runs.id'), nullable=True)
-    news_item_id = Column(UUID(as_uuid=True), ForeignKey('news_items.id'), nullable=True)
+    # No DB-level FK: news_items has composite PK (id, published_at) for TimescaleDB
+    news_item_id = Column(UUID(as_uuid=True), nullable=True)
     
     # Market identifier (US, IND)
     market = Column(String(10), nullable=False, default='US', server_default='US', index=True)
@@ -194,7 +197,7 @@ class StockSignal(Base, TimestampMixin):
     
     # Relationships
     analysis_run = relationship("AnalysisRun", back_populates="signals")
-    news_item = relationship("NewsItem", back_populates="signal")
+    news_item = relationship("NewsItem", back_populates="signal", primaryjoin="StockSignal.news_item_id == foreign(NewsItem.id)", viewonly=True)
     
     __table_args__ = (
         Index('idx_signals_ticker_date', 'ticker', 'created_at'),
@@ -211,13 +214,14 @@ class FundamentalMetric(Base, TimestampMixin):
     __tablename__ = 'fundamental_metrics'
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # recorded_at is part of PK for TimescaleDB hypertable partitioning
+    recorded_at = Column(DateTime(timezone=True), primary_key=True, nullable=False, default=func.now(), index=True)
     
     # Market identifier (US, IND)
     market = Column(String(10), nullable=False, default='US', server_default='US', index=True)
     
     # Core data
     ticker = Column(String(20), nullable=False, index=True)
-    recorded_at = Column(DateTime(timezone=True), nullable=False, default=func.now(), index=True)
     
     # Price data
     current_price = Column(Numeric(12, 4))
@@ -435,7 +439,8 @@ class RawScrapedNews(Base):
     # Processing state
     is_processed = Column(Boolean, default=False, index=True)
     processed_at = Column(DateTime(timezone=True))
-    enriched_news_id = Column(UUID(as_uuid=True), ForeignKey('news_items.id'), nullable=True)
+    # No DB-level FK: news_items has composite PK for TimescaleDB
+    enriched_news_id = Column(UUID(as_uuid=True), nullable=True)
 
     # Ingestion timestamp
     ingested_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

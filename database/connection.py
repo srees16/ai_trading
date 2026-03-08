@@ -251,12 +251,12 @@ class DatabaseManager:
             ('news_items', 'published_at'),
         ]
         
-        with self.get_session() as session:
-            for table_name, time_column in hypertables:
-                try:
+        for table_name, time_column in hypertables:
+            try:
+                with self.get_session() as session:
                     # Check if table exists and is not already a hypertable
                     exists = session.execute(
-                        text(f"""
+                        text("""
                             SELECT EXISTS (
                                 SELECT FROM information_schema.tables 
                                 WHERE table_name = :table_name
@@ -278,7 +278,7 @@ class DatabaseManager:
                         
                         if not is_hypertable:
                             session.execute(
-                                text(f"""
+                                text("""
                                     SELECT create_hypertable(
                                         :table_name, 
                                         :time_column,
@@ -293,9 +293,9 @@ class DatabaseManager:
                                 }
                             )
                             logger.info(f"Created hypertable for {table_name}")
-                    
-                except Exception as e:
-                    logger.warning(f"Could not create hypertable for {table_name}: {e}")
+                
+            except Exception as e:
+                logger.warning(f"Could not create hypertable for {table_name}: {e}")
     
     def close(self):
         """Close all connections and cleanup."""
