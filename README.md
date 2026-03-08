@@ -9,7 +9,8 @@ A Python-based enterprise trading platform combining multi-source news scraping,
 Get the app running on a new machine with these commands:
 
 ### 1⃣ Clone & Install Dependencies
-```powershell
+Windows powershell:
+```
 git clone https://github.com/srees16/centurion_core.git
 cd centurion_core
 python3 -m venv myenv
@@ -29,7 +30,7 @@ export STREAMLIT_SERVER_PORT=9000 API_PORT=9001 ZERODHA_API_KEY="YOUR_KEY_HERE" 
 ```
 
 ### 2⃣ Start PostgreSQL (Docker)
-windows powershell:
+Windows powershell:
 ```
 docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15; Start-Sleep 3; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;"
 ```
@@ -40,38 +41,41 @@ docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -
 ```
 
 ### 3⃣ Initialize Database
-```powershell
+Windows powershell:
+```
 python setup_database.py
 ```
 Expected: ` Database tables created successfully`
 
 ### 4⃣ Start MinIO (Docker) — for Backtest Charts
-```powershell
+Windows powershell:
+```
 docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"
 ```
 
 ### 5⃣ (Optional) Install Ollama — for RAG Document Q&A
-```powershell
-# Download from https://ollama.ai/download, then:
-ollama pull qwen2.5:3b
-
+Windows powershell & MacOS:
+```
+# Download from https://ollama.ai/download
 OR
-```powershell
 curl -fsSL https://ollama.com/install.sh | sh
+
 # then:
 ollama pull qwen2.5:3b
 ```
 
 ### 6⃣ Launch the App
 **Terminal 1 — Streamlit UI:**
-```powershell
+Windows powershell:
+```
 streamlit run app.py
 ```
 Opens at: **http://localhost:9000** 
 login with `admin` / `admin123`
 
 **Terminal 2 (optional) — FastAPI REST API:**
-```powershell
+Windows powershell:
+```
 python run_api.py
 ```
 API docs at: **http://localhost:9001/docs** (auth required)
