@@ -97,9 +97,9 @@ it verbatim.
 
 CONFIDENCE SIGNAL:
 17. End every answer with a confidence indicator on a new line:
-    - 🟢 **High confidence** — answer is fully supported by multiple context chunks
-    - 🟡 **Medium confidence** — answer is supported but from limited context
-    - 🔴 **Low confidence** — answer is partially supported; some gaps exist
+    - **High confidence** — answer is fully supported by multiple context chunks
+    - **Medium confidence** — answer is supported but from limited context
+    - **Low confidence** — answer is partially supported; some gaps exist
 
 OUTPUT LENGTH (mandatory):
 18. Provide concise, implementation-focused answers. \
@@ -127,7 +127,7 @@ Rules:
 - Reproduce code/formulas EXACTLY as they appear in the context — never rewrite or invent code.
 - If a full function implementation exists in context, return it VERBATIM. Do NOT rewrite.
 - Use markdown formatting (bullets, headers, bold). Be concise.
-- End with confidence: 🟢 **High** / 🟡 **Medium** / 🔴 **Low**.
+- End with confidence: **High** / **Medium** / **Low**.
 - Limit response to 600 tokens.\
 """
 
@@ -293,16 +293,16 @@ class OllamaLLMBackend:
             resp.raise_for_status()
             elapsed = time.monotonic() - t0
             logger.info(
-                "🔥 Ollama warm-up complete: model=%s loaded in %.1fs",
+                " Ollama warm-up complete: model=%s loaded in %.1fs",
                 self.model, elapsed,
             )
         except requests.ConnectionError:
             logger.warning(
-                "⚠️ Ollama warm-up skipped: cannot connect to %s",
+                " Ollama warm-up skipped: cannot connect to %s",
                 self.base_url,
             )
         except Exception as e:
-            logger.warning("⚠️ Ollama warm-up failed: %s", e)
+            logger.warning(" Ollama warm-up failed: %s", e)
 
     def _build_prompt(self, query: str, context: str, system_prompt: Optional[str] = None) -> str:
         """Build a single prompt string for the Ollama generate API."""
@@ -387,7 +387,7 @@ class OllamaLLMBackend:
                 effective_num_predict, self._SIMPLE_QUERY_NUM_PREDICT,
             )
             logger.info(
-                "Ollama: simple query (%d words < %d) → "
+                "Ollama: simple query (%d words < %d) "
                 "num_predict reduced to %d",
                 query_words, self._SIMPLE_QUERY_WORD_LIMIT,
                 effective_num_predict,
@@ -1040,7 +1040,7 @@ def create_llm_backend(config: Optional[RAGConfig] = None):
 
 
 # ---------------------------------------------------------------------------
-# Fallback chain: primary → Ollama
+# Fallback chain: primary Ollama
 # ---------------------------------------------------------------------------
 
 class _FallbackChainBackend:
@@ -1058,7 +1058,7 @@ class _FallbackChainBackend:
         self._primary_name = type(primary).__name__
         self._fallback_name = type(fallback).__name__
         logger.info(
-            "LLM fallback chain: %s → %s",
+            "LLM fallback chain: %s %s",
             self._primary_name, self._fallback_name,
         )
 

@@ -50,7 +50,7 @@ def render_fundamental_page():
     market_label = "Indian" if market == 'IND' else "US"
     render_page_header(
         f"{market_label} Fundamental Analysis",
-        description="🏦 Altman Z-Score • 🔍 Beneish M-Score • 💪 Piotroski F-Score"
+        description=" Altman Z-Score • Beneish M-Score • Piotroski F-Score"
     )
 
     # Navigation buttons
@@ -93,7 +93,7 @@ def render_fundamental_page():
     # Display main metrics table (centered)
     _, center_col, _ = st.columns([0.5, 4, 0.5])
     with center_col:
-        st.subheader("📊 All Stocks Overview")
+        st.subheader(" All Stocks Overview")
         render_fundamental_table(stock_metrics)
     
     st.markdown("---")

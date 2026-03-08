@@ -302,7 +302,7 @@ class HybridSearcher:
                 out_dists.append(0.5)  # neutral distance for BM25-only hits
 
         logger.info(
-            "Hybrid search: %d vector + %d BM25 → %d fused results",
+            "Hybrid search: %d vector + %d BM25 %d fused results",
             len(vector_ranked), len(bm25_ranked), len(out_ids),
         )
 

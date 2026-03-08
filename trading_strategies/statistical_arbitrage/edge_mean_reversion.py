@@ -68,9 +68,9 @@ def hurst(ts):
     """
     Returns the Hurst Exponent of the time series.
 
-    H < 0.5 → mean reverting
-    H = 0.5 → random walk
-    H > 0.5 → trending
+    H < 0.5 mean reverting
+    H = 0.5 random walk
+    H > 0.5 trending
     """
     ts = np.asarray(ts)
 

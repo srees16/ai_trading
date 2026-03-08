@@ -74,7 +74,7 @@ class NotificationManager:
             news_item: NewsItem with high sentiment confidence
         """
         if news_item.is_highly_positive():
-            title = f"🚀 STRONG BUY SIGNAL: {news_item.ticker}"
+            title = f" STRONG BUY SIGNAL: {news_item.ticker}"
             message = (
                 f"Highly positive news detected!\n\n"
                 f"Title: {news_item.title[:100]}...\n"
@@ -85,7 +85,7 @@ class NotificationManager:
             self.send_notification(title, message)
         
         elif news_item.is_highly_negative():
-            title = f"🔴 STRONG SELL SIGNAL: {news_item.ticker}"
+            title = f" STRONG SELL SIGNAL: {news_item.ticker}"
             message = (
                 f"Highly negative news detected!\n\n"
                 f"Title: {news_item.title[:100]}...\n"
@@ -120,7 +120,7 @@ class NotificationManager:
             signal: TradingSignal object
         """
         if signal.decision.value in ['STRONG_BUY', 'STRONG_SELL']:
-            emoji = "📈" if signal.decision.value == 'STRONG_BUY' else "📉"
+            emoji = "" if signal.decision.value == 'STRONG_BUY' else ""
             title = f"{emoji} {signal.decision.value}: {signal.news_item.ticker}"
             message = (
                 f"Decision: {signal.decision.value}\n"
@@ -234,7 +234,7 @@ class NotificationManager:
 
         # ── Send ─────────────────────────────────────────────────────
         msg = MIMEMultipart("alternative")
-        msg["Subject"] = f"🦍 WSB Mentions — {', '.join(tickers)} — {now}"
+        msg["Subject"] = f" WSB Mentions — {', '.join(tickers)} — {now}"
         msg["From"] = smtp_user
         msg["To"] = ", ".join(recipients)
         msg.attach(MIMEText(html, "html"))

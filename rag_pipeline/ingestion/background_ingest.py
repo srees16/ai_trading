@@ -252,7 +252,7 @@ class BackgroundIngestionManager:
                 task.stage_pct = 1.0
 
             logger.info(
-                "Background ingestion complete: %s → %s", file_name, result.get("status")
+                "Background ingestion complete: %s %s", file_name, result.get("status")
             )
             return result
 

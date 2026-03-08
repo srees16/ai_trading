@@ -45,7 +45,7 @@ class StreamMessage(BaseModel):
 # ---------------------------------------------------------------------------
 
 class WSSubscribeRequest(BaseModel):
-    """Client → server: subscribe to symbols via WebSocket."""
+    """Client server: subscribe to symbols via WebSocket."""
     action: str = Field(
         "subscribe",
         description="subscribe | unsubscribe | ping",

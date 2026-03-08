@@ -179,8 +179,8 @@ def fetch_option_chain(
         return 0
 
     # ── Collect instrument tokens for threaded OI-change fetch ──
-    oi_tasks = {}          # key → (strike_index, "ce"|"pe")
-    token_map = {}         # same key → instrument_token
+    oi_tasks = {} # key (strike_index, "ce"|"pe")
+    token_map = {} # same key instrument_token
 
     for i, strike in enumerate(strike_prices):
         ce_q = quotes.get(ce_instruments[i], {})
@@ -198,7 +198,7 @@ def fetch_option_chain(
 
     # ── Fire all OI-change calls in parallel (thread pool) ──────
     MAX_WORKERS = min(20, len(oi_tasks) or 1)
-    oi_results = {}  # key → int
+    oi_results = {} # key int
 
     log.info("Fetching OI changes for %d instruments with %d threads",
              len(oi_tasks), MAX_WORKERS)

@@ -142,7 +142,7 @@ def spinner_html(label: str = "Processing…") -> str:
 
 def render_header():
     """Render the main application header with the dark header bar."""
-    render_header_bar(subtitle="💻 Algorithmic Trading · Event-Driven Alpha")
+    render_header_bar(subtitle=" Algorithmic Trading · Event-Driven Alpha")
 
 
 def render_page_header(title: str, subtitle: Optional[str] = None, description: Optional[str] = None):
@@ -237,12 +237,12 @@ def render_navigation_buttons(
 
     # All possible navigation targets (id, label)
     all_pages = [
-        ('main',         '🏠 Main'),
-        ('analysis',     '📊 Stock Analysis'),
-        ('fundamental',  '🔬 Fundamental Analysis'),
-        ('backtesting',  '📈 Backtest Strategy'),
-        ('history',      '📜 History'),
-        ('us_holdings',  '💼 Holdings'),
+        ('main', ' Main'),
+        ('analysis', ' Stock Analysis'),
+        ('fundamental', ' Fundamental Analysis'),
+        ('backtesting', ' Backtest Strategy'),
+        ('history', ' History'),
+        ('us_holdings', ' Holdings'),
     ]
 
     # Build visible buttons: skip current page; skip Analysis if no results
@@ -300,12 +300,12 @@ def render_ind_navigation_buttons(
     )
 
     all_pages = [
-        ('main',         '🏠 Main'),
-        ('analysis',     '📊 Analysis'),
-        ('fundamental',  '🔬 Fundamentals'),
-        ('backtesting',  '📈 Backtest'),
-        ('history',      '📜 History'),
-        ('options',      '🎯 Options'),
+        ('main', ' Main'),
+        ('analysis', ' Analysis'),
+        ('fundamental', ' Fundamentals'),
+        ('backtesting', ' Backtest'),
+        ('history', ' History'),
+        ('options', ' Options'),
         ('ind_kite',     '🪁 Fly Kite'),
     ]
 
@@ -357,35 +357,35 @@ def render_metrics_cards(signals: List[Any]):
     
     with col1:
         st.metric(
-            "🚀 STRONG BUY",
+            " STRONG BUY",
             decision_counts.get('STRONG_BUY', 0),
             help="Stocks with strong buy signals"
         )
     
     with col2:
         st.metric(
-            "📈 BUY",
+            " BUY",
             decision_counts.get('BUY', 0),
             help="Stocks with buy signals"
         )
     
     with col3:
         st.metric(
-            "⚖️ HOLD",
+            " HOLD",
             decision_counts.get('HOLD', 0),
             help="Stocks to hold"
         )
     
     with col4:
         st.metric(
-            "📉 SELL",
+            " SELL",
             decision_counts.get('SELL', 0),
             help="Stocks with sell signals"
         )
     
     with col5:
         st.metric(
-            "🔴 STRONG SELL",
+            " STRONG SELL",
             decision_counts.get('STRONG_SELL', 0),
             help="Stocks with strong sell signals"
         )
@@ -403,9 +403,9 @@ def render_tickers_being_analyzed(tickers: List[str], ticker_mode: str):
         return
     
     source_icons = {
-        "Default Tickers": "📋",
-        "Manual Entry": "✍️",
-        "Upload CSV": "📂"
+        "Default Tickers": "",
+        "Manual Entry": "",
+        "Upload CSV": ""
     }
     icon = source_icons.get(ticker_mode, "")
     
@@ -417,26 +417,26 @@ def render_tickers_being_analyzed(tickers: List[str], ticker_mode: str):
 
 def render_features_section():
     """Render the features section on the main page."""
-    st.markdown("### ✨ Features")
+    st.markdown("### Features")
     
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown("📰 **Multi-Source News**")
+        st.markdown(" **Multi-Source News**")
         st.caption("Aggregates from Yahoo Finance, Finviz, Investing.com, and more")
     
     with col2:
-        st.markdown("🧠 **AI Sentiment Analysis**")
+        st.markdown(" **AI Sentiment Analysis**")
         st.caption("DistilBERT-powered sentiment classification")
     
     with col3:
-        st.markdown("📊 **Comprehensive Metrics**")
+        st.markdown(" **Comprehensive Metrics**")
         st.caption("Fundamentals + Technicals analysis")
 
 
 def render_how_to_use_section():
     """Render the how to use section on the main page."""
-    st.markdown("### 📖 How to Use")
+    st.markdown("### How to Use")
     st.markdown("""
     1. **Select Input Method**: Choose default tickers, enter manually, or upload a CSV
     2. **Configure Settings**: Select output format and append mode
@@ -456,7 +456,7 @@ def render_no_data_warning(page_name: str = "analysis"):
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col2:
-        st.warning("⚠️ No analysis data available.")
+        st.warning(" No analysis data available.")
         
         if page_name == "fundamental":
             st.info("""
@@ -555,7 +555,7 @@ def render_stock_ticker_ribbon(market: str = "IND"):
     spans = []
     for name, price, chg, currency in items:
         if chg is not None:
-            arrow = "▲" if chg >= 0 else "▼"
+            arrow = "" if chg >= 0 else ""
             chg_color = "#16a34a" if chg >= 0 else "#dc2626"
             chg_str = f'<span style="color:{chg_color}; font-weight:600;">{arrow}&nbsp;{chg:+.2f}%</span>'
         else:
@@ -672,7 +672,7 @@ def render_vix_indicator(market: str = "US"):
     # Index change arrow
     if index_chg is not None:
         chg_sign = "+" if index_chg >= 0 else ""
-        chg_arrow = "▲" if index_chg >= 0 else "▼"
+        chg_arrow = "" if index_chg >= 0 else ""
         chg_color = "#16a34a" if index_chg >= 0 else "#dc2626"
         chg_html = (
             f'<span style="color:{chg_color}; font-weight:600;">'

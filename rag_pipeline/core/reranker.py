@@ -165,7 +165,7 @@ class CrossEncoderReranker:
                 break
 
         logger.info(
-            "Re-ranked %d → %d chunks (threshold=%.2f, filtered_out=%d) "
+            "Re-ranked %d %d chunks (threshold=%.2f, filtered_out=%d) "
             "for query: %.60s…",
             len(chunks), len(reranked), threshold, filtered_out, query,
         )

@@ -223,7 +223,7 @@ def infer_stage(content: str) -> str:
             best_count = count
             best_stage = stage
 
-    logger.debug("infer_stage → %s (%d keyword hits).", best_stage, best_count)
+    logger.debug("infer_stage %s (%d keyword hits).", best_stage, best_count)
     return best_stage
 
 
@@ -743,7 +743,7 @@ def _accumulate_paragraphs(
     for para in paragraphs:
         para_tokens = _token_count(para)
 
-        # Over-sized paragraph → split on sentences, then accumulate
+        # Over-sized paragraph split on sentences, then accumulate
         if para_tokens > max_tokens:
             # Flush current buffer first
             if buffer:
@@ -809,11 +809,11 @@ def _chunk_code_block(
     """Chunk a code block into logical units.
 
     Rules:
-    - Each function → one chunk.
-    - Each class → one chunk.
-    - Import group → attached to the following function/class chunk
+    - Each function one chunk.
+    - Each class one chunk.
+    - Import group attached to the following function/class chunk
       as a prefix, so dependent context travels with the code.
-    - Misc top-level code → one chunk.
+    - Misc top-level code one chunk.
     - A function or class is **never** split.
 
     Args:
@@ -1050,7 +1050,7 @@ def _process_text_block(
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 9. Convenience helper — full PDF → enriched chunks in one call
+# 9. Convenience helper — full PDF enriched chunks in one call
 # ═══════════════════════════════════════════════════════════════════════════
 
 def chunk_pdf(

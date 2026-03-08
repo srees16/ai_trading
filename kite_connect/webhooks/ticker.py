@@ -9,14 +9,14 @@ Architecture
 ────────────
   KiteTicker (WebSocket)
        │  on_ticks(ticks)
-       ▼
+       
   KiteWebSocketService
-       │  _on_ticks()          ← parses raw ticks → TickData
-       │  _batch_and_dispatch() ← batches & sends via dispatcher
-       ▼
+       │ _on_ticks() parses raw ticks TickData
+       │ _batch_and_dispatch() batches & sends via dispatcher
+       
   WebhookDispatcher
        │  dispatch(TICK_BATCH)
-       ▼
+       
   ┌─────────────┬───────────────┬──────────────┐
   │ DB Updater  │ UI Cache      │ Alert System │
   └─────────────┴───────────────┴──────────────┘
@@ -105,7 +105,7 @@ class KiteWebSocketService:
         self._symbol_to_token: Dict[str, int] = {}
         self._token_to_symbol: Dict[int, str] = {}
 
-        # Latest tick cache (symbol → TickData)
+        # Latest tick cache (symbol TickData)
         self._tick_cache: Dict[str, TickData] = {}
         self._tick_cache_lock = threading.Lock()
 
@@ -145,7 +145,7 @@ class KiteWebSocketService:
         if not self._kite:
             raise RuntimeError("Kite session not set. Pass kite to constructor.")
 
-        # Build symbol → token map from instruments dump
+        # Build symbol token map from instruments dump
         if not self._symbol_to_token:
             logger.info("Fetching instrument list from Kite for %s…", exchange)
             instruments = self._kite.instruments(exchange)
