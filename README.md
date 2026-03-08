@@ -48,7 +48,7 @@ python setup_database.py
 Expected: ` Database tables created successfully`
 
 ### 4⃣ Start MinIO (Docker) — for Backtest Charts
-Windows powershell:
+Windows powershell & MacOS:
 ```
 docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"
 ```
