@@ -125,7 +125,7 @@ def _render_configuration_panel(
     strategies: list, strategy_options: Dict[str, Any]
 ):
     """Render strategy selection, parameters, and data settings."""
-    st.subheader("⚙️ Configuration")
+    st.subheader(" Configuration")
 
     sel_col, _ = st.columns([2, 1])
     with sel_col:
@@ -155,18 +155,18 @@ def _render_configuration_panel(
 
     params_col, data_col = st.columns([1, 1], gap="large")
     with params_col:
-        st.subheader("🔧 Parameters")
+        st.subheader(" Parameters")
         param_values = _render_parameter_inputs(params)
 
     with data_col:
-        st.subheader("📊 Data")
+        st.subheader(" Data")
         _render_data_settings(param_values)
 
     if not param_values.get("tickers"):
-        st.warning("⚠️ Enter at least 2 crypto ticker symbols (e.g. ETH, BTC, LTC).")
+        st.warning(" Enter at least 2 crypto ticker symbols (e.g. ETH, BTC, LTC).")
 
     run_btn = st.button(
-        "🚀 Run Backtest",
+        " Run Backtest",
         type="primary",
         disabled=len(param_values.get("tickers", [])) < 2,
         help="Run the crypto strategy with the parameters above",
@@ -327,14 +327,14 @@ def _execute_backtest(
 # ====================================================================
 def _render_results_panel():
     """Render crypto backtest results."""
-    st.subheader("📊 Results")
+    st.subheader(" Results")
 
     cache = st.session_state.get("crypto_cache", {})
 
     if not cache:
         result = st.session_state.get("crypto_result")
         if result is None:
-            st.info("📈 Run a backtest to see results.")
+            st.info(" Run a backtest to see results.")
             return
         _render_single_result(result)
         return
@@ -379,7 +379,7 @@ def _render_single_result(result):
         )
         if has:
             st.markdown("---")
-            st.markdown("#### 🎯 Trading Signals")
+            st.markdown("#### Trading Signals")
             render_backtest_signals_table(result.signals)
 
 
@@ -388,7 +388,7 @@ def _render_single_result(result):
 # ====================================================================
 def _render_metrics(metrics: Dict):
     """Render performance metrics."""
-    st.markdown("#### 📊 Performance Metrics")
+    st.markdown("#### Performance Metrics")
 
     st.markdown(
         """

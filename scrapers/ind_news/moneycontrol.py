@@ -74,7 +74,7 @@ _TICKER_SCID: Dict[str, str] = {
     "BRITANNIA": "BI",
 }
 
-# Ticker → human-readable search keywords for relevance matching.
+# Ticker human-readable search keywords for relevance matching.
 # E.g. articles say "HDFC Bank" or "Infosys", not "HDFCBANK" or "INFY".
 _TICKER_KEYWORDS: Dict[str, List[str]] = {
     "RELIANCE": ["reliance"],

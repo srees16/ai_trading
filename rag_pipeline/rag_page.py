@@ -112,7 +112,7 @@ def render_rag_page() -> None:
 
     st.markdown(_rag_page_css(), unsafe_allow_html=True)
 
-    render_header_bar(subtitle="🧠 Knowledge Engine")
+    render_header_bar(subtitle=" Knowledge Engine")
     _user = st.session_state.get('username', 'unknown')
     _throttled_info("[user=%s] RAG Engine: page view", _user)
 
@@ -139,14 +139,14 @@ def render_rag_page() -> None:
     if _is_resubmit:
         query_text = _resubmit_query
 
-    if _is_resubmit or st.button("🔍 Submit Query", type="primary", key="rag_search_btn"):
+    if _is_resubmit or st.button(" Submit Query", type="primary", key="rag_search_btn"):
         import time as _time
         _wall_t0 = _time.perf_counter()
 
         logger.info("[user=%s] RAG Engine: Submit Query clicked — rag_on=%s, resubmit=%s, query='%.80s'",
                     _user, rag_on, _is_resubmit, query_text or '')
         if not query_text:
-            st.warning("⚠️ Please enter a query first.")
+            st.warning(" Please enter a query first.")
         elif rag_on:
             # Show multi-color spinner with a creative line
             import random as _rnd
@@ -172,7 +172,7 @@ def render_rag_page() -> None:
             source_kw = {"source_filter": selected_source} if selected_source else {}
             if _is_resubmit:
                 source_kw["skip_cache"] = True
-                st.info("🔄 Re-submitting query for a fresh response…")
+                st.info(" Re-submitting query for a fresh response…")
 
             # ---- Stream the LLM answer token-by-token ----
             # query_stream() handles retrieval + LLM streaming internally.
@@ -250,7 +250,7 @@ def render_rag_page() -> None:
 
     # ---- Knowledge Base management (only when RAG is on) ----------------
     if rag_on:
-        with st.expander("📚 Knowledge Base", expanded=False):
+        with st.expander(" Knowledge Base", expanded=False):
             render_knowledge_base()
 
     render_footer()

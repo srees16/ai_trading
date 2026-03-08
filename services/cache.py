@@ -7,7 +7,7 @@ stock metrics — is cached per ticker so that:
 
 * Re-running analysis with overlapping tickers reuses prior results.
 * Adding a new ticker only fetches data for that ticker.
-* Each layer (news → sentiment → metrics) can interrogate the cache
+* Each layer (news sentiment metrics) can interrogate the cache
   independently, eliminating redundant API/scraping calls.
 
 Design decisions
@@ -75,7 +75,7 @@ class SessionCache:
         if self._initialised:
             return
         self._default_ttl = timedelta(minutes=default_ttl_minutes)
-        # _store[namespace][key] → _CacheEntry
+        # _store[namespace][key] _CacheEntry
         self._store: Dict[str, Dict[str, _CacheEntry]] = {}
         self._hit_count = 0
         self._miss_count = 0

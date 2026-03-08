@@ -9,15 +9,15 @@ Ingest trading strategy PDFs and get context-aware, LLM-powered answers — runs
 **Two-stage retrieval + LLM generation:**
 
 ```
-PDF Upload → Parse (PyMuPDF) → Chunk (1000 chars) → Embed (MiniLM-L6) → ChromaDB
+PDF Upload Parse (PyMuPDF) Chunk (1000 chars) Embed (MiniLM-L6) ChromaDB
                                                                             │
-User Query → Embed Query ──────────────────────────────────────────────────▶ │
-                                                                            ▼
+User Query Embed Query ────────────────────────────────────────────────── │
+                                                                            
                                                               Stage 1: Top-20 cosine retrieval
                                                                             │
-                                                              Stage 2: Cross-encoder re-rank → Top 5
+                                                              Stage 2: Cross-encoder re-rank Top 5
                                                                             │
-                                                              Ollama LLM (Mistral 7B) → Grounded answer
+                                                              Ollama LLM (Mistral 7B) Grounded answer
 ```
 
 **Design:** Modular protocol/interface pattern — swap any component (embeddings, re-ranker, LLM, vector store) without touching the rest. Lazy model loading. Streamlit session-state singletons.
@@ -61,8 +61,8 @@ print(response.answer)
 | `config.py` | `RAGConfig` dataclass — all settings with env var overrides |
 | `vector_store.py` | ChromaDB wrapper (CRUD, query, stats, reset) |
 | `embeddings.py` | Sentence-transformers embeddings (swappable backend) |
-| `pdf_ingestion.py` | PDF → text → chunks → embeddings → ChromaDB |
-| `query_engine.py` | RAG orchestrator — embed → retrieve → re-rank → LLM |
+| `pdf_ingestion.py` | PDF text chunks embeddings ChromaDB |
+| `query_engine.py` | RAG orchestrator — embed retrieve re-rank LLM |
 | `reranker.py` | Cross-encoder re-ranking (ms-marco-MiniLM-L-6-v2) |
 | `llm_service.py` | Ollama LLM backend with RAG-grounded system prompts |
 | `ui_components.py` | Reusable Streamlit widgets (toggle, uploader, query, KB) |
@@ -137,16 +137,16 @@ Every component uses a **protocol/interface** — implement the protocol and pas
 
 | Swap | Protocol | Example |
 |---|---|---|
-| Embeddings | `EmbeddingBackend.embed(texts) → vectors` | OpenAI, Cohere |
-| Re-ranker | `RerankerBackend.rerank(query, texts, top_n) → indices` | Cohere Rerank |
-| LLM | `LLMBackend.generate(query, context) → answer` | OpenAI, Anthropic |
+| Embeddings | `EmbeddingBackend.embed(texts) vectors` | OpenAI, Cohere |
+| Re-ranker | `RerankerBackend.rerank(query, texts, top_n) indices` | Cohere Rerank |
+| LLM | `LLMBackend.generate(query, context) answer` | OpenAI, Anthropic |
 
 ```python
 # Example: custom LLM
 engine = RAGQueryEngine(vector_store, llm_backend=MyCustomLLMBackend())
 ```
 
-For new file types (DOCX, CSV, etc.), create an ingestion class that extracts text → `chunk_text()` → `EmbeddingService.embed_texts()` → `VectorStoreManager.add_documents()`.
+For new file types (DOCX, CSV, etc.), create an ingestion class that extracts text `chunk_text()` `EmbeddingService.embed_texts()` `VectorStoreManager.add_documents()`.
 
 ---
 

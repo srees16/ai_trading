@@ -5,8 +5,8 @@ The Relative Strength Index (RSI) is a momentum oscillator measuring
 the speed and magnitude of price movements on a 0-100 scale.
 
 Strategy Rules:
-- RSI < 30 (oversold) → Buy signal
-- RSI > 70 (overbought) → Sell signal
+- RSI < 30 (oversold) Buy signal
+- RSI > 70 (overbought) Sell signal
 
 Reference: J. Welles Wilder Jr.'s technical analysis indicator
 """

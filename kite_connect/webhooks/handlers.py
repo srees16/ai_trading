@@ -36,7 +36,7 @@ class DBTickHandler:
         self._min_interval = min_interval
         self._last_write: float = 0.0
         self._lock = threading.Lock()
-        self._pending: Dict[str, Dict] = {}   # symbol → latest tick data
+        self._pending: Dict[str, Dict] = {} # symbol latest tick data
 
     def __call__(self, event) -> None:
         """WebhookDispatcher callback entry point."""
@@ -197,7 +197,7 @@ class NSEMarketStatusMonitor:
                         },
                         source="nse_api",
                     ))
-                    logger.info("NSE market status changed: %s → %s", old_status, label)
+                    logger.info("NSE market status changed: %s %s", old_status, label)
 
             except Exception:
                 logger.debug("NSE status check failed", exc_info=True)

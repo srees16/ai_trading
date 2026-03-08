@@ -438,7 +438,7 @@ def _log_application(
     with _APPLY_LOG.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
     logger.info(
-        "Code applied: %s → %s (%s)",
+        "Code applied: %s %s (%s)",
         target.name, backup.name, diff_summary,
     )
 

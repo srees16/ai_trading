@@ -205,16 +205,16 @@ def _cached_nse_market_status():
             if mkt.get("market") == "Capital Market":
                 status = (mkt.get("marketStatus") or "").lower()
                 if status in ("open", "live"):
-                    return "pill-open", "🟢 Live"
+                    return "pill-open", " Live"
                 elif "pre" in status:
-                    return "pill-pre", "🟡 Pre-Open"
+                    return "pill-pre", " Pre-Open"
                 elif "close" in status:
-                    return "pill-closed", "🔴 Closed"
+                    return "pill-closed", " Closed"
                 else:
                     return "pill-pre", status.title()
     except Exception:
         pass
-    return "pill-closed", "🔴 Closed"
+    return "pill-closed", " Closed"
 
 
 # ── Database ───────────────────────────────────────────────────
@@ -447,11 +447,11 @@ def fetch_realtime_quotes(kite, stock_symbols):
         except kite_exceptions.TokenException:
             # Access token expired mid-session — clear cache so next refresh re-logins
             st.cache_resource.clear()
-            st.error("⚠️ Kite session expired. Click 'Reconnect' to re-login.")
+            st.error(" Kite session expired. Click 'Reconnect' to re-login.")
             return all_quotes
         except kite_exceptions.InputException as e:
             # Some symbols may be invalid — try them individually
-            st.warning(f"⚠️ Batch quote failed, trying individually: {e}")
+            st.warning(f" Batch quote failed, trying individually: {e}")
             for inst in batch:
                 try:
                     q = kite.quote([inst])
@@ -461,10 +461,10 @@ def fetch_realtime_quotes(kite, stock_symbols):
                 except Exception:
                     failed_symbols.append(inst.replace("NSE:", ""))
         except Exception as e:
-            st.warning(f"⚠️ Could not fetch quotes: {e}")
+            st.warning(f" Could not fetch quotes: {e}")
 
     if failed_symbols:
-        st.warning(f"⚠️ {len(failed_symbols)} symbols not found: {', '.join(failed_symbols)}")
+        st.warning(f" {len(failed_symbols)} symbols not found: {', '.join(failed_symbols)}")
 
     return all_quotes
 
@@ -491,7 +491,7 @@ def render_live_dashboard():
 
 def _render_landing_page():
     """Show an intro landing page before the Kite session is started."""
-    render_header_bar(subtitle="🏠 Indian Equities · Zerodha Kite Connect")
+    render_header_bar(subtitle=" Indian Equities · Zerodha Kite Connect")
 
     render_stock_ticker_ribbon(market="IND")
     render_vix_indicator(market="IND")
@@ -525,7 +525,7 @@ def _render_landing_page():
 
     _, col_btn, _ = st.columns([3, 1, 3])
     with col_btn:
-        if st.button("🚀 Start Kite Session", type="primary", use_container_width=True):
+        if st.button(" Start Kite Session", type="primary", use_container_width=True):
             logger.info("[user=%s] Ind Stocks: Start Kite Session clicked", st.session_state.get('username', 'unknown'))
             st.session_state["kite_session_started"] = True
             st.rerun()
@@ -799,14 +799,14 @@ def _render_dashboard():
     except kite_exceptions.TokenException:
         _auth_slot.empty()
         st.cache_resource.clear()
-        st.warning("⚠️ Session expired. Reconnecting...")
+        st.warning(" Session expired. Reconnecting...")
         st.rerun()
         return
     except Exception as e:
         _auth_slot.empty()
         kite_status = "Disconnected"
-        st.error(f"⚠️ Kite Connect login failed: {e}")
-        st.info("ℹ️ Run `py kite_token_store.py` first to generate a valid request token, then click Reconnect.")
+        st.error(f" Kite Connect login failed: {e}")
+        st.info(" Run `py kite_token_store.py` first to generate a valid request token, then click Reconnect.")
         return
 
     # ── Step 2: Load remaining heavy modules (pandas, DB, trading) ──
@@ -828,7 +828,7 @@ def _render_dashboard():
         f'<div class="live-pill {pill_class}"><span class="live-dot"></span> {pill_label}</div>'
     )
     render_header_bar(
-        subtitle="📡 Real-time data · Zerodha Kite Connect",
+        subtitle=" Real-time data · Zerodha Kite Connect",
         right_html=_pills_html,
     )
 
@@ -844,7 +844,7 @@ def _render_dashboard():
         conn = get_db_connection()
         groups = fetch_index_groups(conn)
     except Exception as e:
-        st.error(f"⚠️ Database connection failed: {e}")
+        st.error(f" Database connection failed: {e}")
         return
 
     # ── Auto-seed: populate stocks & index mappings if empty ───
@@ -858,7 +858,7 @@ def _render_dashboard():
             cur.close()
 
             if ix_count == 0:
-                with st.spinner("🌱 First launch — seeding stock database from Kite instruments…"):
+                with st.spinner(" First launch — seeding stock database from Kite instruments…"):
                     seed_stocks_from_kite(kite, conn)
                     # Refresh groups since seed inserts groups too
                     groups = fetch_index_groups(conn)
@@ -868,10 +868,10 @@ def _render_dashboard():
                 st.session_state["_stocks_seeded"] = True
         except Exception as e:
             logger.error("Auto-seed failed: %s", e)
-            st.warning(f"⚠️ Could not auto-seed stock database: {e}")
+            st.warning(f" Could not auto-seed stock database: {e}")
 
     if not groups:
-        st.warning("⚠️ No index groups found. Run setup_livestocks_db.py first.")
+        st.warning(" No index groups found. Run setup_livestocks_db.py first.")
         return
 
     # ── Top control bar: settings pushed left ──
@@ -920,7 +920,7 @@ def _render_dashboard():
             quotes_badge_slot = st.empty()
 
         with c2:
-            if st.button("🔄 Reconnect", use_container_width=True):
+            if st.button(" Reconnect", use_container_width=True):
                 logger.info("[user=%s] Ind Stocks: Reconnect clicked", st.session_state.get('username', 'unknown'))
                 # Stop webhook service so it restarts with fresh session
                 try:
@@ -965,7 +965,7 @@ def _render_dashboard():
             logger.info("Webhook streaming started for %d symbols", len(all_stock_names))
         except Exception as e:
             logger.error("Failed to start webhook service: %s", e)
-            st.warning(f"⚠️ Real-time streaming unavailable: {e}. Falling back to polling.")
+            st.warning(f" Real-time streaming unavailable: {e}. Falling back to polling.")
     elif svc._started:
         # Update subscriptions if stock list changed
         svc._update_subscriptions(list(all_stock_names))
@@ -973,7 +973,7 @@ def _render_dashboard():
     # ── Right sidebar: Place Order panel (isolated fragment) ──
     @st.fragment
     def _order_panel():
-        st.markdown("### 🛒 Place Order")
+        st.markdown("### Place Order")
 
         # ── Symbol (full width, searchable) ──
         o_symbol = st.selectbox(
@@ -1047,7 +1047,7 @@ def _render_dashboard():
     # ═══════════════════════════════════════════════════════════
     # Top-level tabs: Stocks | Options
     # ═══════════════════════════════════════════════════════════
-    stocks_main_tab, options_main_tab = st.tabs(["📊 Stocks", "📈 Options"])
+    stocks_main_tab, options_main_tab = st.tabs([" Stocks", " Options"])
 
     # ── STOCKS TAB ─────────────────────────────────────────────
     with stocks_main_tab:
@@ -1059,9 +1059,9 @@ def _render_dashboard():
             """Read real-time quotes from webhook cache & render stock data tables.
 
             Strategy:
-              • Market OPEN  + WS streaming → read from UITickCache (zero API calls)
-              • Market OPEN  + WS not yet connected → one-off REST kite.quote() bootstrap
-              • Market CLOSED → show last-session values from DB (zero API/WS calls)
+              • Market OPEN + WS streaming read from UITickCache (zero API calls)
+              • Market OPEN + WS not yet connected one-off REST kite.quote() bootstrap
+              • Market CLOSED show last-session values from DB (zero API/WS calls)
             """
             _conn = get_db_connection()
 
@@ -1128,7 +1128,7 @@ def _render_dashboard():
 
             if not all_rows:
                 st.info(
-                    "ℹ️ No stocks found. "
+                    " No stocks found. "
                     "This will auto-populate on next dashboard restart after Kite login."
                 )
             else:
@@ -1201,7 +1201,7 @@ def _render_dashboard():
         # ── Quick Trade (not auto-refreshed) ─────────────────────
         def _portfolio_panels():
             """Quick Trade, Order Book, Positions, Holdings, RSI — not auto-refreshed."""
-            with st.expander("⚡ Quick Trade", expanded=False):
+            with st.expander(" Quick Trade", expanded=False):
                 qt_cols = st.columns([3, 2, 2, 1.5, 1.5])
                 qt_symbol = qt_cols[0].selectbox(
                     "Symbol", sorted_stock_list,
@@ -1235,7 +1235,7 @@ def _render_dashboard():
 
             # ── Order Book / Positions / Holdings / RSI Strategy ──────
             st.markdown("")
-            hold_tab, pos_tab, ob_tab, rsi_tab = st.tabs(["💼 Holdings", "📊 Positions", "📝 Order Book", "📈 RSI Strategy"])
+            hold_tab, pos_tab, ob_tab, rsi_tab = st.tabs([" Holdings", " Positions", " Order Book", " RSI Strategy"])
 
             with ob_tab:
                 orders = get_order_book(kite)
@@ -1276,7 +1276,7 @@ def _render_dashboard():
                             else:
                                 st.error(res["error"])
                 else:
-                    st.info("ℹ️ No orders placed today.")
+                    st.info(" No orders placed today.")
     
             with pos_tab:
                 positions = get_positions(kite)
@@ -1320,7 +1320,7 @@ def _render_dashboard():
                         styled_pos = pos_df.style
                     st.dataframe(styled_pos, hide_index=True)
                 else:
-                    st.info("ℹ️ No open positions.")
+                    st.info(" No open positions.")
     
             with hold_tab:
                 # ── Fetch holdings once per session (portfolio structure is stable intraday) ──
@@ -1498,11 +1498,11 @@ def _render_dashboard():
                             st.success(f"Saved {len(selected)} Smallcase symbols.")
                             st.rerun()
                 else:
-                    st.info("ℹ️ No holdings found.")
+                    st.info(" No holdings found.")
     
             # ── RSI Strategy Scanner ──
             with rsi_tab:
-                st.markdown("##### 📈 RSI Auto-Order Scanner")
+                st.markdown("##### RSI Auto-Order Scanner")
                 st.caption("Scans stocks for RSI signals. **BUY** when RSI < oversold & bullish reversal. **SELL** when RSI > overbought & bearish reversal.")
     
                 # Strategy settings
@@ -1519,10 +1519,10 @@ def _render_dashboard():
                 rsi_auto = rsi_c8.toggle("Auto-place orders", value=False, key="rsi_auto")
     
                 if rsi_auto:
-                    st.warning("⚠️ **Live trading enabled** — orders will be placed automatically on signals.")
+                    st.warning(" **Live trading enabled** — orders will be placed automatically on signals.")
     
                 scan_btn_col, scan_status_col = st.columns([1, 3])
-                run_scan = scan_btn_col.button("🔍 Run Scan", use_container_width=True, key="rsi_scan_btn")
+                run_scan = scan_btn_col.button(" Run Scan", use_container_width=True, key="rsi_scan_btn")
 
                 if run_scan:
                     logger.info("[user=%s] Ind Stocks: Run RSI Scan clicked — capital=%s, rsi_low=%s, rsi_high=%s, interval=%s, auto=%s",
@@ -1595,7 +1595,7 @@ def _render_dashboard():
                             unsafe_allow_html=True,
                         )
                     else:
-                        st.info("ℹ️ No data returned. Ensure market is open and stocks have sufficient history.")
+                        st.info(" No data returned. Ensure market is open and stocks have sufficient history.")
     
         _portfolio_panels()
 
@@ -1609,7 +1609,7 @@ def _render_dashboard():
 def _render_option_chain_tab(kite):
     """Render the Option Chain tab with controls and data grid."""
 
-    st.markdown("##### 🔗 Option Chain — Live OI & LTP")
+    st.markdown("##### Option Chain — Live OI & LTP")
 
     # ── Controls row ──
     oc_c1, oc_c2, oc_c3, oc_c4, oc_c5 = st.columns([1.5, 2, 1.5, 1.5, 1])
@@ -1654,7 +1654,7 @@ def _render_option_chain_tab(kite):
         st.rerun()
 
     if not expiry_list or oc_expiry == "—":
-        st.warning("⚠️ No expiries found. Market may be closed or the index is not available.")
+        st.warning(" No expiries found. Market may be closed or the index is not available.")
         return
 
     # ── Fetch option chain data ──
@@ -1673,7 +1673,7 @@ def _render_option_chain_tab(kite):
         oc_data = st.session_state[oc_cache_key]
 
     if not oc_data["strikes"]:
-        st.warning("⚠️ No strike data returned. Check expiry / market hours.")
+        st.warning(" No strike data returned. Check expiry / market hours.")
         return
 
     # ── Summary metrics ──
@@ -1721,10 +1721,10 @@ def _render_option_chain_tab(kite):
     def _style_oc(styler):
         """Apply Sensibull / NSE-style option chain colours.
 
-        ITM CE  (strike ≤ ATM) → soft green tint on call columns
-        ITM PE  (strike ≥ ATM) → soft red tint on put columns
-        ATM row → golden highlight band across all columns
-        OI Δ / LTP Chg → green=+  red=−
+        ITM CE (strike ≤ ATM) soft green tint on call columns
+        ITM PE (strike ≥ ATM) soft red tint on put columns
+        ATM row golden highlight band across all columns
+        OI Δ / LTP Chg green=+ red=−
         """
 
         # ── Colours ──
@@ -1823,7 +1823,7 @@ def _render_option_chain_tab(kite):
     )
 
     # ── Quick Trade for Options ──
-    with st.expander("⚡ Quick Option Trade", expanded=False):
+    with st.expander(" Quick Option Trade", expanded=False):
         # Build list of tradeable strikes
         strike_list = [str(r["strike"]) for r in oc_data["strikes"]]
         qt_c1, qt_c2, qt_c3, qt_c4, qt_c5, qt_c6 = st.columns([2, 1.5, 1, 1, 1, 1])
@@ -1858,7 +1858,7 @@ def _render_option_chain_tab(kite):
 
 
 if __name__ == "__main__":
-    st.set_page_config(page_title="Live Stocks - India", page_icon="📊", layout="wide")
+    st.set_page_config(page_title="Live Stocks - India", page_icon="", layout="wide")
     from ui.styles import apply_custom_styles
     apply_custom_styles()
     render_live_dashboard()

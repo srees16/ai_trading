@@ -150,10 +150,10 @@ def render_options_page():
 
     # Tabs for different sections
     tab_quotes, tab_live, tab_chain, tab_lookup = st.tabs([
-        "📊 Index Quotes",
-        "🟢 Live Derivative Prices",
-        "🔗 Option Chain",
-        "🔍 Token Lookup",
+        " Index Quotes",
+        " Live Derivative Prices",
+        " Option Chain",
+        " Token Lookup",
     ])
 
     with tab_quotes:
@@ -175,7 +175,7 @@ def render_options_page():
 
 def _render_index_quotes(quotes):
     """Fetch and display quotes for major indices."""
-    st.markdown("##### 📊 Index Quotes")
+    st.markdown("##### Index Quotes")
     st.caption("Real-time quotes for major Indian derivatives indices.")
 
     col_sel, col_btn = st.columns([3, 1])
@@ -235,7 +235,7 @@ def _render_index_quotes(quotes):
 
 def _render_live_derivative_prices(quotes):
     """Fetch and display live derivative prices for a selected index."""
-    st.markdown("##### 🟢 Live Derivative Prices")
+    st.markdown("##### Live Derivative Prices")
     st.caption(
         "Select an index to view live derivative prices across all expiries — "
         "including ATM strike, IV, futures price, and max OI."
@@ -314,13 +314,13 @@ def _render_live_derivative_prices(quotes):
 
                 left, right = st.columns(2)
                 with left:
-                    st.markdown("📈 **Calls (CE)**")
+                    st.markdown(" **Calls (CE)**")
                     st.dataframe(
                         ce_df, use_container_width=True, hide_index=True,
                         height=min(35 * len(ce_df) + 38, 400),
                     )
                 with right:
-                    st.markdown("📉 **Puts (PE)**")
+                    st.markdown(" **Puts (PE)**")
                     st.dataframe(
                         pe_df, use_container_width=True, hide_index=True,
                         height=min(35 * len(pe_df) + 38, 400),
@@ -333,7 +333,7 @@ def _render_live_derivative_prices(quotes):
 
 def _render_option_chain(quotes):
     """Display a consolidated option chain table for a chosen index."""
-    st.markdown("##### 🔗 Option Chain")
+    st.markdown("##### Option Chain")
     st.caption(
         "Select an index and an expiry to load the full option chain "
         "with CE and PE data side by side."
@@ -448,7 +448,7 @@ def _render_option_chain(quotes):
     # Download button
     csv = merged.to_csv(index=False) if "merged" in dir() else pd.DataFrame(options).to_csv(index=False)
     st.download_button(
-        "⬇️ Download CSV",
+        " Download CSV",
         data=csv,
         file_name=f"{label}_{chosen_expiry}_chain.csv",
         mime="text/csv",
@@ -460,7 +460,7 @@ def _render_option_chain(quotes):
 
 def _render_token_lookup(quotes):
     """Look up a trading symbol from an instrument token."""
-    st.markdown("##### 🔍 Instrument Token Lookup")
+    st.markdown("##### Instrument Token Lookup")
     st.caption(
         "Enter an instrument token to find the corresponding trading symbol, "
         "or search derivatives data by symbol prefix."
@@ -468,12 +468,12 @@ def _render_token_lookup(quotes):
 
     mode = st.radio(
         "Lookup mode",
-        ["Token → Symbol", "Fetch Derivatives Data"],
+        ["Token Symbol", "Fetch Derivatives Data"],
         horizontal=True,
         key="opt_lookup_mode",
     )
 
-    if mode == "Token → Symbol":
+    if mode == "Token Symbol":
         token_input = st.number_input(
             "Instrument token",
             value=9073154,
@@ -485,7 +485,7 @@ def _render_token_lookup(quotes):
                 try:
                     symbol = quotes.get_tradingsymbol(int(token_input))
                     if symbol:
-                        st.success(f"**Token {token_input}** → `{symbol}`")
+                        st.success(f"**Token {token_input}** `{symbol}`")
                     else:
                         st.warning(f"No trading symbol found for token {token_input}.")
                 except Exception as exc:
@@ -493,7 +493,7 @@ def _render_token_lookup(quotes):
 
     else:
         st.markdown("Refresh the full derivatives instrument list from Sensibull.")
-        if st.button("📊 Fetch Derivatives Data", key="opt_fetch_deriv"):
+        if st.button(" Fetch Derivatives Data", key="opt_fetch_deriv"):
             with st.spinner("Fetching derivatives data…"):
                 result = _safe_fetch_derivatives(quotes)
                 if result:

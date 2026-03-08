@@ -51,7 +51,7 @@ RAG pipeline where richer context retrieval is worthwhile."""
 _BLOCKED_INTENTS = frozenset({"analysis"})
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Trigger keywords → template key mapping
+# Trigger keywords template key mapping
 #
 # Each entry maps one or more regex patterns to a template key.
 # Patterns are compiled once at import time.  The FIRST match wins,
@@ -419,8 +419,8 @@ _TEMPLATES: Dict[str, str] = {
         "beta, alpha = np.polyfit(market_returns, stock_returns, 1)\n"
         "```\n\n"
         "**Key points:**\n"
-        "- β > 1 → more volatile than the market.\n"
-        "- β < 1 → less volatile (defensive).\n"
+        "- β > 1 more volatile than the market.\n"
+        "- β < 1 less volatile (defensive).\n"
         "- Rolling beta: apply the above in a `.rolling()` window.\n\n"
         "**Confidence: High** — standard CAPM metric."
     ),
@@ -543,7 +543,7 @@ def try_fastpath(query: str) -> Optional[str]:
 
     # ── Generic code-snippet bypass ──────────────────────────────────
     # "is there a function for X" / "how to calculate X" / "formula for X"
-    # WITHOUT strategy-specific keywords → return direct snippet.
+    # WITHOUT strategy-specific keywords return direct snippet.
     if _GENERIC_CODE_PATTERN.search(query_clean):
         if _STRATEGY_KEYWORDS.search(query_clean):
             logger.debug(
@@ -604,9 +604,9 @@ if __name__ == "__main__":
     _ok(_match_trigger("how to calculate volatility") == "volatility",
         "volatility trigger")
     _ok(_match_trigger("what is standard deviation") == "volatility",
-        "std dev → volatility trigger")
+        "std dev volatility trigger")
     _ok(_match_trigger("daily vol estimate") == "volatility",
-        "daily vol → volatility trigger")
+        "daily vol volatility trigger")
     _ok(_match_trigger("sharpe ratio formula") == "sharpe",
         "sharpe trigger")
     _ok(_match_trigger("compute daily returns") == "daily_returns",
@@ -640,7 +640,7 @@ if __name__ == "__main__":
     print("\n=== Length Gate ===")
     _ok(
         try_fastpath("calculate volatility") is not None,
-        "short volatility query → fastpath HIT",
+        "short volatility query fastpath HIT",
     )
     _ok(
         try_fastpath(
@@ -649,22 +649,22 @@ if __name__ == "__main__":
             "standard deviation over multiple time windows and "
             "compare them across different regimes"
         ) is None,
-        "long query (>25 words) → fastpath MISS",
+        "long query (>25 words) fastpath MISS",
     )
-    _ok(try_fastpath("") is None, "empty query → None")
-    _ok(try_fastpath("   ") is None, "blank query → None")
+    _ok(try_fastpath("") is None, "empty query None")
+    _ok(try_fastpath(" ") is None, "blank query None")
 
     # ── Intent gate (analysis blocked) ───────────────────────────────
     print("\n=== Intent Gate ===")
-    # "how much drawdown" → intent=analysis (the 'how much' pattern)
+    # "how much drawdown" intent=analysis (the 'how much' pattern)
     _ok(
         try_fastpath("how much max drawdown does this have") is None,
-        "analysis intent → fastpath MISS",
+        "analysis intent fastpath MISS",
     )
-    # "what is sharpe" → intent=conceptual → allowed
+    # "what is sharpe" intent=conceptual allowed
     _ok(
         try_fastpath("what is sharpe ratio") is not None,
-        "conceptual intent + sharpe → fastpath HIT",
+        "conceptual intent + sharpe fastpath HIT",
     )
 
     # ── Full template content ────────────────────────────────────────
@@ -708,61 +708,61 @@ if __name__ == "__main__":
     # Positive: generic "how to calculate" queries
     ans = try_fastpath("is there a function for daily volatility")
     _ok(ans is not None and "pct_change" in ans,
-        "'is there a function for volatility' → snippet")
+        "'is there a function for volatility' snippet")
 
     ans = try_fastpath("how to calculate daily returns")
     _ok(ans is not None and "pct_change" in ans,
-        "'how to calculate daily returns' → snippet")
+        "'how to calculate daily returns' snippet")
 
     ans = try_fastpath("formula for sharpe ratio")
     _ok(ans is not None and "excess" in ans,
-        "'formula for sharpe ratio' → snippet")
+        "'formula for sharpe ratio' snippet")
 
     ans = try_fastpath("how to compute beta")
     _ok(ans is not None and "cov" in ans,
-        "'how to compute beta' → snippet")
+        "'how to compute beta' snippet")
 
     ans = try_fastpath("is there a function for max drawdown")
     _ok(ans is not None and "cummax" in ans,
-        "'is there a function for drawdown' → snippet")
+        "'is there a function for drawdown' snippet")
 
     ans = try_fastpath("formula for moving average")
     _ok(ans is not None and "rolling" in ans,
-        "'formula for moving average' → snippet")
+        "'formula for moving average' snippet")
 
     ans = try_fastpath("code for correlation between two stocks")
     _ok(ans is not None and "corr" in ans,
-        "'code for correlation' → snippet")
+        "'code for correlation' snippet")
 
     ans = try_fastpath("how to calculate CAGR")
     _ok(ans is not None and "252" in ans,
-        "'how to calculate CAGR' → snippet")
+        "'how to calculate CAGR' snippet")
 
     ans = try_fastpath("function to calculate sortino ratio")
     _ok(ans is not None and "downside" in ans,
-        "'function to calculate sortino' → snippet")
+        "'function to calculate sortino' snippet")
 
     ans = try_fastpath("snippet for ATR indicator")
     _ok(ans is not None and "rolling" in ans,
-        "'snippet for ATR' → snippet")
+        "'snippet for ATR' snippet")
 
     # Negative: strategy keyword blocks generic path
     ans = try_fastpath("how to calculate momentum crossover strategy")
     _ok(ans is None,
-        "strategy keyword 'crossover strategy' → fastpath MISS")
+        "strategy keyword 'crossover strategy' fastpath MISS")
 
     ans = try_fastpath("is there a function for backtest signals")
     _ok(ans is None,
-        "strategy keyword 'backtest signals' → fastpath MISS")
+        "strategy keyword 'backtest signals' fastpath MISS")
 
     ans = try_fastpath("formula for pairs trading arbitrage")
     _ok(ans is None,
-        "strategy keyword 'pairs trading' → fastpath MISS")
+        "strategy keyword 'pairs trading' fastpath MISS")
 
     # Negative: generic phrase but no recognised topic
     ans = try_fastpath("is there a function for something random")
     _ok(ans is None,
-        "generic phrase + unknown topic → fastpath MISS")
+        "generic phrase + unknown topic fastpath MISS")
 
     # ── Summary ──────────────────────────────────────────────────────
     total = _pass + _fail

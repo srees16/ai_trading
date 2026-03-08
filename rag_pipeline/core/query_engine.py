@@ -124,7 +124,7 @@ class RAGResponse:
 
 class LLMBackend(Protocol):
     """
-    Any callable that takes (query, context_str) → answer_str.
+    Any callable that takes (query, context_str) answer_str.
 
     Implement this to plug in OpenAI, Anthropic, local LLM, etc.
     """
@@ -143,7 +143,7 @@ class DefaultLLMBackend:
     def generate(self, query: str, context: str) -> str:
         if not context.strip():
             return (
-                "⚠️ No relevant documents found in the knowledge base. "
+                " No relevant documents found in the knowledge base. "
                 "Please upload strategy PDFs first."
             )
         return (
@@ -162,9 +162,9 @@ class RAGQueryEngine:
     High-level RAG query orchestrator with latency optimisations.
 
     Pipeline flow:
-        cache check → FAQ fast-path → query rewrite → concurrent embed
-        → hybrid search → threshold + dedup → re-rank → token-budget
-        context build → LLM generate → cache store
+        cache check FAQ fast-path query rewrite concurrent embed
+         hybrid search threshold + dedup re-rank token-budget
+        context build LLM generate cache store
 
     Usage:
         engine = RAGQueryEngine(vector_store)
@@ -306,7 +306,7 @@ class RAGQueryEngine:
             9. Cache store + trace summary
         """
         t0 = time.time()
-        _timings: Dict[str, float] = {}   # stage → seconds
+        _timings: Dict[str, float] = {} # stage seconds
 
         trace = PipelineTrace()
         trace.start()
@@ -477,7 +477,7 @@ class RAGQueryEngine:
         # Sort by distance (lower = better)
         chunks.sort(key=lambda c: c.distance)
 
-        # --- Time-budget check: retrieval slow → force FAST_MODE ---
+        # --- Time-budget check: retrieval slow force FAST_MODE ---
         retrieval_span = next(
             (s for s in trace.spans if s.name == "embed_and_retrieve"), None
         )
@@ -760,7 +760,7 @@ class RAGQueryEngine:
         Includes TTFT (time-to-first-token) tracing.
         """
         t0 = time.time()
-        _timings: Dict[str, float] = {}   # stage → seconds
+        _timings: Dict[str, float] = {} # stage seconds
 
         trace = PipelineTrace()
         trace.start()
@@ -902,7 +902,7 @@ class RAGQueryEngine:
         chunks.sort(key=lambda c: c.distance)
         _timings["vector_search"] = time.time() - _t_vec_s
 
-        # --- Time-budget check: retrieval slow → force FAST_MODE ---
+        # --- Time-budget check: retrieval slow force FAST_MODE ---
         retrieval_span_s = next(
             (s for s in trace.spans if s.name == "embed_and_retrieve"), None
         )

@@ -119,7 +119,7 @@ def _render_ticker_selection() -> List[str]:
     Returns:
         List of selected tickers
     """
-    st.markdown("💼 **Select Stocks**")
+    st.markdown(" **Select Stocks**")
     
     ticker_mode = st.radio(
         "Input method:",
@@ -166,7 +166,7 @@ def _handle_csv_upload() -> List[str]:
     with st.expander("View CSV format example"):
         st.code(create_sample_csv(), language="csv")
         st.download_button(
-            label="⬇️ Download Sample CSV",
+            label=" Download Sample CSV",
             data=create_sample_csv(),
             file_name="sample_tickers.csv",
             mime="text/csv"
@@ -207,7 +207,7 @@ def _handle_csv_upload() -> List[str]:
 
 def _render_output_settings():
     """Render output settings controls."""
-    st.markdown("⚙️ **Output Settings**")
+    st.markdown(" **Output Settings**")
     
     output_format = st.selectbox(
         "Output format:",
@@ -274,7 +274,7 @@ def _render_run_controls(tickers: List[str]) -> bool:
     
     with btn_col:
         run_button = st.button(
-            "🚀 Run Analysis",
+            " Run Analysis",
             type="primary",
             disabled=len(tickers) == 0
         )

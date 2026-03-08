@@ -56,11 +56,11 @@ def initialize_database():
             logger.error("Make sure PostgreSQL is running and credentials are correct")
             return False
         
-        logger.info("✅ Database connection successful")
+        logger.info(" Database connection successful")
         
         # Create tables
         if db_manager.initialize_database():
-            logger.info("✅ Database tables created successfully")
+            logger.info(" Database tables created successfully")
         else:
             logger.error("Failed to create database tables")
             return False
@@ -101,7 +101,7 @@ def show_table_info():
             tables = [row[0] for row in result]
             
             if tables:
-                logger.info("\n🗃️ Database Tables:")
+                logger.info("\n Database Tables:")
                 for table in tables:
                     logger.info(f"   • {table}")
             
@@ -115,7 +115,7 @@ def show_table_info():
                 hypertables = [row[0] for row in result]
                 
                 if hypertables:
-                    logger.info("\n⏱️ TimescaleDB Hypertables:")
+                    logger.info("\n TimescaleDB Hypertables:")
                     for ht in hypertables:
                         logger.info(f"   • {ht}")
             except Exception:
@@ -128,7 +128,7 @@ def show_table_info():
 def main():
     """Main setup function."""
     print("\n" + "=" * 60)
-    print("  🏛️ Centurion Capital LLC - Database Setup")
+    print(" Centurion Capital LLC - Database Setup")
     print("=" * 60 + "\n")
     
     # Check configuration
@@ -145,10 +145,10 @@ def main():
     show_table_info()
     
     print("\n" + "=" * 60)
-    print("  ✅ Database setup completed successfully!")
+    print(" Database setup completed successfully!")
     print("=" * 60)
-    print("\n🚀 You can now run: streamlit run app.py")
-    print("💾 Analysis results will be automatically saved to the database.\n")
+    print("\n You can now run: streamlit run app.py")
+    print(" Analysis results will be automatically saved to the database.\n")
     
     return 0
 

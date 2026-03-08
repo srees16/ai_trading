@@ -501,9 +501,9 @@ def _run_tests() -> None:
         pipeline_stages=None, timestamp=None,
     )
     d2 = _row_to_dict(empty_row)
-    check("null retrieved_ids → []", d2["retrieved_ids"] == [])
-    check("null scores → []", d2["scores"] == [])
-    check("null timestamp → None", d2["timestamp"] is None)
+    check("null retrieved_ids []", d2["retrieved_ids"] == [])
+    check("null scores []", d2["scores"] == [])
+    check("null timestamp None", d2["timestamp"] is None)
 
     # ── 3. RetrievalEvaluator with real SQLite DB ────────────────────
     print("\n=== 3. RetrievalEvaluator (SQLite in-memory) ===")
@@ -696,7 +696,7 @@ def _run_tests() -> None:
     # table + raw inserts/selects to simulate the flow.
     print("\n=== 7. End-to-End Flow Simulation ===")
 
-    # Simulate the pipeline: classify → retrieve → log
+    # Simulate the pipeline: classify retrieve log
     sample_query = "Calculate Sharpe ratio for momentum strategy"
     sample_ids = ["chunk_a1b2", "chunk_c3d4", "chunk_e5f6"]
     sample_scores = [0.934, 0.871, 0.756]

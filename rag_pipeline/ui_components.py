@@ -5,12 +5,12 @@ Reusable Streamlit widgets that can be embedded in any page.
 Designed to be replaced / composed into the main centurion_core UI.
 
 Public API:
-    - render_rag_toggle()         → bool  (RAG on/off state)
-    - render_pdf_uploader()       → uploads & ingests PDFs
-    - render_query_input()        → gets user query text
-    - render_rag_response()       → displays RAG answer + sources
-    - render_kb_source_selector() → radio-button KB source picker
-    - render_knowledge_base()     → shows collection stats & management
+    - render_rag_toggle() bool (RAG on/off state)
+    - render_pdf_uploader() uploads & ingests PDFs
+    - render_query_input() gets user query text
+    - render_rag_response() displays RAG answer + sources
+    - render_kb_source_selector() radio-button KB source picker
+    - render_knowledge_base() shows collection stats & management
 """
 
 import json
@@ -196,16 +196,16 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
                 logger.info("Queued background ingestion for %s", file.name)
 
             st.toast(
-                f"📤 {submitted_count} file(s) submitted for background ingestion. "
+                f" {submitted_count} file(s) submitted for background ingestion. "
                 "You can continue querying while they process.",
-                icon="🚀",
+                icon="",
             )
             st.rerun()  # rerun to show the status panel immediately
 
     with col_hint:
         if mgr.has_active_tasks():
             st.info(
-                "⏳ **Ingestion in progress** — you can submit queries "
+                " **Ingestion in progress** — you can submit queries "
                 "for previously ingested documents while new files are processing."
             )
 
@@ -248,23 +248,23 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
             if success_count and not fail_count:
                 st.balloons()
                 st.success(
-                    f"🎉 **Ingestion complete!** {success_count} document(s) ingested "
+                    f" **Ingestion complete!** {success_count} document(s) ingested "
                     f"successfully — {total_chunks} chunks from {total_pages} pages. "
                     "You can now query the knowledge base.",
-                    icon="✅",
+                    icon="",
                 )
             elif success_count and fail_count:
                 st.warning(
-                    f"⚠️ **Ingestion finished with errors.** "
+                    f" **Ingestion finished with errors.** "
                     f"{success_count} succeeded, {fail_count} failed. "
                     "Check the status details above.",
-                    icon="⚠️",
+                    icon="",
                 )
             elif fail_count:
                 st.error(
-                    f"❌ **Ingestion failed.** {fail_count} document(s) could not "
+                    f" **Ingestion failed.** {fail_count} document(s) could not "
                     "be processed. Check the error details above.",
-                    icon="❌",
+                    icon="",
                 )
 
     # ---- Auto-refresh while ingestion is running -----------------------
@@ -294,13 +294,13 @@ def _render_ingestion_status(mgr) -> None:
         return
 
     with st.container():
-        st.markdown("#### 🔄 Ingestion Status")
+        st.markdown("#### Ingestion Status")
 
         # Active tasks — progress is kept in sync by the auto-refresh loop
         for task in active:
             col_name, col_stage, col_pct = st.columns([2, 3, 1])
             with col_name:
-                status_icon = "⏳" if task.status == TaskStatus.PENDING else "🔄"
+                status_icon = "" if task.status == TaskStatus.PENDING else ""
                 st.markdown(f"{status_icon} **{task.file_name}**")
             with col_stage:
                 st.caption(task.stage or "Queued…")
@@ -313,25 +313,25 @@ def _render_ingestion_status(mgr) -> None:
                 r = task.result or {}
                 if r.get("status") == "success":
                     st.success(
-                        f"✅ **{task.file_name}** — {r.get('chunks', '?')} chunks "
+                        f" **{task.file_name}** — {r.get('chunks', '?')} chunks "
                         f"from {r.get('pages', '?')} pages"
                     )
                 elif r.get("reason") == "already_ingested":
                     st.info(
-                        f"📄 **{task.file_name}** — already ingested "
+                        f" **{task.file_name}** — already ingested "
                         f"({r.get('chunks', '?')} chunks persisted). Skipped."
                     )
                 elif r.get("status") == "skipped":
                     st.warning(
-                        f"⚠️ **{task.file_name}** — skipped ({r.get('reason', '')})"
+                        f" **{task.file_name}** — skipped ({r.get('reason', '')})"
                     )
                 else:
-                    st.info(f"📄 **{task.file_name}** — {r.get('status', 'done')}")
+                    st.info(f" **{task.file_name}** — {r.get('status', 'done')}")
             elif task.status == TaskStatus.FAILED:
-                st.error(f"❌ **{task.file_name}** — {task.error or 'unknown error'}")
+                st.error(f" **{task.file_name}** — {task.error or 'unknown error'}")
 
         if active:
-            st.caption("⏱️ *Updating automatically — submit queries above while ingestion runs.*")
+            st.caption(" *Updating automatically — submit queries above while ingestion runs.*")
 
 
 # ---------------------------------------------------------------------------
@@ -361,8 +361,8 @@ def _render_answer_content(text: str) -> None:
 
     Splits the answer on fenced code blocks (```...```) and renders each
     segment with the appropriate Streamlit widget:
-      - Fenced code blocks  → ``st.code()`` with syntax highlighting
-      - Everything else      → ``st.markdown()`` (handles inline `code` too)
+      - Fenced code blocks ``st.code()`` with syntax highlighting
+      - Everything else ``st.markdown()`` (handles inline `code` too)
     """
     import re as _re
 
@@ -401,7 +401,7 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
     Parameters
     ----------
     runtime_label : str | None
-        Pre-formatted runtime string (e.g. "⏱️ Total runtime: …").
+        Pre-formatted runtime string (e.g. " Total runtime: …").
         Displayed right below the HITL feedback buttons when provided.
     """
     from rag_pipeline.code_applier import extract_code_blocks
@@ -415,7 +415,7 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
         fb_col1, fb_col2, fb_col3 = st.columns([1, 1, 6])
 
         with fb_col1:
-            if st.button("👍", key=f"{feedback_key}_up", help="Good answer"):
+            if st.button("", key=f"{feedback_key}_up", help="Good answer"):
                 sources = [c.source for c in response.chunks] if response.chunks else []
                 _log_feedback(
                     query=response.query,
@@ -423,10 +423,10 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
                     feedback="positive",
                     sources=sources,
                 )
-                st.toast("✅ Thanks for the feedback!", icon="👍")
+                st.toast(" Thanks for the feedback!", icon="")
 
         with fb_col2:
-            if st.button("👎", key=f"{feedback_key}_down", help="Poor answer"):
+            if st.button("", key=f"{feedback_key}_down", help="Poor answer"):
                 sources = [c.source for c in response.chunks] if response.chunks else []
                 _log_feedback(
                     query=response.query,
@@ -434,7 +434,7 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
                     feedback="negative",
                     sources=sources,
                 )
-                st.toast("📝 Feedback recorded — we'll improve!", icon="👎")
+                st.toast(" Feedback recorded — we'll improve!", icon="")
 
     # ---- Runtime badge (right below feedback emojis) ----
     if runtime_label:
@@ -447,7 +447,7 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
         rs_col1, rs_col2 = st.columns([2, 5])
         with rs_col1:
             if st.button(
-                "🔄 Re-submit",
+                " Re-submit",
                 key=resubmit_key,
                 help="Not satisfied with the answer? Re-run the query to get a fresh response.",
             ):
@@ -464,7 +464,7 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
 
     if response.chunks:
         with st.expander(
-            f"📚 Retrieved Sources ({len(response.chunks)} chunks)",
+            f" Retrieved Sources ({len(response.chunks)} chunks)",
             expanded=False,
         ):
             for i, chunk in enumerate(response.chunks, 1):
@@ -519,7 +519,7 @@ def _render_code_apply_section(
     apply_key = f"apply_{hash(query + answer[:80])}"
 
     with st.expander(
-        f"🔧 Apply Code Suggestion ({len(code_blocks)} snippet"
+        f" Apply Code Suggestion ({len(code_blocks)} snippet"
         f"{'s' if len(code_blocks) != 1 else ''})",
         expanded=False,
     ):
@@ -557,7 +557,7 @@ def _render_code_apply_section(
         # ---- Preview button ----
         with col_preview:
             if st.button(
-                "👁️ Preview",
+                " Preview",
                 key=f"{apply_key}_preview",
                 help="Generate a preview of the merged code without writing anything.",
             ):
@@ -577,13 +577,13 @@ def _render_code_apply_section(
         preview_summary = st.session_state.get(f"{apply_key}_preview_summary")
         if preview_src:
             st.info(f"**Preview summary:** {preview_summary}")
-            with st.expander("📝 Preview — merged file", expanded=False):
+            with st.expander(" Preview — merged file", expanded=False):
                 st.code(preview_src, language="python")
 
         # ---- Apply button ----
         with col_apply:
             if st.button(
-                "✅ Apply",
+                " Apply",
                 key=f"{apply_key}_apply",
                 help="Apply the code snippet to the selected strategy file (backup created automatically).",
             ):
@@ -607,7 +607,7 @@ def _render_code_apply_section(
                 )
                 if result.success:
                     st.success(
-                        f"✅ **Code applied** to `{selected_file.rel_path}`\n\n"
+                        f" **Code applied** to `{selected_file.rel_path}`\n\n"
                         f"{result.diff_summary}\n\n"
                         f"Backup: `{Path(result.backup_file).name}`"
                     )
@@ -615,20 +615,20 @@ def _render_code_apply_section(
                     st.session_state.pop(f"{apply_key}_preview_src", None)
                     st.session_state.pop(f"{apply_key}_preview_summary", None)
                 else:
-                    st.error(f"❌ {result.message}")
+                    st.error(f" {result.message}")
 
         # ---- Revert button ----
         with col_revert:
             if st.button(
-                "↩️ Revert",
+                " Revert",
                 key=f"{apply_key}_revert",
                 help="Undo the last applied change and restore the backup.",
             ):
                 result = revert_last_patch(selected_file.path)
                 if result.success:
-                    st.success(f"↩️ {result.message}")
+                    st.success(f" {result.message}")
                 else:
-                    st.warning(f"⚠️ {result.message}")
+                    st.warning(f" {result.message}")
 
 
 # ---------------------------------------------------------------------------
@@ -708,7 +708,7 @@ def render_knowledge_base() -> None:
     col_reingest, col_reset = st.columns(2)
     with col_reingest:
         if st.button(
-            "🔄 Re-ingest All Documents",
+            " Re-ingest All Documents",
             type="secondary",
             help="Delete existing chunks and re-process all PDFs with the "
                  "latest chunking pipeline. Use after pipeline upgrades.",
@@ -721,13 +721,13 @@ def render_knowledge_base() -> None:
             for r in results:
                 if r["status"] == "success":
                     st.success(
-                        f"✅ **{r['source']}** — {r['chunks']} chunks from {r['pages']} pages"
+                        f" **{r['source']}** — {r['chunks']} chunks from {r['pages']} pages"
                     )
                 else:
-                    st.warning(f"⚠️ **{r.get('source', '?')}** — {r.get('status', 'unknown')}")
+                    st.warning(f" **{r.get('source', '?')}** — {r.get('status', 'unknown')}")
             st.rerun()
     with col_reset:
-        if st.button("⚠️ Reset Knowledge Base", type="secondary"):
+        if st.button(" Reset Knowledge Base", type="secondary"):
             vs.reset_collection()
             st.warning("Knowledge base has been reset.")
             st.rerun()

@@ -93,9 +93,9 @@ _UNICODE_REPLACEMENTS: Dict[str, str] = {
     "±": "+/-",
     "×": "x",
     "÷": "/",
-    "→": "->",
-    "←": "<-",
-    "↔": "<->",
+    "": "->",
+    "": "<-",
+    "": "<->",
     "⇒": "=>",
     "∈": "in",
     "∉": "not in",
@@ -420,8 +420,8 @@ def fix_hyphenated_breaks(text: str) -> str:
     """Rejoin words split by end-of-line hyphenation.
 
     Patterns handled:
-    - ``"strat-\\negy"`` → ``"strategy"``
-    - ``"opti-\\n  misation"`` → ``"optimisation"``
+    - ``"strat-\\negy"`` ``"strategy"``
+    - ``"opti-\\n misation"`` ``"optimisation"``
 
     Does NOT rejoin hyphens that are part of compound words
     (e.g., ``"well-known"`` on one line).
@@ -444,9 +444,9 @@ def fix_hyphenated_breaks(text: str) -> str:
 def normalise_whitespace(text: str) -> str:
     """Collapse multiple inline spaces while preserving indentation and paragraphs.
 
-    - Tabs → 4 spaces.
-    - Multiple inline spaces → single space (preserving leading indent).
-    - 3+ consecutive blank lines → 2 (paragraph break preserved).
+    - Tabs 4 spaces.
+    - Multiple inline spaces single space (preserving leading indent).
+    - 3+ consecutive blank lines 2 (paragraph break preserved).
 
     Args:
         text: Text to normalise.
@@ -535,7 +535,7 @@ def _is_code_line(line: str) -> bool:
     stripped = line.strip()
     if not stripped:
         return False
-    # Lines with ≥2 spaces of leading indent + non-uppercase start → likely code
+    # Lines with ≥2 spaces of leading indent + non-uppercase start likely code
     indent = len(line) - len(line.lstrip())
     if indent >= 2 and stripped and not stripped[0].isupper():
         return True
@@ -1005,7 +1005,7 @@ def ingest_pdf_structured(pdf_path: str) -> List[StructuredBlock]:
     """Ingest a PDF and return structured, cleaned blocks.
 
     This is the **primary entry-point** of the module.  It runs the
-    full extraction → cleaning → classification pipeline and produces
+    full extraction cleaning classification pipeline and produces
     output ready for ChromaDB storage.
 
     Pipeline steps per page:
@@ -1056,7 +1056,7 @@ def ingest_pdf_structured(pdf_path: str) -> List[StructuredBlock]:
                 logger.debug("Skipping TOC page %d.", page_num)
                 continue
             elif page_num > 1:
-                toc_done = True  # first non-TOC page after start → TOC section is over
+                toc_done = True # first non-TOC page after start TOC section is over
         else:
             toc_done = True
 
@@ -1102,8 +1102,8 @@ def _attach_snippet_ids(blocks: List[StructuredBlock]) -> None:
 
     Handles two patterns:
     - A text block whose last non-empty line matches a snippet heading
-      (e.g. "Snippet 3.1  getDailyVol Function") → tag the **next** code block.
-    - A code block whose first line matches a snippet heading → tag itself.
+      (e.g. "Snippet 3.1 getDailyVol Function") tag the **next** code block.
+    - A code block whose first line matches a snippet heading tag itself.
     """
     pending_snippet_id = ""
     pending_snippet_title = ""
@@ -1695,7 +1695,7 @@ def _detect_section_heading(text: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════════
 
 class PDFIngestionService:
-    """End-to-end PDF → ChromaDB ingestion.
+    """End-to-end PDF ChromaDB ingestion.
 
     Usage::
 
@@ -1822,7 +1822,7 @@ class PDFIngestionService:
             logger.warning("PDF contains no extractable text: %s", pdf_path)
             return {"status": "skipped", "reason": "empty", "source": pdf_path}
 
-        # 4. Build page offset index for chunk→page mapping
+        # 4. Build page offset index for chunkpage mapping
         _progress("Building page index…", 0.40)
         page_offsets: List[int] = []
         offset = 0

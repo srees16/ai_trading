@@ -137,7 +137,7 @@ class NewsItem(Base, TimestampMixin):
     
     # Relationships
     analysis_run = relationship("AnalysisRun", back_populates="news_items")
-    signal = relationship("StockSignal", back_populates="news_item", uselist=False, primaryjoin="NewsItem.id == foreign(StockSignal.news_item_id)", viewonly=True)
+    signal = relationship("StockSignal", back_populates="news_item", uselist=False, primaryjoin="foreign(StockSignal.news_item_id) == NewsItem.id", viewonly=True)
     
     __table_args__ = (
         Index('idx_news_ticker_date', 'ticker', 'published_at'),
@@ -197,7 +197,7 @@ class StockSignal(Base, TimestampMixin):
     
     # Relationships
     analysis_run = relationship("AnalysisRun", back_populates="signals")
-    news_item = relationship("NewsItem", back_populates="signal", primaryjoin="StockSignal.news_item_id == foreign(NewsItem.id)", viewonly=True)
+    news_item = relationship("NewsItem", back_populates="signal", primaryjoin="foreign(StockSignal.news_item_id) == NewsItem.id", viewonly=True)
     
     __table_args__ = (
         Index('idx_signals_ticker_date', 'ticker', 'created_at'),

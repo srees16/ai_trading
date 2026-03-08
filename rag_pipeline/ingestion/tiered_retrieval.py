@@ -57,7 +57,7 @@ class FAQEntry:
 
 class TieredRetriever:
     """
-    Two-tier retrieval: FAQ fast-path → full pipeline fallback.
+    Two-tier retrieval: FAQ fast-path full pipeline fallback.
 
     The FAQ tier uses a separate ChromaDB collection with a tight
     similarity threshold (default 0.90).  Only queries that are very
@@ -136,7 +136,7 @@ class TieredRetriever:
             return None
 
         distance = results["distances"][0][0]
-        similarity = 1.0 - distance  # cosine distance → similarity
+        similarity = 1.0 - distance # cosine distance similarity
 
         if similarity < self._faq_threshold:
             logger.debug(

@@ -368,7 +368,7 @@ def classify_query(query: str) -> Dict[str, Any]:
         priority = "normal"
 
     logger.debug(
-        "classify_query(%r) → intent=%s, stages=%s, needs_code=%s, "
+        "classify_query(%r) intent=%s, stages=%s, needs_code=%s, "
         "strict_code_mode=%s, priority=%s",
         query_clean[:80], intent, stages, code_needed, strict, priority,
     )
@@ -407,104 +407,104 @@ def _run_tests() -> None:
 
     # code_generation
     check(
-        '"Write a function" → code_generation',
+        '"Write a function" code_generation',
         classify_intent("Write a function to compute returns") == "code_generation",
     )
     check(
-        '"Implement a class" → code_generation',
+        '"Implement a class" code_generation',
         classify_intent("Implement a class for portfolio rebalancing") == "code_generation",
     )
     check(
-        '"code for" → code_generation',
+        '"code for" code_generation',
         classify_intent("Give me code for z-score signal") == "code_generation",
     )
     check(
-        '"Refactor the module" → code_generation',
+        '"Refactor the module" code_generation',
         classify_intent("Refactor the risk module") == "code_generation",
     )
     check(
-        '"Debug the error" → code_generation',
+        '"Debug the error" code_generation',
         classify_intent("Debug the stop-loss error") == "code_generation",
     )
     check(
-        '"Build a pipeline" → code_generation',
+        '"Build a pipeline" code_generation',
         classify_intent("Build a data pipeline for OHLCV") == "code_generation",
     )
 
     # analysis
     check(
-        '"Optimize the strategy" → analysis',
+        '"Optimize the strategy" analysis',
         classify_intent("Optimize the momentum strategy") == "analysis",
     )
     check(
-        '"Reduce drawdown" → analysis',
+        '"Reduce drawdown" analysis',
         classify_intent("Reduce the drawdown on this portfolio") == "analysis",
     )
     check(
-        '"Improve sharpe" → analysis',
+        '"Improve sharpe" analysis',
         classify_intent("How can I improve the Sharpe?") == "analysis",
     )
     check(
-        '"Compare two strategies" → analysis',
+        '"Compare two strategies" analysis',
         classify_intent("Compare mean reversion vs momentum") == "analysis",
     )
     check(
-        '"Evaluate performance" → analysis',
+        '"Evaluate performance" analysis',
         classify_intent("Evaluate this strategy performance") == "analysis",
     )
     check(
-        '"Backtest this" → analysis',
+        '"Backtest this" analysis',
         classify_intent("Backtest this on 2020 data") == "analysis",
     )
     check(
-        '"How much drawdown" → analysis',
+        '"How much drawdown" analysis',
         classify_intent("How much drawdown does this strategy have?") == "analysis",
     )
 
     # conceptual
     check(
-        '"Why does…" → conceptual',
+        '"Why does…" conceptual',
         classify_intent("Why does the momentum factor work?") == "conceptual",
     )
     check(
-        '"Explain" → conceptual',
+        '"Explain" conceptual',
         classify_intent("Explain the Kelly criterion") == "conceptual",
     )
     check(
-        '"What is Sharpe ratio" → conceptual',
+        '"What is Sharpe ratio" conceptual',
         classify_intent("What is the Sharpe ratio?") == "conceptual",
     )
     check(
-        '"Define alpha" → conceptual',
+        '"Define alpha" conceptual',
         classify_intent("Define alpha in the context of returns") == "conceptual",
     )
     check(
-        '"Describe mean reversion" → conceptual',
+        '"Describe mean reversion" conceptual',
         classify_intent("Describe mean reversion strategy") == "conceptual",
     )
     check(
-        '"Difference between" → conceptual',
+        '"Difference between" conceptual',
         classify_intent("Difference between Sharpe and Sortino") == "conceptual",
     )
 
     # default fallback
     check(
-        'Ambiguous → conceptual (default)',
+        'Ambiguous conceptual (default)',
         classify_intent("Hello") == "conceptual",
     )
     check(
-        'Empty → conceptual (default)',
+        'Empty conceptual (default)',
         classify_intent("") == "conceptual",
     )
 
     # ── Priority: code_generation > analysis ─────────────────────────
     print("\n=== Intent Priority ===")
     check(
-        '"Write code to optimize" → code_generation (priority)',
+        '"Write code to optimize" code_generation (priority)',
         classify_intent("Write code to optimize the portfolio") == "code_generation",
     )
     check(
-        '"Implement an improvement" → code_generation (priority)',
+        '"Implement an improvement" code_generation (priority)',
         classify_intent("Implement an improvement to reduce drawdown") == "code_generation",
     )
 
@@ -512,41 +512,41 @@ def _run_tests() -> None:
     print("\n=== Pipeline Stage Detection ===")
 
     stages = classify_pipeline_stages("Calculate the Sharpe ratio for momentum returns")
-    check('"sharpe" + "returns" → evaluation', "evaluation" in stages)
+    check('"sharpe" + "returns" evaluation', "evaluation" in stages)
 
     stages = classify_pipeline_stages("Reduce the max drawdown risk on the portfolio")
-    check('"drawdown" + "risk" → risk_management', "risk_management" in stages)
+    check('"drawdown" + "risk" risk_management', "risk_management" in stages)
 
     stages = classify_pipeline_stages("How does the z-score signal generate entries?")
-    check('"z-score" + "signal" → signal_generation', "signal_generation" in stages)
+    check('"z-score" + "signal" signal_generation', "signal_generation" in stages)
 
     stages = classify_pipeline_stages(
         "Backtest the walk-forward strategy with historical simulation"
     )
-    check('"backtest" + "walk-forward" → backtesting', "backtesting" in stages)
+    check('"backtest" + "walk-forward" backtesting', "backtesting" in stages)
 
     stages = classify_pipeline_stages(
         "Optimize portfolio allocation using mean-variance"
     )
     check(
-        '"portfolio" + "allocation" + "mean-variance" → portfolio_construction',
+        '"portfolio" + "allocation" + "mean-variance" portfolio_construction',
         "portfolio_construction" in stages,
     )
 
     stages = classify_pipeline_stages("Clean missing data and handle outliers")
-    check('"missing data" + "outlier" → data_processing', "data_processing" in stages)
+    check('"missing data" + "outlier" data_processing', "data_processing" in stages)
 
     stages = classify_pipeline_stages("Reduce slippage on market orders for TWAP")
-    check('"slippage" + "market order" + "twap" → execution', "execution" in stages)
+    check('"slippage" + "market order" + "twap" execution', "execution" in stages)
 
     stages = classify_pipeline_stages(
         "Train an LSTM with cross-validation for feature importance"
     )
-    check('"lstm" + "cross-validation" + "feature importance" → machine_learning',
+    check('"lstm" + "cross-validation" + "feature importance" machine_learning',
           "machine_learning" in stages)
 
     stages = classify_pipeline_stages("Improve liquidity in the order book spread")
-    check('"liquidity" + "order book" + "spread" → market_microstructure',
+    check('"liquidity" + "order book" + "spread" market_microstructure',
           "market_microstructure" in stages)
 
     # Multi-stage
@@ -560,7 +560,7 @@ def _run_tests() -> None:
 
     # No stage
     stages = classify_pipeline_stages("Hello world")
-    check('No keywords → empty list', stages == [])
+    check('No keywords empty list', stages == [])
 
     # Sorted order
     stages = classify_pipeline_stages(
@@ -575,23 +575,23 @@ def _run_tests() -> None:
     print("\n=== needs_code Detection ===")
 
     check(
-        'code_generation intent → needs_code=True',
+        'code_generation intent needs_code=True',
         needs_code("Write a function", "code_generation") is True,
     )
     check(
-        'analysis intent, no code hint → needs_code=False',
+        'analysis intent, no code hint needs_code=False',
         needs_code("Optimize returns", "analysis") is False,
     )
     check(
-        'conceptual + backtick code → needs_code=True',
+        'conceptual + backtick code needs_code=True',
         needs_code("Explain the `calculate_sharpe` function", "conceptual") is True,
     )
     check(
-        'conceptual + ".py" reference → needs_code=True',
+        'conceptual + ".py" reference needs_code=True',
         needs_code("What does strategy.py do?", "conceptual") is True,
     )
     check(
-        'analysis + "function" mention → needs_code=True',
+        'analysis + "function" mention needs_code=True',
         needs_code("Optimize the function for speed", "analysis") is True,
     )
 
@@ -624,62 +624,62 @@ def _run_tests() -> None:
           r["intent"] == "conceptual" and r["needs_code"] is True)
 
     r = classify_query("")
-    check('Empty query → default', r["intent"] == "conceptual")
-    check('Empty query → no stages', r["pipeline_stage"] == [])
-    check('Empty query → no code', r["needs_code"] is False)
-    check('Empty query → strict_code_mode=False', r["strict_code_mode"] is False)
-    check('Empty query → priority=normal', r["priority"] == "normal")
+    check('Empty query default', r["intent"] == "conceptual")
+    check('Empty query no stages', r["pipeline_stage"] == [])
+    check('Empty query no code', r["needs_code"] is False)
+    check('Empty query strict_code_mode=False', r["strict_code_mode"] is False)
+    check('Empty query priority=normal', r["priority"] == "normal")
 
     r = classify_query("   ")
-    check('Whitespace query → default', r["intent"] == "conceptual")
+    check('Whitespace query default', r["intent"] == "conceptual")
 
     # ── Strict code-mode override ────────────────────────────────────
     print("\n=== Strict Code Mode ===")
 
-    # "implement" keyword → forces code_generation even if conceptual matched first
+    # "implement" keyword forces code_generation even if conceptual matched first
     r = classify_query("what is triple barrier labeling? how can i implement using python?")
-    check('"implement" + "python" → code_generation',
+    check('"implement" + "python" code_generation',
           r["intent"] == "code_generation")
-    check('"implement" + "python" → needs_code=True',
+    check('"implement" + "python" needs_code=True',
           r["needs_code"] is True)
-    check('"implement" + "python" → strict_code_mode=True',
+    check('"implement" + "python" strict_code_mode=True',
           r["strict_code_mode"] is True)
-    check('"implement" + "python" → priority=code_strict',
+    check('"implement" + "python" priority=code_strict',
           r["priority"] == "code_strict")
 
     # "code" keyword alone
     r = classify_query("show me the code for CUSUM filter")
-    check('"code" → strict_code_mode=True',
+    check('"code" strict_code_mode=True',
           r["strict_code_mode"] is True)
-    check('"code" → intent=code_generation',
+    check('"code" intent=code_generation',
           r["intent"] == "code_generation")
 
     # "function" keyword in conceptual context
     r = classify_query("what function calculates daily volatility?")
-    check('"function" → strict_code_mode=True',
+    check('"function" strict_code_mode=True',
           r["strict_code_mode"] is True)
-    check('"function" → intent=code_generation',
+    check('"function" intent=code_generation',
           r["intent"] == "code_generation")
 
     # "python" keyword alone
     r = classify_query("how to apply meta-labelling in python?")
-    check('"python" → strict_code_mode=True',
+    check('"python" strict_code_mode=True',
           r["strict_code_mode"] is True)
-    check('"python" → priority=code_strict',
+    check('"python" priority=code_strict',
           r["priority"] == "code_strict")
 
     # "using python" phrase
     r = classify_query("calculate gaps series using python")
-    check('"using python" → strict_code_mode=True',
+    check('"using python" strict_code_mode=True',
           r["strict_code_mode"] is True)
-    check('"using python" → code_generation',
+    check('"using python" code_generation',
           r["intent"] == "code_generation")
 
-    # Negative: no strict keywords → strict_code_mode=False
+    # Negative: no strict keywords strict_code_mode=False
     r = classify_query("explain the concept of mean reversion")
-    check('No strict keywords → strict_code_mode=False',
+    check('No strict keywords strict_code_mode=False',
           r["strict_code_mode"] is False)
-    check('No strict keywords → priority=normal',
+    check('No strict keywords priority=normal',
           r["priority"] == "normal")
 
     # ── Summary ──────────────────────────────────────────────────────

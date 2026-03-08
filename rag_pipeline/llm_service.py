@@ -125,7 +125,7 @@ Rules (in priority order):
 2. If a function implementation exists in context, return it VERBATIM — same variable names, indentation, and logic. Do NOT rewrite, simplify, or substitute with a generic version.
 3. NEVER use outside knowledge or hallucinate facts. If context is insufficient, say: "I could not find sufficient information in the uploaded documents."
 4. Cite every claim: (Source: filename, Page N). When a Snippet number is provided in the chunk header, include it: (Snippet X.Y, Page N).
-5. When context contains code marked with ⚠, copy it character-for-character inside a ```python code fence. Preserve all indentation, line breaks, and variable names exactly.
+5. When context contains code marked with , copy it character-for-character inside a ```python code fence. Preserve all indentation, line breaks, and variable names exactly.
 6. Use markdown formatting (headers, bullets, **bold**, ```python fences for code). Be concise.
 7. End with confidence: **High** / **Medium** / **Low**.
 8. Limit response to 600 tokens.\
@@ -344,13 +344,13 @@ class OllamaLLMBackend:
                 self.generate_stream(query, context, system_prompt=system_prompt)
             )
             answer = "".join(tokens)
-            if not answer or answer.startswith("\n⚠️"):
-                # generate_stream yields error strings starting with ⚠️
+            if not answer or answer.startswith("\n"):
+                # generate_stream yields error strings starting with 
                 return answer or "The LLM returned an empty response. Please try again."
             return answer
         except Exception as e:
             logger.error("Unexpected LLM error: %s", e, exc_info=True)
-            return f"⚠️ Unexpected error: {e}"
+            return f" Unexpected error: {e}"
 
     def generate_stream(
         self, query: str, context: str, *, system_prompt: Optional[str] = None
@@ -387,7 +387,7 @@ class OllamaLLMBackend:
                 effective_num_predict, self._SIMPLE_QUERY_NUM_PREDICT,
             )
             logger.info(
-                "Ollama: simple query (%d words < %d) → "
+                "Ollama: simple query (%d words < %d) "
                 "num_predict reduced to %d",
                 query_words, self._SIMPLE_QUERY_WORD_LIMIT,
                 effective_num_predict,
@@ -486,7 +486,7 @@ class OllamaLLMBackend:
                                 yield "".join(buffer)
                                 buffer.clear()
                             yield (
-                                f"\n\n⚠️ Model stopped responding for "
+                                f"\n\n Model stopped responding for "
                                 f"{int(gap)}s mid-generation — stream "
                                 f"aborted after {token_count} tokens."
                             )
@@ -544,7 +544,7 @@ class OllamaLLMBackend:
         except requests.ConnectionError:
             logger.error("Cannot connect to Ollama at %s", self.base_url)
             yield (
-                "\n⚠️ **Cannot connect to Ollama.**\n\n"
+                "\n **Cannot connect to Ollama.**\n\n"
                 "Please ensure Ollama is running:\n"
                 "1. Install from https://ollama.com/download\n"
                 "2. Run: `ollama pull llama3` (or `mistral`)\n"
@@ -557,7 +557,7 @@ class OllamaLLMBackend:
                 self.first_token_timeout, self.model,
             )
             yield (
-                f"\n⚠️ **No response from Ollama for "
+                f"\n **No response from Ollama for "
                 f"{self.first_token_timeout}s** "
                 "— request cancelled.\n\n"
                 "The model may be loading or the context is too large.\n"
@@ -570,7 +570,7 @@ class OllamaLLMBackend:
         except requests.Timeout:
             logger.error("Ollama connection timed out.")
             yield (
-                "\n⚠️ **Ollama connection timed out.**\n\n"
+                "\n **Ollama connection timed out.**\n\n"
                 "Ensure Ollama is running and reachable."
             )
         except requests.HTTPError as e:
@@ -579,14 +579,14 @@ class OllamaLLMBackend:
                 hasattr(response, "status_code") and response.status_code == 404
             ):
                 yield (
-                    f"\n⚠️ **Model '{self.model}' not found.**\n\n"
+                    f"\n **Model '{self.model}' not found.**\n\n"
                     f"Pull it first: `ollama pull {self.model}`"
                 )
             else:
-                yield f"\n⚠️ LLM error: {e}"
+                yield f"\n LLM error: {e}"
         except Exception as e:
             logger.error("Ollama streaming error: %s", e, exc_info=True)
-            yield f"\n⚠️ Streaming error: {e}"
+            yield f"\n Streaming error: {e}"
 
     def is_available(self) -> bool:
         """Check if Ollama is running and the model is available."""
@@ -1048,14 +1048,14 @@ def create_llm_backend(config: Optional[RAGConfig] = None):
 
 
 # ---------------------------------------------------------------------------
-# Fallback chain: primary → Ollama
+# Fallback chain: primary Ollama
 # ---------------------------------------------------------------------------
 
 class _FallbackChainBackend:
     """
     Wraps a primary LLM backend with an Ollama fallback.
 
-    If ``primary.generate()`` returns an error message (starts with ⚠️)
+    If ``primary.generate()`` returns an error message (starts with )
     or raises an exception, the request is transparently forwarded to
     the fallback (Ollama) backend.
     """
@@ -1066,7 +1066,7 @@ class _FallbackChainBackend:
         self._primary_name = type(primary).__name__
         self._fallback_name = type(fallback).__name__
         logger.info(
-            "LLM fallback chain: %s → %s",
+            "LLM fallback chain: %s %s",
             self._primary_name, self._fallback_name,
         )
 

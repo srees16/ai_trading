@@ -40,7 +40,7 @@ def render_simple_summary_table(signals: List[Any]):
     if not signals:
         return
     
-    st.subheader("📰 News by Source")
+    st.subheader(" News by Source")
     
     # Group signals by (stock, source)
     grouped: Dict[tuple, List] = defaultdict(list)
@@ -107,7 +107,7 @@ def render_simple_summary_table(signals: List[Any]):
 
 def _render_overall_stock_signals(signals: List[Any]):
     """Render overall stock signals summary."""
-    st.subheader("📊 Overall Stock Signals")
+    st.subheader(" Overall Stock Signals")
     
     stock_summary: Dict[str, Dict] = defaultdict(lambda: {
         'scores': [], 'decisions': [], 'sentiments': [], 'price': None
@@ -158,7 +158,7 @@ def render_signals_table(signals: List[Any]):
     if not signals:
         return
     
-    st.subheader("📝 Detailed Analysis Results")
+    st.subheader(" Detailed Analysis Results")
     
     data = []
     for signal in signals:
@@ -211,7 +211,7 @@ def render_signals_table(signals: List[Any]):
     # Download button
     csv = df.to_csv(index=False)
     st.download_button(
-        label="⬇️ Download Results as CSV",
+        label=" Download Results as CSV",
         data=csv,
         file_name=f"trading_signals_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
         mime="text/csv"
@@ -231,7 +231,7 @@ def render_top_signals(signals: List[Any]):
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("📈 Top Buy Signals")
+        st.subheader(" Top Buy Signals")
         buy_signals = [s for s in signals if s.decision.value in ['STRONG_BUY', 'BUY']]
         buy_signals.sort(key=lambda x: x.decision_score, reverse=True)
         
@@ -254,7 +254,7 @@ def render_top_signals(signals: List[Any]):
             st.info("No buy signals found")
     
     with col2:
-        st.subheader("📉 Top Sell Signals")
+        st.subheader(" Top Sell Signals")
         sell_signals = [s for s in signals if s.decision.value in ['STRONG_SELL', 'SELL']]
         sell_signals.sort(key=lambda x: x.decision_score)
         
