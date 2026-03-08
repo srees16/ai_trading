@@ -107,7 +107,7 @@ def render_simple_summary_table(signals: List[Any]):
 
 def _render_overall_stock_signals(signals: List[Any]):
     """Render overall stock signals summary."""
-    st.subheader("📈 Overall Stock Signals")
+    st.subheader("📊 Overall Stock Signals")
     
     stock_summary: Dict[str, Dict] = defaultdict(lambda: {
         'scores': [], 'decisions': [], 'sentiments': [], 'price': None
@@ -158,7 +158,7 @@ def render_signals_table(signals: List[Any]):
     if not signals:
         return
     
-    st.subheader("📋 Detailed Analysis Results")
+    st.subheader("📝 Detailed Analysis Results")
     
     data = []
     for signal in signals:
@@ -231,7 +231,7 @@ def render_top_signals(signals: List[Any]):
     col1, col2 = st.columns(2)
     
     with col1:
-        st.subheader("🔝 Top Buy Signals")
+        st.subheader("📈 Top Buy Signals")
         buy_signals = [s for s in signals if s.decision.value in ['STRONG_BUY', 'BUY']]
         buy_signals.sort(key=lambda x: x.decision_score, reverse=True)
         
@@ -254,7 +254,7 @@ def render_top_signals(signals: List[Any]):
             st.info("No buy signals found")
     
     with col2:
-        st.subheader("⚠️ Top Sell Signals")
+        st.subheader("📉 Top Sell Signals")
         sell_signals = [s for s in signals if s.decision.value in ['STRONG_SELL', 'SELL']]
         sell_signals.sort(key=lambda x: x.decision_score)
         
@@ -294,8 +294,8 @@ def render_fundamental_table(stock_metrics: Dict[str, Any]) -> pd.DataFrame:
         z_score = metrics.altman_z_score
         if z_score is not None:
             z_status = (
-                "🟢 Safe" if z_score > 2.99
-                else ("🟡 Grey Zone" if z_score > 1.81 else "🔴 Distress")
+                "Safe" if z_score > 2.99
+                else ("Grey Zone" if z_score > 1.81 else "Distress")
             )
             z_display = f"{z_score:.2f}"
         else:
@@ -304,7 +304,7 @@ def render_fundamental_table(stock_metrics: Dict[str, Any]) -> pd.DataFrame:
         # Beneish M interpretation
         m_score = metrics.beneish_m_score
         if m_score is not None:
-            m_status = "🔴 Likely Manipulator" if m_score > -2.22 else "🟢 Unlikely"
+            m_status = "Likely Manipulator" if m_score > -2.22 else "Unlikely"
             m_display = f"{m_score:.2f}"
         else:
             m_display, m_status = "N/A", "N/A"
@@ -313,8 +313,8 @@ def render_fundamental_table(stock_metrics: Dict[str, Any]) -> pd.DataFrame:
         f_score = metrics.piotroski_f_score
         if f_score is not None:
             f_status = (
-                "🟢 Strong" if f_score >= 8
-                else ("🟡 Moderate" if f_score >= 5 else "🔴 Weak")
+                "Strong" if f_score >= 8
+                else ("Moderate" if f_score >= 5 else "Weak")
             )
             f_display = f"{f_score}/9"
         else:

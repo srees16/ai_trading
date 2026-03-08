@@ -15,6 +15,8 @@ from ui.components import (
     render_header,
     render_footer,
     render_navigation_buttons,
+    render_vix_indicator,
+    render_stock_ticker_ribbon,
 )
 from utils import parse_ticker_csv, validate_tickers, create_sample_csv
 
@@ -27,7 +29,13 @@ def render_main_page():
                 st.session_state.get('username', 'unknown'))
     render_header()
 
-    # Navigation buttons — directly below the header bar
+    # Scrolling ribbon — top 10 US stocks by market cap
+    render_stock_ticker_ribbon(market="US")
+
+    # VIX indicator bar
+    render_vix_indicator(market="US")
+
+    # Navigation buttons
     render_navigation_buttons(
         current_page='main',
         back_key_suffix='from_main',
@@ -35,7 +43,7 @@ def render_main_page():
 
     # Tighten the gap between nav buttons and control panel
     st.markdown(
-        '<div style="margin-top: -0.6rem;"></div>',
+        '<div style="margin-top: -1.5rem;"></div>',
         unsafe_allow_html=True,
     )
 
@@ -52,20 +60,20 @@ def render_control_panel():
     st.markdown(
         """<style>
         /* Reduce whitespace around radio buttons, expanders, and text areas */
-        [data-testid="stRadio"] { margin-bottom: -0.6rem; }
-        [data-testid="stExpander"] { margin-top: -0.4rem; margin-bottom: -0.4rem; }
-        [data-testid="stTextArea"] { margin-top: -0.4rem; }
-        [data-testid="stFileUploader"] { margin-top: -0.4rem; }
-        [data-testid="stSelectbox"] { margin-bottom: -0.6rem; }
-        [data-testid="stCheckbox"] { margin-top: -0.4rem; margin-bottom: -0.4rem; }
+        [data-testid="stRadio"] { margin-top: -0.5rem; margin-bottom: -0.8rem; }
+        [data-testid="stExpander"] { margin-top: -0.6rem; margin-bottom: -0.6rem; }
+        [data-testid="stTextArea"] { margin-top: -0.6rem; }
+        [data-testid="stFileUploader"] { margin-top: -0.6rem; }
+        [data-testid="stSelectbox"] { margin-bottom: -0.8rem; }
+        [data-testid="stCheckbox"] { margin-top: -0.5rem; margin-bottom: -0.5rem; }
 
         /* Collapse the gap between the two-column panel and the Run button */
         [data-testid="stHorizontalBlock"] + [data-testid="stElementContainer"],
         [data-testid="stHorizontalBlock"] + div {
-            margin-top: -1.2rem !important;
+            margin-top: -1.5rem !important;
         }
         /* Also tighten the warning / button row itself */
-        [data-testid="stAlert"] { margin-top: -0.4rem !important; margin-bottom: -0.4rem !important; }
+        [data-testid="stAlert"] { margin-top: -0.5rem !important; margin-bottom: -0.5rem !important; }
         </style>""",
         unsafe_allow_html=True,
     )
@@ -82,7 +90,7 @@ def render_control_panel():
     st.session_state.tickers = tickers
     
     # Run Analysis section — full width below the settings (tighter spacing)
-    st.markdown('<div style="margin-top: -2.5rem;"></div>', unsafe_allow_html=True)
+    st.markdown('<div style="margin-top: -3.5rem;"></div>', unsafe_allow_html=True)
     run_clicked = _render_run_controls(tickers)
     
     if run_clicked and len(tickers) > 0:
@@ -111,7 +119,7 @@ def _render_ticker_selection() -> List[str]:
     Returns:
         List of selected tickers
     """
-    st.markdown("**Select Stocks**")
+    st.markdown("💼 **Select Stocks**")
     
     ticker_mode = st.radio(
         "Input method:",
@@ -155,7 +163,7 @@ def _handle_manual_entry() -> List[str]:
 
 def _handle_csv_upload() -> List[str]:
     """Handle CSV file upload for tickers."""
-    with st.expander("📄 View CSV format example"):
+    with st.expander("View CSV format example"):
         st.code(create_sample_csv(), language="csv")
         st.download_button(
             label="⬇️ Download Sample CSV",
@@ -177,10 +185,10 @@ def _handle_csv_upload() -> List[str]:
             
             if parsed_tickers:
                 valid_tickers, invalid_tickers = validate_tickers(parsed_tickers)
-                st.success(f"✓ Found {len(valid_tickers)} valid ticker(s)")
+                st.success(f"Found {len(valid_tickers)} valid ticker(s)")
                 
                 if invalid_tickers:
-                    st.warning(f"⚠️ Skipped {len(invalid_tickers)} invalid ticker(s)")
+                    st.warning(f"Skipped {len(invalid_tickers)} invalid ticker(s)")
                     with st.expander("View invalid tickers"):
                         st.write(", ".join(invalid_tickers))
                 
@@ -189,17 +197,17 @@ def _handle_csv_upload() -> List[str]:
                 
                 return valid_tickers
             else:
-                st.error("❌ No valid tickers found in CSV")
+                st.error("No valid tickers found in CSV")
         except Exception as e:
             logger.error(f"Error parsing CSV: {e}")
-            st.error(f"❌ Error parsing CSV: {e}")
+            st.error(f"Error parsing CSV: {e}")
     
     return []
 
 
 def _render_output_settings():
     """Render output settings controls."""
-    st.markdown("**Output Settings**")
+    st.markdown("⚙️ **Output Settings**")
     
     output_format = st.selectbox(
         "Output format:",
@@ -236,7 +244,7 @@ def _render_output_settings():
         extension = ".xlsx" if output_format == "Excel (.xlsx)" else ".csv"
         full_path = Path(custom_path) / f"{filename}{extension}"
         Config.OUTPUT_FILE = str(full_path)
-        st.caption(f"📁 Save to: `{full_path}`")
+        st.caption(f"Save to: `{full_path}`")
     else:
         default_filename = (
             "daily_stock_news.xlsx"
@@ -245,7 +253,7 @@ def _render_output_settings():
         )
         Config.OUTPUT_FILE = default_filename
         default_path = Path.cwd() / default_filename
-        st.caption(f"📁 Save to: `{default_path}`")
+        st.caption(f"Save to: `{default_path}`")
 
 
 def _render_run_controls(tickers: List[str]) -> bool:
@@ -260,13 +268,13 @@ def _render_run_controls(tickers: List[str]) -> bool:
     """
     # Status + Run button (left-aligned)
     if not tickers:
-        st.warning("⚠️ No tickers selected")
+        st.warning("No tickers selected")
     
     btn_col, _ = st.columns([1, 2])
     
     with btn_col:
         run_button = st.button(
-            "Run Analysis",
+            "🚀 Run Analysis",
             type="primary",
             disabled=len(tickers) == 0
         )

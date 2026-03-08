@@ -5,6 +5,10 @@ what is cusum filter, show an example of how i can implement the symmetric CUSUM
 how can i find daily volatility estimates, is there a function that i can use? (p.44)
 what is triple barrier labeling method? how can i apply using python? (p.45, snippet 3.2)
 how can i expand getEvents to incorporate meta-labelling (p.50, snippet 3.6)
+how to do labeling for side and size (snip 3.5, p49)
+what are monte carlo experiments, how can we evaluate the efficiency of the sequential bootstrap algorithm
+what is the implementation of time decay factors (snip 4.11, p70)
+how to find the minimum D value that passes the ADF test (snip 5.4, p 85)
 
 ~~~~ test prompts from "the school of the americas"~~~~
 

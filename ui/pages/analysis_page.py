@@ -15,6 +15,9 @@ from ui.components import (
     render_footer,
     render_metrics_cards,
     render_analysis_navigation_buttons,
+    render_ind_navigation_buttons,
+    render_stock_ticker_ribbon,
+    render_vix_indicator,
     spinner_html,
 )
 
@@ -23,7 +26,9 @@ logger = logging.getLogger(__name__)
 
 def render_analysis_page():
     """Render the analysis progress and results page."""
-    render_page_header("📈 US Stock Analysis")
+    market = st.session_state.get('current_market', 'US')
+    market_label = "Indian" if market == 'IND' else "US"
+    render_page_header(f"{market_label} Stock Analysis")
     
     st.markdown("---")
     
@@ -37,7 +42,7 @@ def render_analysis_page():
         # the CSS animation renders in the browser while heavy
         # Python imports and network calls happen server-side.
         spinner_slot = st.empty()
-        spinner_slot.markdown(spinner_html("Loading analysis engine…"), unsafe_allow_html=True)
+        spinner_slot.markdown(spinner_html("⏳ Loading analysis engine…"), unsafe_allow_html=True)
 
         def _on_progress(pct: int, label: str):
             spinner_slot.markdown(
@@ -46,7 +51,7 @@ def render_analysis_page():
             )
 
         from services.analysis import run_analysis_async   # deferred (heavy)
-        spinner_slot.markdown(spinner_html("Starting analysis…"), unsafe_allow_html=True)
+        spinner_slot.markdown(spinner_html("🚀 Starting analysis…"), unsafe_allow_html=True)
 
         st.session_state.signals = asyncio.run(
             run_analysis_async(st.session_state.tickers, progress_callback=_on_progress)
@@ -92,7 +97,15 @@ def _render_analysis_results(
         render_*: Lazily-imported rendering callables
     """
     # Navigation buttons
-    render_analysis_navigation_buttons()
+    market = st.session_state.get('current_market', 'US')
+    if market == 'IND':
+        render_stock_ticker_ribbon(market="IND")
+        render_vix_indicator(market="IND")
+        render_ind_navigation_buttons(current_page='analysis', back_key_suffix='from_analysis')
+    else:
+        render_stock_ticker_ribbon(market="US")
+        render_vix_indicator(market="US")
+        render_analysis_navigation_buttons()
     
     st.markdown("---")
     
@@ -109,9 +122,9 @@ def _render_analysis_results(
     # Charts in tabs
     tab1, tab2, tab3, tab4 = st.tabs([
         "📊 Overview",
-        "📋 Detailed Table",
-        "🔝 Top Signals",
-        "📈 Sentiment Charts"
+        "📝 Detailed Table",
+        "🎯 Top Signals",
+        "🧠 Sentiment Charts"
     ])
     
     with tab1:
@@ -133,7 +146,7 @@ def _render_analysis_results(
 
 def _render_no_signals_warning():
     """Render warning when no signals were generated."""
-    st.warning("⚠️ No signals were generated. Please try different tickers.")
+    st.warning("No signals were generated. Please try different tickers.")
     
     if st.button("🏠 Main", key="back_no_signals"):
         logger.info("[user=%s] Clicked 'Main' (no signals fallback)",

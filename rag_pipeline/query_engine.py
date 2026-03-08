@@ -42,6 +42,7 @@ from rag_pipeline.perf_trace import PipelineTrace
 from rag_pipeline.query_rewriter import QueryRewriter, expand_query
 from rag_pipeline.reranker import CrossEncoderReranker
 from rag_pipeline.retriever import is_fast_mode, is_simple_query
+from rag_pipeline.query_classifier import classify_query as _classify_query
 from rag_pipeline.semantic_cache import SemanticCache
 from rag_pipeline.tiered_retrieval import TieredRetriever
 from rag_pipeline.fastpath import try_fastpath
@@ -356,9 +357,21 @@ class RAGQueryEngine:
                 )
 
         # --- Step 2b: Fastpath bypass (short quant questions) ---
+        # Skip fastpath when the knowledge base has documents — the
+        # full RAG pipeline should always be used so answers come
+        # from the actual ingested content, not generic templates.
         _t_cls = time.time()
-        with trace.span("fastpath_check"):
-            fastpath_answer = try_fastpath(query_text)
+        _kb_has_docs = self._vs.count() > 0
+        if _kb_has_docs:
+            fastpath_answer = None
+            logger.info(
+                "Fastpath SKIPPED — knowledge base has %d documents; "
+                "using full RAG pipeline.",
+                self._vs.count(),
+            )
+        else:
+            with trace.span("fastpath_check"):
+                fastpath_answer = try_fastpath(query_text)
         _timings["classification"] = time.time() - _t_cls
         if fastpath_answer is not None:
             logger.info("Fastpath HIT — bypassing full RAG pipeline.")
@@ -540,6 +553,15 @@ class RAGQueryEngine:
         # --- Simple-query detection (used to skip heavy stages) ---
         _simple_q = is_simple_query(query_text)
 
+        # --- Query classification (code-mode detection) ---
+        _classification = _classify_query(query_text)
+        _code_mode = _classification.get("strict_code_mode", False)
+        if _code_mode:
+            logger.info(
+                "Code-mode detected for query — reranker will protect "
+                "code chunks from threshold filtering."
+            )
+
         # --- Step 5b: Metadata boost (exact match on snippet/section) ---
         _t_expand = time.time()
         if chunks and not _simple_q:
@@ -576,7 +598,8 @@ class RAGQueryEngine:
         elif self._reranker and chunks:
             with trace.span("rerank", n_candidates=len(chunks)):
                 chunks = self._reranker.rerank(
-                    query_text, chunks, top_n=self._config.rerank_top_n
+                    query_text, chunks, top_n=self._config.rerank_top_n,
+                    code_mode=_code_mode,
                 )
             if not chunks:
                 logger.warning(
@@ -798,9 +821,19 @@ class RAGQueryEngine:
                 return
 
         # Fastpath bypass (short quant questions)
+        # Skip when KB has documents — full RAG pipeline takes priority.
         _t_cls_s = time.time()
-        with trace.span("fastpath_check"):
-            fastpath_answer = try_fastpath(query_text)
+        _kb_has_docs_s = self._vs.count() > 0
+        if _kb_has_docs_s:
+            fastpath_answer = None
+            logger.info(
+                "Fastpath SKIPPED (stream) — knowledge base has %d "
+                "documents; using full RAG pipeline.",
+                self._vs.count(),
+            )
+        else:
+            with trace.span("fastpath_check"):
+                fastpath_answer = try_fastpath(query_text)
         _timings["classification"] = time.time() - _t_cls_s
         if fastpath_answer is not None:
             logger.info("Fastpath HIT (stream) — bypassing full RAG pipeline.")
@@ -930,6 +963,15 @@ class RAGQueryEngine:
         # --- Simple-query detection (used to skip heavy stages) ---
         _simple_q_s = is_simple_query(query_text)
 
+        # --- Query classification (code-mode detection) ---
+        _classification_s = _classify_query(query_text)
+        _code_mode_s = _classification_s.get("strict_code_mode", False)
+        if _code_mode_s:
+            logger.info(
+                "Code-mode detected (stream) — reranker will protect "
+                "code chunks from threshold filtering."
+            )
+
         # Metadata boost (exact match on snippet/section)
         _t_expand_s = time.time()
         if chunks and not _simple_q_s:
@@ -962,7 +1004,8 @@ class RAGQueryEngine:
         elif self._reranker and chunks:
             with trace.span("rerank", n_candidates=len(chunks)):
                 chunks = self._reranker.rerank(
-                    query_text, chunks, top_n=self._config.rerank_top_n
+                    query_text, chunks, top_n=self._config.rerank_top_n,
+                    code_mode=_code_mode_s,
                 )
             if not chunks:
                 logger.warning(
@@ -1180,11 +1223,41 @@ class RAGQueryEngine:
         top_k: int,
         where: Optional[Dict[str, Any]],
     ) -> List[RetrievedChunk]:
-        """Embed a single query variant and retrieve chunks."""
+        """Embed a single query variant and retrieve chunks.
+
+        If the filtered query fails (e.g. ChromaDB index corruption),
+        automatically retries without metadata filters so retrieval
+        degrades gracefully instead of returning zero results.
+        """
         query_embedding = self._embedder.embed_query(query_text)
 
+        try:
+            results = self._run_search(
+                query_text, query_embedding, top_k, where,
+            )
+        except Exception as exc:
+            if where is not None:
+                logger.warning(
+                    "Filtered retrieval failed (%s) — retrying without "
+                    "metadata filter.", exc,
+                )
+                results = self._run_search(
+                    query_text, query_embedding, top_k, None,
+                )
+            else:
+                raise
+        return self._parse_results(results)
+
+    def _run_search(
+        self,
+        query_text: str,
+        query_embedding: List[float],
+        top_k: int,
+        where: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Execute a single vector (or hybrid) search."""
         if self._hybrid:
-            results = self._hybrid.search(
+            return self._hybrid.search(
                 query_text=query_text,
                 query_embedding=query_embedding,
                 top_k=top_k,
@@ -1192,14 +1265,12 @@ class RAGQueryEngine:
                 bm25_weight=self._config.hybrid_bm25_weight,
                 vector_weight=self._config.hybrid_vector_weight,
             )
-        else:
-            results = self._vs.query(
-                query_embeddings=[query_embedding],
-                n_results=top_k,
-                where=where,
-                include=["documents", "metadatas", "distances"],
-            )
-        return self._parse_results(results)
+        return self._vs.query(
+            query_embeddings=[query_embedding],
+            n_results=top_k,
+            where=where,
+            include=["documents", "metadatas", "distances"],
+        )
 
     def _build_where_filter(
         self,
@@ -1514,13 +1585,16 @@ class RAGQueryEngine:
         formatted: List[str] = []
         for i, chunk in enumerate(chunks, 1):
             meta = chunk.metadata
-            page = meta.get("page_number", "?")
+            page = meta.get("page_number") or meta.get("page", "?")
             section = meta.get("section", "")
             similarity = 1.0 - chunk.distance
             rerank_score = meta.get("rerank_score")
             title = meta.get("title", chunk.source)
             word_count = meta.get("word_count", len(chunk.text.split()))
-            contains_code = meta.get("contains_code", False)
+            contains_code = (
+                meta.get("contains_code", False)
+                or meta.get("chunk_type") == "code"
+            )
 
             # Structured header with all available metadata
             header_parts = [
@@ -1554,6 +1628,11 @@ class RAGQueryEngine:
                 if snippet_title:
                     snip_label += f" — {snippet_title}"
                 header_parts.append(snip_label)
+            func_names = meta.get("function_names", [])
+            if func_names:
+                header_parts.append(
+                    f"Functions: {', '.join(func_names)}"
+                )
 
             header_parts.append(f"Vector Similarity: {similarity:.1%}")
             if rerank_score is not None:
@@ -1562,11 +1641,16 @@ class RAGQueryEngine:
             if contains_code:
                 header_parts.append(
                     "⚠ THIS CHUNK CONTAINS SOURCE CODE — reproduce it "
-                    "EXACTLY as written. Do NOT rewrite, paraphrase, or "
-                    "generate alternative code."
+                    "EXACTLY as written inside a ```python code fence. "
+                    "Do NOT rewrite, paraphrase, or generate alternative code."
                 )
             header_parts.append(f"--- Content Start ---")
-            header_parts.append(chunk.text)
+            if contains_code:
+                header_parts.append("```python")
+                header_parts.append(chunk.text)
+                header_parts.append("```")
+            else:
+                header_parts.append(chunk.text)
             header_parts.append(f"--- Content End ---")
 
             formatted.append("\n".join(header_parts))

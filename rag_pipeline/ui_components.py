@@ -216,21 +216,56 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
     results: List[Dict[str, Any]] = []
     if completed:
         engine = _get_query_engine()
+        success_count = 0
+        fail_count = 0
+        total_chunks = 0
+        total_pages = 0
         for task in completed:
             if task.status == TaskStatus.COMPLETED and task.result:
                 results.append(task.result)
                 r = task.result
                 if r["status"] == "success":
+                    success_count += 1
+                    total_chunks += r.get("chunks", 0)
+                    total_pages += r.get("pages", 0)
                     try:
                         engine.invalidate_cache(r["source"], "ingested")
                     except Exception:
                         pass
+                elif r.get("reason") == "already_ingested":
+                    success_count += 1
+                    total_chunks += r.get("chunks", 0)
             elif task.status == TaskStatus.FAILED:
+                fail_count += 1
                 results.append({
                     "status": "error",
                     "source": task.file_name,
                     "error": task.error,
                 })
+
+        # Show a prominent completion notification when no more tasks are pending
+        if not mgr.has_active_tasks():
+            if success_count and not fail_count:
+                st.balloons()
+                st.success(
+                    f"🎉 **Ingestion complete!** {success_count} document(s) ingested "
+                    f"successfully — {total_chunks} chunks from {total_pages} pages. "
+                    "You can now query the knowledge base.",
+                    icon="✅",
+                )
+            elif success_count and fail_count:
+                st.warning(
+                    f"⚠️ **Ingestion finished with errors.** "
+                    f"{success_count} succeeded, {fail_count} failed. "
+                    "Check the status details above.",
+                    icon="⚠️",
+                )
+            elif fail_count:
+                st.error(
+                    f"❌ **Ingestion failed.** {fail_count} document(s) could not "
+                    "be processed. Check the error details above.",
+                    icon="❌",
+                )
 
     # ---- Auto-refresh while ingestion is running -----------------------
     # Polls every 2 s so the progress bar stays in sync with the backend.
@@ -296,7 +331,7 @@ def _render_ingestion_status(mgr) -> None:
                 st.error(f"❌ **{task.file_name}** — {task.error or 'unknown error'}")
 
         if active:
-            st.caption("⏱️ *Updating automatically — submit queries below while ingestion runs.*")
+            st.caption("⏱️ *Updating automatically — submit queries above while ingestion runs.*")
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +406,7 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
     """
     from rag_pipeline.code_applier import extract_code_blocks
 
-    st.markdown("### 💡 Answer")
+    st.markdown("### Answer")
     _render_answer_content(response.answer)
 
     # ---- Feedback buttons (thumbs up / thumbs down) ----
@@ -642,10 +677,25 @@ def render_knowledge_base() -> None:
     col3.metric("Collection", stats["collection_name"])
 
     if stats["sources"]:
+        per_source = vs.get_per_source_stats()
         st.markdown("**Indexed Sources:**")
         for src in stats["sources"]:
+            info = per_source.get(src, {})
+            chunks = info.get("chunks", 0)
+            pages = info.get("page_count", 0)
+            size_bytes = info.get("file_size", 0)
+            if size_bytes >= 1_048_576:
+                size_str = f"{size_bytes / 1_048_576:.1f} MB"
+            elif size_bytes >= 1024:
+                size_str = f"{size_bytes / 1024:.1f} KB"
+            elif size_bytes > 0:
+                size_str = f"{size_bytes} B"
+            else:
+                size_str = "n/a"
             col_a, col_b = st.columns([4, 1])
-            col_a.write(f"📄 {src}")
+            col_a.write(
+                f"📄 **{src}**  ·  {chunks} chunks  ·  {pages} pages  ·  {size_str}"
+            )
             if col_b.button("🗑️", key=f"del_{src}", help=f"Remove {src}"):
                 ingestion_svc = _get_ingestion_service()
                 removed = ingestion_svc.delete_source(src)

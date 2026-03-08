@@ -52,7 +52,7 @@ def _get_ingestion_service():
     if engine is None:
         raise HTTPException(status_code=503, detail="RAG engine not available")
     try:
-        from rag_pipeline.pdf_ingestion import PDFIngestionService
+        from rag_pipeline.ingestion.pdf_ingestion import PDFIngestionService
 
         return PDFIngestionService(
             vector_store=engine._vs,
@@ -319,7 +319,7 @@ async def run_evaluation(request: RunEvaluationRequest):
         raise HTTPException(status_code=503, detail="RAG engine not available")
 
     try:
-        from rag_pipeline.evaluation import (
+        from rag_pipeline.llm.evaluation import (
             EvalDataset,
             EvalQuery,
             run_evaluation as _run_eval,

@@ -60,6 +60,42 @@ class DataService:
         """Check if yfinance is available."""
         return True
     
+    @staticmethod
+    def _ensure_exchange_suffix(ticker: str) -> str:
+        """Add .NS suffix for Indian tickers that are missing it.
+
+        yfinance requires NSE tickers to end with ``.NS`` (e.g.
+        ``RELIANCE.NS``).  If the ticker already carries an exchange
+        suffix (``.NS``, ``.BO``, ``.L``, etc.) it is returned as-is.
+        Otherwise we make a quick ``yf.Ticker`` probe: if the bare
+        symbol fails but ``{symbol}.NS`` succeeds, we return the
+        suffixed version.
+        """
+        # Already has an exchange suffix → nothing to do
+        if '.' in ticker:
+            return ticker
+
+        # Quick probe: try the bare ticker first
+        try:
+            info = yf.Ticker(ticker).fast_info
+            if info and getattr(info, 'timezone', None):
+                return ticker  # bare symbol works (US stock, etc.)
+        except Exception:
+            pass
+
+        # Try with .NS suffix (NSE India)
+        ns_ticker = f"{ticker}.NS"
+        try:
+            info = yf.Ticker(ns_ticker).fast_info
+            if info and getattr(info, 'timezone', None):
+                logger.info("DataService: Resolved %s → %s", ticker, ns_ticker)
+                return ns_ticker
+        except Exception:
+            pass
+
+        # Return original — let downstream handle the error
+        return ticker
+    
     def get_ohlcv(
         self,
         ticker: str,
@@ -112,7 +148,10 @@ class DataService:
         """Fetch data from Yahoo Finance."""
         if not self._yf_available:
             raise ImportError("yfinance is required for data fetching")
-        
+
+        # Ensure Indian tickers have .NS suffix for yfinance
+        ticker = self._ensure_exchange_suffix(ticker)
+
         try:
             df = yf.download(
                 ticker,

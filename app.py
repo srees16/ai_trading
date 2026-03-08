@@ -35,6 +35,7 @@ if os.getcwd() != _PROJECT_ROOT:
     os.chdir(_PROJECT_ROOT)
 
 import logging
+import time as _time
 
 import streamlit as st
 
@@ -54,6 +55,17 @@ logging.basicConfig(
     handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
+
+_LOG_INTERVAL = 5  # seconds
+_last_module_log_ts: float = 0.0
+
+def _throttled_module_info(msg: str, *args) -> None:
+    """Log module-rendering messages at most once every _LOG_INTERVAL seconds."""
+    global _last_module_log_ts
+    now = _time.monotonic()
+    if now - _last_module_log_ts >= _LOG_INTERVAL:
+        logger.info(msg, *args)
+        _last_module_log_ts = now
 
 
 # ── Ollama model warm-up (runs exactly once per process) ────────
@@ -109,7 +121,7 @@ def _warmup_ollama() -> bool:
 
 st.set_page_config(
     page_title="Centurion Capital LLC",
-    page_icon="📈",
+    page_icon="📊",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -140,10 +152,10 @@ def main():
     # ── Top-level app selector ──────────────────────────────────
     # Displayed as a compact radio bar right after login.
     APP_OPTIONS = {
-        "trading_platform": "📈 US Stocks",
-        "live_stocks":      "📈 Ind Stocks",
-        "crypto":           "₿ Crypto",
-        "rag_engine":       "📚 RAG Engine",
+        "trading_platform": "US Stocks",
+        "live_stocks": "Ind Stocks",
+        "crypto": "Crypto",
+        "rag_engine": "RAG Engine"
     }
 
     current_app = st.session_state.get("current_app", "trading_platform")
@@ -178,10 +190,10 @@ def main():
 
     if selected_app == "live_stocks":
         logger.info("[user=%s] Rendering module: Ind Stocks", _user)
-        _get_renderer("live_stocks")()
+        _route_ind_stocks()
 
     elif selected_app == "rag_engine":
-        logger.info("[user=%s] Rendering module: RAG Engine", _user)
+        _throttled_module_info("[user=%s] Rendering module: RAG Engine", _user)
         _get_renderer("rag_engine")()
 
     elif selected_app == "crypto":
@@ -220,6 +232,15 @@ def _get_renderer(module_key: str):
     elif module_key == "history":
         from ui.pages.history_page import render_history_page
         return render_history_page
+    elif module_key == "us_holdings":
+        from ui.pages.us_holdings_page import render_us_holdings_page
+        return render_us_holdings_page
+    elif module_key == "ind_main":
+        from ui.pages.ind_main_page import render_ind_main_page
+        return render_ind_main_page
+    elif module_key == "options":
+        from ui.pages.options_page import render_options_page
+        return render_options_page
     elif module_key == "main":
         from ui.pages.main_page import render_main_page
         return render_main_page
@@ -232,10 +253,33 @@ def _route_trading_platform():
     _user = st.session_state.get('username', 'unknown')
     logger.info("[user=%s] US Stocks sub-page: %s", _user, current_page)
 
+    st.session_state['current_market'] = 'US'
+
     renderer = _get_renderer(current_page if current_page in (
-        'analysis', 'fundamental', 'backtesting', 'history',
+        'analysis', 'fundamental', 'backtesting', 'history', 'us_holdings',
     ) else 'main')
     renderer()
+
+
+def _route_ind_stocks():
+    """Route to the appropriate Indian Stocks sub-page."""
+    current_page = st.session_state.get('current_page', 'main')
+    _user = st.session_state.get('username', 'unknown')
+    logger.info("[user=%s] Ind Stocks sub-page: %s", _user, current_page)
+
+    st.session_state['current_market'] = 'IND'
+
+    if current_page == 'ind_kite':
+        # Render the live Kite dashboard
+        _get_renderer('live_stocks')()
+    elif current_page == 'options':
+        _get_renderer('options')()
+    elif current_page in ('analysis', 'fundamental', 'backtesting', 'history'):
+        # Reuse the same pages as US Stocks — they read current_market
+        _get_renderer(current_page)()
+    else:
+        # Default: Indian Stocks main page (ticker selection)
+        _get_renderer('ind_main')()
 
 
 if __name__ == "__main__":

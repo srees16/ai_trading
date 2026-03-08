@@ -178,7 +178,8 @@ class BacktestRepository(BaseRepository[BacktestResult]):
     def get_recent_backtests(
         self,
         days: int = 7,
-        limit: int = 50
+        limit: int = 50,
+        market: str = None,
     ) -> List[BacktestResult]:
         """
         Get recently run backtests.
@@ -186,15 +187,21 @@ class BacktestRepository(BaseRepository[BacktestResult]):
         Args:
             days: Number of days back
             limit: Maximum results
+            market: Filter by market ('US', 'IND')
             
         Returns:
             List of recent backtests
         """
         cutoff = datetime.utcnow() - timedelta(days=days)
         
-        return self.session.query(BacktestResult).filter(
+        query = self.session.query(BacktestResult).filter(
             BacktestResult.created_at >= cutoff
-        ).order_by(desc(BacktestResult.created_at)).limit(limit).all()
+        )
+        
+        if market:
+            query = query.filter(BacktestResult.market == market)
+        
+        return query.order_by(desc(BacktestResult.created_at)).limit(limit).all()
     
     def compare_strategies(
         self,

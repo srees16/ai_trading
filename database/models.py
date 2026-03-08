@@ -63,6 +63,9 @@ class AnalysisRun(Base, TimestampMixin):
     run_type = Column(String(50), nullable=False)  # 'stock_analysis', 'backtest', 'fundamental'
     status = Column(SQLEnum(AnalysisStatus), default=AnalysisStatus.PENDING, nullable=False)
     
+    # Market identifier (US, IND)
+    market = Column(String(10), nullable=False, default='US', server_default='US', index=True)
+    
     # Input parameters
     tickers = Column(ARRAY(String), nullable=False)
     parameters = Column(JSONB, default={})
@@ -104,6 +107,9 @@ class NewsItem(Base, TimestampMixin):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     analysis_run_id = Column(UUID(as_uuid=True), ForeignKey('analysis_runs.id'), nullable=True)
+    
+    # Market identifier (US, IND)
+    market = Column(String(10), nullable=False, default='US', server_default='US', index=True)
     
     # Core news data
     ticker = Column(String(20), nullable=False, index=True)
@@ -150,6 +156,9 @@ class StockSignal(Base, TimestampMixin):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     analysis_run_id = Column(UUID(as_uuid=True), ForeignKey('analysis_runs.id'), nullable=True)
     news_item_id = Column(UUID(as_uuid=True), ForeignKey('news_items.id'), nullable=True)
+    
+    # Market identifier (US, IND)
+    market = Column(String(10), nullable=False, default='US', server_default='US', index=True)
     
     # Core signal data
     ticker = Column(String(20), nullable=False, index=True)
@@ -202,6 +211,9 @@ class FundamentalMetric(Base, TimestampMixin):
     __tablename__ = 'fundamental_metrics'
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # Market identifier (US, IND)
+    market = Column(String(10), nullable=False, default='US', server_default='US', index=True)
     
     # Core data
     ticker = Column(String(20), nullable=False, index=True)
@@ -266,6 +278,9 @@ class BacktestResult(Base, TimestampMixin):
     __tablename__ = 'backtest_results'
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # Market identifier (US, IND)
+    market = Column(String(10), nullable=False, default='US', server_default='US', index=True)
     
     # Strategy identification
     strategy_id = Column(String(100), nullable=False, index=True)

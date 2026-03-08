@@ -15,7 +15,7 @@ from uuid import UUID
 import streamlit as st
 
 from config import Config
-from ui.components import render_page_header, render_footer, render_navigation_buttons, get_decision_emoji
+from ui.components import render_page_header, render_footer, render_navigation_buttons, render_ind_navigation_buttons, render_stock_ticker_ribbon, render_vix_indicator, get_decision_emoji
 
 logger = logging.getLogger(__name__)
 
@@ -68,19 +68,26 @@ def render_history_page():
     _ensure_heavy()
     logger.info("[user=%s] Viewing History page",
                 st.session_state.get('username', 'unknown'))
+    market = st.session_state.get('current_market', 'US')
+    market_label = "Indian" if market == 'IND' else "US"
     render_page_header(
-        title="📋 History"
+        title=f"{market_label} History"
     )
-
-    st.markdown("---")
 
     # Navigation
-    render_navigation_buttons(
-        current_page='history',
-        back_key_suffix="history"
-    )
+    if market == 'IND':
+        render_stock_ticker_ribbon(market="IND")
+        render_vix_indicator(market="IND")
+        render_ind_navigation_buttons(current_page='history', back_key_suffix='history')
+    else:
+        render_stock_ticker_ribbon(market="US")
+        render_vix_indicator(market="US")
+        render_navigation_buttons(
+            current_page='history',
+            back_key_suffix="history"
+        )
 
-    st.markdown("")
+    st.markdown("---")
 
     if not DB_AVAILABLE:
         _render_db_unavailable()
@@ -93,8 +100,8 @@ def render_history_page():
     # Tabs for different history views
     tab_runs, tab_signals, tab_backtests = st.tabs([
         "📊 Analysis Runs",
-        "📈 Trading Signals",
-        "🔬 Backtest Results",
+        "🎯 Trading Signals",
+        "📈 Backtest Results",
     ])
 
     with tab_runs:
@@ -114,7 +121,7 @@ def _render_db_unavailable():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         st.info(
-            "🗄️ **Database Not Configured**\n\n"
+            "**Database Not Configured**\n\n"
             "History requires a PostgreSQL database connection.\n\n"
             "Set the following environment variables to enable:\n"
             "- `CENTURION_DB_PASSWORD` or `CENTURION_DATABASE_URL`\n"
@@ -134,7 +141,7 @@ def _render_date_filter() -> Dict[str, Any]:
 
     with col1:
         period = st.selectbox(
-            "📅 Time Period",
+            "Time Period",
             ["Last 7 days", "Last 14 days", "Last 30 days", "Last 90 days", "Custom Range"],
             index=0,
             key="history_period"
@@ -182,11 +189,12 @@ def _render_analysis_runs(date_range: Dict[str, Any]):
     """Render past analysis runs with drill-down capability."""
     try:
         db_service = _get_db_service()
+        market = st.session_state.get('current_market', 'US')
 
         with db_service.session_scope() as session:
             AnalysisRepository, _, _ = _get_repositories()
             repo = AnalysisRepository(session)
-            runs = repo.get_recent_runs(limit=100, days=date_range['days'])
+            runs = repo.get_recent_runs(limit=100, days=date_range['days'], market=market)
 
             if not runs:
                 st.info("No analysis runs found for the selected period.")
@@ -195,7 +203,7 @@ def _render_analysis_runs(date_range: Dict[str, Any]):
             # Summary metrics
             _render_run_summary(runs)
 
-            st.markdown("##### Analysis Run History")
+            st.markdown("##### 📊 Analysis Run History")
 
             # Build DataFrame
             run_data = []
@@ -250,13 +258,13 @@ def _render_run_summary(runs: list):
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Total Runs", total)
+        st.metric("📊 Total Runs", total)
     with col2:
-        st.metric("Completed", completed)
+        st.metric("✅ Completed", completed)
     with col3:
-        st.metric("Failed", failed)
+        st.metric("❌ Failed", failed)
     with col4:
-        st.metric("Total Signals", total_signals)
+        st.metric("🎯 Total Signals", total_signals)
 
 
 def _render_run_details(session, run_id: str):
@@ -268,7 +276,7 @@ def _render_run_details(session, run_id: str):
         return
 
     st.markdown("---")
-    st.markdown(f"##### 📋 Run Details — `{run_id[:8]}`")
+    st.markdown(f"##### Run Details — `{run_id[:8]}`")
 
     # Fetch signals for this run
     _, SignalRepository, _ = _get_repositories()
@@ -304,7 +312,7 @@ def _render_run_details(session, run_id: str):
         ).order_by(NewsItem.published_at.desc()).all()
 
         if news_items:
-            with st.expander(f"📰 News Items ({len(news_items)})", expanded=False):
+            with st.expander(f"News Items ({len(news_items)})", expanded=False):
                 news_data = []
                 for n in news_items:
                     news_data.append({
@@ -332,7 +340,7 @@ def _render_signal_history(date_range: Dict[str, Any]):
 
         # Ticker filter
         ticker_input = st.text_input(
-            "🔎 Filter by ticker (comma-separated, leave empty for all)",
+            "Filter by ticker (comma-separated, leave empty for all)",
             value="",
             key="history_signal_ticker",
             placeholder="e.g. AAPL, GOOGL, TSLA"
@@ -357,8 +365,10 @@ def _render_signal_history(date_range: Dict[str, Any]):
                 # Get all recent signals
                 cutoff = date_range['start_date']
                 _, StockSignal = _get_db_models()
+                market = st.session_state.get('current_market', 'US')
                 all_signals = session.query(StockSignal).filter(
-                    StockSignal.created_at >= cutoff
+                    StockSignal.created_at >= cutoff,
+                    StockSignal.market == market,
                 ).order_by(desc(StockSignal.created_at)).limit(500).all()
 
             if not all_signals:
@@ -368,16 +378,16 @@ def _render_signal_history(date_range: Dict[str, Any]):
             # Summary
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Total Signals", len(all_signals))
+                st.metric("🎯 Total Signals", len(all_signals))
             with col2:
                 buy_count = sum(1 for s in all_signals if s.decision and s.decision.value in ('BUY', 'STRONG_BUY'))
-                st.metric("Buy Signals", buy_count)
+                st.metric("📈 Buy Signals", buy_count)
             with col3:
                 sell_count = sum(1 for s in all_signals if s.decision and s.decision.value in ('SELL', 'STRONG_SELL'))
-                st.metric("Sell Signals", sell_count)
+                st.metric("📉 Sell Signals", sell_count)
 
             # Signal table
-            st.markdown("##### Signal History")
+            st.markdown("##### 🎯 Signal History")
             signal_data = []
             for s in all_signals:
                 signal_data.append({
@@ -397,7 +407,7 @@ def _render_signal_history(date_range: Dict[str, Any]):
 
             # Decision distribution chart
             if len(all_signals) > 1:
-                with st.expander("📊 Decision Distribution", expanded=False):
+                with st.expander("Decision Distribution", expanded=False):
                     decision_counts = {}
                     for s in all_signals:
                         d = s.decision.value if s.decision else 'UNKNOWN'
@@ -422,13 +432,15 @@ def _render_backtest_history(date_range: Dict[str, Any]):
     """Render historical backtest results."""
     try:
         db_service = _get_db_service()
+        market = st.session_state.get('current_market', 'US')
 
         with db_service.session_scope() as session:
             _, _, BacktestRepository = _get_repositories()
             repo = BacktestRepository(session)
             backtests = repo.get_recent_backtests(
                 days=date_range['days'],
-                limit=100
+                limit=100,
+                market=market,
             )
 
             if not backtests:
@@ -439,9 +451,9 @@ def _render_backtest_history(date_range: Dict[str, Any]):
             col1, col2, col3, col4 = st.columns(4)
             successful = [b for b in backtests if b.success]
             with col1:
-                st.metric("Total Backtests", len(backtests))
+                st.metric("📊 Total Backtests", len(backtests))
             with col2:
-                st.metric("Successful", len(successful))
+                st.metric("✅ Successful", len(successful))
             with col3:
                 avg_return = (
                     sum(b.total_return for b in successful if b.total_return is not None)
@@ -453,17 +465,17 @@ def _render_backtest_history(date_range: Dict[str, Any]):
                     sum(b.sharpe_ratio for b in successful if b.sharpe_ratio is not None)
                     / max(1, len([b for b in successful if b.sharpe_ratio is not None]))
                 ) if successful else 0
-                st.metric("Avg Sharpe", f"{avg_sharpe:.2f}")
+                st.metric("📊 Avg Sharpe", f"{avg_sharpe:.2f}")
 
             # Backtest table
-            st.markdown("##### Backtest Results")
+            st.markdown("##### 📈 Backtest Results")
             bt_data = []
             for b in backtests:
                 bt_data.append({
                     'Date': b.created_at.strftime('%Y-%m-%d %H:%M') if b.created_at else 'N/A',
                     'Strategy': b.strategy_name or 'N/A',
                     'Tickers': ', '.join(b.tickers) if b.tickers else 'N/A',
-                    'Status': '✅' if b.success else '❌',
+                    'Status': '' if b.success else '',
                     'Return': f"{b.total_return:.2f}%" if b.total_return is not None else 'N/A',
                     'Sharpe': f"{b.sharpe_ratio:.2f}" if b.sharpe_ratio is not None else 'N/A',
                     'Max DD': f"{b.max_drawdown:.2f}%" if b.max_drawdown is not None else 'N/A',
@@ -503,7 +515,7 @@ def _render_minio_backtest_charts():
         if not run_details:
             return
 
-        with st.expander("🖼️ Stored Backtest Charts", expanded=False):
+        with st.expander("Stored Backtest Charts", expanded=False):
             # --- Runs overview table ---
             def _fmt_size(b: int) -> str:
                 if b < 1024:
@@ -618,10 +630,10 @@ def _render_strategy_comparison(backtests: list):
 def _format_status(status: str) -> str:
     """Format status with emoji indicator."""
     status_map = {
-        'completed': '✅ Completed',
-        'running': '🔄 Running',
-        'pending': '⏳ Pending',
-        'failed': '❌ Failed',
+        'completed': 'Completed',
+        'running': 'Running',
+        'pending': 'Pending',
+        'failed': 'Failed',
     }
     return status_map.get(status.lower(), status)
 

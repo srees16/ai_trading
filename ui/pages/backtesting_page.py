@@ -15,7 +15,7 @@ import streamlit as st
 
 from config import Config
 from trading_strategies import list_strategies
-from ui.components import render_page_header, render_footer, render_navigation_buttons, render_no_data_warning
+from ui.components import render_page_header, render_footer, render_navigation_buttons, render_ind_navigation_buttons, render_stock_ticker_ribbon, render_vix_indicator, render_no_data_warning
 
 logger = logging.getLogger(__name__)
 
@@ -103,15 +103,24 @@ def render_backtesting_page():
     _ensure_heavy()  # lazy-load pandas, plotly, ui.tables
     logger.info("[user=%s] Viewing Backtesting page",
                 st.session_state.get('username', 'unknown'))
+    market = st.session_state.get('current_market', 'US')
+    market_label = "Indian" if market == 'IND' else "US"
     render_page_header(
-        "🔬 Backtest Strategy"
+        f"{market_label} Backtest Strategy"
     )
 
     # Navigation buttons
-    render_navigation_buttons(
-        current_page='backtesting',
-        back_key_suffix='from_backtest'
-    )
+    if market == 'IND':
+        render_stock_ticker_ribbon(market="IND")
+        render_vix_indicator(market="IND")
+        render_ind_navigation_buttons(current_page='backtesting', back_key_suffix='from_backtest')
+    else:
+        render_stock_ticker_ribbon(market="US")
+        render_vix_indicator(market="US")
+        render_navigation_buttons(
+            current_page='backtesting',
+            back_key_suffix='from_backtest'
+        )
     
     st.markdown("---")
 
@@ -274,7 +283,7 @@ def _precompute_all_strategies(strategies: list):
             logger.error(f"Pre-compute failed for {strategy_name}: {e}")
 
     spinner_slot.markdown(
-        _spinner_html(100, "All strategies computed ✅"),
+        _spinner_html(100, "✅ All strategies computed "),
         unsafe_allow_html=True,
     )
     import time as _time; _time.sleep(0.6)
@@ -344,13 +353,13 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
         params = strategy_cls.get_parameters()
         
         st.markdown("---")
-        st.subheader("📊 Parameters")
+        st.subheader("🔧 Parameters")
         
         # Dynamic parameter inputs
         param_values = _render_parameter_inputs(params)
         
         st.markdown("---")
-        st.subheader("🗂️ Data Settings")
+        st.subheader("📊 Data Settings")
         
         # Ticker and date inputs
         _render_data_settings(strategy_info, param_values)
@@ -363,13 +372,13 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
         
         # Show cache status (render with no extra vertical margin)
         if selected_name in cache:
-            _compact_caption(f"📦 Cached result loaded for **{selected_name}**")
+            _compact_caption(f"Cached result loaded for **{selected_name}**")
         
         btn_col, _ = st.columns([1.3, 1.7])
         with btn_col:
             st.markdown('<div class="bt-green-btn-scope">', unsafe_allow_html=True)
             run_backtest = st.button(
-                "Run Backtest",
+                "🚀 Run Backtest",
                 type="primary",
                 disabled=not param_values.get('tickers'),
                 help="Run with custom parameters (overrides cached result)",
@@ -481,7 +490,7 @@ def _render_data_settings(strategy_info: Dict, param_values: Dict):
                 max_value=datetime.now()
             )
         if start_date >= end_date:
-            st.warning("⚠️ Start date must be before end date.")
+            st.warning("Start date must be before end date.")
     else:
         end_date = datetime.now()
         period_days = {
@@ -535,7 +544,7 @@ def _execute_backtest(strategy_cls, strategy_info: Dict, param_values: Dict, sel
         st.session_state.backtest_cache[selected_name] = result
 
         manual_spinner.markdown(
-            _spinner_html(100, f"{selected_name} complete ✅"),
+            _spinner_html(100, f"{selected_name} complete "),
             unsafe_allow_html=True,
         )
         import time as _time; _time.sleep(0.6)
@@ -561,12 +570,12 @@ def _execute_backtest(strategy_cls, strategy_info: Dict, param_values: Dict, sel
         else:
             logger.warning("[user=%s] Backtest failed: %s — %s",
                            _user, selected_name, result.error_message)
-            st.error(f"❌ Failed: {result.error_message}")
+            st.error(f"Failed: {result.error_message}")
 
     except Exception as e:
         manual_spinner.empty()
         logger.error(f"Error running backtest: {e}")
-        st.error(f"❌ Error: {str(e)}")
+        st.error(f"Error: {str(e)}")
 
 
 def _save_backtest_to_database(
@@ -618,8 +627,8 @@ def _save_backtest_to_database(
                 'final_value': m.get('final_value'),
             })
         
-        if db_service.save_backtest_result(backtest_data):
-            _compact_caption("🗄️ Results saved to database")
+        if db_service.save_backtest_result(backtest_data, market=st.session_state.get('current_market', 'US')):
+            _compact_caption("Results saved to database")
             
     except Exception as e:
         logger.error(f"Failed to save backtest to database: {e}")
@@ -667,16 +676,23 @@ def _save_charts_to_minio(
             strategy_name=strategy_name,
         )
 
-        return len(saved) if saved else 0
+        count = len(saved) if saved else 0
+        if count:
+            logger.info("Saved %d chart(s) to MinIO for %s", count, strategy_name)
+        else:
+            logger.warning("No charts saved to MinIO for %s (charts=%d)",
+                           strategy_name, len(result.charts))
+        return count
 
     except Exception as e:
         logger.error(f"Failed to save charts to MinIO: {e}")
+        st.warning(f"Could not save charts to MinIO: {e}")
         return 0
 
 
 def _render_results_panel():
     """Render the backtest results panel with tabs for each strategy."""
-    st.subheader("📈 Results")
+    st.subheader("Results")
 
     cache = st.session_state.get('backtest_cache', {})
 
@@ -684,7 +700,7 @@ def _render_results_panel():
     if not cache:
         result = st.session_state.get('backtest_result')
         if result is None:
-            st.info("👈 Configure a strategy and click **Run Backtest** to see results")
+            st.info("Configure a strategy and click **Run Backtest** to see results")
             return
         _render_single_strategy_result(result)
         return
@@ -705,7 +721,7 @@ def _render_results_panel():
 def _render_single_strategy_result(result):
     """Render metrics, charts, tables, and signals for a single strategy result."""
     if not result.success:
-        st.error(f"❌ Backtest failed: {result.error_message}")
+        st.error(f"Backtest failed: {result.error_message}")
         return
 
     # Display metrics
@@ -760,7 +776,7 @@ def _render_performance_metrics(metrics: Dict):
     
     # Show aggregate summary first (if multiple tickers)
     if aggregate_metrics and len(ticker_metrics) > 1:
-        st.markdown("##### 📊 Aggregate Summary")
+        st.markdown("##### Aggregate Summary")
         agg_cols = st.columns(min(4, len(aggregate_metrics)))
         for i, (key, val) in enumerate(aggregate_metrics.items()):
             with agg_cols[i % len(agg_cols)]:
@@ -849,7 +865,7 @@ def _render_ticker_metric_cards(t_metrics: Dict, display_keys: list):
 def _render_complex_metric(label: str, val):
     """Render a nested dict or list metric as an expandable section."""
     import pandas as pd
-    with st.expander(f"📋 {label}", expanded=False):
+    with st.expander(f"{label}", expanded=False):
         if isinstance(val, list):
             if val and isinstance(val[0], dict):
                 # List of dicts → table

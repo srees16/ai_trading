@@ -34,7 +34,7 @@ elif sys.path[0] != _PROJECT_ROOT:
 # ── Heavy imports are LAZY ──────────────────────────────────────────
 # kiteconnect pulls in twisted+autobahn (~30 s on Windows).  We defer
 # all heavy imports to first actual use so the login page isn't blocked.
-from ui.components import load_logo_base64_small, render_header_bar, render_footer, spinner_html as _spinner_html
+from ui.components import load_logo_base64_small, render_header_bar, render_footer, render_ind_navigation_buttons, render_stock_ticker_ribbon, render_vix_indicator, spinner_html as _spinner_html
 
 # Lazy singletons — populated on first call via _ensure_imports()
 _kite_mod = None
@@ -205,16 +205,16 @@ def _cached_nse_market_status():
             if mkt.get("market") == "Capital Market":
                 status = (mkt.get("marketStatus") or "").lower()
                 if status in ("open", "live"):
-                    return "pill-open", "Live"
+                    return "pill-open", "🟢 Live"
                 elif "pre" in status:
-                    return "pill-pre", "Pre-Open"
+                    return "pill-pre", "🟡 Pre-Open"
                 elif "close" in status:
-                    return "pill-closed", "Closed"
+                    return "pill-closed", "🔴 Closed"
                 else:
                     return "pill-pre", status.title()
     except Exception:
         pass
-    return "pill-closed", "Closed"
+    return "pill-closed", "🔴 Closed"
 
 
 # ── Database ───────────────────────────────────────────────────
@@ -447,11 +447,11 @@ def fetch_realtime_quotes(kite, stock_symbols):
         except kite_exceptions.TokenException:
             # Access token expired mid-session — clear cache so next refresh re-logins
             st.cache_resource.clear()
-            st.error("Kite session expired. Click 'Reconnect' to re-login.")
+            st.error("⚠️ Kite session expired. Click 'Reconnect' to re-login.")
             return all_quotes
         except kite_exceptions.InputException as e:
             # Some symbols may be invalid — try them individually
-            st.warning(f"Batch quote failed, trying individually: {e}")
+            st.warning(f"⚠️ Batch quote failed, trying individually: {e}")
             for inst in batch:
                 try:
                     q = kite.quote([inst])
@@ -461,7 +461,7 @@ def fetch_realtime_quotes(kite, stock_symbols):
                 except Exception:
                     failed_symbols.append(inst.replace("NSE:", ""))
         except Exception as e:
-            st.warning(f"Could not fetch quotes: {e}")
+            st.warning(f"⚠️ Could not fetch quotes: {e}")
 
     if failed_symbols:
         st.warning(f"⚠️ {len(failed_symbols)} symbols not found: {', '.join(failed_symbols)}")
@@ -478,10 +478,11 @@ def render_live_dashboard():
     Does NOT call st.set_page_config — the caller is responsible for that.
     """
 
-    # ── Landing page gate: show intro until user clicks "Start Kite Session" ──
+    # ── Auto-start Kite session (no landing page) ──
     if not st.session_state.get("kite_session_started", False):
-        _render_landing_page()
-        return
+        logger.info("[user=%s] Ind Stocks: Kite session auto-started",
+                    st.session_state.get('username', 'unknown'))
+        st.session_state["kite_session_started"] = True
 
     _render_dashboard()
 
@@ -490,7 +491,13 @@ def render_live_dashboard():
 
 def _render_landing_page():
     """Show an intro landing page before the Kite session is started."""
-    render_header_bar(subtitle="Indian Equities · Zerodha Kite Connect")
+    render_header_bar(subtitle="🏠 Indian Equities · Zerodha Kite Connect")
+
+    render_stock_ticker_ribbon(market="IND")
+    render_vix_indicator(market="IND")
+
+    # Navigation buttons for Ind Stocks module
+    render_ind_navigation_buttons(current_page='ind_kite', back_key_suffix='from_kite_landing')
 
     st.markdown("""
     <style>
@@ -507,7 +514,7 @@ def _render_landing_page():
     </style>
 
     <div class="landing-card">
-        <h3>📈 Indian Equities — Live Dashboard</h3>
+        <h3>Indian Equities — Live Dashboard</h3>
         <ul>
             <li><strong>Real-time quotes</strong> — NIFTY 50, Bank Nifty, IT &amp; Energy indices streamed via Zerodha Kite Connect</li>
             <li><strong>Live market status</strong> — automatic detection of pre-open, live, and post-market sessions from NSE</li>
@@ -518,7 +525,7 @@ def _render_landing_page():
 
     _, col_btn, _ = st.columns([3, 1, 3])
     with col_btn:
-        if st.button("Start Kite Session", type="primary", use_container_width=True):
+        if st.button("🚀 Start Kite Session", type="primary", use_container_width=True):
             logger.info("[user=%s] Ind Stocks: Start Kite Session clicked", st.session_state.get('username', 'unknown'))
             st.session_state["kite_session_started"] = True
             st.rerun()
@@ -792,14 +799,14 @@ def _render_dashboard():
     except kite_exceptions.TokenException:
         _auth_slot.empty()
         st.cache_resource.clear()
-        st.warning("Session expired. Reconnecting...")
+        st.warning("⚠️ Session expired. Reconnecting...")
         st.rerun()
         return
     except Exception as e:
         _auth_slot.empty()
         kite_status = "Disconnected"
-        st.error(f"Kite Connect login failed: {e}")
-        st.info("Run `py kite_token_store.py` first to generate a valid request token, then click Reconnect.")
+        st.error(f"⚠️ Kite Connect login failed: {e}")
+        st.info("ℹ️ Run `py kite_token_store.py` first to generate a valid request token, then click Reconnect.")
         return
 
     # ── Step 2: Load remaining heavy modules (pandas, DB, trading) ──
@@ -819,12 +826,17 @@ def _render_dashboard():
     # ── Header bar (rendered after Kite login so kite_status is available) ──
     _pills_html = (
         f'<div class="live-pill {pill_class}"><span class="live-dot"></span> {pill_label}</div>'
-        f'<div class="live-pill pill-open" style="margin-top:10px"><span class="live-dot"></span> Online</div>'
     )
     render_header_bar(
-        subtitle="Real-time data · Zerodha Kite Connect",
+        subtitle="📡 Real-time data · Zerodha Kite Connect",
         right_html=_pills_html,
     )
+
+    render_stock_ticker_ribbon(market="IND")
+    render_vix_indicator(market="IND")
+
+    # Navigation buttons for Ind Stocks module
+    render_ind_navigation_buttons(current_page='ind_kite', back_key_suffix='from_kite_dash')
 
     try:
         from setup.db_setup import create_table as _ensure_tables
@@ -832,7 +844,7 @@ def _render_dashboard():
         conn = get_db_connection()
         groups = fetch_index_groups(conn)
     except Exception as e:
-        st.error(f"Database connection failed: {e}")
+        st.error(f"⚠️ Database connection failed: {e}")
         return
 
     # ── Auto-seed: populate stocks & index mappings if empty ───
@@ -846,7 +858,7 @@ def _render_dashboard():
             cur.close()
 
             if ix_count == 0:
-                with st.spinner("First launch — seeding stock database from Kite instruments…"):
+                with st.spinner("🌱 First launch — seeding stock database from Kite instruments…"):
                     seed_stocks_from_kite(kite, conn)
                     # Refresh groups since seed inserts groups too
                     groups = fetch_index_groups(conn)
@@ -856,10 +868,10 @@ def _render_dashboard():
                 st.session_state["_stocks_seeded"] = True
         except Exception as e:
             logger.error("Auto-seed failed: %s", e)
-            st.warning(f"Could not auto-seed stock database: {e}")
+            st.warning(f"⚠️ Could not auto-seed stock database: {e}")
 
     if not groups:
-        st.warning("No index groups found. Run setup_livestocks_db.py first.")
+        st.warning("⚠️ No index groups found. Run setup_livestocks_db.py first.")
         return
 
     # ── Top control bar: settings pushed left ──
@@ -870,7 +882,7 @@ def _render_dashboard():
 
         with c1:
             refresh_secs = st.select_slider(
-                "UI refresh ⏱",
+                "UI refresh ",
                 options=[2, 5, 10, 15, 20, 30, 45, 60],
                 value=5,
                 key="refresh_secs",
@@ -885,21 +897,21 @@ def _render_dashboard():
                 if _mkt_open:
                     st.markdown(
                         f'<span class="status-badge badge-success">'
-                        f'🔴 WebSocket Live · {_cached} instruments'
+                        f'WebSocket Live · {_cached} instruments'
                         f'</span>',
                         unsafe_allow_html=True,
                     )
                 else:
                     st.markdown(
                         f'<span class="status-badge badge-info">'
-                        f'🌙 WebSocket Connected · {_cached} instruments · Market Closed'
+                        f'WebSocket Connected · {_cached} instruments · Market Closed'
                         f'</span>',
                         unsafe_allow_html=True,
                     )
             else:
                 st.markdown(
                     '<span class="status-badge badge-warn">'
-                    '📡 Polling mode (WebSocket starting…)'
+                    'Polling mode (WebSocket starting…)'
                     '</span>',
                     unsafe_allow_html=True,
                 )
@@ -953,7 +965,7 @@ def _render_dashboard():
             logger.info("Webhook streaming started for %d symbols", len(all_stock_names))
         except Exception as e:
             logger.error("Failed to start webhook service: %s", e)
-            st.warning(f"Real-time streaming unavailable: {e}. Falling back to polling.")
+            st.warning(f"⚠️ Real-time streaming unavailable: {e}. Falling back to polling.")
     elif svc._started:
         # Update subscriptions if stock list changed
         svc._update_subscriptions(list(all_stock_names))
@@ -1015,7 +1027,7 @@ def _render_dashboard():
             logger.info("[user=%s] Ind Stocks: Place Order clicked — symbol=%s, side=%s, qty=%s, type=%s, product=%s",
                         st.session_state.get('username', 'unknown'), o_symbol, o_txn, o_qty, o_type, o_product)
             if o_symbol not in all_stock_names:
-                st.error(f"❌ **{o_symbol}** is not a valid stock.")
+                st.error(f"**{o_symbol}** is not a valid stock.")
             else:
                 result = place_order(
                     kite, o_symbol, o_exchange, o_txn, o_qty,
@@ -1025,9 +1037,9 @@ def _render_dashboard():
                     validity=o_validity,
                 )
                 if result["success"]:
-                    st.success(f"✅ Order placed — ID: **{result['order_id']}**")
+                    st.success(f"Order placed — ID: **{result['order_id']}**")
                 else:
-                    st.error(f"❌ {result['error']}")
+                    st.error(f"{result['error']}")
 
     with st.sidebar:
         _order_panel()
@@ -1035,7 +1047,7 @@ def _render_dashboard():
     # ═══════════════════════════════════════════════════════════
     # Top-level tabs: Stocks | Options
     # ═══════════════════════════════════════════════════════════
-    stocks_main_tab, options_main_tab = st.tabs(["📈 Stocks", "🔗 Options"])
+    stocks_main_tab, options_main_tab = st.tabs(["📊 Stocks", "📈 Options"])
 
     # ── STOCKS TAB ─────────────────────────────────────────────
     with stocks_main_tab:
@@ -1067,14 +1079,14 @@ def _render_dashboard():
                     _age_str = f"{_age:.0f}s ago" if _age < 60 else f"{_age/60:.1f}m ago"
                     quotes_badge_slot.markdown(
                         f'<span class="status-badge badge-success">'
-                        f'🔴 Live · {len(quotes)} quotes · {_age_str}</span>',
+                        f'Live · {len(quotes)} quotes · {_age_str}</span>',
                         unsafe_allow_html=True,
                     )
                 elif _market_open:
                     # Market is open but we haven't received a tick yet
                     quotes_badge_slot.markdown(
                         '<span class="status-badge badge-warn">'
-                        '⏳ Waiting for first tick…</span>',
+                        'Waiting for first tick…</span>',
                         unsafe_allow_html=True,
                     )
                 else:
@@ -1094,100 +1106,97 @@ def _render_dashboard():
                     update_stocks_in_db(_conn, quotes)
                     quotes_badge_slot.markdown(
                         f'<span class="status-badge badge-info">'
-                        f'📊 {len(quotes)} quotes (REST bootstrap)</span>',
+                        f'{len(quotes)} quotes (REST bootstrap)</span>',
                         unsafe_allow_html=True,
                     )
                 else:
                     quotes_badge_slot.markdown(
                         '<span class="status-badge badge-warn">'
-                        '⚠ Could not fetch quotes</span>',
+                        'Could not fetch quotes</span>',
                         unsafe_allow_html=True,
                     )
             else:
                 # Market is closed AND WS not connected — just show DB data
                 quotes_badge_slot.empty()
     
-            # ── Display tabs ──
-            tab_names = [name for _, name in groups]
-            tabs = st.tabs(tab_names)
-    
-            for tab, (group_id, group_name) in zip(tabs, groups):
-                with tab:
-                    rows = fetch_stocks_from_db(_conn, group_id)
-    
-                    if not rows:
-                        st.info(
-                            f"No stocks mapped to **{group_name}**. "
-                            f"This will auto-populate on next dashboard restart after Kite login."
-                        )
-                        continue
-    
-                    df = pd.DataFrame(rows, columns=["Name", "High", "Low", "Volume", "LTP", "Change (%)"])
-    
-                    # Detect if we have any price data at all
-                    _has_prices = df["LTP"].notna().any()
-    
-                    if not _has_prices:
-                        st.markdown(
-                            '<div style="background:#fefce8;border:1px solid #fde68a;border-radius:6px;'
-                            'padding:0.5rem 0.8rem;margin-bottom:0.5rem;font-size:0.82rem;color:#92400e">'
-                            '📴 <b>Market is closed</b> — showing stock names only. '
-                            'Prices will update automatically when the market session is active.'
-                            '</div>',
-                            unsafe_allow_html=True,
-                        )
-    
-                    # Summary metrics
-                    col1, col2, col3, col4 = st.columns(4)
-                    col1.metric("Stocks", len(df))
-                    col2.metric("Avg LTP", f"₹{df['LTP'].mean():,.2f}" if _has_prices else "—")
-                    if df['Change (%)'].notna().any():
-                        gainer_idx = df['Change (%)'].idxmax()
-                        loser_idx  = df['Change (%)'].idxmin()
-                        col3.metric(
-                            "Top Gainer",
-                            df.loc[gainer_idx, 'Name'],
-                            f"{df['Change (%)'].max():+.2f}%",
-                        )
-                        col4.metric(
-                            "Top Loser",
-                            df.loc[loser_idx, 'Name'],
-                            f"{df['Change (%)'].min():+.2f}%",
-                            delta_color="inverse",
-                        )
-    
-                    # Style the dataframe
-                    def color_change(val):
-                        if val is None or pd.isna(val):
-                            return ""
-                        return "color: #38a169; font-weight:600" if val > 0 \
-                            else "color: #e53e3e; font-weight:600" if val < 0 else ""
-    
-                    styled_df = df.style.map(color_change, subset=["Change (%)"])
-                    styled_df = styled_df.format({
-                        "High":  "₹{:,.2f}",
-                        "Low":   "₹{:,.2f}",
-                        "LTP":   "₹{:,.2f}",
-                        "Volume": "{:,.0f}",
-                        "Change (%)": "{:+.2f}%",
-                    }, na_rep="—")
-    
-                    st.dataframe(
-                        styled_df,
-                        hide_index=True,
-                        column_config={
-                            "Name":       st.column_config.TextColumn("Name", width="medium"),
-                            "High":       st.column_config.TextColumn("High", width="small"),
-                            "Low":        st.column_config.TextColumn("Low", width="small"),
-                            "Volume":     st.column_config.TextColumn("Volume", width="small"),
-                            "LTP":        st.column_config.TextColumn("LTP", width="small"),
-                            "Change (%)": st.column_config.TextColumn("Change (%)", width="small"),
-                        },
+            # ── Display all stocks in a single table ──
+            all_rows = []
+            for group_id, group_name in groups:
+                rows = fetch_stocks_from_db(_conn, group_id)
+                if rows:
+                    all_rows.extend(rows)
+
+            if not all_rows:
+                st.info(
+                    "ℹ️ No stocks found. "
+                    "This will auto-populate on next dashboard restart after Kite login."
+                )
+            else:
+                df = pd.DataFrame(all_rows, columns=["Name", "High", "Low", "Volume", "LTP", "Change (%)"])
+                df = df.drop_duplicates(subset=["Name"])
+
+                # Detect if we have any price data at all
+                _has_prices = df["LTP"].notna().any()
+
+                if not _has_prices:
+                    st.markdown(
+                        '<div style="background:#fefce8;border:1px solid #fde68a;border-radius:6px;'
+                        'padding:0.5rem 0.8rem;margin-bottom:0.5rem;font-size:0.82rem;color:#92400e">'
+                        '<b>Market is closed</b> — showing stock names only. '
+                        'Prices will update automatically when the market session is active.'
+                        '</div>',
+                        unsafe_allow_html=True,
                     )
+
+                # Summary metrics
+                col1, col2, col3, col4 = st.columns(4)
+                col1.metric("Stocks", len(df))
+                col2.metric("Avg LTP", f"₹{df['LTP'].mean():,.2f}" if _has_prices else "—")
+                if df['Change (%)'].notna().any():
+                    gainer_idx = df['Change (%)'].idxmax()
+                    loser_idx  = df['Change (%)'].idxmin()
+                    col3.metric(
+                        "Top Gainer",
+                        df.loc[gainer_idx, 'Name'],
+                        f"{df['Change (%)'].max():+.2f}%",
+                    )
+                    col4.metric(
+                        "Top Loser",
+                        df.loc[loser_idx, 'Name'],
+                        f"{df['Change (%)'].min():+.2f}%",
+                        delta_color="inverse",
+                    )
+
+                # Style the dataframe
+                def color_change(val):
+                    if val is None or pd.isna(val):
+                        return ""
+                    return "color: #38a169; font-weight:600" if val > 0 \
+                        else "color: #e53e3e; font-weight:600" if val < 0 else ""
+
+                styled_df = df.style.map(color_change, subset=["Change (%)"])
+                styled_df = styled_df.format({
+                    "High":  "₹{:,.2f}",
+                    "Low":   "₹{:,.2f}",
+                    "LTP":   "₹{:,.2f}",
+                    "Volume": "{:,.0f}",
+                    "Change (%)": "{:+.2f}%",
+                }, na_rep="—")
+
+                st.dataframe(
+                    styled_df,
+                    hide_index=True,
+                    column_config={
+                        "Name":       st.column_config.TextColumn("Name", width="medium"),
+                        "High":       st.column_config.TextColumn("High", width="small"),
+                        "Low":        st.column_config.TextColumn("Low", width="small"),
+                        "Volume":     st.column_config.TextColumn("Volume", width="small"),
+                        "LTP":        st.column_config.TextColumn("LTP", width="small"),
+                        "Change (%)": st.column_config.TextColumn("Change (%)", width="small"),
+                    },
+                )
     
             _conn.close()
-
-        _stock_quotes_panel()
 
         # ── Quick Trade (not auto-refreshed) ─────────────────────
         def _portfolio_panels():
@@ -1209,14 +1218,14 @@ def _render_dashboard():
                     key="qt_prod_global",
                     label_visibility="collapsed",
                 )
-                if qt_cols[3].button("🟢 BUY", key="qt_buy_global", use_container_width=True):
+                if qt_cols[3].button("BUY", key="qt_buy_global", use_container_width=True):
                     res = place_order(kite, qt_symbol, "NSE", "BUY", qt_qty,
                                       order_type="MARKET", product=qt_product)
                     if res["success"]:
                         st.success(f"BUY order placed — ID: {res['order_id']}")
                     else:
                         st.error(res["error"])
-                if qt_cols[4].button("🔴 SELL", key="qt_sell_global", use_container_width=True):
+                if qt_cols[4].button("SELL", key="qt_sell_global", use_container_width=True):
                     res = place_order(kite, qt_symbol, "NSE", "SELL", qt_qty,
                                       order_type="MARKET", product=qt_product)
                     if res["success"]:
@@ -1226,7 +1235,7 @@ def _render_dashboard():
 
             # ── Order Book / Positions / Holdings / RSI Strategy ──────
             st.markdown("")
-            hold_tab, pos_tab, ob_tab, rsi_tab = st.tabs(["💼 Holdings", "📊 Positions", "📋 Order Book", "🧠 RSI Strategy"])
+            hold_tab, pos_tab, ob_tab, rsi_tab = st.tabs(["💼 Holdings", "📊 Positions", "📝 Order Book", "📈 RSI Strategy"])
 
             with ob_tab:
                 orders = get_order_book(kite)
@@ -1258,7 +1267,7 @@ def _render_dashboard():
                         cancel_id = cancel_cols[0].selectbox(
                             "Order", pending["order_id"].tolist(), label_visibility="collapsed",
                         )
-                        if cancel_cols[1].button("❌ Cancel", use_container_width=True):
+                        if cancel_cols[1].button("Cancel", use_container_width=True):
                             logger.info("[user=%s] Ind Stocks: Cancel Order clicked — order_id=%s", st.session_state.get('username', 'unknown'), cancel_id)
                             res = cancel_order(kite, cancel_id)
                             if res["success"]:
@@ -1267,7 +1276,7 @@ def _render_dashboard():
                             else:
                                 st.error(res["error"])
                 else:
-                    st.info("No orders placed today.")
+                    st.info("ℹ️ No orders placed today.")
     
             with pos_tab:
                 positions = get_positions(kite)
@@ -1311,7 +1320,7 @@ def _render_dashboard():
                         styled_pos = pos_df.style
                     st.dataframe(styled_pos, hide_index=True)
                 else:
-                    st.info("No open positions.")
+                    st.info("ℹ️ No open positions.")
     
             with hold_tab:
                 # ── Fetch holdings once per session (portfolio structure is stable intraday) ──
@@ -1352,13 +1361,13 @@ def _render_dashboard():
                     if _overlay_count > 0:
                         st.markdown(
                             f'<span class="status-badge badge-success">'
-                            f'🔴 Live · {_overlay_count}/{len(hold_df)} holdings updated via WebSocket</span>',
+                            f'Live · {_overlay_count}/{len(hold_df)} holdings updated via WebSocket</span>',
                             unsafe_allow_html=True,
                         )
                     elif not _ws_svc.market_is_open if _ws_svc._started else True:
                         st.markdown(
                             '<span class="status-badge badge-info">'
-                            '🌙 Market Closed · showing last session values</span>',
+                            'Market Closed · showing last session values</span>',
                             unsafe_allow_html=True,
                         )
 
@@ -1489,11 +1498,11 @@ def _render_dashboard():
                             st.success(f"Saved {len(selected)} Smallcase symbols.")
                             st.rerun()
                 else:
-                    st.info("No holdings found.")
+                    st.info("ℹ️ No holdings found.")
     
             # ── RSI Strategy Scanner ──
             with rsi_tab:
-                st.markdown("##### 🧠 RSI Auto-Order Scanner")
+                st.markdown("##### 📈 RSI Auto-Order Scanner")
                 st.caption("Scans stocks for RSI signals. **BUY** when RSI < oversold & bullish reversal. **SELL** when RSI > overbought & bearish reversal.")
     
                 # Strategy settings
@@ -1543,7 +1552,7 @@ def _render_dashboard():
                             }
                             if r.get("order"):
                                 o = r["order"]
-                                row["Order"] = f"ID: {o['order_id']}" if o["success"] else f"❌ {o['error']}"
+                                row["Order"] = f"ID: {o['order_id']}" if o["success"] else f"{o['error']}"
                                 row["Qty"] = o.get("qty", 0)
                                 row["SL"] = o.get("trigger_price", 0)
                             else:
@@ -1586,9 +1595,11 @@ def _render_dashboard():
                             unsafe_allow_html=True,
                         )
                     else:
-                        st.info("No data returned. Ensure market is open and stocks have sufficient history.")
+                        st.info("ℹ️ No data returned. Ensure market is open and stocks have sufficient history.")
     
         _portfolio_panels()
+
+        _stock_quotes_panel()
 
     # ── OPTIONS TAB ────────────────────────────────────────────
     with options_main_tab:
@@ -1632,7 +1643,7 @@ def _render_option_chain_tab(kite):
         key="oc_timeframe",
     )
 
-    oc_refresh = oc_c5.button("🔄 Refresh", key="oc_refresh_btn", use_container_width=True)
+    oc_refresh = oc_c5.button("Refresh", key="oc_refresh_btn", use_container_width=True)
     if oc_refresh:
         logger.info("[user=%s] Ind Stocks: Refresh Option Chain clicked — index=%s", st.session_state.get('username', 'unknown'), oc_index)
 
@@ -1643,7 +1654,7 @@ def _render_option_chain_tab(kite):
         st.rerun()
 
     if not expiry_list or oc_expiry == "—":
-        st.warning("No expiries found. Market may be closed or the index is not available.")
+        st.warning("⚠️ No expiries found. Market may be closed or the index is not available.")
         return
 
     # ── Fetch option chain data ──
@@ -1662,7 +1673,7 @@ def _render_option_chain_tab(kite):
         oc_data = st.session_state[oc_cache_key]
 
     if not oc_data["strikes"]:
-        st.warning("No strike data returned. Check expiry / market hours.")
+        st.warning("⚠️ No strike data returned. Check expiry / market hours.")
         return
 
     # ── Summary metrics ──
@@ -1832,7 +1843,7 @@ def _render_option_chain_tab(kite):
         actual_qty = qt_qty * lot_sizes.get(oc_index, 30)
 
         if qt_c6.button(
-            f"{'🟢' if qt_side == 'BUY' else '🔴'} {qt_side}",
+            f"{'' if qt_side == 'BUY' else ''} {qt_side}",
             key="oqt_go", use_container_width=True,
         ):
             from trading.order_service import place_order as _place_order
@@ -1841,13 +1852,13 @@ def _render_option_chain_tab(kite):
                 order_type="MARKET", product=qt_prod,
             )
             if res["success"]:
-                st.success(f"✅ Order placed — ID: **{res['order_id']}** ({actual_qty} qty)")
+                st.success(f"Order placed — ID: **{res['order_id']}** ({actual_qty} qty)")
             else:
-                st.error(f"❌ {res['error']}")
+                st.error(f"{res['error']}")
 
 
 if __name__ == "__main__":
-    st.set_page_config(page_title="Live Stocks - India", page_icon="📈", layout="wide")
+    st.set_page_config(page_title="Live Stocks - India", page_icon="📊", layout="wide")
     from ui.styles import apply_custom_styles
     apply_custom_styles()
     render_live_dashboard()

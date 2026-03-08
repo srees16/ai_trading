@@ -13,6 +13,9 @@ from ui.components import (
     render_page_header,
     render_footer,
     render_navigation_buttons,
+    render_ind_navigation_buttons,
+    render_stock_ticker_ribbon,
+    render_vix_indicator,
     render_no_data_warning,
     render_score_interpretations_table,
 )
@@ -43,16 +46,25 @@ def render_fundamental_page():
     _ensure_heavy()
     logger.info("[user=%s] Viewing Fundamental Analysis page",
                 st.session_state.get('username', 'unknown'))
+    market = st.session_state.get('current_market', 'US')
+    market_label = "Indian" if market == 'IND' else "US"
     render_page_header(
-        "📊 Fundamental Analysis",
-        description="Altman Z-Score • Beneish M-Score • Piotroski F-Score"
+        f"{market_label} Fundamental Analysis",
+        description="🏦 Altman Z-Score • 🔍 Beneish M-Score • 💪 Piotroski F-Score"
     )
 
     # Navigation buttons
-    render_navigation_buttons(
-        current_page='fundamental',
-        back_key_suffix='from_fundamental'
-    )
+    if market == 'IND':
+        render_stock_ticker_ribbon(market="IND")
+        render_vix_indicator(market="IND")
+        render_ind_navigation_buttons(current_page='fundamental', back_key_suffix='from_fundamental')
+    else:
+        render_stock_ticker_ribbon(market="US")
+        render_vix_indicator(market="US")
+        render_navigation_buttons(
+            current_page='fundamental',
+            back_key_suffix='from_fundamental'
+        )
     
     st.markdown("---")
     
@@ -81,7 +93,7 @@ def render_fundamental_page():
     # Display main metrics table (centered)
     _, center_col, _ = st.columns([0.5, 4, 0.5])
     with center_col:
-        st.subheader("📋 All Stocks Overview")
+        st.subheader("📊 All Stocks Overview")
         render_fundamental_table(stock_metrics)
     
     st.markdown("---")

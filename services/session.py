@@ -62,6 +62,8 @@ def _init_navigation_state():
         st.session_state.current_page = 'main'
     if 'current_app' not in st.session_state:
         st.session_state.current_app = 'trading_platform'
+    if 'current_market' not in st.session_state:
+        st.session_state.current_market = 'US'
 
 
 def _init_rag_state():

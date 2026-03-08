@@ -69,7 +69,7 @@ def get_rag_engine():
     if _rag_engine is None:
         try:
             from rag_pipeline.config import RAGConfig
-            from rag_pipeline.query_engine import RAGQueryEngine
+            from rag_pipeline.core.query_engine import RAGQueryEngine
             config = RAGConfig()
             _rag_engine = RAGQueryEngine(config)
             logger.info("RAG QueryEngine initialised")

@@ -120,15 +120,15 @@ Get straight to the point.\
 RAG_SYSTEM_PROMPT_COMPACT = """\
 You are a document QA assistant. Answer ONLY from the provided context chunks.
 
-Rules:
-- NEVER use outside knowledge or hallucinate facts.
-- If context is insufficient, say: "I could not find sufficient information in the uploaded documents."
-- Cite every claim: (Source: filename, Page N).
-- Reproduce code/formulas EXACTLY as they appear in the context — never rewrite or invent code.
-- If a full function implementation exists in context, return it VERBATIM. Do NOT rewrite.
-- Use markdown formatting (bullets, headers, bold). Be concise.
-- End with confidence: **High** / **Medium** / **Low**.
-- Limit response to 600 tokens.\
+Rules (in priority order):
+1. NEVER generate code from your training data. The ONLY code you may include is code that appears word-for-word in the context chunks below.
+2. If a function implementation exists in context, return it VERBATIM — same variable names, indentation, and logic. Do NOT rewrite, simplify, or substitute with a generic version.
+3. NEVER use outside knowledge or hallucinate facts. If context is insufficient, say: "I could not find sufficient information in the uploaded documents."
+4. Cite every claim: (Source: filename, Page N). When a Snippet number is provided in the chunk header, include it: (Snippet X.Y, Page N).
+5. When context contains code marked with ⚠, copy it character-for-character inside a ```python code fence. Preserve all indentation, line breaks, and variable names exactly.
+6. Use markdown formatting (headers, bullets, **bold**, ```python fences for code). Be concise.
+7. End with confidence: **High** / **Medium** / **Low**.
+8. Limit response to 600 tokens.\
 """
 
 # Default: use compact prompt for speed.  Cloud backends (Claude, OpenAI)
@@ -219,7 +219,7 @@ class OllamaLLMBackend:
     # Simple-query threshold: queries shorter than this use a reduced
     # num_predict to save latency.
     _SIMPLE_QUERY_WORD_LIMIT = 30
-    _SIMPLE_QUERY_NUM_PREDICT = 300
+    _SIMPLE_QUERY_NUM_PREDICT = 500
 
     def __init__(
         self,
@@ -984,8 +984,10 @@ def create_llm_backend(config: Optional[RAGConfig] = None):
     """
     Instantiate the appropriate LLM backend based on ``config.llm_provider``.
 
-    Currently hardcoded to Ollama-only. Claude and OpenAI paths are
-    commented out.
+    Supported providers:
+        - ``ollama``  — Local inference (default)
+        - ``claude``  — Anthropic Messages API (with Ollama fallback)
+        - ``openai``  — OpenAI Chat Completions API (with Ollama fallback)
 
     Returns an object with ``.generate(query, context) -> str`` and
     ``.generate_stream(query, context)`` methods.
@@ -993,49 +995,56 @@ def create_llm_backend(config: Optional[RAGConfig] = None):
     config = config or RAGConfig()
     provider = config.llm_provider  # already lowered in config
 
-    # --- Always use Ollama regardless of provider setting ---
+    # --- Claude ---
+    if provider == "claude":
+        if not config.claude_api_key:
+            logger.warning(
+                "Claude selected but ANTHROPIC_API_KEY is not set — "
+                "falling back to Ollama."
+            )
+            return _create_ollama_backend(config)
+        primary = ClaudeLLMBackend(
+            api_key=config.claude_api_key,
+            model=config.claude_model,
+            temperature=config.claude_temperature,
+            max_tokens=config.claude_max_tokens,
+        )
+        fallback = _create_ollama_backend(config)
+        logger.info(
+            "LLM provider: Claude (%s) with Ollama fallback",
+            config.claude_model,
+        )
+        return _FallbackChainBackend(primary, fallback)
+
+    # --- OpenAI ---
+    if provider == "openai":
+        if not config.openai_api_key:
+            logger.warning(
+                "OpenAI selected but OPENAI_API_KEY is not set — "
+                "falling back to Ollama."
+            )
+            return _create_ollama_backend(config)
+        primary = OpenAILLMBackend(
+            api_key=config.openai_api_key,
+            model=config.openai_model,
+            temperature=config.openai_temperature,
+            max_tokens=config.openai_max_tokens,
+            timeout=config.llm_timeout,
+        )
+        fallback = _create_ollama_backend(config)
+        logger.info(
+            "LLM provider: OpenAI (%s) with Ollama fallback",
+            config.openai_model,
+        )
+        return _FallbackChainBackend(primary, fallback)
+
+    # --- Ollama (default) ---
+    if provider != "ollama":
+        logger.warning(
+            "Unknown LLM provider '%s'. Falling back to Ollama.",
+            provider,
+        )
     return _create_ollama_backend(config)
-
-    # --- Claude (commented out) ---
-    # if provider == "claude":
-    #     if not config.claude_api_key:
-    #         logger.warning(
-    #             "Claude selected but ANTHROPIC_API_KEY is not set — "
-    #             "falling back to default backend."
-    #         )
-    #         return _FallbackLLMBackend("claude", "ANTHROPIC_API_KEY")
-    #     primary = ClaudeLLMBackend(
-    #         api_key=config.claude_api_key,
-    #         model=config.claude_model,
-    #         temperature=config.claude_temperature,
-    #         max_tokens=config.claude_max_tokens,
-    #     )
-    #     fallback = _create_ollama_backend(config)
-    #     return _FallbackChainBackend(primary, fallback)
-
-    # --- OpenAI (commented out) ---
-    # if provider == "openai":
-    #     if not config.openai_api_key:
-    #         logger.warning(
-    #             "OpenAI selected but OPENAI_API_KEY is not set — "
-    #             "falling back to default backend."
-    #         )
-    #         return _FallbackLLMBackend("openai", "OPENAI_API_KEY")
-    #     primary = OpenAILLMBackend(
-    #         api_key=config.openai_api_key,
-    #         model=config.openai_model,
-    #         temperature=config.openai_temperature,
-    #         max_tokens=config.openai_max_tokens,
-    #         timeout=config.llm_timeout,
-    #     )
-    #     fallback = _create_ollama_backend(config)
-    #     return _FallbackChainBackend(primary, fallback)
-
-    # logger.warning(
-    #     "Unknown LLM provider '%s'. Supported: %s. Using fallback.",
-    #     provider, ", ".join(_PROVIDERS),
-    # )
-    # return _FallbackLLMBackend(provider)
 
 
 # ---------------------------------------------------------------------------

@@ -55,6 +55,8 @@ class NewsItem:
     sentiment_score: Optional[float] = None
     sentiment_label: Optional[SentimentLabel] = None
     sentiment_confidence: Optional[float] = None
+    relevance_score: Optional[float] = None
+    importance_rank: Optional[int] = None
     
     def __repr__(self) -> str:
         return (

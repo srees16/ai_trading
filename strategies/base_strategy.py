@@ -406,6 +406,9 @@ class BaseStrategy(ABC):
         max_position_value = capital * risk.max_position_size
         close_max = signals['Close'].dropna().max()
         shares = int(max_position_value / close_max) if close_max > 0 else 0
+        # Guarantee at least 1 share so high-priced stocks still trade
+        if shares == 0 and close_max > 0 and close_max <= capital:
+            shares = 1
         
         portfolio['positions'] = signals['positions']
         portfolio['Close'] = signals['Close']
@@ -441,11 +444,15 @@ class BaseStrategy(ABC):
         portfolio = pd.DataFrame(index=signals.index)
         
         long_positions = signals['positions'].clip(lower=0)
-        long_signals = signals['signals'].clip(lower=0)
+        # Recompute signals from clipped positions so sells (1→0) restore cash
+        long_signals = long_positions.diff().fillna(0)
         
         max_position_value = capital * risk.max_position_size
         close_max = signals['Close'].dropna().max()
         shares = int(max_position_value / close_max) if close_max > 0 else 0
+        # Guarantee at least 1 share so high-priced stocks still trade
+        if shares == 0 and close_max > 0 and close_max <= capital:
+            shares = 1
         
         portfolio['positions'] = long_positions
         portfolio['Close'] = signals['Close']

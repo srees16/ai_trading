@@ -6,12 +6,12 @@ Usage:
 
 Integration notes:
     The page delegates all rendering to reusable widgets in
-    ``rag_pipeline.ui_components``.  To embed RAG into ANY Streamlit
+    ``rag_pipeline.ui.ui_components``.  To embed RAG into ANY Streamlit
     page in centurion_core, simply import the individual widget
     functions and call them.
 
     Example:
-        from rag_pipeline.ui_components import (
+        from rag_pipeline.ui.ui_components import (
             render_rag_toggle,
             render_query_input,
             render_rag_response,
@@ -20,6 +20,7 @@ Integration notes:
 
 import logging
 import sys
+import time as _time
 from pathlib import Path
 
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
@@ -35,6 +36,17 @@ from ui.components import load_logo_base64_small, render_header_bar, render_foot
 # module-import time.  Only lightweight stdlib imports live here.
 
 logger = logging.getLogger(__name__)
+
+_LOG_INTERVAL = 5  # seconds
+_last_log_ts: float = 0.0
+
+def _throttled_info(msg: str, *args) -> None:
+    """Log at INFO level at most once every _LOG_INTERVAL seconds."""
+    global _last_log_ts
+    now = _time.monotonic()
+    if now - _last_log_ts >= _LOG_INTERVAL:
+        logger.info(msg, *args)
+        _last_log_ts = now
 
 
 @st.cache_data(show_spinner=False)
@@ -87,7 +99,7 @@ def render_rag_page() -> None:
     from services.session import ensure_rag_state
     ensure_rag_state()
 
-    from rag_pipeline.ui_components import (
+    from rag_pipeline.ui.ui_components import (
         render_rag_toggle,
         render_pdf_uploader,
         render_query_input,
@@ -100,13 +112,13 @@ def render_rag_page() -> None:
 
     st.markdown(_rag_page_css(), unsafe_allow_html=True)
 
-    render_header_bar(subtitle="Knowledge Engine")
+    render_header_bar(subtitle="🧠 Knowledge Engine")
     _user = st.session_state.get('username', 'unknown')
-    logger.info("[user=%s] RAG Engine: page view", _user)
+    _throttled_info("[user=%s] RAG Engine: page view", _user)
 
     # ---- RAG toggle (always visible) ------------------------------------
     rag_on = render_rag_toggle()
-    logger.info("[user=%s] RAG Engine: RAG toggle=%s", _user, rag_on)
+    _throttled_info("[user=%s] RAG Engine: RAG toggle=%s", _user, rag_on)
 
     # ---- Upload & manage sections (only when RAG is on) -----------------
     #      Placed BEFORE the query section so users see ingestion status
@@ -114,9 +126,9 @@ def render_rag_page() -> None:
     # ---- Knowledge-base source selector (radio buttons) -----------------
     selected_source = None
     if rag_on:
-        from rag_pipeline.ui_components import render_kb_source_selector
+        from rag_pipeline.ui.ui_components import render_kb_source_selector
         selected_source = render_kb_source_selector()
-        logger.info("[user=%s] RAG Engine: KB source=%s", _user, selected_source)
+        _throttled_info("[user=%s] RAG Engine: KB source=%s", _user, selected_source)
 
     # ---- Query section (always visible) ---------------------------------
     query_text = render_query_input()
@@ -127,14 +139,14 @@ def render_rag_page() -> None:
     if _is_resubmit:
         query_text = _resubmit_query
 
-    if _is_resubmit or st.button("Submit Query", type="primary", key="rag_search_btn"):
+    if _is_resubmit or st.button("🔍 Submit Query", type="primary", key="rag_search_btn"):
         import time as _time
         _wall_t0 = _time.perf_counter()
 
         logger.info("[user=%s] RAG Engine: Submit Query clicked — rag_on=%s, resubmit=%s, query='%.80s'",
                     _user, rag_on, _is_resubmit, query_text or '')
         if not query_text:
-            st.warning("Please enter a query first.")
+            st.warning("⚠️ Please enter a query first.")
         elif rag_on:
             # Show multi-color spinner with a creative line
             import random as _rnd
@@ -178,7 +190,7 @@ def render_rag_page() -> None:
                 collected_tokens.append(token)
                 # Re-render the accumulated answer so far
                 answer_placeholder.markdown(
-                    "### 💡 Answer\n\n" + "".join(collected_tokens)
+                    "### Answer\n\n" + "".join(collected_tokens)
                 )
 
             full_answer = "".join(collected_tokens)
@@ -192,7 +204,7 @@ def render_rag_page() -> None:
             # Build a RAGResponse for render_rag_response().  The chunks
             # were consumed inside query_stream() so we pass an empty
             # list; the sources expander will be hidden.
-            from rag_pipeline.query_engine import RAGResponse
+            from rag_pipeline.core.query_engine import RAGResponse
             response = RAGResponse(
                 query=query_text,
                 answer=full_answer,
@@ -211,12 +223,12 @@ def render_rag_page() -> None:
             else:
                 _m, _s = divmod(_wall_elapsed, 60)
                 _elapsed_label = f"{int(_m)}m {_s:.0f}s"
-            _runtime_label = f"⏱️ Total runtime: **{_elapsed_label}** · First token: **{_ttft_str}**"
+            _runtime_label = f"Total runtime: **{_elapsed_label}** · First token: **{_ttft_str}**"
 
             render_rag_response(response, runtime_label=_runtime_label)
         else:
             # RAG disabled — pass query directly to LLM without retrieval
-            from rag_pipeline.query_engine import RAGResponse
+            from rag_pipeline.core.query_engine import RAGResponse
             response = RAGResponse(
                 query=query_text,
                 answer=f"*(RAG disabled — no document retrieval performed)*\n\n**Your query:** {query_text}",
@@ -228,17 +240,17 @@ def render_rag_page() -> None:
                 "[user=%s] RAG-off query complete — wall_time=%.2fs, query='%.80s'",
                 _user, _wall_elapsed, query_text or '',
             )
-            _runtime_label = f"⏱️ Total runtime: **{_wall_elapsed:.1f}s**"
+            _runtime_label = f"Total runtime: **{_wall_elapsed:.1f}s**"
             render_rag_response(response, runtime_label=_runtime_label)
 
     # ---- File upload (only when RAG is on) ------------------------------
     if rag_on:
-        logger.info("[user=%s] RAG Engine: PDF upload section visible", _user)
+        _throttled_info("[user=%s] RAG Engine: PDF upload section visible", _user)
         render_pdf_uploader()
 
     # ---- Knowledge Base management (only when RAG is on) ----------------
     if rag_on:
-        with st.expander("Knowledge Base", expanded=False):
+        with st.expander("📚 Knowledge Base", expanded=False):
             render_knowledge_base()
 
     render_footer()

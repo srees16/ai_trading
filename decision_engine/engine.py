@@ -1,5 +1,6 @@
 """
-Decision engine that combines sentiment, fundamentals, and technicals.
+Decision engine that combines sentiment, fundamentals, technicals,
+macro-economic indicators, and public (Google search) sentiment.
 """
 
 from typing import Optional
@@ -10,13 +11,33 @@ from models import NewsItem, StockMetrics, TradingSignal, DecisionTag, Sentiment
 
 class DecisionEngine:
     """
-    Combines sentiment, fundamental, and technical analysis to generate trading decisions.
+    Combines sentiment, fundamental, technical, macro-economic, and
+    public-sentiment analysis to generate trading decisions.
+
+    Score composition (when all layers are available):
+        news sentiment   30 %
+        fundamentals     25 %
+        technicals       25 %
+        macro-economic   10 %
+        public sentiment 10 %
+
+    When macro or public sentiment data is unavailable the weights
+    are automatically redistributed among the remaining components.
     """
     
     def __init__(self):
         """Initialize the decision engine."""
-        pass
-    
+        self._macro_snapshot = None
+        self._public_sentiments = {}  # ticker → PublicSentiment
+
+    def set_macro_snapshot(self, snapshot) -> None:
+        """Inject a ``MacroSnapshot`` for the current analysis cycle."""
+        self._macro_snapshot = snapshot
+
+    def set_public_sentiments(self, sentiments: dict) -> None:
+        """Inject ``{ticker: PublicSentiment}`` for the current cycle."""
+        self._public_sentiments = sentiments or {}
+
     def generate_signal(
         self, 
         news_item: NewsItem, 
@@ -36,12 +57,35 @@ class DecisionEngine:
         sentiment_score = self._calculate_sentiment_score(news_item)
         fundamental_score = self._calculate_fundamental_score(metrics)
         technical_score = self._calculate_technical_score(metrics)
-        
-        # Combine scores with weights
+        macro_score = self._calculate_macro_score()
+        public_score = self._calculate_public_sentiment_score(news_item.ticker)
+
+        # Dynamic weighting — redistribute if macro / public unavailable
+        w_sent = Config.SENTIMENT_WEIGHT
+        w_fund = Config.FUNDAMENTAL_WEIGHT
+        w_tech = Config.TECHNICAL_WEIGHT
+        w_macro = Config.MACRO_WEIGHT
+        w_pub = Config.PUBLIC_SENTIMENT_WEIGHT
+
+        if macro_score is None:
+            w_macro = 0.0
+        if public_score is None:
+            w_pub = 0.0
+
+        total_w = w_sent + w_fund + w_tech + w_macro + w_pub
+        if total_w > 0:
+            w_sent /= total_w
+            w_fund /= total_w
+            w_tech /= total_w
+            w_macro /= total_w
+            w_pub /= total_w
+
         combined_score = (
-            sentiment_score * Config.SENTIMENT_WEIGHT +
-            fundamental_score * Config.FUNDAMENTAL_WEIGHT +
-            technical_score * Config.TECHNICAL_WEIGHT
+            sentiment_score * w_sent
+            + fundamental_score * w_fund
+            + technical_score * w_tech
+            + (macro_score or 0) * w_macro
+            + (public_score or 0) * w_pub
         )
         
         # Determine decision
@@ -54,7 +98,9 @@ class DecisionEngine:
             sentiment_score,
             fundamental_score,
             technical_score,
-            combined_score
+            combined_score,
+            macro_score=macro_score,
+            public_score=public_score,
         )
         
         # Create signal
@@ -232,6 +278,34 @@ class DecisionEngine:
             return DecisionTag.SELL
         else:
             return DecisionTag.HOLD
+
+    # ── Macro-economic scoring ───────────────────────────────────────
+
+    def _calculate_macro_score(self) -> Optional[float]:
+        """
+        Return the pre-computed macro sentiment score from the snapshot,
+        or ``None`` if unavailable.
+        """
+        snap = self._macro_snapshot
+        if snap is None:
+            return None
+        if snap.macro_sentiment_score is not None:
+            return max(-1.0, min(1.0, snap.macro_sentiment_score))
+        return None
+
+    # ── Public (Google search) sentiment scoring ─────────────────────
+
+    def _calculate_public_sentiment_score(self, ticker: str) -> Optional[float]:
+        """
+        Return the Google-search-derived public sentiment for *ticker*,
+        or ``None`` if not available.
+        """
+        ps = self._public_sentiments.get(ticker)
+        if ps is None or ps.results_analyzed == 0:
+            return None
+        return max(-1.0, min(1.0, ps.avg_sentiment_score))
+
+    # ── Reasoning ────────────────────────────────────────────────────
     
     def _generate_reasoning(
         self,
@@ -240,7 +314,10 @@ class DecisionEngine:
         sentiment_score: float,
         fundamental_score: float,
         technical_score: float,
-        combined_score: float
+        combined_score: float,
+        *,
+        macro_score: Optional[float] = None,
+        public_score: Optional[float] = None,
     ) -> str:
         """Generate human-readable reasoning for the decision."""
         reasons = []
@@ -278,6 +355,23 @@ class DecisionEngine:
                     reasons.append("Bullish MACD")
                 else:
                     reasons.append("Bearish MACD")
+
+        # Macro
+        if macro_score is not None:
+            snap = self._macro_snapshot
+            label = getattr(snap, "macro_sentiment_label", None) or "n/a"
+            reasons.append(f"Macro: {label} ({macro_score:+.2f})")
+            if snap and snap.vix is not None:
+                reasons.append(f"VIX={snap.vix:.1f}")
+
+        # Public sentiment
+        if public_score is not None:
+            ps = self._public_sentiments.get(news_item.ticker)
+            if ps:
+                reasons.append(
+                    f"Public sentiment: {ps.sentiment_label} "
+                    f"({public_score:+.2f}, {ps.results_analyzed} pages)"
+                )
         
         # Combine
         reasoning = "; ".join(reasons) if reasons else "Based on available data"

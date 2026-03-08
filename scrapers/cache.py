@@ -171,7 +171,7 @@ class ScraperCache:
     """
     Unified caching / dedup / rate-limiting facade for the scraper layer.
 
-    Typical usage inside ``NewsAggregator``::
+    Typical usage inside ``USNewsAggregator``::
 
         cache = ScraperCache()
 
@@ -207,10 +207,20 @@ class ScraperCache:
         # Per-source rate limiters (keyed by source display name)
         self._limiters: Dict[str, _SourceRateLimiter] = {}
         self._limiter_defaults: Dict[str, float] = {
+            # US sources
             "Finviz": 1.5,
             "Investing.com": 1.0,
             "TradingView": 0.5,
             "Yahoo Finance": 0.3,
+            # Indian sources
+            "Moneycontrol": 1.0,
+            "Economic Times": 1.0,
+            "Mint": 0.8,
+            "Business Standard": 0.8,
+            "Hindu Business Line": 0.8,
+            "Zerodha Pulse": 0.5,
+            "NDTV Profit": 0.8,
+            "Google News India": 0.5,
         }
 
         self._news_ttl = timedelta(minutes=Config.NEWS_CACHE_TTL_MINUTES)

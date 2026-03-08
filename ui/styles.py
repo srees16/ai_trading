@@ -170,8 +170,29 @@ def get_typography_css() -> str:
         margin-bottom: 0.25rem;
         color: #1a1a2e !important;
     }
+    /* Compact section headings — professional, space-efficient sizing */
+    [data-testid="stMainBlockContainer"] h2 {
+        font-size: 1.05rem !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.01em;
+    }
+    [data-testid="stMainBlockContainer"] h3 {
+        font-size: 0.95rem !important;
+        font-weight: 600 !important;
+    }
+    [data-testid="stMainBlockContainer"] h4 {
+        font-size: 0.88rem !important;
+        font-weight: 600 !important;
+    }
+    [data-testid="stMainBlockContainer"] h5 {
+        font-size: 0.82rem !important;
+        font-weight: 600 !important;
+    }
     .header-bar h1, .header-bar h2, .header-bar h3 {
         color: #ffffff !important;
+        font-size: unset !important;
+        font-weight: unset !important;
+        letter-spacing: unset !important;
     }
     .header-bar .subtitle {
         color: #8b949e !important;

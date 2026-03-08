@@ -50,7 +50,8 @@ def parse_ticker_csv(file_content: str) -> List[str]:
         tickers = df[ticker_col].dropna().astype(str).str.strip().str.upper().unique().tolist()
         
         # Filter out empty strings and invalid tickers
-        tickers = [t for t in tickers if t and len(t) > 0 and len(t) <= 5]
+        # Allow exchange suffixes like .NS, .BO, .L (up to 15 chars total)
+        tickers = [t for t in tickers if t and 1 <= len(t) <= 15]
         
         return tickers
     
@@ -63,7 +64,7 @@ def parse_ticker_csv(file_content: str) -> List[str]:
             for line in lines:
                 # Split by comma and take first item
                 ticker = line.split(',')[0].strip().upper()
-                if ticker and len(ticker) <= 5 and ticker.isalpha():
+                if ticker and len(ticker) <= 15 and ticker.replace('.', '').replace('-', '').isalnum():
                     tickers.append(ticker)
             return list(set(tickers))
         except:
@@ -84,8 +85,9 @@ def validate_tickers(tickers: List[str]) -> Tuple[List[str], List[str]]:
     invalid = []
     
     for ticker in tickers:
-        # Basic validation: 1-5 uppercase letters
-        if ticker and 1 <= len(ticker) <= 5 and ticker.replace('.', '').replace('-', '').isalnum():
+        # Strip exchange suffix before length check (.NS, .BO, .L, etc.)
+        base = ticker.split('.')[0] if '.' in ticker else ticker
+        if base and 1 <= len(base) <= 15 and base.replace('-', '').isalnum():
             valid.append(ticker)
         else:
             invalid.append(ticker)

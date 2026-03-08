@@ -45,7 +45,7 @@ class Config:
     # =================================================================
     CACHE_TTL_MINUTES: int = int(os.getenv("CENTURION_CACHE_TTL_MINUTES", "30"))
     # News cache has a shorter TTL than metrics since news is more volatile
-    NEWS_CACHE_TTL_MINUTES: int = int(os.getenv("CENTURION_NEWS_CACHE_TTL_MINUTES", "15"))
+    NEWS_CACHE_TTL_MINUTES: int = int(os.getenv("CENTURION_NEWS_CACHE_TTL_MINUTES", "30"))
     METRICS_CACHE_TTL_MINUTES: int = int(os.getenv("CENTURION_METRICS_CACHE_TTL_MINUTES", "30"))
     
     # =================================================================
@@ -62,9 +62,11 @@ class Config:
     # =================================================================
     # Decision Engine Weights (must sum to 1.0)
     # =================================================================
-    SENTIMENT_WEIGHT: float = 0.4
-    FUNDAMENTAL_WEIGHT: float = 0.3
-    TECHNICAL_WEIGHT: float = 0.3
+    SENTIMENT_WEIGHT: float = 0.30
+    FUNDAMENTAL_WEIGHT: float = 0.25
+    TECHNICAL_WEIGHT: float = 0.25
+    MACRO_WEIGHT: float = 0.10
+    PUBLIC_SENTIMENT_WEIGHT: float = 0.10
     
     # =================================================================
     # Decision Thresholds
