@@ -14,7 +14,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Column, String, Float, Integer, Boolean, DateTime, Text,
-    ForeignKey, Index, Enum as SQLEnum, JSON, Numeric, UniqueConstraint
+    ForeignKey, Index, Enum as SQLEnum, Numeric, UniqueConstraint
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 from sqlalchemy.orm import declarative_base, relationship

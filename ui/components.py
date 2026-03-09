@@ -14,27 +14,6 @@ import streamlit as st
 logger = logging.getLogger(__name__)
 
 
-def load_logo_base64() -> str:
-    """
-    Load logo image and return base64 encoded HTML.
-    
-    Returns:
-        HTML img tag with embedded base64 logo, or empty string if not found
-    """
-    _KEY = "_logo_b64_large"
-    if _KEY in st.session_state:
-        return st.session_state[_KEY]
-
-    logo_path = Path(__file__).parent / "assets" / "centurion_logo.png"
-    html = ""
-    if logo_path.exists():
-        with open(logo_path, "rb") as f:
-            logo_data = base64.b64encode(f.read()).decode()
-        html = f'<img src="data:image/png;base64,{logo_data}" style="height: 1.6rem; vertical-align: middle; margin-right: 0.2rem;">'
-    st.session_state[_KEY] = html
-    return html
-
-
 def load_logo_base64_small() -> str:
     """
     Load logo image with smaller size for page headers.
@@ -389,61 +368,6 @@ def render_metrics_cards(signals: List[Any]):
             decision_counts.get('STRONG_SELL', 0),
             help="Stocks with strong sell signals"
         )
-
-
-def render_tickers_being_analyzed(tickers: List[str], ticker_mode: str):
-    """
-    Display the stocks currently selected for analysis.
-    
-    Args:
-        tickers: List of stock ticker symbols
-        ticker_mode: Input mode used (Default Tickers, Manual Entry, Upload CSV)
-    """
-    if not tickers:
-        return
-    
-    source_icons = {
-        "Default Tickers": "📋",
-        "Manual Entry": "✍️",
-        "Upload CSV": "📂"
-    }
-    icon = source_icons.get(ticker_mode, "")
-    
-    st.markdown(
-        f'<p class="page-description">{icon} Analyzing {len(tickers)} stock(s): {", ".join(tickers)}</p>',
-        unsafe_allow_html=True
-    )
-
-
-def render_features_section():
-    """Render the features section on the main page."""
-    st.markdown("### ✨ Features")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("**Multi-Source News**")
-        st.caption("Aggregates from Yahoo Finance, Finviz, Investing.com, and more")
-    
-    with col2:
-        st.markdown("**AI Sentiment Analysis**")
-        st.caption("DistilBERT-powered sentiment classification")
-    
-    with col3:
-        st.markdown("**Comprehensive Metrics**")
-        st.caption("Fundamentals + Technicals analysis")
-
-
-def render_how_to_use_section():
-    """Render the how to use section on the main page."""
-    st.markdown("### 📖 How to Use")
-    st.markdown("""
-    1. **Select Input Method**: Choose default tickers, enter manually, or upload a CSV
-    2. **Configure Settings**: Select output format and append mode
-    3. **Run Analysis**: Click the Run Analysis button
-    4. **Review Results**: Explore charts, tables, and detailed signal information
-    5. **Download Data**: Export results for further analysis
-    """)
 
 
 def render_no_data_warning(page_name: str = "analysis"):

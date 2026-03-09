@@ -29,7 +29,6 @@ import logging
 import base64
 from datetime import timedelta
 from typing import List, Dict, Any, Optional
-from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 

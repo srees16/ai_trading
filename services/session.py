@@ -5,8 +5,6 @@ Handles Streamlit session state initialization and management,
 including the SessionCache lifecycle.
 """
 
-from typing import Any, List, Optional
-
 import streamlit as st
 
 
@@ -92,20 +90,3 @@ def ensure_rag_state():
     if "_rag_state_initialised" not in st.session_state:
         _init_rag_state()
         st.session_state["_rag_state_initialised"] = True
-
-
-def _init_cache():
-    """
-    Initialise the ``SessionCache`` singleton.
-
-    The cache persists across Streamlit reruns within the same browser
-    session.  It is only cleared explicitly (e.g. when the user starts a
-    brand-new analysis with a completely different ticker set).
-    """
-    from services.cache import get_session_cache  # noqa: local import to avoid circular
-    from config import Config
-
-    cache = get_session_cache()
-    # Apply configured TTL (in case env vars changed between restarts)
-    from datetime import timedelta
-    cache._default_ttl = timedelta(minutes=Config.CACHE_TTL_MINUTES)

@@ -16,7 +16,7 @@ import logging
 import asyncio
 import time
 from datetime import datetime
-from typing import Dict, List, Set
+from typing import Dict, List
 
 import pandas as pd
 

@@ -182,11 +182,6 @@ class AlgoTradingSystem:
 
 async def main():
     """Main entry point."""
-    # You can customize tickers here
-    # tickers = ["AAPL", "MSFT", "GOOGL", "TSLA", "NVDA"]
-    # system = AlgoTradingSystem(tickers=tickers)
-    
-    # Or use default tickers from config
     system = AlgoTradingSystem()
     
     await system.run()

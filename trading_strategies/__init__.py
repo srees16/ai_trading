@@ -15,7 +15,6 @@ first accessed, keeping the login page fast.
 """
 
 import importlib
-from typing import Optional
 
 __all__ = [
     # Momentum strategies

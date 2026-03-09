@@ -9,62 +9,204 @@ A Python-based enterprise trading platform combining multi-source news scraping,
 Get the app running on a new machine with these commands:
 
 ### 1️⃣ Clone & Install Dependencies
+
+**Windows PowerShell:**
 ```powershell
-git clone https://github.com/srees16/centurion_core.git
+git clone -b dev https://github.com/srees16/centurion_core.git
 cd centurion_core
-python3 -m venv myenv
-.\myenv\Scripts\activate or (macOS: source myenv/bin/activate)
+python -m venv myenv
+.\myenv\Scripts\Activate.ps1
 pip install -r requirements.txt
 ```
 
-### 2️⃣ Execute environment variables
+**macOS / Linux:**
+```bash
+git clone -b dev https://github.com/srees16/centurion_core.git
+cd centurion_core
+python3 -m venv myenv
+source myenv/bin/activate
+pip install -r requirements.txt
+```
+
+### 2️⃣ Set Environment Variables
+
+**Windows PowerShell:**
 ```powershell
-export STREAMLIT_SERVER_PORT='9000' API_PORT='9001' ZERODHA_API_KEY='qwertyuiop' ZERODHA_API_SECRET='asdfghjklmnbvcxz' ZERODHA_USER_ID='xyz123' ZERODHA_PASSWORD='1234509876' KITE_DB_HOST='localhost' KITE_DB_PORT='9003' KITE_DB_NAME='livestocks_ind' KITE_DB_USER='postgres' KITE_DB_PASSWORD='superadmin1' KITE_POOL_MAXSIZE='40' MINIO_ENDPOINT='localhost:9004' MINIO_ACCESS_KEY='minioadmin' MINIO_SECRET_KEY='minioadmin123' MINIO_SECURE='false' MINIO_BUCKET='centurion-backtests' MINIO_ENABLED='true' CENTURION_DB_HOST='localhost' CENTURION_DB_PORT='9003' CENTURION_DB_NAME='centurion_rag' CENTURION_DB_USER='postgres' CENTURION_DB_PASSWORD='superadmin1' CENTURION_RAG_LLM_URL='http://localhost:11434' RAG_MODEL='qwen2.5:3b' CENTURION_RAG_CHROMA_DIR='./chroma_store' CENTURION_RAG_EMBED_MODEL='BAAI/bge-base-en-v1.5' CENTURION_RAG_CONTEXT_TOKEN_BUDGET='1200' CENTURION_RAG_MAX_CONTEXT_CHUNKS='8' CENTURION_RAG_TOP_K='15' CENTURION_RAG_SIMILARITY_THRESHOLD='0.70' CENTURION_RAG_LLM_NUM_CTX='2048' CENTURION_RAG_LLM_NUM_PREDICT='400' CENTURION_RAG_LLM_MAX_TOKENS='400' CENTURION_RAG_LLM_TEMPERATURE='0.2' CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300' CENTURION_RAG_LLM_CHUNK_TIMEOUT='30' CENTURION_RAG_QUERY_BUDGET='300' CENTURION_RAG_QUERY_REWRITE='false' CENTURION_RAG_STREAMING='true' CENTURION_RAG_FAQ_ENABLED='false' RAG_FAST_MODE='false' CENTURION_DEFAULT_ADMIN_PASSWORD='admin123' CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'
+$env:STREAMLIT_SERVER_PORT='9000'
+$env:API_PORT='9001'
+$env:ZERODHA_API_KEY='qwertyuiop'
+$env:ZERODHA_API_SECRET='asdfghjklmnbvcxz'
+$env:ZERODHA_USER_ID='xyz123'
+$env:ZERODHA_PASSWORD='1234509876'
+$env:KITE_DB_HOST='localhost'
+$env:KITE_DB_PORT='9003'
+$env:KITE_DB_NAME='livestocks_ind'
+$env:KITE_DB_USER='postgres'
+$env:KITE_DB_PASSWORD='superadmin1'
+$env:KITE_POOL_MAXSIZE='40'
+$env:MINIO_ENDPOINT='localhost:9004'
+$env:MINIO_ACCESS_KEY='minioadmin'
+$env:MINIO_SECRET_KEY='minioadmin123'
+$env:MINIO_SECURE='false'
+$env:MINIO_BUCKET='centurion-backtests'
+$env:MINIO_ENABLED='true'
+$env:CENTURION_DB_HOST='localhost'
+$env:CENTURION_DB_PORT='9003'
+$env:CENTURION_DB_NAME='centurion_rag'
+$env:CENTURION_DB_USER='postgres'
+$env:CENTURION_DB_PASSWORD='superadmin1'
+$env:CENTURION_RAG_LLM_URL='http://localhost:11434'
+$env:RAG_MODEL='qwen2.5:3b'
+$env:CENTURION_RAG_CHROMA_DIR='./chroma_store'
+$env:CENTURION_RAG_EMBED_MODEL='BAAI/bge-base-en-v1.5'
+$env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET='1200'
+$env:CENTURION_RAG_MAX_CONTEXT_CHUNKS='8'
+$env:CENTURION_RAG_TOP_K='15'
+$env:CENTURION_RAG_SIMILARITY_THRESHOLD='0.70'
+$env:CENTURION_RAG_LLM_NUM_CTX='2048'
+$env:CENTURION_RAG_LLM_NUM_PREDICT='400'
+$env:CENTURION_RAG_LLM_MAX_TOKENS='400'
+$env:CENTURION_RAG_LLM_TEMPERATURE='0.2'
+$env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300'
+$env:CENTURION_RAG_LLM_CHUNK_TIMEOUT='30'
+$env:CENTURION_RAG_QUERY_BUDGET='300'
+$env:CENTURION_RAG_QUERY_REWRITE='false'
+$env:CENTURION_RAG_STREAMING='true'
+$env:CENTURION_RAG_FAQ_ENABLED='false'
+$env:RAG_FAST_MODE='false'
+$env:CENTURION_DEFAULT_ADMIN_PASSWORD='admin123'
+$env:CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'
+```
+
+**macOS / Linux:**
+```bash
+export STREAMLIT_SERVER_PORT='9000' \
+  API_PORT='9001' \
+  ZERODHA_API_KEY='qwertyuiop' \
+  ZERODHA_API_SECRET='asdfghjklmnbvcxz' \
+  ZERODHA_USER_ID='xyz123' \
+  ZERODHA_PASSWORD='1234509876' \
+  KITE_DB_HOST='localhost' \
+  KITE_DB_PORT='9003' \
+  KITE_DB_NAME='livestocks_ind' \
+  KITE_DB_USER='postgres' \
+  KITE_DB_PASSWORD='superadmin1' \
+  KITE_POOL_MAXSIZE='40' \
+  MINIO_ENDPOINT='localhost:9004' \
+  MINIO_ACCESS_KEY='minioadmin' \
+  MINIO_SECRET_KEY='minioadmin123' \
+  MINIO_SECURE='false' \
+  MINIO_BUCKET='centurion-backtests' \
+  MINIO_ENABLED='true' \
+  CENTURION_DB_HOST='localhost' \
+  CENTURION_DB_PORT='9003' \
+  CENTURION_DB_NAME='centurion_rag' \
+  CENTURION_DB_USER='postgres' \
+  CENTURION_DB_PASSWORD='superadmin1' \
+  CENTURION_RAG_LLM_URL='http://localhost:11434' \
+  RAG_MODEL='qwen2.5:3b' \
+  CENTURION_RAG_CHROMA_DIR='./chroma_store' \
+  CENTURION_RAG_EMBED_MODEL='BAAI/bge-base-en-v1.5' \
+  CENTURION_RAG_CONTEXT_TOKEN_BUDGET='1200' \
+  CENTURION_RAG_MAX_CONTEXT_CHUNKS='8' \
+  CENTURION_RAG_TOP_K='15' \
+  CENTURION_RAG_SIMILARITY_THRESHOLD='0.70' \
+  CENTURION_RAG_LLM_NUM_CTX='2048' \
+  CENTURION_RAG_LLM_NUM_PREDICT='400' \
+  CENTURION_RAG_LLM_MAX_TOKENS='400' \
+  CENTURION_RAG_LLM_TEMPERATURE='0.2' \
+  CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300' \
+  CENTURION_RAG_LLM_CHUNK_TIMEOUT='30' \
+  CENTURION_RAG_QUERY_BUDGET='300' \
+  CENTURION_RAG_QUERY_REWRITE='false' \
+  CENTURION_RAG_STREAMING='true' \
+  CENTURION_RAG_FAQ_ENABLED='false' \
+  RAG_FAST_MODE='false' \
+  CENTURION_DEFAULT_ADMIN_PASSWORD='admin123' \
+  CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'
 ```
 
 ### 3️⃣ Start PostgreSQL (Docker)
+
+**Windows PowerShell:**
 ```powershell
-docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15 && sleep 2 && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15
+Start-Sleep -Seconds 5
+docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
+```
+
+**macOS / Linux:**
+```bash
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15
+sleep 5
+docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
 ```
 
 ### 4️⃣ Initialize Database
+
+**Windows PowerShell:**
 ```powershell
 python setup_database.py
+```
+
+**macOS / Linux:**
+```bash
+python3 setup_database.py
 ```
 Expected: `✓ Database tables created successfully`
 
 ### 5️⃣ Start MinIO (Docker) — for Backtest Charts
+
+**Windows PowerShell:**
 ```powershell
 docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"
 ```
 
-### 6️⃣ (Optional) Install Ollama — for RAG Document Q&A
-```powershell
-# Download from https://ollama.ai/download, then:
-ollama pull qwen2.5:3b
+**macOS / Linux:**
+```bash
+docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"
+```
 
-OR
+### 6️⃣ (Optional) Install Ollama — for RAG Document Q&A
+
+**Windows PowerShell:**
 ```powershell
+# Download from https://ollama.ai/download, install, then:
+ollama pull qwen2.5:3b
+```
+
+**macOS / Linux:**
+```bash
 curl -fsSL https://ollama.com/install.sh | sh
-# then:
 ollama pull qwen2.5:3b
 ```
 
 ### 7️⃣ Launch the App
-**Terminal 1 — Streamlit UI:**
+
+**Terminal 1 — Streamlit UI (Windows PowerShell):**
 ```powershell
+streamlit run app.py
+```
+
+**Terminal 1 — Streamlit UI (macOS / Linux):**
+```bash
 streamlit run app.py
 ```
 Opens at: **http://localhost:9000** 
 login with `admin` / `admin123`
 
-**Terminal 2 (optional) — FastAPI REST API:**
+**Terminal 2 (optional) — FastAPI REST API (Windows PowerShell):**
 ```powershell
 python run_api.py --port 9001
 ```
+
+**Terminal 2 (optional) — FastAPI REST API (macOS / Linux):**
+```bash
+python3 run_api.py --port 9001
+```
 API docs at: **http://localhost:9001/docs** (auth required)
 
-Open Minio at **http://localhost:9002/login**
+Open MinIO at **http://localhost:9002/login**
 login with: `minioadmin` / `minioadmin123`
 
 ### ✅ Verify Everything Works
@@ -407,10 +549,13 @@ details = minio.list_runs_detailed()         # metadata: size, chart count, stra
 | **Stock Analysis** | `analysis` | Multi-colour CSS spinner during analysis → 4-tab results (Overview, Detailed Table, Top Signals, Sentiment) |
 | **Fundamental** | `fundamental` | Z/M/F score interpretations, all-stocks table, three charts side-by-side |
 | **Backtesting** | `backtesting` | Auto pre-computes all strategies on first visit; config panel + per-strategy result tabs with charts |
+| **US Holdings** | `us_holdings` | US portfolio holdings view |
 | **Crypto** | `crypto` | Isolated crypto strategies (default: ETH, BTC, LTC); Binance data, separate cache |
 | **History** | `history` | 3 tabs: Analysis Runs (drill-down), Trading Signals (filterable), Backtest Results (with MinIO charts) |
 | **RAG** | `rag` | PDF upload, query input with KB source selector, streaming response, code applicator |
-| **Indian Equities** | Kite Connect | Live quotes, order book, positions, holdings, option chain, RSI scanner |
+| **Indian Main** | `ind_main` | Indian equities ticker selection and analysis dashboard |
+| **Indian Equities** | `ind_kite` | Live quotes, order book, positions, holdings, option chain, RSI scanner (Kite Connect) |
+| **Options** | `options` | Concurrent option chain with OI, Greeks, IV, Sensibull-style colouring |
 
 ### Authentication
 - YAML-based credentials (`auth/credentials.yaml`)
@@ -452,7 +597,10 @@ centurion_core/
 │       ├── fundamental_page.py   # Fundamental analysis drill-down
 │       ├── backtesting_page.py   # Strategy backtesting + MinIO/DB integration
 │       ├── crypto_page.py        # Crypto strategy page (Binance API)
-│       └── history_page.py       # Historical results browser
+│       ├── history_page.py       # Historical results browser
+│       ├── us_holdings_page.py   # US portfolio holdings view
+│       ├── ind_main_page.py      # Indian equities main dashboard
+│       └── options_page.py       # Option chain analysis page
 │
 ├── auth/                         # Authentication
 │   ├── authenticator.py          # Login/session management
@@ -465,13 +613,14 @@ centurion_core/
 │   └── repositories/             # Repository pattern (6 repos + base)
 │
 ├── scrapers/                     # News scraping modules
-│   ├── aggregator.py             # Concurrent coordinator (Semaphore, 3-layer cache)
+│   ├── us_aggregator.py          # US market concurrent coordinator (Semaphore, 3-layer cache)
+│   ├── ind_aggregator.py         # Indian market news aggregator
+│   ├── broader_sentiment.py      # Macro / broader market sentiment
+│   ├── morningstar.py            # Morningstar data scraper
 │   ├── cache.py                  # Rate limiter + content deduplicator
-│   ├── yahoo_finance.py          # yfinance library
-│   ├── finviz.py                 # HTTP + optional Selenium Elite
-│   ├── investing.py              # HTTP with custom headers
-│   ├── tradingview.py            # JSON API
-│   └── wallstreetbets.py         # Reddit public JSON (8 flairs)
+│   ├── us_news/                  # US news source scrapers (Yahoo, Finviz, Investing, TradingView, WSB)
+│   ├── ind_news/                 # Indian news source scrapers
+│   └── macro/                    # Macroeconomic data scrapers
 │
 ├── sentiment/                    # AI sentiment analysis
 │   └── analyzer.py               # DistilBERT implementation
@@ -524,23 +673,37 @@ centurion_core/
 │
 ├── rag_pipeline/                 # RAG document intelligence
 │   ├── config.py                 # 60+ field configuration dataclass
-│   ├── embeddings.py             # sentence-transformers (BGE-base-en-v1.5)
-│   ├── vector_store.py           # ChromaDB HNSW cosine wrapper
-│   ├── pdf_ingestion.py          # Structure-aware PDF chunking (~1280 lines)
-│   ├── hybrid_search.py          # BM25 + vector RRF fusion
-│   ├── reranker.py               # Cross-encoder re-ranking
-│   ├── query_rewriter.py         # LLM query expansion + HyDE
-│   ├── semantic_cache.py         # Embedding-based answer cache
-│   ├── llm_service.py            # Ollama / Claude / OpenAI abstraction
-│   ├── query_engine.py           # 10-stage pipeline (~968 lines)
-│   ├── evaluation.py             # IR metrics + LLM-as-Judge
-│   ├── tiered_retrieval.py       # FAQ tier (similarity ≥ 0.90)
-│   ├── token_counter.py          # tiktoken / heuristic counter
-│   ├── triplet_export.py         # Fine-tuning triplet generator
-│   ├── code_applier.py           # RAG → strategy code applicator
-│   ├── ui_components.py          # Streamlit RAG widgets
 │   ├── rag_page.py               # RAG page entry point
-│   └── perf_trace.py             # Pipeline stage timing
+│   ├── core/                     # Query pipeline core
+│   │   ├── query_engine.py       # 10-stage pipeline (~968 lines)
+│   │   ├── reranker.py           # Cross-encoder re-ranking (code_mode support)
+│   │   ├── hybrid_search.py      # BM25 + vector RRF fusion
+│   │   ├── query_rewriter.py     # LLM query expansion + HyDE
+│   │   ├── query_classifier.py   # Query intent classification
+│   │   ├── semantic_cache.py     # Embedding-based answer cache (in-memory)
+│   │   ├── retriever.py          # Unified retrieval interface
+│   │   ├── context_builder.py    # Token-budget context assembly
+│   │   └── fastpath.py           # Fast-path optimisations
+│   ├── storage/                  # Vector & embedding storage
+│   │   ├── vector_store.py       # ChromaDB HNSW cosine wrapper + DualIndexStore
+│   │   ├── embeddings.py         # sentence-transformers (BGE-base-en-v1.5)
+│   │   └── triplet_export.py     # Fine-tuning triplet generator
+│   ├── ingestion/                # Document ingestion
+│   │   ├── pdf_ingestion.py      # Structure-aware PDF chunking
+│   │   ├── chunking.py           # Token-based chunking with code extraction
+│   │   ├── tiered_retrieval.py   # FAQ tier (similarity >= 0.90)
+│   │   └── background_ingest.py  # Background ingestion worker
+│   ├── llm/                      # LLM integration
+│   │   ├── llm_service.py        # Ollama / Claude / OpenAI abstraction
+│   │   ├── evaluation.py         # IR metrics + LLM-as-Judge
+│   │   └── code_applier.py       # RAG → strategy code applicator
+│   ├── ui/                       # RAG Streamlit widgets
+│   │   └── ui_components.py      # Upload, query, response UI
+│   └── utils/                    # Pipeline utilities
+│       ├── token_counter.py      # tiktoken / heuristic counter
+│       ├── perf_trace.py         # Pipeline stage timing
+│       ├── retrieval_evaluator.py # Retrieval quality evaluation
+│       └── time_budget.py        # Query time budget management
 │
 ├── notifications/                # Desktop + email alerts
 │   └── manager.py                # plyer popups + SMTP HTML email
@@ -617,8 +780,8 @@ If ports are in use, either:
 ### Step 1: Clone Repository & Setup Python Environment
 
 ```powershell
-# Clone the repository
-git clone https://github.com/srees16/centurion_core.git
+# Clone the repository (dev branch)
+git clone -b dev https://github.com/srees16/centurion_core.git
 cd centurion_core
 
 # Create and activate virtual environment
@@ -647,22 +810,9 @@ Choose **Option A (Docker)** or **Option B (Local PostgreSQL)**.
 #### **Option A: PostgreSQL via Docker** (Recommended)
 
 ```powershell
-# Pull and run PostgreSQL container
-docker run -d `
-  --name centurion-postgres `
-  -p 9003:5432 `
-  -e POSTGRES_USER=postgres `
-  -e POSTGRES_PASSWORD=superadmin1 `
-  -e POSTGRES_DB=centurion_rag `
-  postgres:15
-
-# Wait 5 seconds for container to start
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15
 Start-Sleep -Seconds 5
-
-# Verify container is running
 docker ps | findstr centurion-postgres
-
-# Check logs for startup
 docker logs centurion-postgres
 ```
 
@@ -711,22 +861,9 @@ python setup_database.py
 ### Step 4: Set Up MinIO Object Storage (for Backtest Charts)
 
 ```powershell
-# Pull and run MinIO container
-docker run -d `
-  --name centurion-minio `
-  -p 9004:9000 `
-  -p 9002:9001 `
-  -e MINIO_ROOT_USER=minioadmin `
-  -e MINIO_ROOT_PASSWORD=minioadmin123 `
-  minio/minio:latest server /data --console-address ":9001"
-
-# Wait for startup
+docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"
 Start-Sleep -Seconds 5
-
-# Verify container
 docker ps | findstr centurion-minio
-
-# Create the bucket (optional — created auto on first use)
 docker exec centurion-minio mc mb minio/centurion-backtests
 ```
 
@@ -1171,6 +1308,15 @@ docker compose down -v
 ---
 
 ## 15. Changelog
+
+### 2025-07-15
+
+- **Codebase Cleanup** — Removed unused imports across 12 files, deleted 20+ dead functions/methods from `strategies/utils.py`, `strategies/loader.py`, `strategies/data_service.py`, `services/session.py`, `ui/components.py`, `strategies/registry.py`
+- **RAG Pipeline Restructure** — Deleted 7 stale top-level duplicate files (`query_engine.py`, `llm_service.py`, `pdf_ingestion.py`, `vector_store.py`, `reranker.py`, `chunking.py`, `ui_components.py`); all imports now route through the subpackage layout (`core/`, `storage/`, `ingestion/`, `llm/`, `ui/`, `utils/`)
+- **Reranker code_mode** — Backported `code_mode` parameter from stale `reranker.py` to `rag_pipeline/core/reranker.py` for code-aware threshold adjustment
+- **Removed Dead Modules** — Deleted `scrapers/aggregator.py` (fully replaced by `us_aggregator.py` + `ind_aggregator.py`)
+- **New UI Pages** — Added `us_holdings_page.py`, `ind_main_page.py`, `options_page.py` to README documentation
+- **README Quick Start** — Separated Windows PowerShell and macOS/Linux commands; fixed broken `export` in PowerShell blocks, replaced `sleep` with `Start-Sleep`, fixed unclosed Ollama code block
 
 ### 2026-02-28
 
