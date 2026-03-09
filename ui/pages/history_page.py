@@ -5,7 +5,6 @@ Allows users to review past analysis runs, signals, and backtest results
 stored in the database, filtered by date/time.
 """
 
-import base64
 import json
 import logging
 from datetime import datetime, timedelta

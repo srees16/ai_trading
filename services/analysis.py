@@ -160,7 +160,7 @@ async def _execute_analysis(
     # ── Step 2: Sentiment analysis (with cache) ──────────────────────
     # (Spinner already shows status; skip redundant info notification)
     if progress_callback:
-        progress_callback(30, " Analyzing sentiment…")
+        progress_callback(30, "Analyzing sentiment…")
     
     # Separate already-analysed items from new ones
     items_to_analyse = []
@@ -172,7 +172,7 @@ async def _execute_analysis(
             items_to_analyse.append(item)
     
     if progress_callback:
-        progress_callback(35, f" {len(items_to_analyse)} items to analyse ({len(already_analysed)} cached)…")
+        progress_callback(35, f"{len(items_to_analyse)} items to analyse ({len(already_analysed)} cached)…")
 
     if items_to_analyse:
         newly_analysed = system.sentiment_analyzer.analyze_news_items(items_to_analyse)
@@ -180,7 +180,7 @@ async def _execute_analysis(
         newly_analysed = []
     
     if progress_callback:
-        progress_callback(48, " Caching sentiment results…")
+        progress_callback(48, "Caching sentiment results…")
 
     analyzed_news = already_analysed + newly_analysed
     
@@ -304,7 +304,7 @@ async def _execute_analysis(
     if progress_callback:
         progress_callback(95, f"\u2705 {len(signals)} trading signals generated")
     if progress_callback:
-        progress_callback(100, " Analysis complete ")
+        progress_callback(100, "Analysis complete ")
     
     # ── Step 4: WSB email report (auto-send when SMTP configured) ────
     wsb_news = [n for n in analyzed_news if n.source == "WallStreetBets"]

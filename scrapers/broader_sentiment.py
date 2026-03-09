@@ -25,10 +25,8 @@ Implementation notes
 """
 
 import asyncio
-import hashlib
 import logging
 import re
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
@@ -37,7 +35,6 @@ from urllib.parse import quote_plus, urlparse
 import aiohttp
 from bs4 import BeautifulSoup
 
-from config import Config
 from models import SentimentLabel
 
 logger = logging.getLogger(__name__)

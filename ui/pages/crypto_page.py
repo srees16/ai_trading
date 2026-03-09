@@ -166,7 +166,7 @@ def _render_configuration_panel(
         st.warning(" Enter at least 2 crypto ticker symbols (e.g. ETH, BTC, LTC).")
 
     run_btn = st.button(
-        " Run Backtest",
+        "Run Backtest",
         type="primary",
         disabled=len(param_values.get("tickers", [])) < 2,
         help="Run the crypto strategy with the parameters above",

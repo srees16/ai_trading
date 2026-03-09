@@ -7,7 +7,7 @@ authentication tokens, and service singletons.
 
 import logging
 from functools import lru_cache
-from typing import Generator, Optional
+
 
 logger = logging.getLogger(__name__)
 

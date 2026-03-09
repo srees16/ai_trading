@@ -110,7 +110,7 @@ def _render_control_panel():
 
 def _render_ticker_selection() -> List[str]:
     """Render ticker selection controls for Indian stocks."""
-    st.markdown(" **Select Stocks**")
+    st.markdown("**Select Stocks**")
 
     ticker_mode = st.radio(
         "Input method:",
@@ -276,7 +276,7 @@ def _render_run_controls(tickers: List[str]) -> bool:
 
     with btn_col:
         run_button = st.button(
-            " Run Analysis",
+            "Run Analysis",
             type="primary",
             disabled=len(tickers) == 0,
             key="ind_run_analysis",

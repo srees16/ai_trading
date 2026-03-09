@@ -7,10 +7,9 @@ evaluation, and configuration.
 
 import logging
 import os
-import tempfile
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 
 from api.dependencies import get_rag_engine
 from api.schemas.common import ErrorResponse, SuccessResponse

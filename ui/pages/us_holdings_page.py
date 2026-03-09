@@ -67,7 +67,7 @@ def render_us_holdings_page():
     _user = st.session_state.get("username", "unknown")
     logger.info("[user=%s] Viewing Holdings page", _user)
 
-    render_header_bar(subtitle=" Holdings · DriveWealth")
+    render_header_bar(subtitle="Holdings · DriveWealth")
     render_stock_ticker_ribbon(market="US")
     render_vix_indicator(market="US")
     render_navigation_buttons(current_page="us_holdings", back_key_suffix="from_us_holdings")
@@ -116,7 +116,7 @@ def render_us_holdings_page():
 
     # ── 4. Dashboard tabs ───────────────────────────────────
     tab_summary, tab_positions, tab_orders, tab_txns = st.tabs(
-        [" Account Summary", " Positions", " Orders", " Transactions"]
+        ["Account Summary", "Positions", "Orders", "Transactions"]
     )
 
     with tab_summary:
@@ -359,7 +359,7 @@ def _render_positions(dw, account_id: str):
     positions = resp if isinstance(resp, list) else resp.get("equityPositions", resp.get("positions", []))
 
     if not positions:
-        st.info(" No open positions in this account.")
+        st.info("No open positions in this account.")
         return
 
     import pandas as pd

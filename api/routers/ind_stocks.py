@@ -10,7 +10,7 @@ import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query
 
 from api.dependencies import get_kite_session, set_kite_session
 from api.schemas.common import ErrorResponse, SuccessResponse
