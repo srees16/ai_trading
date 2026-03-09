@@ -525,7 +525,7 @@ def _render_landing_page():
 
     _, col_btn, _ = st.columns([3, 1, 3])
     with col_btn:
-        if st.button("🚀 Start Kite Session", type="primary", use_container_width=True):
+        if st.button("Start Kite Session", type="primary", use_container_width=True):
             logger.info("[user=%s] Ind Stocks: Start Kite Session clicked", st.session_state.get('username', 'unknown'))
             st.session_state["kite_session_started"] = True
             st.rerun()
@@ -1235,7 +1235,7 @@ def _render_dashboard():
 
             # ── Order Book / Positions / Holdings / RSI Strategy ──────
             st.markdown("")
-            hold_tab, pos_tab, ob_tab, rsi_tab = st.tabs(["💼 Holdings", "📊 Positions", "📝 Order Book", "📈 RSI Strategy"])
+            hold_tab, pos_tab, ob_tab, rsi_tab = st.tabs(["Holdings", "Positions", "Order Book", "RSI Strategy"])
 
             with ob_tab:
                 orders = get_order_book(kite)

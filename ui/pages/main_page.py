@@ -119,7 +119,7 @@ def _render_ticker_selection() -> List[str]:
     Returns:
         List of selected tickers
     """
-    st.markdown("💼 **Select Stocks**")
+    st.markdown("**Select Stocks**")
     
     ticker_mode = st.radio(
         "Input method:",
@@ -274,7 +274,7 @@ def _render_run_controls(tickers: List[str]) -> bool:
     
     with btn_col:
         run_button = st.button(
-            "🚀 Run Analysis",
+            "Run Analysis",
             type="primary",
             disabled=len(tickers) == 0
         )

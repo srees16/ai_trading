@@ -143,7 +143,7 @@ def render_rag_toggle() -> bool:
         st.session_state["rag_enabled"] = _get_config().rag_enabled
 
     st.session_state["rag_enabled"] = st.toggle(
-        "🧠 RAG",
+        "RAG",
         value=st.session_state["rag_enabled"],
         help="When enabled, queries will retrieve context from uploaded strategy documents.",
         key="rag_pipeline_toggle",
@@ -371,7 +371,7 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
     """
     from rag_pipeline.llm.code_applier import extract_code_blocks
 
-    st.markdown("### 💬 Answer")
+    st.markdown("### Answer")
     _render_answer_content(response.answer)
 
     # ---- Feedback buttons (thumbs up / thumbs down) ----

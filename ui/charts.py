@@ -116,7 +116,7 @@ def render_sentiment_chart(signals: List[Any]):
     if not signals:
         return
     
-    st.subheader("🧠 Sentiment Analysis")
+    st.subheader("Sentiment Analysis")
     
     # Extract sentiment data
     sentiment_data = []

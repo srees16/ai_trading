@@ -112,7 +112,7 @@ def render_rag_page() -> None:
 
     st.markdown(_rag_page_css(), unsafe_allow_html=True)
 
-    render_header_bar(subtitle="🧠 Knowledge Engine")
+    render_header_bar(subtitle="Knowledge Engine")
     _user = st.session_state.get('username', 'unknown')
     _throttled_info("[user=%s] RAG Engine: page view", _user)
 
@@ -139,7 +139,7 @@ def render_rag_page() -> None:
     if _is_resubmit:
         query_text = _resubmit_query
 
-    if _is_resubmit or st.button("🔍 Submit Query", type="primary", key="rag_search_btn"):
+    if _is_resubmit or st.button("Submit Query", type="primary", key="rag_search_btn"):
         import time as _time
         _wall_t0 = _time.perf_counter()
 

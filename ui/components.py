@@ -142,7 +142,7 @@ def spinner_html(label: str = "Processing…") -> str:
 
 def render_header():
     """Render the main application header with the dark header bar."""
-    render_header_bar(subtitle="💻 Algorithmic Trading · Event-Driven Alpha")
+    render_header_bar(subtitle="Algorithmic Trading · Event-Driven Alpha")
 
 
 def render_page_header(title: str, subtitle: Optional[str] = None, description: Optional[str] = None):
@@ -237,12 +237,12 @@ def render_navigation_buttons(
 
     # All possible navigation targets (id, label)
     all_pages = [
-        ('main',         '🏠 Main'),
-        ('analysis',     '📊 Stock Analysis'),
-        ('fundamental',  '🔬 Fundamental Analysis'),
-        ('backtesting',  '📈 Backtest Strategy'),
-        ('history',      '📜 History'),
-        ('us_holdings',  '💼 Holdings'),
+        ('main',         'Main'),
+        ('analysis',     'Stock Analysis'),
+        ('fundamental',  'Fundamental Analysis'),
+        ('backtesting',  'Backtest Strategy'),
+        ('history',      'History'),
+        ('us_holdings',  'Holdings'),
     ]
 
     # Build visible buttons: skip current page; skip Analysis if no results
@@ -300,13 +300,13 @@ def render_ind_navigation_buttons(
     )
 
     all_pages = [
-        ('main',         '🏠 Main'),
-        ('analysis',     '📊 Analysis'),
-        ('fundamental',  '🔬 Fundamentals'),
-        ('backtesting',  '📈 Backtest'),
-        ('history',      '📜 History'),
-        ('options',      '🎯 Options'),
-        ('ind_kite',     '🪁 Fly Kite'),
+        ('main',         'Main'),
+        ('analysis',     'Analysis'),
+        ('fundamental',  'Fundamentals'),
+        ('backtesting',  'Backtest'),
+        ('history',      'History'),
+        ('options',      'Options'),
+        ('ind_kite',     'Fly Kite'),
     ]
 
     buttons = [
@@ -422,15 +422,15 @@ def render_features_section():
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.markdown("📰 **Multi-Source News**")
+        st.markdown("**Multi-Source News**")
         st.caption("Aggregates from Yahoo Finance, Finviz, Investing.com, and more")
     
     with col2:
-        st.markdown("🧠 **AI Sentiment Analysis**")
+        st.markdown("**AI Sentiment Analysis**")
         st.caption("DistilBERT-powered sentiment classification")
     
     with col3:
-        st.markdown("📊 **Comprehensive Metrics**")
+        st.markdown("**Comprehensive Metrics**")
         st.caption("Fundamentals + Technicals analysis")
 
 
