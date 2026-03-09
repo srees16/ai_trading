@@ -372,16 +372,15 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
     from rag_pipeline.llm.code_applier import extract_code_blocks
 
     st.markdown("### Answer")
-    st.markdown("### Answer")
     _render_answer_content(response.answer)
 
-    # ---- Feedback buttons (thumbs up / thumbs down) ----
+    # ---- HITL Feedback buttons (👍 thumbs up / 👎 thumbs down) ----
     if response.rag_enabled and response.answer:
         feedback_key = f"fb_{hash(response.query + response.answer[:100])}"
         fb_col1, fb_col2, fb_col3 = st.columns([1, 1, 6])
 
         with fb_col1:
-            if st.button("", key=f"{feedback_key}_up", help="Good answer"):
+            if st.button("👍", key=f"{feedback_key}_up", help="Good answer"):
                 sources = [c.source for c in response.chunks] if response.chunks else []
                 _log_feedback(
                     query=response.query,
@@ -389,10 +388,10 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
                     feedback="positive",
                     sources=sources,
                 )
-                st.toast("Thanks for the feedback!", icon="")
+                st.toast("Thanks for the feedback!", icon="👍")
 
         with fb_col2:
-            if st.button("", key=f"{feedback_key}_down", help="Poor answer"):
+            if st.button("👎", key=f"{feedback_key}_down", help="Poor answer"):
                 sources = [c.source for c in response.chunks] if response.chunks else []
                 _log_feedback(
                     query=response.query,
@@ -400,7 +399,7 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
                     feedback="negative",
                     sources=sources,
                 )
-                st.toast("Feedback recorded — we'll improve!", icon="")
+                st.toast("Feedback recorded — we'll improve!", icon="👎")
 
     # ---- Runtime badge (right below feedback emojis) ----
     if runtime_label:
