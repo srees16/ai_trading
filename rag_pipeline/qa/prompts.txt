@@ -9,6 +9,7 @@ how to do labeling for side and size (snip 3.5, p49)
 what are monte carlo experiments, how can we evaluate the efficiency of the sequential bootstrap algorithm
 what is the implementation of time decay factors (snip 4.11, p70)
 how to find the minimum D value that passes the ADF test (snip 5.4, p 85)
+how can i declare cross validation class when there is an overlap of observations (snip 7.3, p109)
 
 ~~~~ test prompts from "the school of the americas"~~~~
 
