@@ -5,12 +5,12 @@ Reusable Streamlit widgets that can be embedded in any page.
 Designed to be replaced / composed into the main centurion_core UI.
 
 Public API:
-    - render_rag_toggle()         → bool  (RAG on/off state)
-    - render_pdf_uploader()       → uploads & ingests PDFs
-    - render_query_input()        → gets user query text
-    - render_rag_response()       → displays RAG answer + sources
-    - render_kb_source_selector() → radio-button KB source picker
-    - render_knowledge_base()     → shows collection stats & management
+    - render_rag_toggle() bool (RAG on/off state)
+    - render_pdf_uploader() uploads & ingests PDFs
+    - render_query_input() gets user query text
+    - render_rag_response() displays RAG answer + sources
+    - render_kb_source_selector() radio-button KB source picker
+    - render_knowledge_base() shows collection stats & management
 """
 
 import json
@@ -176,7 +176,7 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
     col_upload, col_hint = st.columns([1, 2])
     with col_upload:
         uploaded_files = st.file_uploader(
-            "📄 Upload PDFs",
+            " Upload PDFs",
             type=["pdf"],
             accept_multiple_files=True,
             help="Upload one or more PDF documents to build the knowledge base.",
@@ -187,7 +187,7 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
         if not uploaded_files:
             return None
 
-        if st.button("📥 Ingest Documents", type="primary", key="rag_ingest_btn"):
+        if st.button(" Ingest Documents", type="primary", key="rag_ingest_btn"):
             submitted_count = 0
             for file in uploaded_files:
                 file_bytes = file.read()
@@ -198,7 +198,7 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
             st.toast(
                 f"{submitted_count} file(s) submitted for background ingestion. "
                 "You can continue querying while they process.",
-                icon="📥",
+                icon="",
             )
             st.rerun()  # rerun to show the status panel immediately
 
@@ -259,13 +259,13 @@ def _render_ingestion_status(mgr) -> None:
         return
 
     with st.container():
-        st.markdown("#### 📥 Ingestion Status")
+        st.markdown("#### Ingestion Status")
 
         # Active tasks — progress is kept in sync by the auto-refresh loop
         for task in active:
             col_name, col_stage, col_pct = st.columns([2, 3, 1])
             with col_name:
-                status_icon = "⏳" if task.status == TaskStatus.PENDING else "⚙️"
+                status_icon = "" if task.status == TaskStatus.PENDING else ""
                 st.markdown(f"{status_icon} **{task.file_name}**")
             with col_stage:
                 st.caption(task.stage or "Queued…")
@@ -310,7 +310,7 @@ def render_query_input() -> Optional[str]:
     Returns the query string or None if empty.
     """
     query = st.text_input(
-        "🔍 Ask a question",
+        " Ask a question",
         placeholder="e.g. What are the entry and exit rules for the momentum strategy?",
         key="rag_query_input",
     )
@@ -326,8 +326,8 @@ def _render_answer_content(text: str) -> None:
 
     Splits the answer on fenced code blocks (```...```) and renders each
     segment with the appropriate Streamlit widget:
-      - Fenced code blocks  → ``st.code()`` with syntax highlighting
-      - Everything else      → ``st.markdown()`` (handles inline `code` too)
+      - Fenced code blocks ``st.code()`` with syntax highlighting
+      - Everything else ``st.markdown()`` (handles inline `code` too)
     """
     import re as _re
 
@@ -372,6 +372,7 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
     from rag_pipeline.llm.code_applier import extract_code_blocks
 
     st.markdown("### Answer")
+    st.markdown("### Answer")
     _render_answer_content(response.answer)
 
     # ---- Feedback buttons (thumbs up / thumbs down) ----
@@ -380,7 +381,7 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
         fb_col1, fb_col2, fb_col3 = st.columns([1, 1, 6])
 
         with fb_col1:
-            if st.button("👍", key=f"{feedback_key}_up", help="Good answer"):
+            if st.button("", key=f"{feedback_key}_up", help="Good answer"):
                 sources = [c.source for c in response.chunks] if response.chunks else []
                 _log_feedback(
                     query=response.query,
@@ -388,10 +389,10 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
                     feedback="positive",
                     sources=sources,
                 )
-                st.toast("Thanks for the feedback!", icon="✅")
+                st.toast("Thanks for the feedback!", icon="")
 
         with fb_col2:
-            if st.button("👎", key=f"{feedback_key}_down", help="Poor answer"):
+            if st.button("", key=f"{feedback_key}_down", help="Poor answer"):
                 sources = [c.source for c in response.chunks] if response.chunks else []
                 _log_feedback(
                     query=response.query,
@@ -399,7 +400,7 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
                     feedback="negative",
                     sources=sources,
                 )
-                st.toast("Feedback recorded — we'll improve!", icon="📝")
+                st.toast("Feedback recorded — we'll improve!", icon="")
 
     # ---- Runtime badge (right below feedback emojis) ----
     if runtime_label:
@@ -412,14 +413,14 @@ def render_rag_response(response, *, runtime_label: str | None = None) -> None:
         rs_col1, rs_col2 = st.columns([2, 5])
         with rs_col1:
             if st.button(
-                "🔄 Re-submit",
+                " Re-submit",
                 key=resubmit_key,
                 help="Not satisfied with the answer? Re-run the query to get a fresh response.",
             ):
                 st.session_state["rag_resubmit_query"] = response.query
                 st.rerun()
         with rs_col2:
-            st.caption("💡 Not happy with this answer? Re-submit to get a fresh response.")
+            st.caption(" Not happy with this answer? Re-submit to get a fresh response.")
 
     # ---- Apply Code Suggestion section ----
     if response.rag_enabled and response.answer:
@@ -585,13 +586,13 @@ def _render_code_apply_section(
         # ---- Revert button ----
         with col_revert:
             if st.button(
-                "↩Revert",
+                "Revert",
                 key=f"{apply_key}_revert",
                 help="Undo the last applied change and restore the backup.",
             ):
                 result = revert_last_patch(selected_file.path)
                 if result.success:
-                    st.success(f"↩{result.message}")
+                    st.success(f"{result.message}")
                 else:
                     st.warning(f"{result.message}")
 
@@ -649,16 +650,16 @@ def render_knowledge_base() -> None:
             if col_b.button("🗑️", key=f"del_{src}", help=f"Remove {src}"):
                 ingestion_svc = _get_ingestion_service()
                 removed = ingestion_svc.delete_source(src)
-                st.success(f"✅ Removed {removed} chunks from **{src}**")
+                st.success(f" Removed {removed} chunks from **{src}**")
                 st.rerun()
     else:
-        st.info("ℹ️ No documents indexed yet. Upload PDFs above to get started.")
+        st.info(" No documents indexed yet. Upload PDFs above to get started.")
 
     st.divider()
     col_reingest, col_reset = st.columns(2)
     with col_reingest:
         if st.button(
-            "🔄 Re-ingest All Documents",
+            " Re-ingest All Documents",
             type="secondary",
             help="Delete existing chunks and re-process all PDFs with the "
                  "latest chunking pipeline. Use after pipeline upgrades.",
@@ -677,7 +678,7 @@ def render_knowledge_base() -> None:
                     st.warning(f"**{r.get('source', '?')}** — {r.get('status', 'unknown')}")
             st.rerun()
     with col_reset:
-        if st.button("🗑️ Reset Knowledge Base", type="secondary"):
+        if st.button(" Reset Knowledge Base", type="secondary"):
             vs.reset_collection()
-            st.warning("⚠️ Knowledge base has been reset.")
+            st.warning(" Knowledge base has been reset.")
             st.rerun()

@@ -34,7 +34,7 @@ __all__ = [
 ]
 
 # ── Lazy import mapping ──────────────────────────────────────────────
-# Maps a public name → (submodule, class_name)
+# Maps a public name (submodule, class_name)
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     'MACDOscillatorStrategy':    ('.momentum_trading',      'MACDOscillatorStrategy'),
     'AwesomeOscillatorStrategy': ('.momentum_trading',      'AwesomeOscillatorStrategy'),
@@ -49,7 +49,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     'CryptoMeanReversionStrategy': ('.crypto',                'CryptoMeanReversionStrategy'),
 }
 
-# Strategy key → (submodule, class_name) for STRATEGY_MAP
+# Strategy key (submodule, class_name) for STRATEGY_MAP
 _STRATEGY_KEYS: dict[str, str] = {
     'macd':                  'MACDOscillatorStrategy',
     'awesome_oscillator':    'AwesomeOscillatorStrategy',

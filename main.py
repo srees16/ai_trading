@@ -75,7 +75,7 @@ class AlgoTradingSystem:
         logger.info("=" * 70)
         
         # Step 1: Scrape news
-        logger.info("📰 Step 1: Scraping news from multiple sources...")
+        logger.info(" Step 1: Scraping news from multiple sources...")
         all_news = await self.news_aggregator.fetch_news_for_tickers(self.tickers)
         logger.info(f"Collected {len(all_news)} news items")
         

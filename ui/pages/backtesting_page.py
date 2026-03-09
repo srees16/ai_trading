@@ -188,7 +188,7 @@ def _precompute_all_strategies(strategies: list):
     """
     # Only auto-precompute when the user has explicitly run an analysis
     if not st.session_state.get('analysis_complete', False):
-        st.info("ℹ️ Run an analysis on the main page first to auto-compute all strategies.")
+        st.info(" Run an analysis on the main page first to auto-compute all strategies.")
         return
 
     # Use the snapshot of tickers captured at "Run Analysis" time.
@@ -204,7 +204,7 @@ def _precompute_all_strategies(strategies: list):
     analysis_run = st.session_state.get('analysis_run_id', 0)
     cached_run   = st.session_state.get('backtest_cache_run_id', None)
 
-    # Cache is still valid → skip recomputation entirely
+    # Cache is still valid skip recomputation entirely
     if st.session_state.get('backtest_cache') and analysis_run == cached_run:
         return
 
@@ -283,7 +283,7 @@ def _precompute_all_strategies(strategies: list):
             logger.error(f"Pre-compute failed for {strategy_name}: {e}")
 
     spinner_slot.markdown(
-        _spinner_html(100, "✅ All strategies computed "),
+        _spinner_html(100, " All strategies computed "),
         unsafe_allow_html=True,
     )
     import time as _time; _time.sleep(0.6)
@@ -307,7 +307,7 @@ def _precompute_all_strategies(strategies: list):
 
 def _render_configuration_panel(strategies: list, strategy_options: Dict[str, Any]):
     """Render the strategy configuration panel."""
-    st.subheader("⚙️ Configuration")
+    st.subheader(" Configuration")
     
     # Strategy category filter
     categories = sorted(list(set(s['category'] for s in strategies)))
@@ -353,13 +353,13 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
         params = strategy_cls.get_parameters()
         
         st.markdown("---")
-        st.subheader("🔧 Parameters")
+        st.subheader(" Parameters")
         
         # Dynamic parameter inputs
         param_values = _render_parameter_inputs(params)
         
         st.markdown("---")
-        st.subheader("📊 Data Settings")
+        st.subheader(" Data Settings")
         
         # Ticker and date inputs
         _render_data_settings(strategy_info, param_values)
@@ -368,7 +368,7 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
         
         # Warn if no tickers provided
         if not param_values.get('tickers'):
-            st.warning("⚠️ Please enter at least one ticker symbol above.")
+            st.warning(" Please enter at least one ticker symbol above.")
         
         # Show cache status (render with no extra vertical margin)
         if selected_name in cache:
@@ -378,7 +378,7 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
         with btn_col:
             st.markdown('<div class="bt-green-btn-scope">', unsafe_allow_html=True)
             run_backtest = st.button(
-                "🚀 Run Backtest",
+                " Run Backtest",
                 type="primary",
                 disabled=not param_values.get('tickers'),
                 help="Run with custom parameters (overrides cached result)",
@@ -868,7 +868,7 @@ def _render_complex_metric(label: str, val):
     with st.expander(f"{label}", expanded=False):
         if isinstance(val, list):
             if val and isinstance(val[0], dict):
-                # List of dicts → table
+                # List of dicts table
                 df = pd.DataFrame(val)
                 st.dataframe(df, width='stretch', hide_index=True)
             else:

@@ -159,11 +159,11 @@ class DualIndexStore:
         self._collections: Dict[str, Any] = {}
 
         # Build a per-instance LRU cache for query embeddings.
-        # Key = (query_text, chunk_type) → embedding vector.
+        # Key = (query_text, chunk_type) embedding vector.
         @functools.lru_cache(maxsize=_QUERY_EMBED_CACHE_SIZE)
         def _cached_embed(text: str, chunk_type: str) -> Tuple[float, ...]:
             vec = self._embed_fn(text, chunk_type)
-            return tuple(vec)  # tuples are hashable → cache-friendly
+            return tuple(vec) # tuples are hashable cache-friendly
 
         self._cached_embed = _cached_embed
 
@@ -522,7 +522,7 @@ class DualIndexStore:
             results = collection.query(**query_kwargs)
             n_found = len(results.get("ids", [[]])[0])
             logger.info(
-                "query_index('%s', type=%s, top_k=%d) → %d results.",
+                "query_index('%s', type=%s, top_k=%d) %d results.",
                 query[:60], chunk_type, top_k, n_found,
             )
             return results
@@ -812,7 +812,7 @@ def _normalize_for_embedding(text: str) -> str:
     # 1. Remove trailing comments
     text = _TRAILING_COMMENT_RE.sub("", text)
 
-    # 2. Tab → 4 spaces
+    # 2. Tab 4 spaces
     text = text.expandtabs(4)
 
     # 3. Strip trailing whitespace per line, collapse excess blanks

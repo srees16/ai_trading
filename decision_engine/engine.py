@@ -28,7 +28,7 @@ class DecisionEngine:
     def __init__(self):
         """Initialize the decision engine."""
         self._macro_snapshot = None
-        self._public_sentiments = {}  # ticker → PublicSentiment
+        self._public_sentiments = {} # ticker PublicSentiment
 
     def set_macro_snapshot(self, snapshot) -> None:
         """Inject a ``MacroSnapshot`` for the current analysis cycle."""

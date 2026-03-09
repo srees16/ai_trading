@@ -506,7 +506,7 @@ def build_prompt_context(
 
     logger.info(
         "build_prompt_context: %d strategy, %d code, %d risk/eval chunks "
-        "(%d dropped) → %d tokens / %d budget, %d chars.%s",
+        "(%d dropped) %d tokens / %d budget, %d chars.%s",
         len(selected_strategy), len(selected_code), len(selected_risk),
         dropped, result_tokens, max_tokens, len(result),
         " [code-priority]" if _prefers_code else "",
@@ -542,10 +542,10 @@ def _run_tests() -> None:
 
     # ── 1. Empty / None input ────────────────────────────────────────
     print("\n=== 1. Empty Input ===")
-    check("None → empty string", build_prompt_context(None) == "")
-    check("empty dict → empty string", build_prompt_context({}) == "")
+    check("None empty string", build_prompt_context(None) == "")
+    check("empty dict empty string", build_prompt_context({}) == "")
     check(
-        "empty lists → empty string",
+        "empty lists empty string",
         build_prompt_context({"theory_context": [], "code_context": []}) == "",
     )
 
@@ -634,15 +634,15 @@ def _run_tests() -> None:
     risk_idx = out.index(_HEADER_RISK)
     check("risk section comes after theory", risk_idx > theory_idx)
 
-    # drawdown is risk_management → should be in risk section
+    # drawdown is risk_management should be in risk section
     dd_pos = out.index("Maximum drawdown")
     check("drawdown in risk section", dd_pos > risk_idx)
 
-    # Sharpe is evaluation → also in risk section
+    # Sharpe is evaluation also in risk section
     sharpe_pos = out.index("Sharpe ratio")
     check("Sharpe in risk section", sharpe_pos > risk_idx)
 
-    # z-score is signal_generation → should be in strategy section
+    # z-score is signal_generation should be in strategy section
     zscore_pos = out.index("z-score")
     check("z-score in strategy section", zscore_pos > theory_idx and zscore_pos < risk_idx)
 
@@ -731,7 +731,7 @@ def _run_tests() -> None:
     check("all three sections present",
           _HEADER_THEORY in out and _HEADER_CODE in out and _HEADER_RISK in out)
 
-    # Verify section order: Theory → Code → Risk
+    # Verify section order: Theory Code Risk
     t_pos = out.index(_HEADER_THEORY)
     c_pos = out.index(_HEADER_CODE)
     r_pos = out.index(_HEADER_RISK)
@@ -754,7 +754,7 @@ def _run_tests() -> None:
         "code_context": [],
     }
     out = build_prompt_context(ctx_csv)
-    check("CSV stage → risk section", _HEADER_RISK in out)
+    check("CSV stage risk section", _HEADER_RISK in out)
     check("CSV content in output", "risk modelling" in out)
 
     # ── 9. List-typed pipeline_stage ─────────────────────────────────
@@ -770,7 +770,7 @@ def _run_tests() -> None:
         "code_context": [],
     }
     out = build_prompt_context(ctx_list)
-    check("list stage → risk section", _HEADER_RISK in out)
+    check("list stage risk section", _HEADER_RISK in out)
 
     # ── 10. Non-Python code ──────────────────────────────────────────
     print("\n=== 10. Non-Python Code ===")
@@ -1012,7 +1012,7 @@ def _run_tests() -> None:
     # Empty input
     check("strip: empty string", _strip_comments("") == "")
     # No comments
-    check("strip: no comments → unchanged", _strip_comments("x = 1\ny = 2") == "x = 1\ny = 2")
+    check("strip: no comments unchanged", _strip_comments("x = 1\ny = 2") == "x = 1\ny = 2")
 
     # ── 20. _trim_code_preserving_defs helper ────────────────────────
     print("\n=== 20. _trim_code_preserving_defs ===")
@@ -1041,19 +1041,19 @@ def _run_tests() -> None:
     )
     # With a generous budget, everything preserved
     trim1 = _trim_code_preserving_defs(big_func, max_tokens=500)
-    check("trim_defs: generous budget → has applyPtSlOnT1", "def applyPtSlOnT1" in trim1)
-    check("trim_defs: generous budget → has getDailyVol", "def getDailyVol" in trim1)
+    check("trim_defs: generous budget has applyPtSlOnT1", "def applyPtSlOnT1" in trim1)
+    check("trim_defs: generous budget has getDailyVol", "def getDailyVol" in trim1)
 
     # With a very tight budget: comments stripped, defs preserved
     trim2 = _trim_code_preserving_defs(big_func, max_tokens=30)
-    check("trim_defs: tight budget → preserves def applyPtSlOnT1", "def applyPtSlOnT1" in trim2)
-    check("trim_defs: tight budget → preserves def getDailyVol", "def getDailyVol" in trim2)
-    check("trim_defs: tight budget → comments stripped", "# Module docstring" not in trim2)
-    check("trim_defs: tight budget → within budget", count_tokens(trim2) <= 30)
+    check("trim_defs: tight budget preserves def applyPtSlOnT1", "def applyPtSlOnT1" in trim2)
+    check("trim_defs: tight budget preserves def getDailyVol", "def getDailyVol" in trim2)
+    check("trim_defs: tight budget comments stripped", "# Module docstring" not in trim2)
+    check("trim_defs: tight budget within budget", count_tokens(trim2) <= 30)
 
-    # Already fits → returned unchanged
+    # Already fits returned unchanged
     small = "def foo():\n    pass"
-    check("trim_defs: already fits → unchanged", _trim_code_preserving_defs(small, 100) == small)
+    check("trim_defs: already fits unchanged", _trim_code_preserving_defs(small, 100) == small)
 
     # ── 21. Strict code mode: protected chunks ───────────────────────
     print("\n=== 21. Strict Code Mode: Protected Chunks ===")

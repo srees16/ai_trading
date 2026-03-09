@@ -1,6 +1,6 @@
 # Quick Start - Docker Deployment
 
-## 🚀 Deploy Locally with Docker
+## Deploy Locally with Docker
 
 ### Option 1: Quick Deploy (Recommended)
 ```powershell
@@ -26,7 +26,7 @@ docker run -d -p 9000:9000 --name algo-trading-system algo-trading-system:latest
 docker logs -f algo-trading-system
 ```
 
-## ☁️ Deploy to Cloud
+## Deploy to Cloud
 
 ### Azure
 ```powershell
@@ -40,7 +40,7 @@ docker logs -f algo-trading-system
 .\deployment\deploy-gcp.ps1
 ```
 
-## 📊 Verify Deployment
+## Verify Deployment
 
 ### Check Container Status
 ```bash
@@ -57,7 +57,7 @@ docker logs -f algo-trading-system
 - Azure: http://<dns-name>.<region>.azurecontainer.io:9000
 - GCP: Provided after deployment
 
-## 🛑 Stop and Clean Up
+## Stop and Clean Up
 
 ```bash
 # Stop container
@@ -70,7 +70,7 @@ docker rm algo-trading-system
 docker rmi algo-trading-system:latest
 ```
 
-## 📝 Notes
+## Notes
 
 - First run downloads ~250MB DistilBERT model
 - Data persists in ./data directory

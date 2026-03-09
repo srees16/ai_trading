@@ -237,7 +237,7 @@ class Authenticator:
         st.session_state.login_time = datetime.now()
         st.session_state.login_attempts = 0
 
-        # ── Auto-migrate legacy SHA-256 hash → bcrypt ────────────
+        # ── Auto-migrate legacy SHA-256 hash bcrypt ────────────
         if _is_legacy_sha256(user['password']):
             new_hash = hash_password(password)
             self.credentials['users'][username]['password'] = new_hash
@@ -345,7 +345,7 @@ class Authenticator:
                     "Password", type="password", placeholder="Password", label_visibility="collapsed"
                 )
                 
-                submitted = st.form_submit_button("🔐 Sign In", type="primary",
+                submitted = st.form_submit_button(" Sign In", type="primary",
                                                        use_container_width=True)
                 
                 if submitted:
@@ -365,7 +365,7 @@ class Authenticator:
             # Footer
             st.markdown(
                 "<p style='text-align:center; margin-top:1.5rem; font-size:0.75rem; color:#999;'>"
-                "🏛️ © 2026 Centurion Capital LLC · All rights reserved</p>",
+                " © 2026 Centurion Capital LLC · All rights reserved</p>",
                 unsafe_allow_html=True,
             )
         

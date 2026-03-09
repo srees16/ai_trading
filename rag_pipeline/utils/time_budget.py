@@ -49,13 +49,13 @@ logger = logging.getLogger(__name__)
 # ═══════════════════════════════════════════════════════════════════════════
 
 DEFAULT_QUERY_BUDGET_S = 300        # total seconds per query
-DEFAULT_RETRIEVAL_SLOW_S = 30       # retrieval threshold → FAST_MODE
+DEFAULT_RETRIEVAL_SLOW_S = 30 # retrieval threshold FAST_MODE
 DEFAULT_LLM_BUDGET_S = 300          # max seconds for LLM generation
 
 # Graceful cutoff messages
 _CUTOFF_TOTAL = (
     "\n\n---\n"
-    "⚠️ **Response truncated** — the total processing time exceeded "
+    " **Response truncated** — the total processing time exceeded "
     "the allowed budget ({budget}s).  The answer above may be "
     "incomplete.  Please try a more specific query or enable "
     "FAST_MODE for quicker results."
@@ -63,7 +63,7 @@ _CUTOFF_TOTAL = (
 
 _CUTOFF_LLM = (
     "\n\n---\n"
-    "⚠️ **Response truncated** — the language model took longer than "
+    " **Response truncated** — the language model took longer than "
     "{budget}s.  The partial answer above contains the tokens "
     "generated so far.  Try shortening your query or reducing the "
     "context window."

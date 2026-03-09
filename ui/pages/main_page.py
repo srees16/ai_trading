@@ -166,7 +166,7 @@ def _handle_csv_upload() -> List[str]:
     with st.expander("View CSV format example"):
         st.code(create_sample_csv(), language="csv")
         st.download_button(
-            label="⬇️ Download Sample CSV",
+            label=" Download Sample CSV",
             data=create_sample_csv(),
             file_name="sample_tickers.csv",
             mime="text/csv"
@@ -207,7 +207,7 @@ def _handle_csv_upload() -> List[str]:
 
 def _render_output_settings():
     """Render output settings controls."""
-    st.markdown("⚙️ **Output Settings**")
+    st.markdown(" **Output Settings**")
     
     output_format = st.selectbox(
         "Output format:",

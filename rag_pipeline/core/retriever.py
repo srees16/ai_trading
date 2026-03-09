@@ -198,7 +198,7 @@ def _log_code_retrieval(
             _EXPECTED_WARN_TOP_N, sorted(missing),
         )
 
-# Regex to split camelCase tokens (e.g. applyPtSlOnT1 → [apply,Pt,Sl,On,T,1])
+# Regex to split camelCase tokens (e.g. applyPtSlOnT1 [apply,Pt,Sl,On,T,1])
 _CAMEL_SPLIT_RE = re.compile(r"[a-z]+|[A-Z][a-z]*|\d+")
 
 
@@ -290,10 +290,10 @@ def _split_identifier(name: str) -> set[str]:
     Examples::
 
         _split_identifier("applyPtSlOnT1")
-        # → {'apply', 'pt', 'sl', 'on', 'applyptslont1'}
+        # {'apply', 'pt', 'sl', 'on', 'applyptslont1'}
 
         _split_identifier("daily_volatility")
-        # → {'daily', 'volatility', 'daily_volatility'}
+        # {'daily', 'volatility', 'daily_volatility'}
     """
     parts: set[str] = set()
     parts.add(name.lower())
@@ -577,7 +577,7 @@ class Retriever:
             ``id``, ``content``, ``metadata``, ``scores``.
         """
         if not query or not query.strip():
-            logger.warning("⚠️ retrieve() called with empty query.")
+            logger.warning(" retrieve() called with empty query.")
             return []
 
         query = query.strip()
@@ -614,7 +614,7 @@ class Retriever:
         strict_code = classification.get("strict_code_mode", False)
 
         logger.info(
-            "Retriever: query=%r → intent=%s, stages=%s, needs_code=%s, "
+            "Retriever: query=%r intent=%s, stages=%s, needs_code=%s, "
             "strict_code_mode=%s",
             query[:80], intent, query_stages, code_needed, strict_code,
         )
@@ -867,7 +867,7 @@ class Retriever:
         )
         if total > _RETRIEVAL_TIMEOUT_WARN:
             logger.warning(
-                "⚠️ Retriever: total retrieval %.2fs exceeds %.1fs threshold!",
+                " Retriever: total retrieval %.2fs exceeds %.1fs threshold!",
                 total, _RETRIEVAL_TIMEOUT_WARN,
             )
 
@@ -908,7 +908,7 @@ class Retriever:
 
         candidates: List[Dict[str, Any]] = []
         for doc_id, doc, meta, dist in zip(ids, docs, metas, dists):
-            # ChromaDB cosine distance → similarity: sim = 1 - dist
+            # ChromaDB cosine distance similarity: sim = 1 - dist
             similarity = max(0.0, 1.0 - dist)
             candidates.append({
                 "id": doc_id,
@@ -1148,9 +1148,9 @@ class Retriever:
             }
 
         # ── Step 2: Group by parent_id ───────────────────────────────
-        # parent_id → best child final_score
+        # parent_id best child final_score
         parent_best_score: Dict[str, float] = {}
-        # parent_id → chunk_type of the best-scoring child (for routing)
+        # parent_id chunk_type of the best-scoring child (for routing)
         parent_chunk_type: Dict[str, str] = {}
 
         for r in ranked:
@@ -1174,7 +1174,7 @@ class Retriever:
         )
 
         logger.info(
-            "retrieve_context: %d ranked children → %d unique parents.",
+            "retrieve_context: %d ranked children %d unique parents.",
             len(ranked), len(sorted_parents),
         )
 
@@ -1186,7 +1186,7 @@ class Retriever:
         parents_expanded = 0
         expansion_tokens = 0           # tokens added purely by expansion
 
-        # Pre-index: parent_id → best-scoring child's section_id
+        # Pre-index: parent_id best-scoring child's section_id
         _best_child_section: Dict[str, int] = {}
         for r in ranked:
             pid = r.get("metadata", {}).get("parent_id", "") or r["id"]
@@ -1238,7 +1238,7 @@ class Retriever:
                     if _section_id_of(s) in adjacent_ids
                 ]
                 logger.debug(
-                    "Large parent %s (%d tokens) — trimmed %d→%d adjacent siblings.",
+                    "Large parent %s (%d tokens) — trimmed %d%d adjacent siblings.",
                     pid, parent_total_tokens, len(all_siblings), len(siblings),
                 )
             else:
@@ -1458,17 +1458,17 @@ def _run_tests() -> None:
     check("doc 2 > doc 1 (sharpe mention vs none)", scores[2] > scores[1])
 
     # Empty corpus / query
-    check("empty corpus → empty", _bm25_scores(qt, []) == [])
-    check("empty query → zeros", _bm25_scores([], docs) == [0.0, 0.0, 0.0])
+    check("empty corpus empty", _bm25_scores(qt, []) == [])
+    check("empty query zeros", _bm25_scores([], docs) == [0.0, 0.0, 0.0])
 
     # ── 3. Min-max normalisation ─────────────────────────────────────
     print("\n=== 3. Normalisation ===")
     norm = _min_max_normalise([10.0, 20.0, 30.0])
-    check("[10,20,30] → [0.0, 0.5, 1.0]", norm == [0.0, 0.5, 1.0])
-    check("identical values → zeros", _min_max_normalise([5.0, 5.0]) == [0.0, 0.0])
-    check("empty → empty", _min_max_normalise([]) == [])
+    check("[10,20,30] [0.0, 0.5, 1.0]", norm == [0.0, 0.5, 1.0])
+    check("identical values zeros", _min_max_normalise([5.0, 5.0]) == [0.0, 0.0])
+    check("empty empty", _min_max_normalise([]) == [])
     norm2 = _min_max_normalise([0.0, 1.0])
-    check("[0,1] → [0,1]", norm2 == [0.0, 1.0])
+    check("[0,1] [0,1]", norm2 == [0.0, 1.0])
 
     # ── 4. Stage bonus computation ───────────────────────────────────
     print("\n=== 4. Stage Bonus ===")
@@ -1479,19 +1479,19 @@ def _run_tests() -> None:
         {"metadata": {}},
     ]
     bonuses = Retriever._compute_stage_bonuses(cands, ["risk_management", "evaluation"])
-    check("risk_management matches → 1.0", bonuses[0] == 1.0)
-    check("evaluation matches → 1.0", bonuses[1] == 1.0)
-    check("signal_generation no match → 0.0", bonuses[2] == 0.0)
-    check("no stage in meta → 0.0", bonuses[3] == 0.0)
+    check("risk_management matches 1.0", bonuses[0] == 1.0)
+    check("evaluation matches 1.0", bonuses[1] == 1.0)
+    check("signal_generation no match 0.0", bonuses[2] == 0.0)
+    check("no stage in meta 0.0", bonuses[3] == 0.0)
 
-    # No query stages → all neutral
+    # No query stages all neutral
     bonuses_empty = Retriever._compute_stage_bonuses(cands, [])
-    check("no query stages → all 0.0", all(b == 0.0 for b in bonuses_empty))
+    check("no query stages all 0.0", all(b == 0.0 for b in bonuses_empty))
 
     # Comma-separated stage (flattened metadata)
     cands_csv = [{"metadata": {"pipeline_stage": "risk_management, evaluation"}}]
     bonuses_csv = Retriever._compute_stage_bonuses(cands_csv, ["evaluation"])
-    check("CSV stage matches → 1.0", bonuses_csv[0] == 1.0)
+    check("CSV stage matches 1.0", bonuses_csv[0] == 1.0)
 
     # ── 5. Full Retriever (end-to-end with mock store) ───────────────
     print("\n=== 5. Full Retriever (end-to-end) ===")
@@ -1582,7 +1582,7 @@ def _run_tests() -> None:
 
         # ── Query: empty ─────────────────────────────────────────────
         results5 = retriever.retrieve("", top_k=5)
-        check("empty query → empty results", results5 == [])
+        check("empty query empty results", results5 == [])
 
         # ── Score structure validation ───────────────────────────────
         r = results[0]
@@ -1597,7 +1597,7 @@ def _run_tests() -> None:
         results6 = retriever.retrieve(
             "Write code for Sharpe", top_k=2,
         )
-        check("top_k=2 → at most 2 results", len(results6) <= 2)
+        check("top_k=2 at most 2 results", len(results6) <= 2)
 
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -1619,11 +1619,11 @@ def _run_tests() -> None:
 
         store2 = DualIndexStore(config=cfg2, embed_fn=mock_embed2)
 
-        # Parent block A → 3 sibling theory chunks
+        # Parent block A 3 sibling theory chunks
         parent_a = "parentA_sharpe_01"
-        # Parent block B → 2 sibling code chunks
+        # Parent block B 2 sibling code chunks
         parent_b = "parentB_drawdown_02"
-        # Parent block C → 1 standalone theory chunk
+        # Parent block C 1 standalone theory chunk
         parent_c = "parentC_momentum_03"
 
         pc_chunks = [
@@ -1758,7 +1758,7 @@ def _run_tests() -> None:
         # ── 6g: Empty query ──────────────────────────────────────────
         ctx_empty = retriever2.retrieve_context("", top_k=5)
         check(
-            "empty query → empty context",
+            "empty query empty context",
             ctx_empty["theory_context"] == []
             and ctx_empty["code_context"] == []
             and ctx_empty.get("intent") == "unknown",
@@ -1845,7 +1845,7 @@ def _run_tests() -> None:
     finally:
         shutil.rmtree(tmpdir3, ignore_errors=True)
 
-    # ── 8. Large parent → adjacent-only expansion ────────────────────
+    # ── 8. Large parent adjacent-only expansion ────────────────────
     print("\n=== 8. Large Parent Adjacent-Only ===")
 
     tmpdir4 = tempfile.mkdtemp()
@@ -1866,7 +1866,7 @@ def _run_tests() -> None:
         large_parent_id = "large_parent_001"
         large_chunks = []
         for i in range(10):
-            # Each chunk ~150 tokens → total ~1500 tokens (> 1200 threshold)
+            # Each chunk ~150 tokens total ~1500 tokens (> 1200 threshold)
             large_chunks.append({
                 "content": (
                     f"Child chunk section {i} from the large parent. "
@@ -2310,13 +2310,13 @@ def _run_tests() -> None:
 
     # 14a: is_simple_query dynamic threshold
     os.environ["RAG_SIMPLE_QUERY_THRESHOLD"] = "30"
-    check("is_simple_query short → True",
+    check("is_simple_query short True",
           is_simple_query("What is Sharpe ratio") is True)
     long_q = " ".join([f"word{i}" for i in range(35)])
-    check("is_simple_query long → False",
+    check("is_simple_query long False",
           is_simple_query(long_q) is False)
     os.environ["RAG_SIMPLE_QUERY_THRESHOLD"] = "0"
-    check("is_simple_query disabled (threshold=0) → False",
+    check("is_simple_query disabled (threshold=0) False",
           is_simple_query("short query") is False)
 
     # 14b: Constants
@@ -2410,66 +2410,66 @@ def _run_tests() -> None:
           _STRICT_CODE_KEYWORD_OVERLAP_BOOST == 0.3)
 
     # 15b: _fuzzy_ratio function
-    check("fuzzy: identical → 1.0", _fuzzy_ratio("apply", "apply") == 1.0)
-    check("fuzzy: empty a → 0.0", _fuzzy_ratio("", "apply") == 0.0)
-    check("fuzzy: empty b → 0.0", _fuzzy_ratio("apply", "") == 0.0)
+    check("fuzzy: identical 1.0", _fuzzy_ratio("apply", "apply") == 1.0)
+    check("fuzzy: empty a 0.0", _fuzzy_ratio("", "apply") == 0.0)
+    check("fuzzy: empty b 0.0", _fuzzy_ratio("apply", "") == 0.0)
     fr1 = _fuzzy_ratio("barrier", "barrier")
-    check("fuzzy: exact match → 1.0", fr1 == 1.0)
+    check("fuzzy: exact match 1.0", fr1 == 1.0)
     fr2 = _fuzzy_ratio("barrer", "barrier")
-    check("fuzzy: near match → high ratio", fr2 > 0.7)
+    check("fuzzy: near match high ratio", fr2 > 0.7)
     fr3 = _fuzzy_ratio("apply", "xyz")
-    check("fuzzy: no match → low ratio", fr3 < 0.3)
+    check("fuzzy: no match low ratio", fr3 < 0.3)
     fr4 = _fuzzy_ratio("pt", "ptsl")
-    check("fuzzy: partial substring → mid ratio", 0.3 < fr4 < 0.9)
+    check("fuzzy: partial substring mid ratio", 0.3 < fr4 < 0.9)
     # Symmetry
     check("fuzzy: symmetric", _fuzzy_ratio("abc", "abd") == _fuzzy_ratio("abd", "abc"))
 
     # 15c: _fuzzy_func_name_score
-    # applyPtSlOnT1 → sub-tokens: {apply, pt, sl, on, applyptslont1}
-    # query "apply" should match "apply" perfectly → 1.0 * 0.5 = 0.5
+    # applyPtSlOnT1 sub-tokens: {apply, pt, sl, on, applyptslont1}
+    # query "apply" should match "apply" perfectly 1.0 * 0.5 = 0.5
     fscore1 = _fuzzy_func_name_score(
         "def applyPtSlOnT1(close, events, ptSl, molecule):\n"
         "    events_ = events.loc[molecule]",
         _tokenize("implement triple barrier apply python"),
     )
-    check("fuzzy_func: 'apply' exact match → 0.5", abs(fscore1 - 0.5) < 0.01)
+    check("fuzzy_func: 'apply' exact match 0.5", abs(fscore1 - 0.5) < 0.01)
 
-    # query "barrier" vs func tokens {apply, pt, sl, on} → no close match → 0.0
+    # query "barrier" vs func tokens {apply, pt, sl, on} no close match 0.0
     fscore2 = _fuzzy_func_name_score(
         "def applyPtSlOnT1(close, events, ptSl, molecule):\n"
         "    return out",
         _tokenize("barrier labeling method"),
     )
-    check("fuzzy_func: 'barrier' no sub-token match → 0.0", fscore2 == 0.0)
+    check("fuzzy_func: 'barrier' no sub-token match 0.0", fscore2 == 0.0)
 
-    # No function names → 0.0
+    # No function names 0.0
     fscore3 = _fuzzy_func_name_score(
         "The triple barrier method labels observations.",
         _tokenize("barrier labeling"),
     )
-    check("fuzzy_func: no def → 0.0", fscore3 == 0.0)
+    check("fuzzy_func: no def 0.0", fscore3 == 0.0)
 
-    # No query tokens → 0.0
+    # No query tokens 0.0
     fscore4 = _fuzzy_func_name_score(
         "def applyPtSlOnT1(close):\n    pass",
         [],
     )
-    check("fuzzy_func: empty query → 0.0", fscore4 == 0.0)
+    check("fuzzy_func: empty query 0.0", fscore4 == 0.0)
 
-    # daily_volatility + query 'volatility' → exact sub-token match
+    # daily_volatility + query 'volatility' exact sub-token match
     fscore5 = _fuzzy_func_name_score(
         "def daily_volatility(close, span=100):\n    pass",
         _tokenize("daily volatility estimate"),
     )
-    check("fuzzy_func: 'daily'/'volatility' exact → 0.5",
+    check("fuzzy_func: 'daily'/'volatility' exact 0.5",
           abs(fscore5 - 0.5) < 0.01)
 
-    # Completely unrelated → below threshold → 0.0
+    # Completely unrelated below threshold 0.0
     fscore6 = _fuzzy_func_name_score(
         "def calculate_sharpe(returns):\n    pass",
         _tokenize("barrier labeling method"),
     )
-    check("fuzzy_func: unrelated func → 0.0", fscore6 == 0.0)
+    check("fuzzy_func: unrelated func 0.0", fscore6 == 0.0)
 
     # 15d: _STRICT_CODE_FUZZY_WEIGHT constant
     check("_STRICT_CODE_FUZZY_WEIGHT == 0.5", _STRICT_CODE_FUZZY_WEIGHT == 0.5)
@@ -2477,46 +2477,46 @@ def _run_tests() -> None:
           _STRICT_CODE_FUZZY_MIN_THRESHOLD == 0.5)
 
     # 15e: _strict_code_boost scoring function
-    # Chunk with def + name overlap + keyword overlap → +0.8
+    # Chunk with def + name overlap + keyword overlap +0.8
     boost1 = _strict_code_boost(
         "def applyPtSlOnT1(close, events, ptSl, molecule):\n"
         "    events_ = events.loc[molecule]\n"
         "    out = events_[['t1']].copy(deep=True)",
         _tokenize("implement triple barrier labeling apply python"),
     )
-    check("boost: def + name overlap ('apply') → ≥0.5", boost1 >= 0.5)
-    check("boost: keyword overlap → ≥0.8", boost1 >= 0.8)
+    check("boost: def + name overlap ('apply') ≥0.5", boost1 >= 0.5)
+    check("boost: keyword overlap ≥0.8", boost1 >= 0.8)
 
-    # Chunk with def but NO name/keyword overlap → 0.0
+    # Chunk with def but NO name/keyword overlap 0.0
     boost2 = _strict_code_boost(
         "def calculate_sharpe(returns):\n    return np.mean(returns) / np.std(returns)",
         _tokenize("implement triple barrier labeling"),
     )
-    check("boost: def but no name/keyword overlap → 0.0",
+    check("boost: def but no name/keyword overlap 0.0",
           abs(boost2 - 0.0) < 0.01)
 
-    # Chunk with no def at all, but keyword overlap → +0.3
+    # Chunk with no def at all, but keyword overlap +0.3
     boost3 = _strict_code_boost(
         "The triple barrier method labels observations by checking "
         "profit-taking and stop-loss limits.",
         _tokenize("triple barrier labeling"),
     )
-    check("boost: no def, keyword overlap → 0.3", abs(boost3 - 0.3) < 0.01)
+    check("boost: no def, keyword overlap 0.3", abs(boost3 - 0.3) < 0.01)
 
-    # Chunk with no overlap at all → 0.0
+    # Chunk with no overlap at all 0.0
     boost4 = _strict_code_boost(
         "Portfolio rebalancing uses mean-variance optimization.",
         _tokenize("triple barrier labeling"),
     )
-    check("boost: no overlap → 0.0", boost4 == 0.0)
+    check("boost: no overlap 0.0", boost4 == 0.0)
 
-    # Chunk with def + exact name overlap → +0.8
+    # Chunk with def + exact name overlap +0.8
     boost5 = _strict_code_boost(
         "def daily_volatility(close, span=100):\n"
         "    df0 = close.index.searchsorted(close.index - pd.Timedelta(days=1))",
         _tokenize("daily volatility function"),
     )
-    check("boost: def daily_volatility + query 'daily','volatility' → 0.8",
+    check("boost: def daily_volatility + query 'daily','volatility' 0.8",
           abs(boost5 - 0.8) < 0.01)
 
     # 15c: Full strict code-mode retrieve (end-to-end)
@@ -2757,12 +2757,12 @@ def _run_tests() -> None:
     check("log: top 3 function names logged",
           "top 3 function names" in log16)
 
-    # Test: empty ranked → no crash
+    # Test: empty ranked no crash
     _log_buf16.truncate(0)
     _log_buf16.seek(0)
     _log_code_retrieval([])
     log16_empty = _log_buf16.getvalue()
-    check("log: empty ranked → no crash", "no ranked results" in log16_empty)
+    check("log: empty ranked no crash", "no ranked results" in log16_empty)
 
     # Test: expected_fn warning when function missing from top-N
     _log_buf16.truncate(0)
@@ -2811,7 +2811,7 @@ def _run_tests() -> None:
     check("norm: excess blanks collapsed",
           "\n\n\n" not in norm2 and "a = 1" in norm2 and "b = 2" in norm2)
 
-    # Test 3: tabs → 4 spaces
+    # Test 3: tabs 4 spaces
     code3 = "def foo():\n\treturn 1"
     norm3 = _normalize_for_embedding(code3)
     check("norm: tabs converted to spaces",
@@ -2838,7 +2838,7 @@ def _run_tests() -> None:
           not any(ln.endswith(" ") for ln in norm6.split("\n")))
 
     # Test 7: empty string
-    check("norm: empty → empty", _normalize_for_embedding("") == "")
+    check("norm: empty empty", _normalize_for_embedding("") == "")
 
     # Test 8: preserves indentation (not on def line)
     code8 = "def foo():\n    if True:\n        return 1"

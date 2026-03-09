@@ -8,7 +8,7 @@ Indicators scraped
 ──────────────────
 * **VIX** (CBOE Volatility Index)          — fear gauge
 * **US 10Y Treasury yield** (^TNX)         — risk-free rate proxy
-* **US 2Y Treasury yield** (^IRX → 13-wk) — short-end proxy for yield curve
+* **US 2Y Treasury yield** (^IRX 13-wk) — short-end proxy for yield curve
 * **S&P 500** (^GSPC)                      — broad market health
 * **Gold** (GC=F)                          — safe-haven demand
 * **DXY / USD Index** (DX-Y.NYB)           — dollar strength
@@ -85,7 +85,7 @@ class MacroSnapshot:
         }
 
 
-# ── Ticker → field mapping ──────────────────────────────────────────
+# ── Ticker field mapping ──────────────────────────────────────────
 
 _TICKERS: Dict[str, str] = {
     "^VIX":       "vix",
@@ -236,10 +236,10 @@ class MacroIndicators:
         Derive a composite macro-sentiment score in [-1, +1].
 
         Components (equal weight where available):
-        * VIX zone         : < 15 → +1, 15-20 → +0.5, 20-30 → -0.5, > 30 → -1
-        * Yield curve      : positive spread → +0.5, negative → -0.5
+        * VIX zone : < 15 +1, 15-20 +0.5, 20-30 -0.5, > 30 -1
+        * Yield curve : positive spread +0.5, negative -0.5
         * Index momentum   : recent % change mapped to [-1,+1]
-        * Gold / oil       : rising gold → fearful (-), rising oil → mixed
+        * Gold / oil : rising gold fearful (-), rising oil mixed
         """
         scores = []
 

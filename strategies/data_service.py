@@ -71,7 +71,7 @@ class DataService:
         symbol fails but ``{symbol}.NS`` succeeds, we return the
         suffixed version.
         """
-        # Already has an exchange suffix → nothing to do
+        # Already has an exchange suffix nothing to do
         if '.' in ticker:
             return ticker
 
@@ -88,7 +88,7 @@ class DataService:
         try:
             info = yf.Ticker(ns_ticker).fast_info
             if info and getattr(info, 'timezone', None):
-                logger.info("DataService: Resolved %s → %s", ticker, ns_ticker)
+                logger.info("DataService: Resolved %s %s", ticker, ns_ticker)
                 return ns_ticker
         except Exception:
             pass

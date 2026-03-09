@@ -121,7 +121,7 @@ def _warmup_ollama() -> bool:
 
 st.set_page_config(
     page_title="Centurion Capital LLC",
-    page_icon="📊",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="collapsed"
 )

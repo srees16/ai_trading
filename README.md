@@ -4,7 +4,7 @@ A Python-based enterprise trading platform combining multi-source news scraping,
 
 ---
 
-## ⚡ Quick Start (5 Minutes)
+## Quick Start (5 Minutes)
 
 Get the app running on a new machine with these commands:
 
@@ -209,7 +209,7 @@ API docs at: **http://localhost:9001/docs** (auth required)
 Open MinIO at **http://localhost:9002/login**
 login with: `minioadmin` / `minioadmin123`
 
-### ✅ Verify Everything Works
+### Verify Everything Works
 - [ ] Streamlit opens at http://localhost:9000
 - [ ] Login succeeds with `admin` / `admin123`
 - [ ] No database errors in console
@@ -246,9 +246,9 @@ The application follows a modular, deferred-import architecture for fast startup
 
 ```
 app.py (Streamlit Router)
-  ├── apply_custom_styles() → initialize_session_state() → check_authentication()
+  ├── apply_custom_styles() initialize_session_state() check_authentication()
   ├── Page routing via st.session_state.current_page:
-  │     main → analysis → fundamental → backtesting → crypto → history
+  │ main analysis fundamental backtesting crypto history
   └── All page imports deferred to route branches
 ```
 
@@ -256,12 +256,12 @@ app.py (Streamlit Router)
 
 ```
 AlgoTradingSystem (main.py)
-  ├── USNewsAggregator   → Yahoo Finance, Finviz, Investing.com, TradingView, r/WallStreetBets
-  ├── SentimentAnalyzer   → DistilBERT transformer model
-  ├── MetricsCalculator   → Fundamentals (yfinance) + Technicals (RSI, MACD, Bollinger)
-  ├── DecisionEngine      → Weighted scoring → STRONG_BUY / BUY / HOLD / SELL / STRONG_SELL
-  ├── NotificationManager → Desktop popups (plyer) + HTML email via SMTP
-  └── StorageManager      → Excel/CSV export + MinIO object storage
+  ├── USNewsAggregator Yahoo Finance, Finviz, Investing.com, TradingView, r/WallStreetBets
+  ├── SentimentAnalyzer DistilBERT transformer model
+  ├── MetricsCalculator Fundamentals (yfinance) + Technicals (RSI, MACD, Bollinger)
+  ├── DecisionEngine Weighted scoring STRONG_BUY / BUY / HOLD / SELL / STRONG_SELL
+  ├── NotificationManager Desktop popups (plyer) + HTML email via SMTP
+  └── StorageManager Excel/CSV export + MinIO object storage
 ```
 
 ### Dual Strategy System
@@ -277,7 +277,7 @@ AlgoTradingSystem (main.py)
 
 ### News Scraping
 
-Five concurrent scrapers with 3-layer caching (session → scraper cache → DB freshness):
+Five concurrent scrapers with 3-layer caching (session scraper cache DB freshness):
 
 | Source | Method | Limit |
 |--------|--------|-------|
@@ -399,7 +399,7 @@ Streamlit dashboard for real-time Indian equity monitoring, order management, op
 | `core/database_service.py` | PostgreSQL connection pool for `livestocks_ind` database |
 | `core/selenium_service.py` | Chrome/Edge WebDriver lifecycle management |
 | `nse/nse_csv_downloader.py` | NSE bhavcopy CSV download via Selenium |
-| `nse/nse_data_loader.py` | CSV → PostgreSQL bulk loader |
+| `nse/nse_data_loader.py` | CSV PostgreSQL bulk loader |
 | `options/option_chain.py` | Concurrent option chain with OI, Greeks, and IV (ThreadPoolExecutor, 20 workers) |
 | `trading/order_service.py` | Market/Limit/SL/SL-M orders, CNC/MIS/NRML products, DAY/IOC validity |
 | `trading/rsi_strategy.py` | Live RSI scanner — BUY (RSI<30 + reversal), SELL (RSI>70 + reversal), auto-order placement |
@@ -501,7 +501,7 @@ Retrieval-Augmented Generation pipeline for document Q&A with PDF ingestion, hyb
 ### Service Layer
 
 `DatabaseService` (singleton) provides a unified API:
-- Analysis lifecycle: `start_analysis_run()` → `complete_analysis_run()` / `fail_analysis_run()`
+- Analysis lifecycle: `start_analysis_run()` `complete_analysis_run()` / `fail_analysis_run()`
 - Persistence: `save_signals()`, `save_news_items()` (SHA-256 dedup), `save_fundamental_metrics()` (upsert)
 - Backtesting: `save_backtest_result()` with normalised detail tables + strategy summary refresh
 - Freshness: `check_freshness()`, `record_fetch()`, `record_error()`
@@ -525,7 +525,7 @@ S3-compatible storage for backtest chart images:
 
 - **Path pattern**: `centurion-backtests/<run_id>/<TICKER>/<strategy_name>/<filename>`
 - **Metadata tags**: `x-amz-meta-run-id`, `x-amz-meta-strategy`, `x-amz-meta-ticker`, `x-amz-meta-chart-title`
-- **Formats**: matplotlib (base64 → PNG), plotly (JSON), backtesting.py (HTML)
+- **Formats**: matplotlib (base64 PNG), plotly (JSON), backtesting.py (HTML)
 - **Presigned URLs**: 1-hour expiry for History page viewing
 
 ```python
@@ -546,7 +546,7 @@ details = minio.list_runs_detailed()         # metadata: size, chart count, stra
 | Page | Route | Description |
 |------|-------|-------------|
 | **Main** | `main` | Ticker selection (default / manual / CSV upload), output settings, Run Analysis button |
-| **Stock Analysis** | `analysis` | Multi-colour CSS spinner during analysis → 4-tab results (Overview, Detailed Table, Top Signals, Sentiment) |
+| **Stock Analysis** | `analysis` | Multi-colour CSS spinner during analysis 4-tab results (Overview, Detailed Table, Top Signals, Sentiment) |
 | **Fundamental** | `fundamental` | Z/M/F score interpretations, all-stocks table, three charts side-by-side |
 | **Backtesting** | `backtesting` | Auto pre-computes all strategies on first visit; config panel + per-strategy result tabs with charts |
 | **US Holdings** | `us_holdings` | US portfolio holdings view |
@@ -764,9 +764,9 @@ $ports = @(9000, 9001, 9002, 9003, 9004, 11434)
 foreach ($port in $ports) {
     $connection = Test-NetConnection -ComputerName localhost -Port $port -InformationLevel Quiet
     if ($connection) {
-        Write-Host "⚠️  Port $port is in use" -ForegroundColor Yellow
+        Write-Host " Port $port is in use" -ForegroundColor Yellow
     } else {
-        Write-Host "✓ Port $port is available" -ForegroundColor Green
+        Write-Host " Port $port is available" -ForegroundColor Green
     }
 }
 ```
@@ -845,10 +845,10 @@ python setup_database.py
 
 **Expected output:**
 ```
-✓ Database connection successful
-✓ Database tables created successfully
-✓ Database service layer ready
-✅ Database setup completed successfully!
+ Database connection successful
+ Database tables created successfully
+ Database service layer ready
+ Database setup completed successfully!
 ```
 
 **If this fails:**
@@ -995,10 +995,10 @@ python -c "
 import psycopg2
 try:
     conn = psycopg2.connect('host=localhost port=9003 user=postgres password=superadmin1 dbname=centurion_rag')
-    print('✓ PostgreSQL connection successful')
+    print(' PostgreSQL connection successful')
     conn.close()
 except Exception as e:
-    print(f'✗ PostgreSQL error: {e}')
+    print(f' PostgreSQL error: {e}')
 "
 
 # Test MinIO connection
@@ -1007,9 +1007,9 @@ from minio import Minio
 try:
     client = Minio('localhost:9004', access_key='minioadmin', secret_key='minioadmin123', secure=False)
     client.bucket_exists('centurion-backtests')
-    print('✓ MinIO connection successful')
+    print(' MinIO connection successful')
 except Exception as e:
-    print(f'✗ MinIO error: {e}')
+    print(f' MinIO error: {e}')
 "
 
 # Test Ollama (if using RAG)
@@ -1050,7 +1050,7 @@ API docs at: **http://localhost:9001/docs** (login required)
    - **Password**: `admin123`
 3. Navigate to **Main** page — ensure no error messages appear
 4. Try a quick analysis with 2-3 tickers (e.g., AAPL, MSFT, GOOGL)
-5. Check **History** → **Analysis Runs** to verify database persistence
+5. Check **History** **Analysis Runs** to verify database persistence
 
 **Expected UI state:**
 - No red error boxes
@@ -1108,9 +1108,9 @@ For production, see [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md) for:
 
 ### Quick Start
 
-1. Launch the app → log in → land on the **Main** page.
+1. Launch the app log in land on the **Main** page.
 2. Select tickers (default list, manual entry, or CSV upload).
-3. Click **Run Analysis** → results appear on the **Stock Analysis** page.
+3. Click **Run Analysis** results appear on the **Stock Analysis** page.
 4. Navigate to **Fundamental Analysis** for Z/M/F score drill-down.
 5. Navigate to **Backtest Strategy** to test any of the 11 strategies.
 6. Navigate to **History** to review past runs, signals, and stored charts.
@@ -1130,7 +1130,7 @@ For production, see [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md) for:
 
 1. Navigate to the **Crypto** page.
 2. Enter crypto tickers (e.g., `ETH, BTC, LTC`) — auto-mapped to USDT pairs.
-3. The pipeline runs: EDA → statistical tests → portfolio construction → backtesting → optimisation.
+3. The pipeline runs: EDA statistical tests portfolio construction backtesting optimisation.
 4. With optimisation enabled (default), four targets are tested: max equity, min drawdown, min volatility, max Sharpe.
 
 ### RAG Document Q&A
@@ -1157,11 +1157,11 @@ All pages share consistent navigation buttons:
 
 | Button | Action |
 |---|---|
-| 🏠 **Main** | Return to the main dashboard |
-| 📈 **Stock Analysis** | View analysis results |
-| 📊 **Fundamental Analysis** | Open fundamental metrics |
-| 🔬 **Backtest Strategy** | Open backtesting |
-| 📋 **History** | Browse historical results |
+| **Main** | Return to the main dashboard |
+| **Stock Analysis** | View analysis results |
+| **Fundamental Analysis** | Open fundamental metrics |
+| **Backtest Strategy** | Open backtesting |
+| **History** | Browse historical results |
 
 ---
 
@@ -1328,10 +1328,10 @@ docker compose down -v
 
 ---
 
-## ⚠️ Disclaimer
+## Disclaimer
 
 This software is provided for **educational and informational purposes only**. It does not constitute financial advice, investment recommendations, or professional trading guidance. Stock trading involves substantial risk of loss. Always consult qualified financial advisors before making investment decisions. Use at your own risk.
 
 ---
 
-**Ready to get started? Run `streamlit run app.py` and begin analysing! 🚀📈**
+**Ready to get started? Run `streamlit run app.py` and begin analysing! **

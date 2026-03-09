@@ -136,7 +136,7 @@ def _render_ticker_selection() -> List[str]:
 
 def _handle_default_tickers() -> List[str]:
     """Handle default Indian tickers selection."""
-    with st.expander("📋 View default tickers (NSE)"):
+    with st.expander(" View default tickers (NSE)"):
         display_names = [t.replace('.NS', '') for t in IND_DEFAULT_TICKERS]
         st.write(", ".join(display_names))
         st.caption("Tickers are automatically appended with .NS suffix for NSE data.")
@@ -165,7 +165,7 @@ def _handle_csv_upload() -> List[str]:
         st.code(sample, language="csv")
         st.caption("Tickers in the CSV can be plain NSE symbols — .NS suffix is added automatically.")
         st.download_button(
-            label="⬇️ Download Sample CSV",
+            label=" Download Sample CSV",
             data=sample,
             file_name="sample_ind_tickers.csv",
             mime="text/csv",
@@ -213,7 +213,7 @@ def _handle_csv_upload() -> List[str]:
 
 def _render_output_settings():
     """Render output settings controls."""
-    st.markdown("⚙️ **Output Settings**")
+    st.markdown(" **Output Settings**")
 
     output_format = st.selectbox(
         "Output format:",

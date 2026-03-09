@@ -117,7 +117,7 @@ class GoogleSearchSentiment:
         print(ps.sentiment_label, ps.avg_sentiment_score)
     """
 
-    # Class-level cache: ticker → (PublicSentiment, timestamp)
+    # Class-level cache: ticker (PublicSentiment, timestamp)
     _cache: Dict[str, Tuple[PublicSentiment, datetime]] = {}
 
     def __init__(self):
@@ -146,7 +146,7 @@ class GoogleSearchSentiment:
 
         company = ticker.replace(".NS", "").replace(".BO", "")
 
-        # Step 1: Web search (Google → DuckDuckGo fallback)
+        # Step 1: Web search (Google DuckDuckGo fallback)
         results = await self._google_search(company)
         if not results:
             results = await self._duckduckgo_search(company)
@@ -166,7 +166,7 @@ class GoogleSearchSentiment:
         self._cache[ticker] = (ps, now)
 
         logger.info(
-            "GoogleSearchSentiment: %s → %s (score=%.2f, %d pages)",
+            "GoogleSearchSentiment: %s %s (score=%.2f, %d pages)",
             ticker, ps.sentiment_label, ps.avg_sentiment_score,
             ps.results_analyzed,
         )

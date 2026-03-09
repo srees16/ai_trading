@@ -98,9 +98,9 @@ def render_history_page():
 
     # Tabs for different history views
     tab_runs, tab_signals, tab_backtests = st.tabs([
-        "📊 Analysis Runs",
-        "🎯 Trading Signals",
-        "📈 Backtest Results",
+        " Analysis Runs",
+        " Trading Signals",
+        " Backtest Results",
     ])
 
     with tab_runs:
@@ -202,7 +202,7 @@ def _render_analysis_runs(date_range: Dict[str, Any]):
             # Summary metrics
             _render_run_summary(runs)
 
-            st.markdown("##### 📊 Analysis Run History")
+            st.markdown("##### Analysis Run History")
 
             # Build DataFrame
             run_data = []
@@ -234,7 +234,7 @@ def _render_analysis_runs(date_range: Dict[str, Any]):
 
             if run_options:
                 selected = st.selectbox(
-                    "🔍 Select a run to view details",
+                    " Select a run to view details",
                     options=["— Select —"] + list(run_options.keys()),
                     key="history_run_select"
                 )
@@ -257,13 +257,13 @@ def _render_run_summary(runs: list):
 
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("📊 Total Runs", total)
+        st.metric(" Total Runs", total)
     with col2:
-        st.metric("✅ Completed", completed)
+        st.metric(" Completed", completed)
     with col3:
-        st.metric("❌ Failed", failed)
+        st.metric(" Failed", failed)
     with col4:
-        st.metric("🎯 Total Signals", total_signals)
+        st.metric(" Total Signals", total_signals)
 
 
 def _render_run_details(session, run_id: str):
@@ -377,16 +377,16 @@ def _render_signal_history(date_range: Dict[str, Any]):
             # Summary
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("🎯 Total Signals", len(all_signals))
+                st.metric(" Total Signals", len(all_signals))
             with col2:
                 buy_count = sum(1 for s in all_signals if s.decision and s.decision.value in ('BUY', 'STRONG_BUY'))
-                st.metric("📈 Buy Signals", buy_count)
+                st.metric(" Buy Signals", buy_count)
             with col3:
                 sell_count = sum(1 for s in all_signals if s.decision and s.decision.value in ('SELL', 'STRONG_SELL'))
-                st.metric("📉 Sell Signals", sell_count)
+                st.metric(" Sell Signals", sell_count)
 
             # Signal table
-            st.markdown("##### 🎯 Signal History")
+            st.markdown("##### Signal History")
             signal_data = []
             for s in all_signals:
                 signal_data.append({
@@ -450,9 +450,9 @@ def _render_backtest_history(date_range: Dict[str, Any]):
             col1, col2, col3, col4 = st.columns(4)
             successful = [b for b in backtests if b.success]
             with col1:
-                st.metric("📊 Total Backtests", len(backtests))
+                st.metric(" Total Backtests", len(backtests))
             with col2:
-                st.metric("✅ Successful", len(successful))
+                st.metric(" Successful", len(successful))
             with col3:
                 avg_return = (
                     sum(b.total_return for b in successful if b.total_return is not None)
@@ -464,10 +464,10 @@ def _render_backtest_history(date_range: Dict[str, Any]):
                     sum(b.sharpe_ratio for b in successful if b.sharpe_ratio is not None)
                     / max(1, len([b for b in successful if b.sharpe_ratio is not None]))
                 ) if successful else 0
-                st.metric("📊 Avg Sharpe", f"{avg_sharpe:.2f}")
+                st.metric(" Avg Sharpe", f"{avg_sharpe:.2f}")
 
             # Backtest table
-            st.markdown("##### 📈 Backtest Results")
+            st.markdown("##### Backtest Results")
             bt_data = []
             for b in backtests:
                 bt_data.append({
@@ -491,7 +491,7 @@ def _render_backtest_history(date_range: Dict[str, Any]):
 
             # Strategy performance comparison
             if len(successful) > 1:
-                with st.expander("📊 Strategy Performance Comparison", expanded=False):
+                with st.expander(" Strategy Performance Comparison", expanded=False):
                     _render_strategy_comparison(successful)
 
             # --- MinIO chart images ---

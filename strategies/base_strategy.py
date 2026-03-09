@@ -444,7 +444,7 @@ class BaseStrategy(ABC):
         portfolio = pd.DataFrame(index=signals.index)
         
         long_positions = signals['positions'].clip(lower=0)
-        # Recompute signals from clipped positions so sells (1→0) restore cash
+        # Recompute signals from clipped positions so sells (10) restore cash
         long_signals = long_positions.diff().fillna(0)
         
         max_position_value = capital * risk.max_position_size

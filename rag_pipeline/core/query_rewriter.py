@@ -9,7 +9,7 @@ Usage:
     from rag_pipeline.core.query_rewriter import QueryRewriter
     rewriter = QueryRewriter(config)
     expanded = rewriter.rewrite("RSI strategy")
-    # → ["What are the RSI-based trading strategy rules and entry criteria?",
+    # ["What are the RSI-based trading strategy rules and entry criteria?",
     #    "How is the Relative Strength Index used for momentum signals?", ...]
 """
 
@@ -69,9 +69,9 @@ def expand_query(query: str) -> str:
     query with the original text preserved at the front.
 
     Rules:
-        * "first chapter"  → appends "Chapter 1", "opening chapter",
+        * "first chapter" appends "Chapter 1", "opening chapter",
           "introduction section"
-        * "central theme"  → appends "main idea", "primary argument",
+        * "central theme" appends "main idea", "primary argument",
           "core thesis"
         * etc.
 
@@ -95,7 +95,7 @@ def expand_query(query: str) -> str:
             unique.append(phrase)
 
     expanded = query + " " + " ".join(unique)
-    logger.info("expand_query: '%s' → '%s'", query, expanded)
+    logger.info("expand_query: '%s' '%s'", query, expanded)
     return expanded
 
 
@@ -227,7 +227,7 @@ class QueryRewriter:
             raw = self.llm.generate(user_msg, "", system_prompt=system_msg)
             variants = self._parse_variants(raw, query)
             logger.info(
-                "Query rewritten: '%s' → %d variants", query, len(variants)
+                "Query rewritten: '%s' %d variants", query, len(variants)
             )
         except Exception as e:
             logger.warning("Query rewrite failed (%s); using original query", e)

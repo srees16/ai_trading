@@ -105,7 +105,7 @@ def render_us_holdings_page():
     # ── 3. Disconnect button ────────────────────────────────
     dc1, dc2 = st.columns([6, 1])
     with dc2:
-        if st.button("🔴 Disconnect", use_container_width=True, key="dw_disconnect"):
+        if st.button(" Disconnect", use_container_width=True, key="dw_disconnect"):
             logger.info("[user=%s] Disconnecting DriveWealth account", _user)
             _clear_creds()
             for k in list(st.session_state.keys()):
@@ -246,7 +246,7 @@ def _render_auth_form(saved: dict):
 
 def _render_account_linking(dw, user_id: str):
     """Let the user pick from their DriveWealth accounts or enter an ID."""
-    st.markdown("### 🔗 Link a Trading Account")
+    st.markdown("### Link a Trading Account")
 
     accounts = []
     if user_id:
@@ -319,7 +319,7 @@ def _render_account_summary(dw, account_id: str):
     c4.metric("Leverage", f"{acc.get('leverage', 1)}x")
 
     # Cash balances
-    st.markdown("#### 💰 Cash Balances")
+    st.markdown("#### Cash Balances")
     try:
         cash = dw.get_account_cash(account_id)
         cash_data = cash.get("cash", cash)
@@ -337,7 +337,7 @@ def _render_account_summary(dw, account_id: str):
     # BOD snapshot from account response
     bod = acc.get("bod")
     if bod and isinstance(bod, dict):
-        st.markdown("#### 🌅 Beginning of Day")
+        st.markdown("#### Beginning of Day")
         bd1, bd2, bd3 = st.columns(3)
         bd1.metric("Cash Balance", f"${bod.get('cashBalance', 0):,.2f}")
         bd2.metric("Equity Value", f"${bod.get('equityValue', 0):,.2f}")
@@ -416,7 +416,7 @@ def _render_orders(dw, account_id: str):
 
     orders = resp if isinstance(resp, list) else resp.get("orders", [])
     if not orders:
-        st.info("📝 No resting orders.")
+        st.info(" No resting orders.")
         return
 
     import pandas as pd
@@ -446,7 +446,7 @@ def _render_transactions(dw, account_id: str):
 
     txns = resp if isinstance(resp, list) else resp.get("transactions", [])
     if not txns:
-        st.info("💸 No transactions found.")
+        st.info(" No transactions found.")
         return
 
     import pandas as pd

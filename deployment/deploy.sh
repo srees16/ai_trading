@@ -17,7 +17,7 @@ docker build -f deployment/Dockerfile -t algo-trading-system:latest .
 
 # Check if build was successful
 if [ $? -eq 0 ]; then
-    echo "✓ Docker image built successfully!"
+    echo " Docker image built successfully!"
     
     # Stop and remove existing container if running
     echo "Stopping existing container (if any)..."
@@ -33,7 +33,7 @@ if [ $? -eq 0 ]; then
         algo-trading-system:latest
     
     if [ $? -eq 0 ]; then
-        echo "✓ Container started successfully!"
+        echo " Container started successfully!"
         echo ""
         echo "=================================================="
         echo "Application is running at: http://localhost:9000"
@@ -45,10 +45,10 @@ if [ $? -eq 0 ]; then
         echo "  Restart:       docker restart algo-trading-system"
         echo "  Remove:        docker rm -f algo-trading-system"
     else
-        echo "✗ Failed to start container"
+        echo " Failed to start container"
         exit 1
     fi
 else
-    echo "✗ Failed to build Docker image"
+    echo " Failed to build Docker image"
     exit 1
 fi

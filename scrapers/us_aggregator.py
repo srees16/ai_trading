@@ -296,7 +296,7 @@ class USNewsAggregator:
             # Source weight
             src_w = _SOURCE_WEIGHTS.get(item.source, 0.5)
 
-            # Recency: 1.0 for now → 0.0 for articles > 7 days old
+            # Recency: 1.0 for now 0.0 for articles > 7 days old
             try:
                 ts = item.timestamp.replace(tzinfo=None) if item.timestamp.tzinfo else item.timestamp
                 age_hours = max((now - ts).total_seconds() / 3600.0, 0.0)

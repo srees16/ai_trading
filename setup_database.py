@@ -56,11 +56,11 @@ def initialize_database():
             logger.error("Make sure PostgreSQL is running and credentials are correct")
             return False
         
-        logger.info("✅ Database connection successful")
+        logger.info(" Database connection successful")
         
         # Create tables
         if db_manager.initialize_database():
-            logger.info("✅ Database tables created successfully")
+            logger.info(" Database tables created successfully")
         else:
             logger.error("Failed to create database tables")
             return False
@@ -85,42 +85,41 @@ def show_table_info():
     """Display information about created tables."""
     try:
         from database import DatabaseManager
+        from sqlalchemy import text
         
         db_manager = DatabaseManager()
-        session = db_manager.get_session()
         
-        # Get table information
-        result = session.execute("""
-            SELECT table_name 
-            FROM information_schema.tables 
-            WHERE table_schema = 'public'
-            ORDER BY table_name;
-        """)
-        
-        tables = [row[0] for row in result]
-        
-        if tables:
-            logger.info("\n🗃️ Database Tables:")
-            for table in tables:
-                logger.info(f"   • {table}")
-        
-        # Check hypertables
-        try:
-            result = session.execute("""
-                SELECT hypertable_name 
-                FROM timescaledb_information.hypertables
-                WHERE hypertable_schema = 'public';
-            """)
-            hypertables = [row[0] for row in result]
+        with db_manager.get_session() as session:
+            # Get table information
+            result = session.execute(text("""
+                SELECT table_name 
+                FROM information_schema.tables 
+                WHERE table_schema = 'public'
+                ORDER BY table_name;
+            """))
             
-            if hypertables:
-                logger.info("\n⏱️ TimescaleDB Hypertables:")
-                for ht in hypertables:
-                    logger.info(f"   • {ht}")
-        except:
-            logger.info("\nTimescaleDB hypertables not found (extension may not be enabled)")
-        
-        session.close()
+            tables = [row[0] for row in result]
+            
+            if tables:
+                logger.info("\n Database Tables:")
+                for table in tables:
+                    logger.info(f"   • {table}")
+            
+            # Check hypertables
+            try:
+                result = session.execute(text("""
+                    SELECT hypertable_name 
+                    FROM timescaledb_information.hypertables
+                    WHERE hypertable_schema = 'public';
+                """))
+                hypertables = [row[0] for row in result]
+                
+                if hypertables:
+                    logger.info("\n TimescaleDB Hypertables:")
+                    for ht in hypertables:
+                        logger.info(f"   • {ht}")
+            except Exception:
+                logger.info("\nTimescaleDB hypertables not found (extension may not be enabled)")
         
     except Exception as e:
         logger.error(f"Could not get table info: {e}")
@@ -129,7 +128,7 @@ def show_table_info():
 def main():
     """Main setup function."""
     print("\n" + "=" * 60)
-    print("  🏛️ Centurion Capital LLC - Database Setup")
+    print(" Centurion Capital LLC - Database Setup")
     print("=" * 60 + "\n")
     
     # Check configuration
@@ -146,7 +145,7 @@ def main():
     show_table_info()
     
     print("\n" + "=" * 60)
-    print("  ✅ Database setup completed successfully!")
+    print(" Database setup completed successfully!")
     print("=" * 60)
     print("\nYou can now run: streamlit run app.py")
     print("Analysis results will be automatically saved to the database.\n")

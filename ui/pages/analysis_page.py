@@ -148,7 +148,7 @@ def _render_no_signals_warning():
     """Render warning when no signals were generated."""
     st.warning("No signals were generated. Please try different tickers.")
     
-    if st.button("🏠 Main", key="back_no_signals"):
+    if st.button(" Main", key="back_no_signals"):
         logger.info("[user=%s] Clicked 'Main' (no signals fallback)",
                     st.session_state.get('username', 'unknown'))
         st.session_state.current_page = 'main'
