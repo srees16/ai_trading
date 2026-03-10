@@ -45,7 +45,7 @@ docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -
 ### 4️⃣ Initialize Database
 
 **Windows PowerShell or macOS / Linux:**
-```
+```powershell
 python setup_database.py
 ```
 Expected: `✓ Database tables created successfully`
@@ -53,14 +53,14 @@ Expected: `✓ Database tables created successfully`
 ### 5️⃣ Start MinIO (Docker) — for Backtest Charts
 
 **Windows PowerShell or macOS / Linux:**
-```
+```powershell
 docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"
 ```
 
 ### 6️⃣ (Optional) Install Ollama — for RAG Document Q&A
 
 **Windows PowerShell:**
-```
+```powershell
 Download from https://ollama.ai/download, install, then:
 ollama pull qwen2.5:3b
 # Or
@@ -72,7 +72,7 @@ ollama pull qwen2.5:3b
 **macOS / Linux:**
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
-# then
+# then:
 ollama pull qwen2.5:3b
 ```
 
@@ -88,7 +88,7 @@ login with `admin` / `admin123`
 
 **Terminal 2 (optional) — FastAPI REST API (Windows PowerShell or macOS / Linux):**
 ```
-python3 run_api.py --port 9001
+python3 run_api.py
 ```
 API docs at: **http://localhost:9001/docs** (auth required)
 
