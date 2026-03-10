@@ -62,17 +62,11 @@ docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USE
 **Windows powershell & MacOS:**
 ```
 # Download from https://ollama.ai/download
-OR run on Windows
+> OR run on Windows
 winget install Ollama.Ollama
-OR run on MacOS
+> OR run on MacOS
 curl -fsSL https://ollama.com/install.sh | sh
 
-# then:
-ollama pull qwen2.5:3b
-```
-**macOS / Linux:**
-```bash
-curl -fsSL https://ollama.com/install.sh | sh
 # then:
 ollama pull qwen2.5:3b
 ```
