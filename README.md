@@ -54,64 +54,56 @@ docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -
 
 ### 4️⃣ Initialize Database
 
-**Windows PowerShell:**
-```powershell
-python setup_database.py
+**Windows PowerShell or macOS / Linux:**
 ```
-
-**macOS / Linux:**
-```bash
-python3 setup_database.py
+python setup_database.py
 ```
 Expected: `✓ Database tables created successfully`
 
 ### 5️⃣ Start MinIO (Docker) — for Backtest Charts
 
-**Windows PowerShell:**
-```powershell
-docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"
+**Windows PowerShell or macOS / Linux:**
 ```
-
-**macOS / Linux:**
-```bash
 docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"
 ```
 
 ### 6️⃣ (Optional) Install Ollama — for RAG Document Q&A
 
 **Windows PowerShell:**
-```powershell
 # Download from https://ollama.ai/download, install, then:
+```
+ollama pull qwen2.5:3b
+```
+OR
+```
+winget install Ollama.Ollama
+```
+# then:
+```
 ollama pull qwen2.5:3b
 ```
 
 **macOS / Linux:**
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
+```
+# then
+```
 ollama pull qwen2.5:3b
 ```
 
 ### 7️⃣ Launch the App
 
-**Terminal 1 — Streamlit UI (Windows PowerShell):**
+**Windows PowerShell or macOS / Linux:**
 ```powershell
 streamlit run app.py
 ```
 
-**Terminal 1 — Streamlit UI (macOS / Linux):**
-```bash
-streamlit run app.py
-```
 Opens at: **http://localhost:9000** 
 login with `admin` / `admin123`
 
-**Terminal 2 (optional) — FastAPI REST API (Windows PowerShell):**
-```powershell
-python run_api.py --port 9001
+**Terminal 2 (optional) — FastAPI REST API (Windows PowerShell or macOS / Linux):**
 ```
-
-**Terminal 2 (optional) — FastAPI REST API (macOS / Linux):**
-```bash
 python3 run_api.py --port 9001
 ```
 API docs at: **http://localhost:9001/docs** (auth required)
@@ -726,8 +718,7 @@ docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -
 #### **Option B: Local PostgreSQL Installation**
 
 ```powershell
-# Verify PostgreSQL is installed and running
-# Windows Service Status:
+# Verify PostgreSQL is installed and running in Windows Service Status:
 Get-Service postgresql-x64-15
 
 # If not running, start it:
@@ -786,12 +777,7 @@ docker exec centurion-minio mc mb minio/centurion-backtests
 If you plan to use the RAG document Q&A feature, install Ollama:
 
 ```powershell
-# Download from https://ollama.ai/download
-# Or via PowerShell:
-Invoke-WebRequest -Uri "https://ollama.ai/download/OllamaSetup.exe" -OutFile OllamaSetup.exe
-.\OllamaSetup.exe
-
-# After installation, download the default model
+winget install Ollama.Ollama
 ollama pull qwen2.5:3b
 
 # Verify Ollama is running (should listen on port 11434)
