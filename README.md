@@ -83,7 +83,7 @@ streamlit run app.py
 Opens at: **http://localhost:9000** 
 login with `admin` / `admin123`
 
-**Terminal 2 — FastAPI REST API (Windows PowerShell or macOS / Linux) [optional]:**
+**Terminal 2 - FastAPI REST API (Windows PowerShell or macOS / Linux) [optional]:**
 ```
 python3 run_api.py
 ```
