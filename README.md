@@ -12,7 +12,7 @@ Get the app running on a new machine with these commands:
 
 **Windows PowerShell:**
 ```powershell
-git clone -b dev https://github.com/srees16/centurion_core.git
+git clone -b develop https://github.com/srees16/centurion_core.git
 cd centurion_core
 python -m venv myenv
 .\myenv\Scripts\Activate.ps1
