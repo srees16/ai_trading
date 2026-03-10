@@ -726,8 +726,7 @@ docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -
 #### **Option B: Local PostgreSQL Installation**
 
 ```powershell
-# Verify PostgreSQL is installed and running
-# Windows Service Status:
+# Verify PostgreSQL is installed and running in Windows Service Status:
 Get-Service postgresql-x64-15
 
 # If not running, start it:
