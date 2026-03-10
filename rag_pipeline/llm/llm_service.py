@@ -223,7 +223,7 @@ class OllamaLLMBackend:
 
     def __init__(
         self,
-        model: str = "llama3",
+        model: str = "qwen2.5:3b",
         base_url: str = "http://localhost:11434",
         temperature: float = 0.2,
         top_p: float = 0.9,
@@ -233,7 +233,7 @@ class OllamaLLMBackend:
         max_tokens: int = 400,
         timeout: int = 600,
         chunk_timeout: int = 30,
-        first_token_timeout: int = 120,
+        first_token_timeout: int = 180,
         warmup: bool = True,
         compact_prompt: bool = True,
     ) -> None:

@@ -87,7 +87,7 @@ def _warmup_ollama() -> bool:
 
         model = os.getenv(
             "RAG_MODEL",
-            os.getenv("CENTURION_RAG_LLM_MODEL", "mistral"),
+            os.getenv("CENTURION_RAG_LLM_MODEL", "qwen2.5:3b"),
         )
         base_url = os.getenv(
             "CENTURION_RAG_LLM_URL", "http://localhost:11434"
