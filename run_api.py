@@ -26,6 +26,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+
 def main():
     parser = argparse.ArgumentParser(description="Centurion Capital LLC API")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
