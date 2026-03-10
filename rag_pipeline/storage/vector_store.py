@@ -1117,6 +1117,44 @@ class VectorStoreManager:
             "hnsw_ef_search": self._config.hnsw_ef_search,
         }
 
+    def get_source_details(self, source_name: str) -> Dict[str, Any]:
+        """Return metadata details for a specific indexed source.
+
+        Reads stored chunk metadata to extract page count, chunk count,
+        ingestion timestamp, and file size (from disk if available).
+        """
+        details: Dict[str, Any] = {
+            "source": source_name,
+            "chunks": 0,
+            "page_count": None,
+            "ingested_at": None,
+            "file_size_bytes": None,
+        }
+        try:
+            results = self.collection.get(
+                where={"source": source_name},
+                include=["metadatas"],
+            )
+            metas = results.get("metadatas") or []
+            details["chunks"] = len(metas)
+            if metas and metas[0]:
+                first = metas[0]
+                details["page_count"] = first.get("page_count")
+                details["ingested_at"] = first.get("ingested_at")
+        except Exception:
+            pass
+
+        # Try to get file size from the upload directory
+        try:
+            from pathlib import Path
+            upload_path = Path(self._config.pdf_upload_dir) / source_name
+            if upload_path.exists():
+                details["file_size_bytes"] = upload_path.stat().st_size
+        except Exception:
+            pass
+
+        return details
+
     # ------------------------------------------------------------------
     # Maintenance
     # ------------------------------------------------------------------

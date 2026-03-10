@@ -688,8 +688,21 @@ def render_knowledge_base() -> None:
     if stats["sources"]:
         st.markdown("**Indexed Sources:**")
         for src in stats["sources"]:
+            details = vs.get_source_details(src)
             col_a, col_b = st.columns([4, 1])
-            col_a.write(f"📄 {src}")
+            with col_a:
+                st.write(f"📄 **{src}**")
+                meta_parts: list[str] = []
+                if details.get("file_size_bytes"):
+                    meta_parts.append(f"Size: {_format_file_size(details['file_size_bytes'])}")
+                if details.get("page_count") is not None:
+                    meta_parts.append(f"Pages: {details['page_count']}")
+                if details.get("chunks"):
+                    meta_parts.append(f"Chunks: {details['chunks']}")
+                if details.get("ingested_at"):
+                    meta_parts.append(f"Ingested: {details['ingested_at']}")
+                if meta_parts:
+                    st.caption(" | ".join(meta_parts))
             if col_b.button("🗑️", key=f"del_{src}", help=f"Remove {src}"):
                 ingestion_svc = _get_ingestion_service()
                 removed = ingestion_svc.delete_source(src)

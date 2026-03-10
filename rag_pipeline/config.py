@@ -421,7 +421,7 @@ class RAGConfig:
             # RAG_MODEL is the short-form convenience env var;
             # CENTURION_RAG_LLM_MODEL is the fully-qualified name.
             "RAG_MODEL",
-            os.getenv("CENTURION_RAG_LLM_MODEL", "mistral"),
+            os.getenv("CENTURION_RAG_LLM_MODEL", "qwen2.5:3b"),
         )
     )
     llm_base_url: str = field(
@@ -471,7 +471,7 @@ class RAGConfig:
     )
     llm_first_token_timeout: int = field(
         default_factory=lambda: int(
-            os.getenv("CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT", "120")
+            os.getenv("CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT", "180")
         )
     )
     llm_compact_prompt: bool = field(
