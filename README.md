@@ -63,7 +63,7 @@ docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USE
 ```
 Download from https://ollama.ai/download, install, then:
 ollama pull qwen2.5:3b
-# OR
+# Or
 winget install Ollama.Ollama
 # then:
 ollama pull qwen2.5:3b
