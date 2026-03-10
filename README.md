@@ -75,7 +75,7 @@ ollama pull qwen2.5:3b
 
 ### 7️⃣ Launch the App
 
-**Windows PowerShell or macOS / Linux:**
+**Terminal 1 - Windows PowerShell or macOS / Linux:**
 ```powershell
 streamlit run app.py
 ```
@@ -83,7 +83,7 @@ streamlit run app.py
 Opens at: **http://localhost:9000** 
 login with `admin` / `admin123`
 
-**Terminal 2 (optional) — FastAPI REST API (Windows PowerShell or macOS / Linux):**
+**Terminal 2 — FastAPI REST API (Windows PowerShell or macOS / Linux) [optional]:**
 ```
 python3 run_api.py
 ```
