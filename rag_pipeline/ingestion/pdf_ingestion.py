@@ -91,9 +91,9 @@ _UNICODE_REPLACEMENTS: Dict[str, str] = {
     "±": "+/-",
     "×": "x",
     "÷": "/",
-    "": "->",
-    "": "<-",
-    "": "<->",
+    "\u2192": "->",   # → rightwards arrow
+    "\u2190": "<-",   # ← leftwards arrow
+    "\u2194": "<->",  # ↔ left right arrow
     "⇒": "=>",
     "∈": "in",
     "∉": "not in",

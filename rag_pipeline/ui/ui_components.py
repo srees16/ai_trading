@@ -243,6 +243,41 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
     return results if results else None
 
 
+def _format_file_size(size_bytes: int) -> str:
+    """Format bytes into a human-readable string."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    else:
+        return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+
+def _format_ingestion_timestamp(epoch: float | None) -> str:
+    """Format an epoch timestamp into a readable local-time string."""
+    if epoch is None:
+        return "N/A"
+    from datetime import datetime
+    return datetime.fromtimestamp(epoch).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _format_ingestion_metadata(result: Dict[str, Any], file_size_bytes: int = 0) -> str:
+    """Build a one-line metadata summary for a completed ingestion."""
+    parts: list[str] = []
+    if file_size_bytes:
+        parts.append(f"Size: {_format_file_size(file_size_bytes)}")
+    pages = result.get("pages")
+    if pages is not None:
+        parts.append(f"Pages: {pages}")
+    chunks = result.get("chunks")
+    if chunks is not None:
+        parts.append(f"Chunks: {chunks}")
+    skipped = result.get("skipped_short")
+    if skipped:
+        parts.append(f"Skipped (short): {skipped}")
+    return " | ".join(parts) if parts else "No metadata available"
+
+
 def _render_ingestion_status(mgr) -> None:
     """Render a live status panel for active background ingestion tasks.
 
@@ -276,24 +311,33 @@ def _render_ingestion_status(mgr) -> None:
         for task in recently_done:
             if task.status == TaskStatus.COMPLETED:
                 r = task.result or {}
+                ts_str = _format_ingestion_timestamp(task.completed_at)
+                meta_line = _format_ingestion_metadata(r, task.file_size_bytes)
                 if r.get("status") == "success":
                     st.success(
-                        f"**{task.file_name}** — {r.get('chunks', '?')} chunks "
-                        f"from {r.get('pages', '?')} pages"
+                        f"**{task.file_name}**  \n"
+                        f"{meta_line}  \n"
+                        f"Ingested at {ts_str}"
                     )
                 elif r.get("reason") == "already_ingested":
                     st.info(
                         f"**{task.file_name}** — already ingested "
-                        f"({r.get('chunks', '?')} chunks persisted). Skipped."
+                        f"({r.get('chunks', '?')} chunks persisted). Skipped.  \n"
+                        f"Checked at {ts_str}"
                     )
                 elif r.get("status") == "skipped":
                     st.warning(
-                        f"**{task.file_name}** — skipped ({r.get('reason', '')})"
+                        f"**{task.file_name}** — skipped ({r.get('reason', '')})  \n"
+                        f"Checked at {ts_str}"
                     )
                 else:
                     st.info(f"**{task.file_name}** — {r.get('status', 'done')}")
             elif task.status == TaskStatus.FAILED:
-                st.error(f"**{task.file_name}** — {task.error or 'unknown error'}")
+                ts_str = _format_ingestion_timestamp(task.completed_at)
+                st.error(
+                    f"**{task.file_name}** — {task.error or 'unknown error'}  \n"
+                    f"Failed at {ts_str}"
+                )
 
         if active:
             st.caption("*Updating automatically — submit queries below while ingestion runs.*")
