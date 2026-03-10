@@ -720,11 +720,7 @@ Choose **Option A (Docker)** or **Option B (Local PostgreSQL)**.
 #### **Option A: PostgreSQL via Docker** (Recommended)
 
 ```powershell
-docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15
-Start-Sleep -Seconds 9
-docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;"
-docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
-docker ps | findstr centurion-postgres
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15; Start-Sleep -Seconds 9; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;"; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"; docker ps | findstr centurion-postgres
 ```
 
 #### **Option B: Local PostgreSQL Installation**
