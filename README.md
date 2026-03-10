@@ -59,16 +59,17 @@ docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USE
 
 ### 6️⃣ (Optional) Install Ollama — for RAG Document Q&A
 
-**Windows PowerShell:**
-```powershell
-Download from https://ollama.ai/download, install, then:
-ollama pull qwen2.5:3b
-# Or
+**Windows powershell & MacOS:**
+```
+# Download from https://ollama.ai/download
+OR run on Windows
 winget install Ollama.Ollama
+OR run on MacOS
+curl -fsSL https://ollama.com/install.sh | sh
+
 # then:
 ollama pull qwen2.5:3b
 ```
-
 **macOS / Linux:**
 ```bash
 curl -fsSL https://ollama.com/install.sh | sh
