@@ -54,14 +54,9 @@ docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -
 
 ### 4️⃣ Initialize Database
 
-**Windows PowerShell:**
-```powershell
-python setup_database.py
+**Windows PowerShell or macOS / Linux:**
 ```
-
-**macOS / Linux:**
-```bash
-python3 setup_database.py
+python setup_database.py
 ```
 Expected: `✓ Database tables created successfully`
 
