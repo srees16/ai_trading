@@ -15,19 +15,9 @@ Get the app running on a new machine with these commands:
 git clone -b develop https://github.com/srees16/centurion_core.git
 cd centurion_core
 python -m venv myenv
-.\myenv\Scripts\Activate.ps1
+myenv\Scripts\activate (macOS/Linux: source myenv/bin/activate)
 pip install -r requirements.txt
 ```
-
-**macOS / Linux:**
-```bash
-git clone -b dev https://github.com/srees16/centurion_core.git
-cd centurion_core
-python3 -m venv myenv
-source myenv/bin/activate
-pip install -r requirements.txt
-```
-
 ### 2️⃣ Set Environment Variables
 
 **Windows PowerShell:**
@@ -73,12 +63,9 @@ docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USE
 Download from https://ollama.ai/download, install, then:
 ```
 ollama pull qwen2.5:3b
-```
-OR
-```
+# OR
 winget install Ollama.Ollama
-```
-then:
+# then:
 ```
 ollama pull qwen2.5:3b
 ```
@@ -88,7 +75,6 @@ ollama pull qwen2.5:3b
 curl -fsSL https://ollama.com/install.sh | sh
 ```
 # then
-```
 ollama pull qwen2.5:3b
 ```
 
