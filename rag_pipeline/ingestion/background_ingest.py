@@ -60,6 +60,7 @@ class IngestionTask:
 
     task_id: str
     file_name: str
+    file_size_bytes: int = 0
     status: TaskStatus = TaskStatus.PENDING
     stage: str = ""
     stage_pct: float = 0.0
@@ -122,7 +123,7 @@ class BackgroundIngestionManager:
         for progress via ``get_task()`` or ``get_all_tasks()``.
         """
         task_id = f"{file_name}_{uuid.uuid4().hex[:8]}"
-        task = IngestionTask(task_id=task_id, file_name=file_name)
+        task = IngestionTask(task_id=task_id, file_name=file_name, file_size_bytes=len(file_bytes))
 
         with self._lock:
             self._tasks[task_id] = task
@@ -243,6 +244,9 @@ class BackgroundIngestionManager:
                 file_bytes=file_bytes,
                 progress_callback=_progress,
             )
+
+            # Attach file size to result for UI display
+            result["file_size_bytes"] = task.file_size_bytes
 
             with self._lock:
                 task.status = TaskStatus.COMPLETED
