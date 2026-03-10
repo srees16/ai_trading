@@ -198,7 +198,7 @@ def render_pdf_uploader() -> Optional[List[Dict[str, Any]]]:
             st.toast(
                 f"{submitted_count} file(s) submitted for background ingestion. "
                 "You can continue querying while they process.",
-                icon="",
+                icon="📄",
             )
             st.rerun()  # rerun to show the status panel immediately
 
