@@ -151,16 +151,16 @@ def render_rag_page() -> None:
             # Show multi-color spinner with a creative line
             import random as _rnd
             _SPINNER_LINES = [
-                "Diving deep into your documents…",
-                "Summoning insights from the vault…",
-                "Connecting the dots across pages…",
-                "Mining your knowledge base for gold…",
-                "Crunching context at light speed…",
-                "Reading between the lines for you…",
-                "Paging through the archives…",
-                "Hunting for the perfect answer…",
-                "Cross-referencing your strategy docs…",
-                "Assembling intelligence from the KB…",
+                "Diving deep into your documents",
+                "Summoning insights from the vault",
+                "Connecting the dots across pages",
+                "Mining your knowledge base for gold",
+                "Crunching context at light speed",
+                "Reading between the lines for you",
+                "Paging through the archives",
+                "Hunting for the perfect answer",
+                "Cross-referencing your strategy docs",
+                "Assembling intelligence from the KB",
             ]
             from ui.components import spinner_html as _spinner_html
             spinner_placeholder = st.empty()
