@@ -32,114 +32,24 @@ pip install -r requirements.txt
 
 **Windows PowerShell:**
 ```powershell
-$env:STREAMLIT_SERVER_PORT='9000'
-$env:API_PORT='9001'
-$env:ZERODHA_API_KEY='qwertyuiop'
-$env:ZERODHA_API_SECRET='asdfghjklmnbvcxz'
-$env:ZERODHA_USER_ID='xyz123'
-$env:ZERODHA_PASSWORD='1234509876'
-$env:KITE_DB_HOST='localhost'
-$env:KITE_DB_PORT='9003'
-$env:KITE_DB_NAME='livestocks_ind'
-$env:KITE_DB_USER='postgres'
-$env:KITE_DB_PASSWORD='superadmin1'
-$env:KITE_POOL_MAXSIZE='40'
-$env:MINIO_ENDPOINT='localhost:9004'
-$env:MINIO_ACCESS_KEY='minioadmin'
-$env:MINIO_SECRET_KEY='minioadmin123'
-$env:MINIO_SECURE='false'
-$env:MINIO_BUCKET='centurion-backtests'
-$env:MINIO_ENABLED='true'
-$env:CENTURION_DB_HOST='localhost'
-$env:CENTURION_DB_PORT='9003'
-$env:CENTURION_DB_NAME='centurion_rag'
-$env:CENTURION_DB_USER='postgres'
-$env:CENTURION_DB_PASSWORD='superadmin1'
-$env:CENTURION_RAG_LLM_URL='http://localhost:11434'
-$env:RAG_MODEL='qwen2.5:3b'
-$env:CENTURION_RAG_CHROMA_DIR='./chroma_store'
-$env:CENTURION_RAG_EMBED_MODEL='BAAI/bge-base-en-v1.5'
-$env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET='1200'
-$env:CENTURION_RAG_MAX_CONTEXT_CHUNKS='8'
-$env:CENTURION_RAG_TOP_K='15'
-$env:CENTURION_RAG_SIMILARITY_THRESHOLD='0.70'
-$env:CENTURION_RAG_LLM_NUM_CTX='2048'
-$env:CENTURION_RAG_LLM_NUM_PREDICT='400'
-$env:CENTURION_RAG_LLM_MAX_TOKENS='400'
-$env:CENTURION_RAG_LLM_TEMPERATURE='0.2'
-$env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300'
-$env:CENTURION_RAG_LLM_CHUNK_TIMEOUT='30'
-$env:CENTURION_RAG_QUERY_BUDGET='300'
-$env:CENTURION_RAG_QUERY_REWRITE='false'
-$env:CENTURION_RAG_STREAMING='true'
-$env:CENTURION_RAG_FAQ_ENABLED='false'
-$env:RAG_FAST_MODE='false'
-$env:CENTURION_DEFAULT_ADMIN_PASSWORD='admin123'
-$env:CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'
+$env:STREAMLIT_SERVER_PORT='9000'; $env:API_PORT='9001'; $env:ZERODHA_API_KEY='YOUR_KEY_HERE'; $env:ZERODHA_API_SECRET='YOUR_SECRET_HERE'; $env:ZERODHA_USER_ID='YOUR_USER_HERE'; $env:ZERODHA_PASSWORD='YOUR_PASSWORD_HERE'; $env:KITE_DB_HOST='localhost'; $env:KITE_DB_PORT='9003'; $env:KITE_DB_NAME='livestocks_ind'; $env:KITE_DB_USER='postgres'; $env:KITE_DB_PASSWORD='superadmin1'; $env:KITE_POOL_MAXSIZE='40'; $env:MINIO_ENDPOINT='localhost:9004'; $env:MINIO_ACCESS_KEY='minioadmin'; $env:MINIO_SECRET_KEY='minioadmin123'; $env:MINIO_SECURE='false'; $env:MINIO_BUCKET='centurion-backtests'; $env:MINIO_ENABLED='true'; $env:CENTURION_DB_HOST='localhost'; $env:CENTURION_DB_PORT='9003'; $env:CENTURION_DB_NAME='centurion_rag'; $env:CENTURION_DB_USER='postgres'; $env:CENTURION_DB_PASSWORD='superadmin1'; $env:CENTURION_DATABASE_URL='postgresql://postgres:superadmin1@localhost:9003/centurion_rag'; $env:CENTURION_RAG_LLM_URL='http://localhost:11434'; $env:RAG_MODEL='qwen2.5:3b'; $env:CENTURION_RAG_CHROMA_DIR='./data/chroma_db'; $env:CENTURION_RAG_EMBEDDING_MODEL='BAAI/bge-base-en-v1.5'; $env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET='2000'; $env:CENTURION_RAG_MAX_CONTEXT_CHUNKS='8'; $env:CENTURION_RAG_TOP_K='15'; $env:CENTURION_RAG_SIMILARITY_THRESHOLD='0.70'; $env:CENTURION_RAG_LLM_NUM_CTX='4096'; $env:CENTURION_RAG_LLM_NUM_PREDICT='500'; $env:CENTURION_RAG_LLM_MAX_TOKENS='500'; $env:CENTURION_RAG_LLM_TEMPERATURE='0.2'; $env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300'; $env:CENTURION_RAG_LLM_CHUNK_TIMEOUT='30'; $env:CENTURION_RAG_QUERY_BUDGET='300'; $env:CENTURION_RAG_QUERY_REWRITE='false'; $env:CENTURION_RAG_STREAMING='true'; $env:CENTURION_RAG_FAQ_ENABLED='false'; $env:RAG_FAST_MODE='false'; $env:CENTURION_RAG_CACHE_ENABLED='false'; $env:CENTURION_DEFAULT_ADMIN_PASSWORD='admin123'; $env:CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'; $env:CENTURION_RAG_LLM_PROVIDER='claude'; $env:ANTHROPIC_API_KEY='YOUR_KEY_HERE'; $env:CENTURION_RAG_CLAUDE_MODEL='claude-opus-4-20250514'; $env:CENTURION_RAG_CLAUDE_MAX_TOKENS='1024'; $env:CENTURION_RAG_CLAUDE_TEMPERATURE='0.2'
 ```
 
 **macOS / Linux:**
 ```bash
-export STREAMLIT_SERVER_PORT='9000' \
-  API_PORT='9001' \
-  ZERODHA_API_KEY='qwertyuiop' \
-  ZERODHA_API_SECRET='asdfghjklmnbvcxz' \
-  ZERODHA_USER_ID='xyz123' \
-  ZERODHA_PASSWORD='1234509876' \
-  KITE_DB_HOST='localhost' \
-  KITE_DB_PORT='9003' \
-  KITE_DB_NAME='livestocks_ind' \
-  KITE_DB_USER='postgres' \
-  KITE_DB_PASSWORD='superadmin1' \
-  KITE_POOL_MAXSIZE='40' \
-  MINIO_ENDPOINT='localhost:9004' \
-  MINIO_ACCESS_KEY='minioadmin' \
-  MINIO_SECRET_KEY='minioadmin123' \
-  MINIO_SECURE='false' \
-  MINIO_BUCKET='centurion-backtests' \
-  MINIO_ENABLED='true' \
-  CENTURION_DB_HOST='localhost' \
-  CENTURION_DB_PORT='9003' \
-  CENTURION_DB_NAME='centurion_rag' \
-  CENTURION_DB_USER='postgres' \
-  CENTURION_DB_PASSWORD='superadmin1' \
-  CENTURION_RAG_LLM_URL='http://localhost:11434' \
-  RAG_MODEL='qwen2.5:3b' \
-  CENTURION_RAG_CHROMA_DIR='./chroma_store' \
-  CENTURION_RAG_EMBED_MODEL='BAAI/bge-base-en-v1.5' \
-  CENTURION_RAG_CONTEXT_TOKEN_BUDGET='1200' \
-  CENTURION_RAG_MAX_CONTEXT_CHUNKS='8' \
-  CENTURION_RAG_TOP_K='15' \
-  CENTURION_RAG_SIMILARITY_THRESHOLD='0.70' \
-  CENTURION_RAG_LLM_NUM_CTX='2048' \
-  CENTURION_RAG_LLM_NUM_PREDICT='400' \
-  CENTURION_RAG_LLM_MAX_TOKENS='400' \
-  CENTURION_RAG_LLM_TEMPERATURE='0.2' \
-  CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300' \
-  CENTURION_RAG_LLM_CHUNK_TIMEOUT='30' \
-  CENTURION_RAG_QUERY_BUDGET='300' \
-  CENTURION_RAG_QUERY_REWRITE='false' \
-  CENTURION_RAG_STREAMING='true' \
-  CENTURION_RAG_FAQ_ENABLED='false' \
-  RAG_FAST_MODE='false' \
-  CENTURION_DEFAULT_ADMIN_PASSWORD='admin123' \
-  CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'
+export STREAMLIT_SERVER_PORT='9000' API_PORT='9001' ZERODHA_API_KEY='YOUR_KEY_HERE' ZERODHA_API_SECRET='YOUR_SECRET_HERE' ZERODHA_USER_ID='YOUR_USER_HERE' ZERODHA_PASSWORD='YOUR_PASSWORD_HERE' KITE_DB_HOST='localhost' KITE_DB_PORT='9003' KITE_DB_NAME='livestocks_ind' KITE_DB_USER='postgres' KITE_DB_PASSWORD='superadmin1' KITE_POOL_MAXSIZE='40' MINIO_ENDPOINT='localhost:9004' MINIO_ACCESS_KEY='minioadmin' MINIO_SECRET_KEY='minioadmin123' MINIO_SECURE='false' MINIO_BUCKET='centurion-backtests' MINIO_ENABLED='true' CENTURION_DB_HOST='localhost' CENTURION_DB_PORT='9003' CENTURION_DB_NAME='centurion_rag' CENTURION_DB_USER='postgres' CENTURION_DB_PASSWORD='superadmin1' CENTURION_DATABASE_URL='postgresql://postgres:superadmin1@localhost:9003/centurion_rag' CENTURION_RAG_LLM_URL='http://localhost:11434' RAG_MODEL='qwen2.5:3b' CENTURION_RAG_CHROMA_DIR='./data/chroma_db' CENTURION_RAG_EMBEDDING_MODEL='BAAI/bge-base-en-v1.5' CENTURION_RAG_CONTEXT_TOKEN_BUDGET='2000' CENTURION_RAG_MAX_CONTEXT_CHUNKS='8' CENTURION_RAG_TOP_K='15' CENTURION_RAG_SIMILARITY_THRESHOLD='0.70' CENTURION_RAG_LLM_NUM_CTX='4096' CENTURION_RAG_LLM_NUM_PREDICT='500' CENTURION_RAG_LLM_MAX_TOKENS='500' CENTURION_RAG_LLM_TEMPERATURE='0.2' CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300' CENTURION_RAG_LLM_CHUNK_TIMEOUT='30' CENTURION_RAG_QUERY_BUDGET='300' CENTURION_RAG_QUERY_REWRITE='false' CENTURION_RAG_STREAMING='true' CENTURION_RAG_FAQ_ENABLED='false' RAG_FAST_MODE='false' CENTURION_RAG_CACHE_ENABLED='false' CENTURION_DEFAULT_ADMIN_PASSWORD='admin123' CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123' CENTURION_RAG_LLM_PROVIDER='claude' ANTHROPIC_API_KEY='YOUR_KEY_HERE' CENTURION_RAG_CLAUDE_MODEL='claude-opus-4-20250514' CENTURION_RAG_CLAUDE_MAX_TOKENS='1024' CENTURION_RAG_CLAUDE_TEMPERATURE='0.2'
 ```
 
 ### 3️⃣ Start PostgreSQL (Docker)
 
 **Windows PowerShell:**
 ```powershell
-docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15
-Start-Sleep -Seconds 5
-docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15; Start-Sleep -Seconds 9; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;"; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
 ```
 
 **macOS / Linux:**
 ```bash
-docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15
-sleep 5
-docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15 && sleep 9 && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;" && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
 ```
 
 ### 4️⃣ Initialize Database
@@ -810,10 +720,11 @@ Choose **Option A (Docker)** or **Option B (Local PostgreSQL)**.
 #### **Option A: PostgreSQL via Docker** (Recommended)
 
 ```powershell
-docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15
-Start-Sleep -Seconds 5
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15
+Start-Sleep -Seconds 9
+docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;"
+docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
 docker ps | findstr centurion-postgres
-docker logs centurion-postgres
 ```
 
 #### **Option B: Local PostgreSQL Installation**
@@ -895,11 +806,11 @@ Test-NetConnection -ComputerName localhost -Port 11434
 
 ### Step 6: Configure Environment Variables
 
-Create `.env` file in the `centurion_core/` root directory with **all** required variables:
+If you already set environment variables in Step 2 of the Quick Start, you can skip this step. Otherwise, create a `.env` file in the `centurion_core/` root directory:
 
 ```ini
 # ═══════════════════════════════════════════════════════════════════
-# CRITICAL: Copy this entire block to .env (replace /path with actual)
+# CRITICAL: Copy this entire block to .env (replace YOUR_*_HERE)
 # ═══════════════════════════════════════════════════════════════════
 
 # ─── Streamlit App ─────────────────────────────────────────────────
@@ -933,10 +844,10 @@ MINIO_ENABLED=true
 
 # ─── Zerodha Kite Connect (Live Indian Trading) ────────────────────
 # Obtain from Zerodha – https://kite.zerodha.com/app/settings/api
-ZERODHA_API_KEY=your_api_key_here
-ZERODHA_API_SECRET=your_api_secret_here
-ZERODHA_USER_ID=your_user_id_here
-ZERODHA_PASSWORD=your_password_here
+ZERODHA_API_KEY=YOUR_KEY_HERE
+ZERODHA_API_SECRET=YOUR_SECRET_HERE
+ZERODHA_USER_ID=YOUR_USER_HERE
+ZERODHA_PASSWORD=YOUR_PASSWORD_HERE
 
 # ─── KiteConnect Connection Pool ──────────────────────────────────
 KITE_POOL_MAXSIZE=40
@@ -944,15 +855,15 @@ KITE_POOL_MAXSIZE=40
 # ─── RAG Document Pipeline ────────────────────────────────────────
 CENTURION_RAG_LLM_URL=http://localhost:11434
 RAG_MODEL=qwen2.5:3b
-CENTURION_RAG_CHROMA_DIR=./chroma_store
-CENTURION_RAG_EMBED_MODEL=BAAI/bge-base-en-v1.5
-CENTURION_RAG_CONTEXT_TOKEN_BUDGET=1200
+CENTURION_RAG_CHROMA_DIR=./data/chroma_db
+CENTURION_RAG_EMBEDDING_MODEL=BAAI/bge-base-en-v1.5
+CENTURION_RAG_CONTEXT_TOKEN_BUDGET=2000
 CENTURION_RAG_MAX_CONTEXT_CHUNKS=8
 CENTURION_RAG_TOP_K=15
 CENTURION_RAG_SIMILARITY_THRESHOLD=0.70
-CENTURION_RAG_LLM_NUM_CTX=2048
-CENTURION_RAG_LLM_NUM_PREDICT=400
-CENTURION_RAG_LLM_MAX_TOKENS=400
+CENTURION_RAG_LLM_NUM_CTX=4096
+CENTURION_RAG_LLM_NUM_PREDICT=500
+CENTURION_RAG_LLM_MAX_TOKENS=500
 CENTURION_RAG_LLM_TEMPERATURE=0.2
 CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT=300
 CENTURION_RAG_LLM_CHUNK_TIMEOUT=30
@@ -961,15 +872,21 @@ CENTURION_RAG_QUERY_REWRITE=false
 CENTURION_RAG_STREAMING=true
 CENTURION_RAG_FAQ_ENABLED=false
 RAG_FAST_MODE=false
+CENTURION_RAG_CACHE_ENABLED=false
 
 # ─── Authentication ───────────────────────────────────────────────
 CENTURION_DEFAULT_ADMIN_PASSWORD=admin123
 CENTURION_DEFAULT_ANALYST_PASSWORD=analyst123
 
-# ─── Optional: Cloud LLM (Alternative to Ollama) ───────────────────
-# Uncomment to use Claude or OpenAI instead of Ollama
-# CENTURION_RAG_LLM_PROVIDER=anthropic  # or "openai"
-# ANTHROPIC_API_KEY=your_claude_key_here
+# ─── Cloud LLM (Claude — default provider) ─────────────────────────
+CENTURION_RAG_LLM_PROVIDER=claude
+ANTHROPIC_API_KEY=YOUR_KEY_HERE
+CENTURION_RAG_CLAUDE_MODEL=claude-opus-4-20250514
+CENTURION_RAG_CLAUDE_MAX_TOKENS=1024
+CENTURION_RAG_CLAUDE_TEMPERATURE=0.2
+
+# ─── Optional: OpenAI (uncomment to use instead of Claude) ──────────
+# CENTURION_RAG_LLM_PROVIDER=openai
 # OPENAI_API_KEY=your_openai_key_here
 ```
 
