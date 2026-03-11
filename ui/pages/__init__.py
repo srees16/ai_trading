@@ -15,6 +15,7 @@ __all__ = [
     'render_backtesting_page',
     'render_crypto_page',
     'render_history_page',
+    'render_finance_ml_page',
 ]
 
 _LAZY_MAP: dict[str, tuple[str, str]] = {
@@ -24,6 +25,7 @@ _LAZY_MAP: dict[str, tuple[str, str]] = {
     'render_backtesting_page': ('ui.pages.backtesting_page', 'render_backtesting_page'),
     'render_crypto_page':      ('ui.pages.crypto_page',      'render_crypto_page'),
     'render_history_page':     ('ui.pages.history_page',     'render_history_page'),
+    'render_finance_ml_page':  ('ui.pages.finance_ml_page',  'render_finance_ml_page'),
 }
 
 

@@ -61,7 +61,7 @@ class NewsItem:
     def __repr__(self) -> str:
         return (
             f"NewsItem(ticker={self.ticker!r}, source={self.source!r}, "
-            f"sentiment={self.sentiment_label}, title={self.title[:40]!r}...)"
+            f"sentiment={self.sentiment_label}, title={self.title[:40]!r})"
         )
     
     def is_highly_positive(self) -> bool:

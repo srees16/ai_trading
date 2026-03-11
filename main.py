@@ -50,7 +50,7 @@ class AlgoTradingSystem:
         self.tickers = tickers or Config.DEFAULT_TICKERS
         self.market = market
         
-        logger.info("Initializing Algo Trading Alert System...")
+        logger.info("Initializing Algo Trading Alert System")
         logger.info(f"Market: {market} | Monitoring tickers: {', '.join(self.tickers)}")
         
         # Initialize components — pick the right news aggregator
@@ -75,7 +75,7 @@ class AlgoTradingSystem:
         logger.info("=" * 70)
         
         # Step 1: Scrape news
-        logger.info(" Step 1: Scraping news from multiple sources...")
+        logger.info(" Step 1: Scraping news from multiple sources")
         all_news = await self.news_aggregator.fetch_news_for_tickers(self.tickers)
         logger.info(f"Collected {len(all_news)} news items")
         
@@ -84,16 +84,16 @@ class AlgoTradingSystem:
             return
         
         # Step 2: Analyze sentiment
-        logger.info("Step 2: Analyzing sentiment...")
+        logger.info("Step 2: Analyzing sentiment")
         analyzed_news = self.sentiment_analyzer.analyze_news_items(all_news)
         logger.info(f"Analyzed sentiment for {len(analyzed_news)} items")
         
         # Step 3: Send notifications for high-confidence news
-        logger.info("Step 3: Checking for high-confidence alerts...")
+        logger.info("Step 3: Checking for high-confidence alerts")
         self.notification_manager.notify_multiple_news(analyzed_news)
         
         # Step 4: Macro-economic indicators
-        logger.info("Step 4: Fetching macro-economic indicators...")
+        logger.info("Step 4: Fetching macro-economic indicators")
         macro_snap = self.macro_indicators.fetch(market=self.market)
         self.decision_engine.set_macro_snapshot(macro_snap)
         logger.info(
@@ -103,7 +103,7 @@ class AlgoTradingSystem:
         )
 
         # Step 5: Google search public sentiment
-        logger.info("Step 5: Analyzing public sentiment via Google search...")
+        logger.info("Step 5: Analyzing public sentiment via Google search")
         unique_tickers = list({item.ticker for item in analyzed_news})
         public_sentiments = await self.broader_sentiment.analyze_multiple(unique_tickers)
         self.decision_engine.set_public_sentiments(public_sentiments)
@@ -111,11 +111,11 @@ class AlgoTradingSystem:
             logger.info("  %s: %s (score=%.2f)", t, ps.sentiment_label, ps.avg_sentiment_score)
 
         # Step 6: Calculate metrics and generate signals
-        logger.info("Step 6: Calculating metrics and generating trading signals...")
+        logger.info("Step 6: Calculating metrics and generating trading signals")
         signals: List[TradingSignal] = []
         
         for news_item in analyzed_news:
-            logger.debug(f"  Analyzing {news_item.ticker}...")
+            logger.debug(f"  Analyzing {news_item.ticker}")
             
             # Calculate metrics
             metrics = self.metrics_calculator.get_stock_metrics(news_item.ticker)
@@ -133,7 +133,7 @@ class AlgoTradingSystem:
         logger.info(f"Generated {len(signals)} trading signals")
         
         # Step 7: Save results
-        logger.info("Step 7: Saving results to file...")
+        logger.info("Step 7: Saving results to file")
         self.storage_manager.save_signals(signals, append=Config.APPEND_MODE)
         
         # Step 8: Display summary
@@ -168,7 +168,7 @@ class AlgoTradingSystem:
         for i, signal in enumerate(buy_signals[:5], 1):
             logger.info(f"  {i}. {signal.news_item.ticker} - {signal.decision.value} "
                   f"(Score: {signal.decision_score:.2f})")
-            logger.debug(f"     {signal.news_item.title[:70]}...")
+            logger.debug(f"     {signal.news_item.title[:70]}")
         
         logger.info(" Top 5 Strongest Sell Signals:")
         sell_signals = [s for s in signals if s.decision.value in ['STRONG_SELL', 'SELL']]
@@ -177,7 +177,7 @@ class AlgoTradingSystem:
         for i, signal in enumerate(sell_signals[:5], 1):
             logger.info(f"  {i}. {signal.news_item.ticker} - {signal.decision.value} "
                   f"(Score: {signal.decision_score:.2f})")
-            logger.debug(f"     {signal.news_item.title[:70]}...")
+            logger.debug(f"     {signal.news_item.title[:70]}")
 
 
 async def main():
@@ -192,6 +192,6 @@ if __name__ == "__main__":
         # Run the async main function
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("System interrupted by user. Exiting gracefully...")
+        logger.info("System interrupted by user. Exiting gracefully")
     except Exception as e:
         logger.error(f"Error running system: {e}", exc_info=True)
