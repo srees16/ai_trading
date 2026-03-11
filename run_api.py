@@ -18,7 +18,7 @@ if _ROOT not in sys.path:
 
 # Load .env BEFORE any other module reads os.getenv()
 from dotenv import load_dotenv
-load_dotenv(Path(_ROOT) / ".env", override=True)
+load_dotenv(Path(_ROOT) / ".env", override=False)
 
 logging.basicConfig(
     level=logging.INFO,
