@@ -31,6 +31,12 @@ from api.auth import (
     create_session_token,
     verify_session_token,
 )
+from auth.shared_session import (
+    SHARED_COOKIE_MAX_AGE,
+    SHARED_COOKIE_NAME,
+    create_shared_token,
+    verify_shared_token,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +47,17 @@ logger = logging.getLogger(__name__)
 
 def _get_authenticated_user(request: Request) -> dict | None:
     """Return the decoded session payload or None if unauthenticated."""
+    # Check API-specific cookie first
     token = request.cookies.get(SESSION_COOKIE)
-    if not token:
-        return None
-    return verify_session_token(token)
+    if token:
+        result = verify_session_token(token)
+        if result:
+            return result
+    # Fall back to shared SSO cookie (set by Streamlit)
+    shared = request.cookies.get(SHARED_COOKIE_NAME)
+    if shared:
+        return verify_shared_token(shared)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +157,7 @@ def create_app() -> FastAPI:
                 content={"success": False, "detail": "Invalid username or password"},
             )
         token = create_session_token(username, role)
+        shared_token = create_shared_token(username, role)
         response = RedirectResponse(url="/docs", status_code=302)
         response.set_cookie(
             key=SESSION_COOKIE,
@@ -152,14 +166,24 @@ def create_app() -> FastAPI:
             samesite="lax",
             max_age=28800,
         )
+        # Shared SSO cookie (readable by Streamlit via JS)
+        response.set_cookie(
+            key=SHARED_COOKIE_NAME,
+            value=shared_token,
+            httponly=False,
+            samesite="lax",
+            path="/",
+            max_age=SHARED_COOKIE_MAX_AGE,
+        )
         logger.info("API docs login: user=%s role=%s", username, role)
         return response
 
     @app.get("/auth/logout", include_in_schema=False)
     async def logout():
-        """Clear the session cookie and redirect to the login page."""
+        """Clear session cookies and redirect to the login page."""
         response = RedirectResponse(url="/auth/login", status_code=302)
         response.delete_cookie(SESSION_COOKIE)
+        response.delete_cookie(SHARED_COOKIE_NAME, path="/")
         return response
 
     # ------------------------------------------------------------------
