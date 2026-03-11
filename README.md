@@ -6,29 +6,33 @@ A Python-based enterprise trading platform combining multi-source news scraping,
 
 ## Quick Start
 
-Follow these steps **in order**, in a **single terminal window**. All commands go into the same session so environment variables persist across steps.
-
-> Replace `YOUR_*` placeholders with your actual credentials. Replace `YOUR_ANTHROPIC_API_KEY` with your [Anthropic API key](https://console.anthropic.com/) for Claude-powered RAG (Ollama is the automatic fallback).
+Replace `YOUR_ANTHROPIC_API_KEY` with your [Anthropic API key] for Claude-powered RAG (Ollama is the fallback).
 
 ---
 
 ### Step 1 — Clone & install dependencies
 
 **Windows PowerShell:**
-```powershell
-git clone -b develop https://github.com/srees16/centurion_core.git; cd centurion_core; python -m venv myenv; myenv\Scripts\activate; pip install -r requirements.txt
+```
+git clone -b develop https://github.com/srees16/centurion_core.git
+python -m venv myenv
+myenv\Scripts\activate
+cd centurion_core
+pip install -r requirements.txt
 ```
 
 **macOS / Linux:**
-```bash
-git clone -b develop https://github.com/srees16/centurion_core.git && cd centurion_core && python3 -m venv myenv && source myenv/bin/activate && pip install -r requirements.txt
+```
+git clone -b develop https://github.com/srees16/centurion_core.git
+cd centurion_core
+python3 -m venv myenv
+source myenv/bin/activate
+pip install -r requirements.txt
 ```
 
 ---
 
 ### Step 2 — Set environment variables
-
-Paste this **once** in the same terminal. Every subsequent command in this session inherits these vars.
 
 **Windows PowerShell:**
 ```powershell
@@ -93,7 +97,7 @@ ollama pull qwen2.5:3b
 
 ---
 
-### Step 7 — Launch Streamlit
+### Step 7 — Launch Streamlit in Terminal 1
 
 Run in the **same terminal** (env vars from Step 2 are still active):
 ```
@@ -101,24 +105,16 @@ streamlit run app.py
 ```
 Opens at: **http://localhost:9000** — login with `admin` / `admin123`
 
+> **SSO:** Logging into either the Streamlit app or the FastAPI docs automatically logs you into the other. Both URLs must use `localhost` (not `127.0.0.1`) for this to work.
+
 ---
 
-### Step 8 (Optional) — Launch FastAPI in a second terminal
-
-> Since `$env:` / `export` variables are per-terminal session, you must set them again in this new terminal.
-
-**Windows PowerShell (paste both lines):**
-```powershell
-$env:ZERODHA_API_KEY='YOUR_KEY_HERE'; $env:ZERODHA_API_SECRET='YOUR_SECRET_HERE'; $env:ZERODHA_USER_ID='YOUR_USER_HERE'; $env:ZERODHA_PASSWORD='YOUR_PASSWORD_HERE'; $env:ANTHROPIC_API_KEY='YOUR_ANTHROPIC_API_KEY'; $env:CENTURION_RAG_LLM_PROVIDER='claude'; $env:CENTURION_RAG_CLAUDE_MODEL='claude-opus-4-20250514'; $env:CENTURION_RAG_CLAUDE_MAX_TOKENS='1024'; $env:CENTURION_RAG_CLAUDE_TEMPERATURE='0.2'; $env:CENTURION_DB_USER='postgres'; $env:CENTURION_DB_PASSWORD='superadmin1'; $env:KITE_DB_USER='postgres'; $env:KITE_DB_PASSWORD='superadmin1'; $env:MINIO_ACCESS_KEY='minioadmin'; $env:MINIO_SECRET_KEY='minioadmin123'; $env:CENTURION_DEFAULT_ADMIN_PASSWORD='admin123'; $env:CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'; $env:CENTURION_DB_HOST='localhost'; $env:CENTURION_DB_PORT='9003'; $env:CENTURION_DB_NAME='centurion_trading'; $env:CENTURION_DATABASE_URL='postgresql://postgres:superadmin1@localhost:9003/centurion_trading'; $env:KITE_DB_HOST='localhost'; $env:KITE_DB_PORT='9003'; $env:KITE_DB_NAME='livestocks_ind'; $env:KITE_POOL_MAXSIZE='40'; $env:MINIO_ENDPOINT='localhost:9004'; $env:MINIO_SECURE='false'; $env:MINIO_BUCKET='centurion-backtests'; $env:MINIO_ENABLED='true'; $env:STREAMLIT_SERVER_PORT='9000'; $env:API_PORT='9001'; $env:CENTURION_RAG_LLM_URL='http://localhost:11434'; $env:RAG_MODEL='qwen2.5:3b'; $env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300'; $env:CENTURION_RAG_LLM_CHUNK_TIMEOUT='30'; $env:CENTURION_RAG_LLM_NUM_CTX='4096'; $env:CENTURION_RAG_LLM_NUM_PREDICT='500'; $env:CENTURION_RAG_LLM_MAX_TOKENS='500'; $env:CENTURION_RAG_LLM_TEMPERATURE='0.2'; $env:CENTURION_RAG_CHROMA_DIR='./data/chroma_db'; $env:CENTURION_RAG_EMBEDDING_MODEL='BAAI/bge-base-en-v1.5'; $env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET='2000'; $env:CENTURION_RAG_MAX_CONTEXT_CHUNKS='8'; $env:CENTURION_RAG_TOP_K='15'; $env:CENTURION_RAG_SIMILARITY_THRESHOLD='0.70'; $env:CENTURION_RAG_QUERY_BUDGET='300'; $env:CENTURION_RAG_QUERY_REWRITE='false'; $env:CENTURION_RAG_STREAMING='true'; $env:CENTURION_RAG_CACHE_ENABLED='false'; $env:CENTURION_RAG_FAQ_ENABLED='false'; $env:RAG_FAST_MODE='false'
+### Step 8 (Optional) — Launch FastAPI in Terminal 2
+> Set env variables in Step 2 and run below:
+```
 python3 run_api.py
 ```
-
-**macOS / Linux (paste both lines):**
-```bash
-export ZERODHA_API_KEY="YOUR_KEY_HERE" ZERODHA_API_SECRET="YOUR_SECRET_HERE" ZERODHA_USER_ID="YOUR_USER_HERE" ZERODHA_PASSWORD='YOUR_PASSWORD_HERE' ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY" CENTURION_RAG_LLM_PROVIDER="claude" CENTURION_RAG_CLAUDE_MODEL="claude-opus-4-20250514" CENTURION_RAG_CLAUDE_MAX_TOKENS="1024" CENTURION_RAG_CLAUDE_TEMPERATURE="0.2" CENTURION_DB_USER="postgres" CENTURION_DB_PASSWORD="superadmin1" KITE_DB_USER="postgres" KITE_DB_PASSWORD="superadmin1" MINIO_ACCESS_KEY="minioadmin" MINIO_SECRET_KEY="minioadmin123" CENTURION_DEFAULT_ADMIN_PASSWORD="admin123" CENTURION_DEFAULT_ANALYST_PASSWORD="analyst123" CENTURION_DB_HOST="localhost" CENTURION_DB_PORT="9003" CENTURION_DB_NAME="centurion_trading" CENTURION_DATABASE_URL="postgresql://postgres:superadmin1@localhost:9003/centurion_trading" KITE_DB_HOST="localhost" KITE_DB_PORT="9003" KITE_DB_NAME="livestocks_ind" KITE_POOL_MAXSIZE="40" MINIO_ENDPOINT="localhost:9004" MINIO_SECURE="false" MINIO_BUCKET="centurion-backtests" MINIO_ENABLED="true" STREAMLIT_SERVER_PORT="9000" API_PORT="9001" CENTURION_RAG_LLM_URL="http://localhost:11434" RAG_MODEL="qwen2.5:3b" CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT="300" CENTURION_RAG_LLM_CHUNK_TIMEOUT="30" CENTURION_RAG_LLM_NUM_CTX="4096" CENTURION_RAG_LLM_NUM_PREDICT="500" CENTURION_RAG_LLM_MAX_TOKENS="500" CENTURION_RAG_LLM_TEMPERATURE="0.2" CENTURION_RAG_CHROMA_DIR="./data/chroma_db" CENTURION_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5" CENTURION_RAG_CONTEXT_TOKEN_BUDGET="2000" CENTURION_RAG_MAX_CONTEXT_CHUNKS="8" CENTURION_RAG_TOP_K="15" CENTURION_RAG_SIMILARITY_THRESHOLD="0.70" CENTURION_RAG_QUERY_BUDGET="300" CENTURION_RAG_QUERY_REWRITE="false" CENTURION_RAG_STREAMING="true" CENTURION_RAG_CACHE_ENABLED="false" CENTURION_RAG_FAQ_ENABLED="false" RAG_FAST_MODE="false"
-python3 run_api.py
-```
-API docs at: **http://localhost:9001/docs** (auth required)
+API docs at: **http://localhost:9001/docs** (auth required) — if already logged into Streamlit, no credentials needed
 
 MinIO console at: **http://localhost:9002/login** — login with `minioadmin` / `minioadmin123`
 

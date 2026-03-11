@@ -16,8 +16,15 @@ from typing import Dict, Optional, Tuple
 
 import bcrypt
 import streamlit as st
+import streamlit.components.v1 as components
 from dotenv import load_dotenv
 
+from auth.shared_session import (
+    SHARED_COOKIE_MAX_AGE,
+    SHARED_COOKIE_NAME,
+    create_shared_token,
+    verify_shared_token,
+)
 from config import Config
 from trading_strategies import list_strategies
 
@@ -236,6 +243,8 @@ class Authenticator:
         st.session_state.user_name = user.get('name', username)
         st.session_state.login_time = datetime.now()
         st.session_state.login_attempts = 0
+        # Reset SSO flag so the shared cookie is written on next render
+        st.session_state.pop("_sso_cookie_set", None)
 
         # ── Auto-migrate legacy SHA-256 hash bcrypt ────────────
         if _is_legacy_sha256(user['password']):
@@ -258,6 +267,7 @@ class Authenticator:
         st.session_state.user_name = None
         st.session_state.login_time = None
         st.session_state.last_activity = None
+        st.session_state.pop("_sso_cookie_set", None)
         
         # Clear all analysis/app data to ensure nothing persists
         keys_to_clear = [
@@ -515,18 +525,133 @@ class Authenticator:
 def check_authentication() -> bool:
     """
     Check if user is authenticated. Call at the start of main().
-    
+
+    Supports cross-app SSO: if the user logged in via the FastAPI
+    docs page (port 9001), the shared cookie is detected and the
+    Streamlit session is auto-populated without re-entering
+    credentials.
+
     Returns:
         True if authenticated, False otherwise (renders login form)
     """
     auth = Authenticator()
+
+    # ── Already authenticated in this session ──────────────────
+    if auth.is_authenticated():
+        _ensure_shared_cookie_set()
+        return True
+
+    # ── SSO: check for token passed via query-param redirect ──
+    sso_token = st.query_params.get("_sso")
+    if sso_token:
+        payload = verify_shared_token(sso_token)
+        if payload:
+            _sso_auto_login(payload)
+            # Remove the one-time param and reload authenticated
+            del st.query_params["_sso"]
+            st.rerun()
+        else:
+            # Expired / invalid — clear the param
+            del st.query_params["_sso"]
+
+    # ── SSO: inject JS to read the shared cookie ──────────────
+    # If the cookie exists (set by FastAPI login), the JS redirects
+    # the browser to ?_sso=<token> which the block above catches
+    # on the next render cycle.
+    if not st.session_state.get("authenticated", False):
+        _inject_sso_cookie_check_js()
+
     return auth.render_login_form()
 
 
 def logout():
-    """Log out the current user."""
+    """Log out the current user and clear the shared SSO cookie."""
     auth = Authenticator()
     auth.logout()
+    _inject_delete_cookie_js()
+
+
+# ---------------------------------------------------------------------------
+# SSO helpers — shared cookie between Streamlit and FastAPI
+# ---------------------------------------------------------------------------
+
+def _sso_auto_login(payload: Dict):
+    """Populate Streamlit session_state from a verified SSO token payload."""
+    username = payload["u"]
+    role = payload["r"]
+    creds = load_credentials()
+    user = creds.get("users", {}).get(username, {})
+    st.session_state.authenticated = True
+    st.session_state.username = username
+    st.session_state.user_role = role
+    st.session_state.user_name = user.get("name", username)
+    st.session_state.login_time = datetime.now()
+    st.session_state.last_activity = datetime.now()
+    st.session_state.login_attempts = 0
+    logger.info("SSO auto-login: user=%s role=%s", username, role)
+
+
+def _ensure_shared_cookie_set():
+    """Inject JS to set the shared SSO cookie once per authenticated session."""
+    if st.session_state.get("_sso_cookie_set"):
+        return
+    username = st.session_state.get("username", "")
+    role = st.session_state.get("user_role", "")
+    if not username:
+        return
+    token = create_shared_token(username, role)
+    cookie_name = SHARED_COOKIE_NAME
+    max_age = SHARED_COOKIE_MAX_AGE
+    components.html(
+        f"""<script>
+        document.cookie = "{cookie_name}={token}; path=/; max-age={max_age}; samesite=lax";
+        </script>""",
+        height=0,
+        width=0,
+    )
+    st.session_state._sso_cookie_set = True
+
+
+def _inject_sso_cookie_check_js():
+    """Inject JS that reads the shared cookie and redirects for auto-login.
+
+    If the ``centurion_session`` cookie exists (set by the FastAPI login),
+    the script redirects the browser to ``?_sso=<token>`` which Streamlit
+    picks up on the next render cycle via ``st.query_params``.
+    """
+    cookie_name = SHARED_COOKIE_NAME
+    components.html(
+        f"""<script>
+        (function() {{
+            var cookies = document.cookie.split(";");
+            for (var i = 0; i < cookies.length; i++) {{
+                var c = cookies[i].trim();
+                if (c.startsWith("{cookie_name}=")) {{
+                    var token = c.substring({len(cookie_name) + 1});
+                    if (token && !window.location.search.includes("_sso=")) {{
+                        var sep = window.location.search ? "&" : "?";
+                        window.location.href = window.location.pathname + window.location.search + sep + "_sso=" + encodeURIComponent(token);
+                    }}
+                    break;
+                }}
+            }}
+        }})();
+        </script>""",
+        height=0,
+        width=0,
+    )
+
+
+def _inject_delete_cookie_js():
+    """Inject JS to delete the shared SSO cookie on logout."""
+    cookie_name = SHARED_COOKIE_NAME
+    components.html(
+        f"""<script>
+        document.cookie = "{cookie_name}=; path=/; max-age=0; samesite=lax";
+        </script>""",
+        height=0,
+        width=0,
+    )
 
 
 def check_system_health() -> dict:

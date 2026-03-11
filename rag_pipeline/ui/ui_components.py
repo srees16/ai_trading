@@ -254,11 +254,25 @@ def _format_file_size(size_bytes: int) -> str:
 
 
 def _format_ingestion_timestamp(epoch: float | None) -> str:
-    """Format an epoch timestamp into a readable local-time string."""
+    """Format an epoch timestamp into a readable IST string."""
     if epoch is None:
         return "N/A"
-    from datetime import datetime
-    return datetime.fromtimestamp(epoch).strftime("%Y-%m-%d %H:%M:%S")
+    from datetime import datetime, timezone, timedelta
+    _IST = timezone(timedelta(hours=5, minutes=30))
+    return datetime.fromtimestamp(epoch, tz=_IST).strftime("%Y-%m-%d %H:%M:%S IST")
+
+
+def _format_iso_to_ist(iso_str: str) -> str:
+    """Convert an ISO-8601 timestamp string to IST for display."""
+    from datetime import datetime, timezone, timedelta
+    _IST = timezone(timedelta(hours=5, minutes=30))
+    try:
+        dt = datetime.fromisoformat(iso_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(_IST).strftime("%Y-%m-%d %H:%M:%S IST")
+    except (ValueError, TypeError):
+        return iso_str
 
 
 def _format_ingestion_metadata(result: Dict[str, Any], file_size_bytes: int = 0) -> str:
@@ -700,7 +714,7 @@ def render_knowledge_base() -> None:
                 if details.get("chunks"):
                     meta_parts.append(f"Chunks: {details['chunks']}")
                 if details.get("ingested_at"):
-                    meta_parts.append(f"Ingested: {details['ingested_at']}")
+                    meta_parts.append(f"Ingested: {_format_iso_to_ist(details['ingested_at'])}")
                 if meta_parts:
                     st.caption(" | ".join(meta_parts))
             if col_b.button("🗑️", key=f"del_{src}", help=f"Remove {src}"):
