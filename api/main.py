@@ -17,7 +17,7 @@ from pathlib import Path
 from fastapi import FastAPI, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 # Ensure project root is on sys.path so all internal imports resolve
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
@@ -190,9 +190,6 @@ def create_app() -> FastAPI:
             title=app.title + " — ReDoc",
         )
 
-    # ------------------------------------------------------------------
-    # Global exception handler
-    # ------------------------------------------------------------------
 
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
@@ -206,9 +203,14 @@ def create_app() -> FastAPI:
             },
         )
 
-    # ------------------------------------------------------------------
-    # Root
-    # ------------------------------------------------------------------
+    _FAVICON_PATH = Path(__file__).resolve().parent.parent / "ui" / "assets" / "centurion_logo.png"
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        if _FAVICON_PATH.is_file():
+            return FileResponse(_FAVICON_PATH, media_type="image/png")
+        return JSONResponse(status_code=204, content=None)
+
 
     @app.get("/", include_in_schema=False)
     async def root():
