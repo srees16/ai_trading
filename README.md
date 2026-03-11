@@ -80,7 +80,7 @@ ollama pull qwen2.5:3b
 streamlit run app.py
 ```
 
-Opens at: **http://localhost:9000** 
+Opens at: **http://localhost:9000** \n
 login with `admin` / `admin123`
 
 **Terminal 2 - FastAPI REST API (Windows PowerShell or macOS / Linux) [optional]:**
@@ -89,7 +89,7 @@ python3 run_api.py
 ```
 API docs at: **http://localhost:9001/docs** (auth required)
 
-Open MinIO at **http://localhost:9002/login**
+Open MinIO at **http://localhost:9002/login** \n
 login with: `minioadmin` / `minioadmin123`
 
 ### Verify Everything Works
