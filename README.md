@@ -4,23 +4,31 @@ A Python-based enterprise trading platform combining multi-source news scraping,
 
 ---
 
-## Quick Start (5 Minutes)
+## Quick Start
 
-Get the app running on a new machine with these commands:
+Follow these steps **in order**, in a **single terminal window**. All commands go into the same session so environment variables persist across steps.
 
-### 1️⃣ Clone & Install Dependencies
+> Replace `YOUR_*` placeholders with your actual credentials. Replace `YOUR_ANTHROPIC_API_KEY` with your [Anthropic API key](https://console.anthropic.com/) for Claude-powered RAG (Ollama is the automatic fallback).
+
+---
+
+### Step 1 — Clone & install dependencies
 
 **Windows PowerShell:**
 ```powershell
-git clone -b develop https://github.com/srees16/centurion_core.git
-cd centurion_core
-python -m venv myenv
-myenv\Scripts\activate (macOS/Linux: source myenv/bin/activate)
-pip install -r requirements.txt
+git clone -b develop https://github.com/srees16/centurion_core.git; cd centurion_core; python -m venv myenv; myenv\Scripts\activate; pip install -r requirements.txt
 ```
-### 2️⃣ Set Environment Variables
 
-> **Note:** Replace `YOUR_ANTHROPIC_API_KEY` with your actual [Anthropic API key](https://console.anthropic.com/). This routes RAG queries to **Claude Opus** for best-quality responses. Ollama is kept as an automatic fallback if Claude is unreachable.
+**macOS / Linux:**
+```bash
+git clone -b develop https://github.com/srees16/centurion_core.git && cd centurion_core && python3 -m venv myenv && source myenv/bin/activate && pip install -r requirements.txt
+```
+
+---
+
+### Step 2 — Set environment variables
+
+Paste this **once** in the same terminal. Every subsequent command in this session inherits these vars.
 
 **Windows PowerShell:**
 ```powershell
@@ -29,10 +37,12 @@ $env:ZERODHA_API_KEY='YOUR_KEY_HERE'; $env:ZERODHA_API_SECRET='YOUR_SECRET_HERE'
 
 **macOS / Linux:**
 ```bash
-export ZERODHA_API_KEY='YOUR_KEY_HERE' ZERODHA_API_SECRET='YOUR_SECRET_HERE' ZERODHA_USER_ID='YOUR_USER_HERE' ZERODHA_PASSWORD='YOUR_PASSWORD_HERE' ANTHROPIC_API_KEY='YOUR_ANTHROPIC_API_KEY' CENTURION_RAG_LLM_PROVIDER='claude' CENTURION_RAG_CLAUDE_MODEL='claude-opus-4-20250514' CENTURION_RAG_CLAUDE_MAX_TOKENS='1024' CENTURION_RAG_CLAUDE_TEMPERATURE='0.2' CENTURION_DB_USER='postgres' CENTURION_DB_PASSWORD='superadmin1' KITE_DB_USER='postgres' KITE_DB_PASSWORD='superadmin1' MINIO_ACCESS_KEY='minioadmin' MINIO_SECRET_KEY='minioadmin123' CENTURION_DEFAULT_ADMIN_PASSWORD='admin123' CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123' CENTURION_DB_HOST='localhost' CENTURION_DB_PORT='9003' CENTURION_DB_NAME='centurion_trading' CENTURION_DATABASE_URL='postgresql://postgres:superadmin1@localhost:9003/centurion_trading' KITE_DB_HOST='localhost' KITE_DB_PORT='9003' KITE_DB_NAME='livestocks_ind' KITE_POOL_MAXSIZE='40' MINIO_ENDPOINT='localhost:9004' MINIO_SECURE='false' MINIO_BUCKET='centurion-backtests' MINIO_ENABLED='true' STREAMLIT_SERVER_PORT='9000' API_PORT='9001' CENTURION_RAG_LLM_URL='http://localhost:11434' RAG_MODEL='qwen2.5:3b' CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300' CENTURION_RAG_LLM_CHUNK_TIMEOUT='30' CENTURION_RAG_LLM_NUM_CTX='4096' CENTURION_RAG_LLM_NUM_PREDICT='500' CENTURION_RAG_LLM_MAX_TOKENS='500' CENTURION_RAG_LLM_TEMPERATURE='0.2' CENTURION_RAG_CHROMA_DIR='./data/chroma_db' CENTURION_RAG_EMBEDDING_MODEL='BAAI/bge-base-en-v1.5' CENTURION_RAG_CONTEXT_TOKEN_BUDGET='2000' CENTURION_RAG_MAX_CONTEXT_CHUNKS='8' CENTURION_RAG_TOP_K='15' CENTURION_RAG_SIMILARITY_THRESHOLD='0.70' CENTURION_RAG_QUERY_BUDGET='300' CENTURION_RAG_QUERY_REWRITE='false' CENTURION_RAG_STREAMING='true' CENTURION_RAG_CACHE_ENABLED='false' CENTURION_RAG_FAQ_ENABLED='false' RAG_FAST_MODE='false'
+export ZERODHA_API_KEY="YOUR_KEY_HERE" ZERODHA_API_SECRET="YOUR_SECRET_HERE" ZERODHA_USER_ID="YOUR_USER_HERE" ZERODHA_PASSWORD='YOUR_PASSWORD_HERE' ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY" CENTURION_RAG_LLM_PROVIDER="claude" CENTURION_RAG_CLAUDE_MODEL="claude-opus-4-20250514" CENTURION_RAG_CLAUDE_MAX_TOKENS="1024" CENTURION_RAG_CLAUDE_TEMPERATURE="0.2" CENTURION_DB_USER="postgres" CENTURION_DB_PASSWORD="superadmin1" KITE_DB_USER="postgres" KITE_DB_PASSWORD="superadmin1" MINIO_ACCESS_KEY="minioadmin" MINIO_SECRET_KEY="minioadmin123" CENTURION_DEFAULT_ADMIN_PASSWORD="admin123" CENTURION_DEFAULT_ANALYST_PASSWORD="analyst123" CENTURION_DB_HOST="localhost" CENTURION_DB_PORT="9003" CENTURION_DB_NAME="centurion_trading" CENTURION_DATABASE_URL="postgresql://postgres:superadmin1@localhost:9003/centurion_trading" KITE_DB_HOST="localhost" KITE_DB_PORT="9003" KITE_DB_NAME="livestocks_ind" KITE_POOL_MAXSIZE="40" MINIO_ENDPOINT="localhost:9004" MINIO_SECURE="false" MINIO_BUCKET="centurion-backtests" MINIO_ENABLED="true" STREAMLIT_SERVER_PORT="9000" API_PORT="9001" CENTURION_RAG_LLM_URL="http://localhost:11434" RAG_MODEL="qwen2.5:3b" CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT="300" CENTURION_RAG_LLM_CHUNK_TIMEOUT="30" CENTURION_RAG_LLM_NUM_CTX="4096" CENTURION_RAG_LLM_NUM_PREDICT="500" CENTURION_RAG_LLM_MAX_TOKENS="500" CENTURION_RAG_LLM_TEMPERATURE="0.2" CENTURION_RAG_CHROMA_DIR="./data/chroma_db" CENTURION_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5" CENTURION_RAG_CONTEXT_TOKEN_BUDGET="2000" CENTURION_RAG_MAX_CONTEXT_CHUNKS="8" CENTURION_RAG_TOP_K="15" CENTURION_RAG_SIMILARITY_THRESHOLD="0.70" CENTURION_RAG_QUERY_BUDGET="300" CENTURION_RAG_QUERY_REWRITE="false" CENTURION_RAG_STREAMING="true" CENTURION_RAG_CACHE_ENABLED="false" CENTURION_RAG_FAQ_ENABLED="false" RAG_FAST_MODE="false"
 ```
 
-### 3️⃣ Start PostgreSQL (Docker)
+---
+
+### Step 3 — Start PostgreSQL + create databases (Docker)
 
 **Windows PowerShell:**
 ```powershell
@@ -44,53 +54,75 @@ docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -
 docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15 && sleep 9 && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;" && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
 ```
 
-### 4️⃣ Initialize Database
+This creates three databases: `centurion_trading` (main), `centurion_rag` (RAG pipeline), `livestocks_ind` (Kite/Zerodha).
 
-**Windows PowerShell or macOS / Linux:**
-```powershell
+---
+
+### Step 4 — Initialize database tables
+
+Run in the **same terminal** (env vars from Step 2 are still active):
+```
 python setup_database.py
 ```
-Expected: `✓ Database tables created successfully`
+Expected output: `✓ Database tables created successfully`
 
-### 5️⃣ Start MinIO (Docker) — for Backtest Charts
+---
 
-**Windows PowerShell or macOS / Linux:**
-```powershell
+### Step 5 — Start MinIO (Docker) — for backtest charts
+
+```
 docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"
 ```
 
-### 6️⃣ (Optional) Install Ollama — for RAG Document Q&A
+---
 
-**Windows powershell & MacOS:**
+### Step 6 (Optional) — Install Ollama for local RAG
+
+**Windows:**
 ```
-# Download from https://ollama.ai/download
-> OR run on Windows
-winget install Ollama.Ollama
-> OR run on MacOS
+winget install Ollama.Ollama (or download from https://ollama.ai/download)
+```
+**macOS:**
+```
 curl -fsSL https://ollama.com/install.sh | sh
-
-# then:
+```
+Then pull the model:
+```
 ollama pull qwen2.5:3b
 ```
 
-### 7️⃣ Launch the App
+---
 
-**Terminal 1 - Windows PowerShell or macOS / Linux:**
-```powershell
+### Step 7 — Launch Streamlit
+
+Run in the **same terminal** (env vars from Step 2 are still active):
+```
 streamlit run app.py
 ```
+Opens at: **http://localhost:9000** — login with `admin` / `admin123`
 
-Opens at: **http://localhost:9000** \n
-login with `admin` / `admin123`
+---
 
-**Terminal 2 - FastAPI REST API (Windows PowerShell or macOS / Linux) [optional]:**
+### Step 8 (Optional) — Launch FastAPI in a second terminal
+
+> Since `$env:` / `export` variables are per-terminal session, you must set them again in this new terminal.
+
+**Windows PowerShell (paste both lines):**
+```powershell
+$env:ZERODHA_API_KEY='YOUR_KEY_HERE'; $env:ZERODHA_API_SECRET='YOUR_SECRET_HERE'; $env:ZERODHA_USER_ID='YOUR_USER_HERE'; $env:ZERODHA_PASSWORD='YOUR_PASSWORD_HERE'; $env:ANTHROPIC_API_KEY='YOUR_ANTHROPIC_API_KEY'; $env:CENTURION_RAG_LLM_PROVIDER='claude'; $env:CENTURION_RAG_CLAUDE_MODEL='claude-opus-4-20250514'; $env:CENTURION_RAG_CLAUDE_MAX_TOKENS='1024'; $env:CENTURION_RAG_CLAUDE_TEMPERATURE='0.2'; $env:CENTURION_DB_USER='postgres'; $env:CENTURION_DB_PASSWORD='superadmin1'; $env:KITE_DB_USER='postgres'; $env:KITE_DB_PASSWORD='superadmin1'; $env:MINIO_ACCESS_KEY='minioadmin'; $env:MINIO_SECRET_KEY='minioadmin123'; $env:CENTURION_DEFAULT_ADMIN_PASSWORD='admin123'; $env:CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'; $env:CENTURION_DB_HOST='localhost'; $env:CENTURION_DB_PORT='9003'; $env:CENTURION_DB_NAME='centurion_trading'; $env:CENTURION_DATABASE_URL='postgresql://postgres:superadmin1@localhost:9003/centurion_trading'; $env:KITE_DB_HOST='localhost'; $env:KITE_DB_PORT='9003'; $env:KITE_DB_NAME='livestocks_ind'; $env:KITE_POOL_MAXSIZE='40'; $env:MINIO_ENDPOINT='localhost:9004'; $env:MINIO_SECURE='false'; $env:MINIO_BUCKET='centurion-backtests'; $env:MINIO_ENABLED='true'; $env:STREAMLIT_SERVER_PORT='9000'; $env:API_PORT='9001'; $env:CENTURION_RAG_LLM_URL='http://localhost:11434'; $env:RAG_MODEL='qwen2.5:3b'; $env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300'; $env:CENTURION_RAG_LLM_CHUNK_TIMEOUT='30'; $env:CENTURION_RAG_LLM_NUM_CTX='4096'; $env:CENTURION_RAG_LLM_NUM_PREDICT='500'; $env:CENTURION_RAG_LLM_MAX_TOKENS='500'; $env:CENTURION_RAG_LLM_TEMPERATURE='0.2'; $env:CENTURION_RAG_CHROMA_DIR='./data/chroma_db'; $env:CENTURION_RAG_EMBEDDING_MODEL='BAAI/bge-base-en-v1.5'; $env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET='2000'; $env:CENTURION_RAG_MAX_CONTEXT_CHUNKS='8'; $env:CENTURION_RAG_TOP_K='15'; $env:CENTURION_RAG_SIMILARITY_THRESHOLD='0.70'; $env:CENTURION_RAG_QUERY_BUDGET='300'; $env:CENTURION_RAG_QUERY_REWRITE='false'; $env:CENTURION_RAG_STREAMING='true'; $env:CENTURION_RAG_CACHE_ENABLED='false'; $env:CENTURION_RAG_FAQ_ENABLED='false'; $env:RAG_FAST_MODE='false'
+python3 run_api.py
 ```
+
+**macOS / Linux (paste both lines):**
+```bash
+export ZERODHA_API_KEY="YOUR_KEY_HERE" ZERODHA_API_SECRET="YOUR_SECRET_HERE" ZERODHA_USER_ID="YOUR_USER_HERE" ZERODHA_PASSWORD='YOUR_PASSWORD_HERE' ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY" CENTURION_RAG_LLM_PROVIDER="claude" CENTURION_RAG_CLAUDE_MODEL="claude-opus-4-20250514" CENTURION_RAG_CLAUDE_MAX_TOKENS="1024" CENTURION_RAG_CLAUDE_TEMPERATURE="0.2" CENTURION_DB_USER="postgres" CENTURION_DB_PASSWORD="superadmin1" KITE_DB_USER="postgres" KITE_DB_PASSWORD="superadmin1" MINIO_ACCESS_KEY="minioadmin" MINIO_SECRET_KEY="minioadmin123" CENTURION_DEFAULT_ADMIN_PASSWORD="admin123" CENTURION_DEFAULT_ANALYST_PASSWORD="analyst123" CENTURION_DB_HOST="localhost" CENTURION_DB_PORT="9003" CENTURION_DB_NAME="centurion_trading" CENTURION_DATABASE_URL="postgresql://postgres:superadmin1@localhost:9003/centurion_trading" KITE_DB_HOST="localhost" KITE_DB_PORT="9003" KITE_DB_NAME="livestocks_ind" KITE_POOL_MAXSIZE="40" MINIO_ENDPOINT="localhost:9004" MINIO_SECURE="false" MINIO_BUCKET="centurion-backtests" MINIO_ENABLED="true" STREAMLIT_SERVER_PORT="9000" API_PORT="9001" CENTURION_RAG_LLM_URL="http://localhost:11434" RAG_MODEL="qwen2.5:3b" CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT="300" CENTURION_RAG_LLM_CHUNK_TIMEOUT="30" CENTURION_RAG_LLM_NUM_CTX="4096" CENTURION_RAG_LLM_NUM_PREDICT="500" CENTURION_RAG_LLM_MAX_TOKENS="500" CENTURION_RAG_LLM_TEMPERATURE="0.2" CENTURION_RAG_CHROMA_DIR="./data/chroma_db" CENTURION_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5" CENTURION_RAG_CONTEXT_TOKEN_BUDGET="2000" CENTURION_RAG_MAX_CONTEXT_CHUNKS="8" CENTURION_RAG_TOP_K="15" CENTURION_RAG_SIMILARITY_THRESHOLD="0.70" CENTURION_RAG_QUERY_BUDGET="300" CENTURION_RAG_QUERY_REWRITE="false" CENTURION_RAG_STREAMING="true" CENTURION_RAG_CACHE_ENABLED="false" CENTURION_RAG_FAQ_ENABLED="false" RAG_FAST_MODE="false"
 python3 run_api.py
 ```
 API docs at: **http://localhost:9001/docs** (auth required)
 
-Open MinIO at **http://localhost:9002/login** \n
-login with: `minioadmin` / `minioadmin123`
+MinIO console at: **http://localhost:9002/login** — login with `minioadmin` / `minioadmin123`
+
+---
 
 ### Verify Everything Works
 - [ ] Streamlit opens at http://localhost:9000
