@@ -161,6 +161,7 @@ def main():
     APP_OPTIONS = {
         "trading_platform": "US Stocks",
         "live_stocks": "Ind Stocks",
+        "finance_ml": "Financial ML",
         "crypto": "Crypto",
         "rag_engine": "RAG Engine"
     }
@@ -199,6 +200,10 @@ def main():
         logger.info("[user=%s] Rendering module: Ind Stocks", _user)
         _route_ind_stocks()
 
+    elif selected_app == "finance_ml":
+        _throttled_module_info("[user=%s] Rendering module: Financial ML", _user)
+        _get_renderer("finance_ml")()
+
     elif selected_app == "rag_engine":
         _throttled_module_info("[user=%s] Rendering module: RAG Engine", _user)
         _get_renderer("rag_engine")()
@@ -227,6 +232,9 @@ def _get_renderer(module_key: str):
     elif module_key == "crypto":
         from ui.pages.crypto_page import render_crypto_page
         return render_crypto_page
+    elif module_key == "finance_ml":
+        from ui.pages.finance_ml_page import render_finance_ml_page
+        return render_finance_ml_page
     elif module_key == "analysis":
         from ui.pages.analysis_page import render_analysis_page
         return render_analysis_page

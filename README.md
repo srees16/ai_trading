@@ -24,9 +24,9 @@ pip install -r requirements.txt
 **macOS / Linux:**
 ```
 git clone -b develop https://github.com/srees16/centurion_core.git
-cd centurion_core
 python3 -m venv myenv
 source myenv/bin/activate
+cd centurion_core
 pip install -r requirements.txt
 ```
 
@@ -58,7 +58,7 @@ docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -
 docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15 && sleep 9 && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;" && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
 ```
 
-This creates three databases: `centurion_trading` (main), `centurion_rag` (RAG pipeline), `livestocks_ind` (Kite/Zerodha).
+This creates three databases: `centurion_trading` (main — stores backtest results, strategy metrics, and Financial ML chapter outputs), `centurion_rag` (RAG pipeline), `livestocks_ind` (Kite/Zerodha).
 
 ---
 
@@ -70,13 +70,17 @@ python setup_database.py
 ```
 Expected output: `✓ Database tables created successfully`
 
+This creates the `backtest_results`, `backtest_trades`, `backtest_equity_points`, `backtest_daily_returns`, and `strategy_performance_summary` tables used by both the Backtest Strategy module and the Financial ML module (`fml_ch02` … `fml_ch21` entries).
+
 ---
 
-### Step 5 — Start MinIO (Docker) — for backtest charts
+### Step 5 — Start MinIO (Docker) — for backtest & Financial ML charts
 
 ```
 docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"
 ```
+
+The `centurion-backtests` bucket is auto-created on first use. It stores backtest strategy charts **and** Financial ML chapter figures (PNG) under `fml_<run_id>/fml_<ch_key>/` paths.
 
 ---
 

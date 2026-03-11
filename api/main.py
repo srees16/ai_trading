@@ -69,7 +69,7 @@ async def lifespan(app: FastAPI):
     """
     Initialise heavyweight singletons at startup; tear down on shutdown.
     """
-    logger.info("Centurion API starting up ...")
+    logger.info("Centurion API starting up")
 
     # Pre-warm database connection (optional, fast)
     try:
