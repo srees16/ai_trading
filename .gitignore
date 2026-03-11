@@ -103,3 +103,7 @@ htmlcov/
 .tox/
 docs/_build/
 site/
+
+# ============ Financial ML (runtime-generated caches & outputs) ============
+financial_ML/_cache/
+financial_ML/_output/
