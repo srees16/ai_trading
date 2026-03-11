@@ -289,6 +289,9 @@ def _render_run_all_button(tickers: List[str], date_start: str, date_end: str):
         _precompute_all_chapters(tickers, date_start, date_end)
 
 
+_PRECOMPUTE_SKIP = {"ch13", "ch16"}  # ch13: Synthetic Backtesting (slow), ch16: HRP (needs 2+ tickers)
+
+
 def _precompute_all_chapters(
     tickers: List[str], date_start: str, date_end: str,
 ):
@@ -303,6 +306,7 @@ def _precompute_all_chapters(
     ]
     total = len(all_chapters)
     succeeded = 0
+    skipped = 0
 
     spinner_slot = st.empty()
 
@@ -317,6 +321,11 @@ def _precompute_all_chapters(
             spinner_html(f"Running {ch_name} ({idx + 1}/{total})"),
             unsafe_allow_html=True,
         )
+
+        if ch_key in _PRECOMPUTE_SKIP:
+            logger.info("Skipping %s (in _PRECOMPUTE_SKIP)", ch_key)
+            skipped += 1
+            continue
 
         if needs_tickers and not tickers:
             # Skip chapters that need tickers when none supplied
@@ -335,8 +344,9 @@ def _precompute_all_chapters(
                 "text": f"Error: {exc}", "tables": [], "figures": [],
             }
 
+    computed = total - skipped
     spinner_slot.markdown(
-        spinner_html(f"All analyses computed ({succeeded}/{total} succeeded) ✓"),
+        spinner_html(f"Done — {succeeded}/{computed} succeeded, {skipped} skipped ✓"),
         unsafe_allow_html=True,
     )
     import time as _time
@@ -368,7 +378,7 @@ def _render_analysis_tabs(tickers: List[str], date_start: str, date_end: str):
                 with col_btn:
                     if needs_tickers and not tickers:
                         st.button(
-                            "↻ Re-run", key=f"fml_run_{ch_key}",
+                            "Re-run", key=f"fml_run_{ch_key}",
                             type="secondary", disabled=True,
                         )
                     else:
@@ -398,7 +408,7 @@ def _render_chapter_rerun_button(
 ):
     """Re-run a single chapter (overrides the precomputed cache)."""
     btn_key = f"fml_run_{ch_key}"
-    if st.button("↻ Re-run", key=btn_key, type="secondary"):
+    if st.button("Re-run", key=btn_key, type="secondary"):
         with st.spinner(f"Running {ch_name}…"):
             try:
                 result = _execute_chapter(
