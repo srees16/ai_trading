@@ -104,7 +104,7 @@ ANALYSIS_TABS: List[tuple] = [
     ]),
     ("Portfolio", [
         ("ch16", "ML Asset Allocation",
-         "Hierarchical Risk Parity (HRP) vs CLA vs IVP — requires  >2 tickers", True),
+         "Hierarchical Risk Parity (HRP) vs CLA vs IVP", True),
     ]),
     ("Computation", [
         ("ch20", "Multiprocessing",
@@ -206,6 +206,11 @@ def render_finance_ml_page():
     # ── Async progress (auto-refreshing fragment) ───────────────
     if st.session_state.get("fml_async_batch_id"):
         _render_async_progress()
+
+    # ── Batch-completion banner (static, persists until next action) ──
+    _fml_banner = st.session_state.pop("_fml_batch_banner", None)
+    if _fml_banner:
+        getattr(st, _fml_banner["kind"])(_fml_banner["msg"])
 
     st.markdown("---")
 
@@ -535,15 +540,21 @@ def _render_async_progress():
                 break
 
     if job["status"] == "done":
-        # Show toasts for any remaining un-toasted completions
-        for cd in new_completions:
-            if cd["status"] == "done":
-                _report_persistence_status(
-                    cd["ch_name"],
-                    cd.get("fig_count", 0),
-                    cd.get("json_ok", False),
-                    cd.get("db_ok", False),
-                )
+        # Build a single summary banner for the entire batch
+        succeeded = job["succeeded"]
+        total = job["total"]
+        skipped = job.get("skipped", 0)
+        failed = total - skipped - succeeded
+        parts: List[str] = [f"{succeeded} chapter(s) completed"]
+        if skipped:
+            parts.append(f"{skipped} skipped")
+        if failed:
+            parts.append(f"{failed} failed")
+        kind = "success" if not failed else "warning"
+        st.session_state["_fml_batch_banner"] = {
+            "kind": kind,
+            "msg": f"Financial ML batch done — {', '.join(parts)}",
+        }
         # Final cleanup — remove batch so the guard at the call-site
         # (``if st.session_state.get("fml_async_batch_id")``) stops
         # rendering this fragment on the next full-app rerun.
@@ -552,8 +563,8 @@ def _render_async_progress():
         st.session_state["fml_run_id"] = st.session_state.get("fml_run_id", 0) + 1
         with _ASYNC_LOCK:
             _ASYNC_JOBS.pop(batch_id, None)
-        # Signal the main page to do the full rerun outside the fragment
-        st.session_state["_fml_needs_rerun"] = True
+        # Trigger a full-app rerun so the analysis tabs pick up new results
+        st.rerun(scope="app")
     else:
         running_name = _CH_NAME_MAP.get(running_ch, running_ch) if running_ch else "…"
         pct = int(progress * 100)
@@ -561,16 +572,6 @@ def _render_async_progress():
             spinner_html(f"Running {running_name} — {pct}%"),
             unsafe_allow_html=True,
         )
-        # Show toasts for chapters that just completed (no full rerun needed —
-        # the fragment auto-refreshes every 3 s and tabs update when job finishes)
-        for cd in new_completions:
-            if cd["status"] == "done":
-                _report_persistence_status(
-                    cd["ch_name"],
-                    cd.get("fig_count", 0),
-                    cd.get("json_ok", False),
-                    cd.get("db_ok", False),
-                )
 
 
 # ════════════════════════════════════════════════════════════════════════
@@ -625,6 +626,8 @@ def _render_analysis_tabs(tickers: List[str], date_start: str, date_end: str):
                             date_start, date_end, needs_tickers,
                         )
 
+                if ch_key == "ch16":
+                    st.caption("Requires >2 tickers")
                 if needs_tickers and not tickers:
                     st.caption("⚠️ Select at least one ticker to enable.")
 
@@ -697,10 +700,11 @@ def _sanitize_result(result: Dict[str, Any]) -> Dict[str, Any]:
 
     # --- figure titles embedded in matplotlib axes -----------
     for _idx, (title, fig) in enumerate(result.get("figures", [])):
-        for ax in fig.get_axes():
-            cur = ax.get_title()
-            if cur and _DEMO_WORD_RE.search(cur):
-                ax.set_title(_DEMO_WORD_RE.sub("", cur).strip(" |—-_"))
+        if not isinstance(fig, bytes):
+            for ax in fig.get_axes():
+                cur = ax.get_title()
+                if cur and _DEMO_WORD_RE.search(cur):
+                    ax.set_title(_DEMO_WORD_RE.sub("", cur).strip(" |—-_"))
 
     # --- table titles ----------------------------------------
     cleaned_tables = []
@@ -810,11 +814,28 @@ def _execute_chapter(
             if num not in pre_fignums
         ]
 
-        return _sanitize_result({
+        sanitized = _sanitize_result({
             "text": buf.getvalue(),
             "tables": [],
             "figures": new_figs,
         })
+
+        # Convert matplotlib figures to PNG bytes so they survive
+        # across Streamlit reruns and background-thread boundaries.
+        png_figs = []
+        for title, fig in sanitized.get("figures", []):
+            fbuf = io.BytesIO()
+            fig.savefig(fbuf, format="png", dpi=120, bbox_inches="tight")
+            png_figs.append((title, fbuf.getvalue()))
+            fbuf.close()
+        sanitized["figures"] = png_figs
+
+        # Now safe to close all captured figures
+        for num in plt.get_fignums():
+            if num not in pre_fignums:
+                _orig_close(num)
+
+        return sanitized
     finally:
         _sd.SYMBOLS = orig_symbols
         _sd.DEFAULT_START = orig_start
@@ -859,12 +880,10 @@ def _save_fml_figures_to_minio(
         return 0
 
     saved = 0
-    for idx, (title, fig) in enumerate(figures):
+    for idx, (title, fig_data) in enumerate(figures):
         try:
-            buf = io.BytesIO()
-            fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
-            image_bytes = buf.getvalue()
-            buf.close()
+            # fig_data is already PNG bytes (rendered at capture time)
+            image_bytes = fig_data if isinstance(fig_data, bytes) else fig_data
 
             tag = _ch_tag(ch_key)
             path = minio_svc.save_backtest_image(
@@ -1105,7 +1124,7 @@ def _report_persistence_status(
         parts.append("results → PostgreSQL")
 
     if parts:
-        st.toast(f"{ch_name}: {', '.join(parts)}", icon="✅")
+        st.toast(f"{ch_name}: {', '.join(parts)}", icon=":material/check_circle:")
     else:
         warnings: List[str] = []
         if not fig_count:
@@ -1125,10 +1144,10 @@ def _report_persistence_status(
 # ════════════════════════════════════════════════════════════════════════
 def _display_result(result: Dict[str, Any], ch_key: str):
     """Render captured analysis output."""
-    # Figures
+    # Figures (stored as PNG bytes)
     if result.get("figures"):
-        for title, fig in result["figures"]:
-            st.pyplot(fig, width="stretch")
+        for title, fig_bytes in result["figures"]:
+            st.image(fig_bytes, use_container_width=True)
 
     # Tables
     if result.get("tables"):
