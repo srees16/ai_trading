@@ -183,12 +183,15 @@ class MinIOService:
         else:
             object_name = f"{run_id}/{safe_strategy}/{filename}"
 
+        def _ascii_safe(val: str) -> str:
+            return val.encode("ascii", "replace").decode("ascii")
+
         metadata = {
-            "x-amz-meta-run-id": run_id,
-            "x-amz-meta-strategy": strategy_name,
-            "x-amz-meta-ticker": ticker,
-            "x-amz-meta-chart-title": chart_title,
-            "x-amz-meta-chart-type": chart_type,
+            "x-amz-meta-run-id": _ascii_safe(run_id),
+            "x-amz-meta-strategy": _ascii_safe(strategy_name),
+            "x-amz-meta-ticker": _ascii_safe(ticker),
+            "x-amz-meta-chart-title": _ascii_safe(chart_title),
+            "x-amz-meta-chart-type": _ascii_safe(chart_type),
         }
 
         try:

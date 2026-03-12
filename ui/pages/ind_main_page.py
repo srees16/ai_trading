@@ -67,7 +67,7 @@ def _render_control_panel():
         """<style>
         [data-testid="stRadio"] { margin-top: -0.5rem; margin-bottom: -0.8rem; }
         [data-testid="stExpander"] { margin-top: -0.6rem; margin-bottom: -0.6rem; }
-        [data-testid="stTextArea"] { margin-top: -0.6rem; }
+        [data-testid="stTextArea"] { margin-top: -0.2rem; }
         [data-testid="stFileUploader"] { margin-top: -0.6rem; }
         [data-testid="stSelectbox"] { margin-bottom: -0.8rem; }
         [data-testid="stCheckbox"] { margin-top: -0.5rem; margin-bottom: -0.5rem; }

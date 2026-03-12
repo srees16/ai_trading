@@ -202,7 +202,7 @@ def main():
 
     elif selected_app == "finance_ml":
         _throttled_module_info("[user=%s] Rendering module: Financial ML", _user)
-        _get_renderer("finance_ml")()
+        _route_finance_ml()
 
     elif selected_app == "rag_engine":
         _throttled_module_info("[user=%s] Rendering module: RAG Engine", _user)
@@ -235,6 +235,9 @@ def _get_renderer(module_key: str):
     elif module_key == "finance_ml":
         from ui.pages.finance_ml_page import render_finance_ml_page
         return render_finance_ml_page
+    elif module_key == "fml_history":
+        from ui.pages.fml_history_page import render_fml_history_page
+        return render_fml_history_page
     elif module_key == "analysis":
         from ui.pages.analysis_page import render_analysis_page
         return render_analysis_page
@@ -295,6 +298,18 @@ def _route_ind_stocks():
     else:
         # Default: Indian Stocks main page (ticker selection)
         _get_renderer('ind_main')()
+
+
+def _route_finance_ml():
+    """Route to Financial ML main page or its history sub-page."""
+    current_page = st.session_state.get('current_page', 'finance_ml')
+    _user = st.session_state.get('username', 'unknown')
+    logger.info("[user=%s] Financial ML sub-page: %s", _user, current_page)
+
+    if current_page == 'fml_history':
+        _get_renderer('fml_history')()
+    else:
+        _get_renderer('finance_ml')()
 
 
 if __name__ == "__main__":

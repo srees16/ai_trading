@@ -242,7 +242,7 @@ def _precompute_all_strategies(strategies: list):
     total_minio_saved = 0
 
     # Single run_id shared by all strategies in this batch
-    minio_run_id = _build_minio_run_id(tickers)
+    minio_run_id = _build_minio_run_id(tickers, market=st.session_state.get('current_market', 'US'))
 
     for idx, s_info in enumerate(eligible):
         strategy_name = s_info['name']
@@ -559,7 +559,8 @@ def _execute_backtest(strategy_cls, strategy_info: Dict, param_values: Dict, sel
             minio_run_id = st.session_state.get('backtest_minio_run_id')
             if not minio_run_id:
                 minio_run_id = _build_minio_run_id(
-                    param_values.get('tickers', [])
+                    param_values.get('tickers', []),
+                    market=st.session_state.get('current_market', 'US'),
                 )
                 st.session_state.backtest_minio_run_id = minio_run_id
             _save_charts_to_minio(
@@ -634,16 +635,21 @@ def _save_backtest_to_database(
         logger.error(f"Failed to save backtest to database: {e}")
 
 
-def _build_minio_run_id(tickers: list) -> str:
+def _build_minio_run_id(tickers: list, market: str = 'US') -> str:
     """
     Build a unique run_id with a short UUID + timestamp for MinIO storage.
-    
+
+    Args:
+        tickers: List of ticker symbols (unused in ID but kept for API compat)
+        market: 'US' or 'IND' — determines the prefix
+
     Returns:
-        String like 'run_b080a824_20260218_163000'
+        String like 'us_b080a824_20260218_163000' or 'in_b080a824_20260218_163000'
     """
+    prefix = 'in' if market == 'IND' else 'us'
     short_id = uuid.uuid4().hex[:8]
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-    return f"run_{short_id}_{ts}"
+    return f"{prefix}_{short_id}_{ts}"
 
 
 def _save_charts_to_minio(
