@@ -316,17 +316,17 @@ def _render_live_derivative_prices(quotes):
                 with left:
                     st.markdown(" **Calls (CE)**")
                     st.dataframe(
-                        ce_df, use_container_width=True, hide_index=True,
+                        ce_df, width="stretch", hide_index=True,
                         height=min(35 * len(ce_df) + 38, 400),
                     )
                 with right:
                     st.markdown(" **Puts (PE)**")
                     st.dataframe(
-                        pe_df, use_container_width=True, hide_index=True,
+                        pe_df, width="stretch", hide_index=True,
                         height=min(35 * len(pe_df) + 38, 400),
                     )
             else:
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                st.dataframe(df, width="stretch", hide_index=True)
 
 
 # ── Tab 3: Full Option Chain ─────────────────────────────────────
@@ -438,12 +438,12 @@ def _render_option_chain(quotes):
 
         st.dataframe(
             merged,
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             height=min(35 * len(merged) + 38, 600),
         )
     else:
-        st.dataframe(pd.DataFrame(options), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(options), width="stretch", hide_index=True)
 
     # Download button
     csv = merged.to_csv(index=False) if "merged" in dir() else pd.DataFrame(options).to_csv(index=False)

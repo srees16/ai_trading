@@ -162,6 +162,7 @@ def main():
         "trading_platform": "US Stocks",
         "live_stocks": "Ind Stocks",
         "finance_ml": "Financial ML",
+        "testune_ts": "Test & Tune",
         "crypto": "Crypto",
         "rag_engine": "RAG Engine"
     }
@@ -204,6 +205,10 @@ def main():
         _throttled_module_info("[user=%s] Rendering module: Financial ML", _user)
         _route_finance_ml()
 
+    elif selected_app == "testune_ts":
+        _throttled_module_info("[user=%s] Rendering module: Test & Tune", _user)
+        _route_testune_ts()
+
     elif selected_app == "rag_engine":
         _throttled_module_info("[user=%s] Rendering module: RAG Engine", _user)
         _get_renderer("rag_engine")()
@@ -238,6 +243,9 @@ def _get_renderer(module_key: str):
     elif module_key == "fml_history":
         from ui.pages.fml_history_page import render_fml_history_page
         return render_fml_history_page
+    elif module_key == "testune_ts":
+        from ui.pages.testune_page import render_testune_page
+        return render_testune_page
     elif module_key == "analysis":
         from ui.pages.analysis_page import render_analysis_page
         return render_analysis_page
@@ -310,6 +318,18 @@ def _route_finance_ml():
         _get_renderer('fml_history')()
     else:
         _get_renderer('finance_ml')()
+
+
+def _route_testune_ts():
+    """Route to TestTune Trading System main page or its history sub-page."""
+    current_page = st.session_state.get('current_page', 'testune_ts')
+    _user = st.session_state.get('username', 'unknown')
+    logger.info("[user=%s] Test & Tune sub-page: %s", _user, current_page)
+
+    if current_page == 'tts_history':
+        _get_renderer('testune_ts')()  # history page TBD
+    else:
+        _get_renderer('testune_ts')()
 
 
 if __name__ == "__main__":

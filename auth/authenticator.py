@@ -356,7 +356,7 @@ class Authenticator:
                 )
                 
                 submitted = st.form_submit_button(" Sign In", type="primary",
-                                                       use_container_width=True)
+                                                       width="stretch")
                 
                 if submitted:
                     if username and password:
@@ -754,7 +754,7 @@ def render_user_menu():
         )
     
     with col_logout:
-        if st.button("Logout", key="logout_btn", use_container_width=True):
+        if st.button("Logout", key="logout_btn", width="stretch"):
             logger.info("[user=%s] Logged out", st.session_state.get('username', 'unknown'))
             logout()
             st.rerun()

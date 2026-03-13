@@ -107,3 +107,7 @@ site/
 # ============ Financial ML (runtime-generated caches & outputs) ============
 financial_ML/_cache/
 financial_ML/_output/
+
+# ============ Test & Tune Trading System (runtime-generated caches & outputs) ============
+testune_trade_sys/_cache/
+testune_trade_sys/_output/

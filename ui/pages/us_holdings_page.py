@@ -105,7 +105,7 @@ def render_us_holdings_page():
     # ── 3. Disconnect button ────────────────────────────────
     dc1, dc2 = st.columns([6, 1])
     with dc2:
-        if st.button(" Disconnect", use_container_width=True, key="dw_disconnect"):
+        if st.button(" Disconnect", width="stretch", key="dw_disconnect"):
             logger.info("[user=%s] Disconnecting DriveWealth account", _user)
             _clear_creds()
             for k in list(st.session_state.keys()):
@@ -210,7 +210,7 @@ def _render_auth_form(saved: dict):
         )
         fc1, fc2 = st.columns([3, 1])
         remember = fc1.checkbox("Save credentials locally", value=bool(saved))
-        submitted = fc2.form_submit_button("Connect", use_container_width=True, type="primary")
+        submitted = fc2.form_submit_button("Connect", width="stretch", type="primary")
 
     if submitted:
         if not client_id or not client_secret or not app_key:
@@ -268,7 +268,7 @@ def _render_account_linking(dw, user_id: str):
             if status_name:
                 label += f"  `{status_name}`"
 
-            if st.button(f"Link {acc_no}", key=f"link_{acc_id}", use_container_width=True):
+            if st.button(f"Link {acc_no}", key=f"link_{acc_id}", width="stretch"):
                 st.session_state["dw_account_id"] = acc_id
                 saved = _load_saved_creds()
                 if saved:
@@ -403,7 +403,7 @@ def _render_positions(dw, account_id: str):
         "Mkt Value": "${:,.2f}",
         "Unrealized P&L": "${:+,.2f}",
     }, na_rep="—")
-    st.dataframe(styled, hide_index=True, use_container_width=True)
+    st.dataframe(styled, hide_index=True, width="stretch")
 
 
 def _render_orders(dw, account_id: str):
@@ -433,7 +433,7 @@ def _render_orders(dw, account_id: str):
         })
 
     df = pd.DataFrame(rows)
-    st.dataframe(df, hide_index=True, use_container_width=True)
+    st.dataframe(df, hide_index=True, width="stretch")
 
 
 def _render_transactions(dw, account_id: str):
@@ -463,4 +463,4 @@ def _render_transactions(dw, account_id: str):
         })
 
     df = pd.DataFrame(rows)
-    st.dataframe(df, hide_index=True, use_container_width=True)
+    st.dataframe(df, hide_index=True, width="stretch")

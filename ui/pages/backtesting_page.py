@@ -382,7 +382,7 @@ def _render_configuration_panel(strategies: list, strategy_options: Dict[str, An
                 type="primary",
                 disabled=not param_values.get('tickers'),
                 help="Run with custom parameters (overrides cached result)",
-                use_container_width=True,
+                width="stretch",
             )
             st.markdown('</div>', unsafe_allow_html=True)
         
