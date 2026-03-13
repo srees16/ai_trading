@@ -6,8 +6,6 @@ A Python-based enterprise trading platform combining multi-source news scraping,
 
 ## Quick Start
 
-Replace `YOUR_ANTHROPIC_API_KEY` with your [Anthropic API key] for Claude-powered RAG (Ollama is the fallback).
-
 ---
 
 ### Step 1 — Clone & install dependencies
@@ -16,25 +14,15 @@ Replace `YOUR_ANTHROPIC_API_KEY` with your [Anthropic API key] for Claude-powere
 ```
 git clone -b develop https://github.com/srees16/centurion_core.git
 python -m venv myenv
-myenv\Scripts\activate
+myenv\Scripts\activate (macOS/Linux: source myenv/bin/activate)
 cd centurion_core
 pip install -r requirements.txt
 ```
-
-**macOS / Linux:**
-```
-git clone -b develop https://github.com/srees16/centurion_core.git
-python3 -m venv myenv
-source myenv/bin/activate
-cd centurion_core
-pip install -r requirements.txt
-```
-
 ---
 
 ### Step 2 — Set environment variables
 
-Set these in the terminal you will use for **all subsequent steps** (values are lost when the terminal closes).
+> Replace `YOUR_ANTHROPIC_API_KEY` with your Anthropic API key for Claude-powered RAG (Ollama is the fallback).
 
 **Windows PowerShell:**
 ```powershell
@@ -52,49 +40,39 @@ export ZERODHA_API_KEY="YOUR_KEY_HERE" ZERODHA_API_SECRET="YOUR_SECRET_HERE" ZER
 
 > try this on windows n check
 
+**Windows PowerShell:**
 ```powershell
 docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15; docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"; Start-Sleep -Seconds 9; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;"; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
 ```
 
-**Windows PowerShell:**
-```powershell
-docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15; Start-Sleep -Seconds 9; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;"; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
-```
-
-> try this on MacOS n check
-
+**macOS / Linux:**
 ```bash
 docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15 && docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001" && sleep 9 && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;" && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
 ```
-**macOS / Linux:**
 
-```bash
-docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15 && sleep 9 && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;" && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
-```
-
-This creates three databases: `centurion_trading` (main — stores backtest results, strategy metrics, and Financial ML chapter outputs), `centurion_rag` (RAG pipeline), `livestocks_ind` (Kite/Zerodha).
+This creates three databases: `centurion_trading` (main — stores backtest results, strategy metrics, Financial ML and Test & Tune chapter outputs), `centurion_rag` (RAG pipeline), `livestocks_ind` (Kite/Zerodha).
 
 ---
 
 ### Step 4 — Initialize database tables
 
-Run in the **same terminal** (env vars from Step 2 are still active):
+Run in the same terminal (env vars from Step 2 are still active):
 ```
 python setup_database.py
 ```
 Expected output: `✓ Database tables created successfully`
 
-This creates the `backtest_results`, `backtest_trades`, `backtest_equity_points`, `backtest_daily_returns`, and `strategy_performance_summary` tables used by both the Backtest Strategy module and the Financial ML module (`fml_ch02` … `fml_ch21` entries).
+This creates the `backtest_results`, `backtest_trades`, `backtest_equity_points`, `backtest_daily_returns`, and `strategy_performance_summary` tables used by the Backtest Strategy, Financial ML (`fml_ch02` … `fml_ch21`), and Test & Tune (`tts_ch01` … `tts_ch07`) modules.
 
 ---
 
-### Step 5 — Start MinIO (Docker) — for backtest & Financial ML charts
+### Step 5 — Start MinIO (Docker) — for backtest, Financial ML & Test-and-Tune charts
 
 ```
 docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"
 ```
 
-The `centurion-backtests` bucket is auto-created on first use. It stores backtest strategy charts **and** Financial ML chapter figures (PNG) under `fml_<run_id>/fml_<ch_key>/` paths.
+The `centurion-backtests` bucket is auto-created on first use. It stores backtest strategy charts, Financial ML chapter figures (PNG) under `fml_<run_id>/fml_<ch_key>/` paths, and Test & Tune figures under `tts_<run_id>/tts_<ch_key>/` paths.
 
 ---
 
@@ -112,10 +90,9 @@ Then pull the model:
 ```
 ollama pull qwen2.5:3b
 ```
-
 ---
 
-### Step 7 — Launch Streamlit in Terminal 1
+### Step 7 — Terminal 1: Launch Streamlit
 
 Run in the **same terminal** (env vars from Step 2 must still be active):
 ```
@@ -127,7 +104,7 @@ Opens at: **http://localhost:9000** — login with `admin` / `admin123`
 
 ---
 
-### Step 8 (Optional) — Launch FastAPI in Terminal 2
+### Step 8 (Optional) — Terminal 2: Launch FastAPI
 > Set env variables from Step 2 in this new terminal too, then run:
 ```
 python3 run_api.py
@@ -145,7 +122,7 @@ MinIO console at: **http://localhost:9002/login** — login with `minioadmin` / 
 - [ ] Run a quick analysis with 2 tickers (AAPL, MSFT) — should complete in <2 min
 - [ ] Check **History** tab — results persist to PostgreSQL
 
-**Stuck?** Jump to **Section 13: Troubleshooting** or **Section 10: Installation** for detailed setup.
+**Stuck?** Jump to **Section 14: Troubleshooting** or **Section 11: Installation** for detailed setup.
 
 ---
 
@@ -159,13 +136,14 @@ MinIO console at: **http://localhost:9002/login** — login with `minioadmin` / 
 6. [Database Layer](#6-database-layer)
 7. [Object Storage (MinIO)](#7-object-storage-minio)
 8. [Interactive Web Interface](#8-interactive-web-interface)
-9. [Project Structure](#9-project-structure)
-10. [Installation (Detailed)](#10-installation)
-11. [Usage Guide](#11-usage-guide)
-12. [API Reference](#12-api-reference)
-13. [Troubleshooting](#13-troubleshooting)
-14. [Dependencies](#14-dependencies)
-15. [Changelog](#15-changelog)
+9. [Financial ML & Test-and-Tune](#9-financial-ml--test-and-tune)
+10. [Project Structure](#10-project-structure)
+11. [Installation (Detailed)](#11-installation)
+12. [Usage Guide](#12-usage-guide)
+13. [API Reference](#13-api-reference)
+14. [Troubleshooting](#14-troubleshooting)
+15. [Dependencies](#15-dependencies)
+16. [Changelog](#16-changelog)
 
 ---
 
@@ -482,6 +460,8 @@ details = minio.list_runs_detailed()         # metadata: size, chart count, stra
 | **Crypto** | `crypto` | Isolated crypto strategies (default: ETH, BTC, LTC); Binance data, separate cache |
 | **History** | `history` | 3 tabs: Analysis Runs (drill-down), Trading Signals (filterable), Backtest Results (with MinIO charts) |
 | **RAG** | `rag` | PDF upload, query input with KB source selector, streaming response, code applicator |
+| **Financial ML** | `finance_ml` | 19 AFML chapter analyses — data structures, labeling, feature importance, HRP, CSCV, and more |
+| **Test & Tune** | `testune_ts` | 7 chapter analyses from *Testing and Tuning Market Trading Systems* (Timothy Masters) |
 | **Indian Main** | `ind_main` | Indian equities ticker selection and analysis dashboard |
 | **Indian Equities** | `ind_kite` | Live quotes, order book, positions, holdings, option chain, RSI scanner (Kite Connect) |
 | **Options** | `options` | Concurrent option chain with OI, Greeks, IV, Sensibull-style colouring |
@@ -500,7 +480,51 @@ details = minio.list_runs_detailed()         # metadata: size, chart count, stra
 
 ---
 
-## 9. Project Structure
+## 9. Financial ML & Test-and-Tune
+
+Two book-based quantitative research modules share the same UI pattern — tabbed chapter analyses, async background pre-computation, MinIO figure persistence, and PostgreSQL result storage.
+
+### Financial ML (AFML)
+
+Based on *Advances in Financial Machine Learning* by Marcos López de Prado. 19 chapter scripts in `financial_ML/applied/` covering:
+
+| Tab | Chapters |
+|-----|----------|
+| Data Structures | Financial Data Structures, Triple-Barrier Labeling, Sample Weights |
+| Features | Fractional Differentiation, Feature Importance, Structural Breaks, Entropy, Microstructure |
+| Modeling | Ensemble Methods, Cross-Validation, Hyper-Parameter Tuning, Bet Sizing |
+| Backtesting | Dangers of Backtesting, Synthetic Backtesting, Backtest Statistics, Strategy Risk |
+| Portfolio | ML Asset Allocation (HRP) |
+| Computation | Multiprocessing & Vectorization, Brute Force & Quantum |
+
+UI page: `ui/pages/finance_ml_page.py` — Route: `finance_ml`
+
+### Test & Tune (TTMTS)
+
+Based on *Testing and Tuning Market Trading Systems* by Timothy Masters (2018). 7 chapter scripts in `testune_trade_sys/applied/` covering:
+
+| Tab | Chapters |
+|-----|----------|
+| Foundations | Introduction (returns, future leak, percent wins), Pre-Optimization Issues (stationarity, entropy) |
+| Optimization | Optimization Issues (elastic-net, differential evolution), Post-Optimization Issues (StocBias, sensitivity) |
+| Performance Estimation | Unbiased Performance (walk-forward, CSCV), Trade-Based Analysis (BCa bootstrap, drawdown bounds) |
+| Statistical Testing | Permutation Tests (return/price/bar permutation, walk-forward permutation) |
+
+C++ algorithms from the book are converted to Python (NumPy/SciPy). Each chapter has a companion reading in `testune_trade_sys/readings/`.
+
+UI page: `ui/pages/testune_page.py` — Route: `testune_ts`
+
+### Shared Architecture
+
+Both modules follow the same pattern:
+- `sample_data.py` — Data generators with yfinance caching to `_cache/` (parquet)
+- `applied/chNN_*.py` — Chapter scripts with algorithm functions and a `main()` entry point
+- `readings/chNN_*.md` — Companion documentation
+- Streamlit page with `ANALYSIS_TABS` registry, `_execute_chapter()` via `importlib`, matplotlib figure capture (PNG bytes), MinIO + PostgreSQL persistence
+
+---
+
+## 10. Project Structure
 
 ```
 centurion_core/
@@ -528,6 +552,8 @@ centurion_core/
 │       ├── crypto_page.py        # Crypto strategy page (Binance API)
 │       ├── history_page.py       # Historical results browser
 │       ├── us_holdings_page.py   # US portfolio holdings view
+│       ├── finance_ml_page.py    # Financial ML chapter analyses (AFML)
+│       ├── testune_page.py       # Test & Tune chapter analyses (TTMTS)
 │       ├── ind_main_page.py      # Indian equities main dashboard
 │       └── options_page.py       # Option chain analysis page
 │
@@ -583,6 +609,20 @@ centurion_core/
 │   ├── derivatives/              # Options Straddle, VIX Calculator (standalone)
 │   ├── portfolio_analysis/       # Asset Allocation / SLSQP optimisation (standalone)
 │   └── risk_modelling/           # Monte Carlo / GBM simulation (standalone)
+│
+├── financial_ML/                 # AFML chapter analyses (López de Prado)
+│   ├── sample_data.py            # Data generators + yfinance caching (_cache/)
+│   ├── applied/                  # 19 chapter scripts (ch02–ch21)
+│   ├── readings/                 # Companion markdown docs
+│   ├── _cache/                   # Parquet price cache (git-ignored)
+│   └── _output/                  # Analysis outputs (git-ignored)
+│
+├── testune_trade_sys/            # Test & Tune chapter analyses (Timothy Masters)
+│   ├── sample_data.py            # Data generators + yfinance caching (_cache/)
+│   ├── applied/                  # 7 chapter scripts (ch01–ch07)
+│   ├── readings/                 # Companion markdown docs
+│   ├── _cache/                   # Parquet price cache (git-ignored)
+│   └── _output/                  # Analysis outputs (git-ignored)
 │
 ├── kite_connect/                 # Zerodha live trading (Indian markets)
 │   ├── zerodha_live.py           # Main Streamlit dashboard (~1326 lines)
@@ -671,7 +711,7 @@ centurion_core/
 
 ---
 
-## 10. Installation
+## 11. Installation
 
 Complete step-by-step setup guide for fresh machine deployment.
 
@@ -1030,7 +1070,7 @@ For production, see [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md) for:
 
 ---
 
-## 11. Usage Guide
+## 12. Usage Guide
 
 ### Quick Start
 
@@ -1091,7 +1131,7 @@ All pages share consistent navigation buttons:
 
 ---
 
-## 12. API Reference
+## 13. API Reference
 
 ### REST API (FastAPI)
 
@@ -1184,7 +1224,7 @@ docker compose down -v
 
 ---
 
-## 13. Troubleshooting
+## 14. Troubleshooting
 
 ### Database
 
@@ -1212,7 +1252,7 @@ docker compose down -v
 
 ---
 
-## 14. Dependencies
+## 15. Dependencies
 
 | Category | Packages |
 |---|---|
@@ -1233,7 +1273,7 @@ docker compose down -v
 | **API** | fastapi, uvicorn[standard], python-multipart |
 ---
 
-## 15. Changelog
+## 16. Changelog
 
 ### 2025-07-15
 

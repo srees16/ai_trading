@@ -326,13 +326,8 @@ def _render_ingestion_status(mgr) -> None:
             if task.status == TaskStatus.COMPLETED:
                 r = task.result or {}
                 ts_str = _format_ingestion_timestamp(task.completed_at)
-                meta_line = _format_ingestion_metadata(r, task.file_size_bytes)
                 if r.get("status") == "success":
-                    st.success(
-                        f"**{task.file_name}**  \n"
-                        f"{meta_line}  \n"
-                        f"Ingested at {ts_str}"
-                    )
+                    st.success(f"**{task.file_name}** ingested successfully.")
                 elif r.get("reason") == "already_ingested":
                     st.info(
                         f"**{task.file_name}** — already ingested "
