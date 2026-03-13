@@ -33,7 +33,12 @@ def check_configuration():
     """Check if database is properly configured."""
     if not Config.is_database_configured():
         logger.error("Database not configured!")
-        logger.error("Please set CENTURION_DB_PASSWORD or CENTURION_DATABASE_URL in .env")
+        logger.error(
+            "CENTURION_DB_PASSWORD and CENTURION_DATABASE_URL are not set.\n"
+            "  Run the export commands from README → Quick Start → Step 2 in this terminal first.\n"
+            "  macOS/Linux:  export CENTURION_DB_PASSWORD='superadmin1' ...\n"
+            "  Windows PS:   $env:CENTURION_DB_PASSWORD='superadmin1' ..."
+        )
         return False
     
     logger.info(f"Database host: {Config.DB_HOST}")

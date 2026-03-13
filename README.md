@@ -34,6 +34,8 @@ pip install -r requirements.txt
 
 ### Step 2 — Set environment variables
 
+Set these in the terminal you will use for **all subsequent steps** (values are lost when the terminal closes).
+
 **Windows PowerShell:**
 ```powershell
 $env:ZERODHA_API_KEY='YOUR_KEY_HERE'; $env:ZERODHA_API_SECRET='YOUR_SECRET_HERE'; $env:ZERODHA_USER_ID='YOUR_USER_HERE'; $env:ZERODHA_PASSWORD='YOUR_PASSWORD_HERE'; $env:ANTHROPIC_API_KEY='YOUR_ANTHROPIC_API_KEY'; $env:CENTURION_RAG_LLM_PROVIDER='claude'; $env:CENTURION_RAG_CLAUDE_MODEL='claude-opus-4-20250514'; $env:CENTURION_RAG_CLAUDE_MAX_TOKENS='1024'; $env:CENTURION_RAG_CLAUDE_TEMPERATURE='0.2'; $env:CENTURION_DB_USER='postgres'; $env:CENTURION_DB_PASSWORD='superadmin1'; $env:KITE_DB_USER='postgres'; $env:KITE_DB_PASSWORD='superadmin1'; $env:MINIO_ACCESS_KEY='minioadmin'; $env:MINIO_SECRET_KEY='minioadmin123'; $env:CENTURION_DEFAULT_ADMIN_PASSWORD='admin123'; $env:CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'; $env:CENTURION_DB_HOST='localhost'; $env:CENTURION_DB_PORT='9003'; $env:CENTURION_DB_NAME='centurion_trading'; $env:CENTURION_DATABASE_URL='postgresql://postgres:superadmin1@localhost:9003/centurion_trading'; $env:KITE_DB_HOST='localhost'; $env:KITE_DB_PORT='9003'; $env:KITE_DB_NAME='livestocks_ind'; $env:KITE_POOL_MAXSIZE='40'; $env:MINIO_ENDPOINT='localhost:9004'; $env:MINIO_SECURE='false'; $env:MINIO_BUCKET='centurion-backtests'; $env:MINIO_ENABLED='true'; $env:STREAMLIT_SERVER_PORT='9000'; $env:API_PORT='9001'; $env:CENTURION_RAG_LLM_URL='http://localhost:11434'; $env:RAG_MODEL='qwen2.5:3b'; $env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300'; $env:CENTURION_RAG_LLM_CHUNK_TIMEOUT='30'; $env:CENTURION_RAG_LLM_NUM_CTX='4096'; $env:CENTURION_RAG_LLM_NUM_PREDICT='500'; $env:CENTURION_RAG_LLM_MAX_TOKENS='500'; $env:CENTURION_RAG_LLM_TEMPERATURE='0.2'; $env:CENTURION_RAG_CHROMA_DIR='./data/chroma_db'; $env:CENTURION_RAG_EMBEDDING_MODEL='BAAI/bge-base-en-v1.5'; $env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET='2000'; $env:CENTURION_RAG_MAX_CONTEXT_CHUNKS='8'; $env:CENTURION_RAG_TOP_K='15'; $env:CENTURION_RAG_SIMILARITY_THRESHOLD='0.70'; $env:CENTURION_RAG_QUERY_BUDGET='300'; $env:CENTURION_RAG_QUERY_REWRITE='false'; $env:CENTURION_RAG_STREAMING='true'; $env:CENTURION_RAG_CACHE_ENABLED='false'; $env:CENTURION_RAG_FAQ_ENABLED='false'; $env:RAG_FAST_MODE='false'
@@ -115,7 +117,7 @@ ollama pull qwen2.5:3b
 
 ### Step 7 — Launch Streamlit in Terminal 1
 
-Run in the **same terminal** (env vars from Step 2 are still active):
+Run in the **same terminal** (env vars from Step 2 must still be active):
 ```
 streamlit run app.py
 ```
@@ -126,7 +128,7 @@ Opens at: **http://localhost:9000** — login with `admin` / `admin123`
 ---
 
 ### Step 8 (Optional) — Launch FastAPI in Terminal 2
-> Set env variables in Step 2 and run below:
+> Set env variables from Step 2 in this new terminal too, then run:
 ```
 python3 run_api.py
 ```
