@@ -46,9 +46,12 @@ class NotificationManager:
         """
         if self.enabled:
             try:
+                # Windows NOTIFYICONDATAW limits: title 64 chars, message 256 chars
+                safe_title = title[:63] if len(title) > 63 else title
+                safe_message = message[:255] if len(message) > 255 else message
                 notification.notify(
-                    title=title,
-                    message=message,
+                    title=safe_title,
+                    message=safe_message,
                     app_name="Algo Trading Alert",
                     timeout=duration
                 )

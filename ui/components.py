@@ -220,6 +220,7 @@ def render_navigation_buttons(
         ('analysis',     'Stock Analysis'),
         ('fundamental',  'Fundamental Analysis'),
         ('backtesting',  'Backtest Strategy'),
+        ('verdict',      'Integrated Verdict'),
         ('history',      'History'),
         ('us_holdings',  'Holdings'),
     ]
@@ -283,6 +284,7 @@ def render_ind_navigation_buttons(
         ('analysis',     'Analysis'),
         ('fundamental',  'Fundamentals'),
         ('backtesting',  'Backtest'),
+        ('verdict',      'Verdict'),
         ('history',      'History'),
         ('options',      'Options'),
         ('ind_kite',     'Fly Kite'),

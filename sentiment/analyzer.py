@@ -9,6 +9,7 @@ first use so that importing this module is near-instant.
 """
 
 import logging
+import threading
 from typing import List, Tuple
 
 from config import Config
@@ -26,6 +27,7 @@ class SentimentAnalyzer:
     """
 
     _shared_pipeline = None  # class-level cache across instances
+    _lock = threading.Lock()  # protects lazy import + model init
 
     def __init__(self):
         """Initialize the sentiment analyzer (model loaded on first use)."""
@@ -37,24 +39,24 @@ class SentimentAnalyzer:
         if self._pipeline is not None:
             return self._pipeline
 
-        # Re-use a class-level singleton so multiple AlgoTradingSystem
-        # instances within the same process don't reload the model.
-        if SentimentAnalyzer._shared_pipeline is not None:
+        with SentimentAnalyzer._lock:
+            # Double-check after acquiring lock
+            if SentimentAnalyzer._shared_pipeline is not None:
+                self._pipeline = SentimentAnalyzer._shared_pipeline
+                logger.info("Reusing cached sentiment model")
+                return self._pipeline
+
+            logger.info("Loading sentiment analysis model...")
+            from transformers import pipeline as _hf_pipeline
+
+            SentimentAnalyzer._shared_pipeline = _hf_pipeline(
+                "sentiment-analysis",
+                model=Config.SENTIMENT_MODEL,
+                device=-1,  # CPU; set to 0 for GPU
+            )
             self._pipeline = SentimentAnalyzer._shared_pipeline
-            logger.info("Reusing cached sentiment model")
+            logger.info("Sentiment model loaded successfully")
             return self._pipeline
-
-        logger.info("Loading sentiment analysis model...")
-        from transformers import pipeline as _hf_pipeline
-
-        SentimentAnalyzer._shared_pipeline = _hf_pipeline(
-            "sentiment-analysis",
-            model=Config.SENTIMENT_MODEL,
-            device=-1,  # CPU; set to 0 for GPU
-        )
-        self._pipeline = SentimentAnalyzer._shared_pipeline
-        logger.info("Sentiment model loaded successfully")
-        return self._pipeline
     
     def analyze(self, text: str) -> Tuple[float, SentimentLabel, float]:
         """

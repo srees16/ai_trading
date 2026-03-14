@@ -267,6 +267,9 @@ def _get_renderer(module_key: str):
     elif module_key == "options":
         from ui.pages.options_page import render_options_page
         return render_options_page
+    elif module_key == "verdict":
+        from ui.pages.verdict_page import render_verdict_page
+        return render_verdict_page
     elif module_key == "main":
         from ui.pages.main_page import render_main_page
         return render_main_page
@@ -282,7 +285,7 @@ def _route_trading_platform():
     st.session_state['current_market'] = 'US'
 
     renderer = _get_renderer(current_page if current_page in (
-        'analysis', 'fundamental', 'backtesting', 'history', 'us_holdings',
+        'analysis', 'fundamental', 'backtesting', 'history', 'us_holdings', 'verdict',
     ) else 'main')
     renderer()
 
@@ -300,7 +303,7 @@ def _route_ind_stocks():
         _get_renderer('live_stocks')()
     elif current_page == 'options':
         _get_renderer('options')()
-    elif current_page in ('analysis', 'fundamental', 'backtesting', 'history'):
+    elif current_page in ('analysis', 'fundamental', 'backtesting', 'history', 'verdict'):
         # Reuse the same pages as US Stocks — they read current_market
         _get_renderer(current_page)()
     else:
