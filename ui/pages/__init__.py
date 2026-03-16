@@ -10,7 +10,6 @@ import importlib as _importlib
 
 __all__ = [
     'render_main_page',
-    'render_analysis_page',
     'render_fundamental_page',
     'render_backtesting_page',
     'render_crypto_page',
@@ -21,7 +20,6 @@ __all__ = [
 
 _LAZY_MAP: dict[str, tuple[str, str]] = {
     'render_main_page':        ('ui.pages.main_page',        'render_main_page'),
-    'render_analysis_page':    ('ui.pages.analysis_page',    'render_analysis_page'),
     'render_fundamental_page': ('ui.pages.fundamental_page', 'render_fundamental_page'),
     'render_backtesting_page': ('ui.pages.backtesting_page', 'render_backtesting_page'),
     'render_crypto_page':      ('ui.pages.crypto_page',      'render_crypto_page'),

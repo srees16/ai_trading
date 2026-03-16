@@ -42,7 +42,7 @@ def render_analysis_page():
         # the CSS animation renders in the browser while heavy
         # Python imports and network calls happen server-side.
         spinner_slot = st.empty()
-        spinner_slot.markdown(spinner_html("Loading analysis engine…"), unsafe_allow_html=True)
+        spinner_slot.markdown(spinner_html("Loading analysis engine"), unsafe_allow_html=True)
 
         def _on_progress(pct: int, label: str):
             spinner_slot.markdown(

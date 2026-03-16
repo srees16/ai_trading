@@ -218,7 +218,7 @@ async def _execute_analysis(
 
     # ── Step 2c: Google search public sentiment ──────────────────────
     if progress_callback:
-        progress_callback(56, " Analyzing public sentiment (Google)")
+        progress_callback(56, " Analyzing public sentiment")
 
     try:
         unique_tickers_for_gs = list({item.ticker for item in analyzed_news})

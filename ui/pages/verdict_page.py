@@ -18,11 +18,28 @@ _PFX = "verdict_"
 
 def render_verdict_page():
     """Main entry point called from app.py routing."""
-    from ui.components import render_page_header, render_footer
+    from ui.components import (
+        render_page_header,
+        render_footer,
+        render_navigation_buttons,
+        render_ind_navigation_buttons,
+        render_stock_ticker_ribbon,
+        render_vix_indicator,
+    )
 
     market = st.session_state.get("current_market", "US")
     market_label = "Indian" if market == "IND" else "US"
     render_page_header(f"{market_label} Integrated Verdict")
+
+    # Scrolling ribbon + VIX indicator
+    render_stock_ticker_ribbon(market=market)
+    render_vix_indicator(market=market)
+
+    # Navigation buttons (same pattern as all other pages)
+    if market == "IND":
+        render_ind_navigation_buttons(current_page='verdict', back_key_suffix='from_verdict')
+    else:
+        render_navigation_buttons(current_page='verdict', back_key_suffix='from_verdict')
 
     st.markdown("---")
 
@@ -40,7 +57,15 @@ def render_verdict_page():
 
 def _render_controls(market: str):
     # ── Default tickers based on market ──────────────────────
-    if market == "IND":
+    # Priority: screener handoff → cached universe → fallback
+    screener_tickers = st.session_state.pop("verdict_from_screener", None)
+    if screener_tickers:
+        default_tickers = screener_tickers
+        st.info(
+            f"Loaded {len(screener_tickers)} tickers from NSE Screener",
+            icon="\u2705",
+        )
+    elif market == "IND":
         cached_key = f"{_PFX}nse_universe"
         if cached_key not in st.session_state:
             with st.spinner("Loading Nifty 50 + Nifty Next 50 …"):
@@ -193,6 +218,57 @@ _COLOUR_MAP = {
 }
 
 
+def _execute_buy_verdicts(verdicts):
+    """Place orders for BUY/STRONG_BUY verdicts via AutoExecutor."""
+    kite = st.session_state.get("kite")
+    signal_dict = {
+        v.ticker.replace(".NS", "").replace(".BO", ""): v.classification
+        for v in verdicts
+    }
+    buy_symbols = [
+        sym for sym, tag in signal_dict.items()
+        if tag in ("BUY", "STRONG_BUY")
+    ]
+
+    if not buy_symbols:
+        st.warning("No BUY/STRONG_BUY signals to execute.")
+        return
+
+    try:
+        from kite_connect.trading.auto_executor import AutoExecutor
+
+        auto_place = kite is not None
+        executor = AutoExecutor(kite=kite, auto_place=auto_place)
+        with st.spinner(f"Executing orders for {len(buy_symbols)} symbols…"):
+            report = executor.run(
+                symbols=buy_symbols,
+                signal_verdicts=signal_dict,
+            )
+        st.success(
+            f"Execution complete — "
+            f"{report.orders_placed} orders placed, "
+            f"{report.orders_failed} failed, "
+            f"{report.signal_filtered_count} filtered by signal."
+        )
+        if report.orders:
+            import pandas as pd
+            order_rows = [
+                {
+                    "Symbol": o.symbol,
+                    "Side": o.side,
+                    "Qty": o.quantity,
+                    "Price": o.price,
+                    "Status": o.status,
+                    "Order ID": o.order_id or "—",
+                }
+                for o in report.orders
+            ]
+            st.dataframe(pd.DataFrame(order_rows), hide_index=True)
+    except Exception as exc:
+        logger.exception("Order execution failed")
+        st.error(f"Order execution error: {exc}")
+
+
 def _render_results(verdicts):
     import pandas as pd
 
@@ -225,6 +301,30 @@ def _render_results(verdicts):
 
     styled = df.style.apply(_colour_verdict, axis=1)
     st.dataframe(styled, hide_index=True, width="stretch")
+
+    # ── Execute BUY/STRONG_BUY signals via Kite ──────────────
+    buy_verdicts = [
+        v for v in verdicts
+        if v.classification in ("BUY", "STRONG_BUY")
+    ]
+    if buy_verdicts:
+        st.markdown("---")
+        buy_syms = [v.ticker.replace(".NS", "").replace(".BO", "") for v in buy_verdicts]
+        st.success(
+            f"**{len(buy_verdicts)} BUY signals**: {', '.join(buy_syms)}"
+        )
+        exec_col, warn_col = st.columns([1, 2])
+        with exec_col:
+            if st.button(
+                f"Place Orders for {len(buy_verdicts)} BUY Signals",
+                type="primary",
+                key=f"{_PFX}execute_btn",
+            ):
+                _execute_buy_verdicts(verdicts)
+        with warn_col:
+            kite = st.session_state.get("kite")
+            if kite is None:
+                st.warning("Kite session not authenticated — orders will be dry-run only.", icon="\u26a0\ufe0f")
 
     # Per-ticker expandable breakdown
     for v in verdicts:

@@ -167,24 +167,34 @@ def _inject_nav_button_css():
             padding-bottom: 0 !important;
         }
 
-        /* Navigation button row: compact, no overflow */
-        [data-testid="stHorizontalBlock"] button[kind="secondary"] {
+        /* Navigation button row: compact, no overflow — scoped to nav class */
+        .centurion-nav button[kind="secondary"] {
             font-size: 0.78rem !important;
-            padding: 0.25rem 0.15rem !important;
+            padding: 0.28rem 0.3rem !important;
             white-space: nowrap !important;
             overflow: hidden !important;
             text-overflow: ellipsis !important;
             min-width: 0 !important;
             margin-top: 0 !important;
             margin-bottom: 0 !important;
+            line-height: 1.3 !important;
+        }
+        /* Active / current-page nav button */
+        .centurion-nav button[kind="secondary"]:disabled {
+            opacity: 1 !important;
+            background-color: #0068d6 !important;
+            color: #ffffff !important;
+            border-color: #0068d6 !important;
+            cursor: default !important;
+            font-weight: 600 !important;
         }
         /* On narrow screens allow text to wrap instead of truncate */
         @media (max-width: 900px) {
-            [data-testid="stHorizontalBlock"] button[kind="secondary"] {
+            .centurion-nav button[kind="secondary"] {
                 white-space: normal !important;
                 font-size: 0.72rem !important;
                 line-height: 1.2 !important;
-                padding: 0.2rem 0.1rem !important;
+                padding: 0.2rem 0.2rem !important;
             }
         }
         </style>""",
@@ -201,62 +211,96 @@ def render_navigation_buttons(
     Render navigation buttons for all pages.
 
     Shows a button for every page except the one the user is currently on.
-    The Stock Analysis button only appears when results are available.
 
     Args:
         current_page: Current page identifier
-            ('main', 'analysis', 'fundamental', 'backtesting', 'history')
+            ('main', 'fundamental', 'backtesting', 'history')
         back_key_suffix: Suffix for button keys to avoid duplicates
     """
     _inject_nav_button_css()
-    has_results = (
-        st.session_state.get('analysis_complete', False)
-        and st.session_state.get('signals')
-    )
-
     # All possible navigation targets (id, label)
     all_pages = [
         ('main',         'Main'),
-        ('analysis',     'Stock Analysis'),
-        ('fundamental',  'Fundamental Analysis'),
-        ('backtesting',  'Backtest Strategy'),
+        ('fundamental',  'Fundamentals'),
+        ('backtesting',  'Backtest'),
         ('verdict',      'Verdict'),
-        ('history',      'History'),
         ('us_holdings',  'Holdings'),
+        ('history',      'History'),
     ]
 
-    # Build visible buttons: skip current page; skip Analysis if no results
-    buttons = [
-        (pid, label)
-        for pid, label in all_pages
-        if pid != current_page
-        and (pid != 'analysis' or has_results)
-    ]
-
-    n = len(buttons)
+    n = len(all_pages)
     if n == 0:
         return
 
     col_spec = [0.3] + [1] * n + [0.3]
+    st.markdown('<div class="centurion-nav">', unsafe_allow_html=True)
     cols = st.columns(col_spec, gap="small")
 
-    for i, (page_id, label) in enumerate(buttons):
+    for i, (page_id, label) in enumerate(all_pages):
+        is_active = page_id == current_page
         with cols[i + 1]:
             if st.button(
                 label,
                 key=f"nav_{page_id}_{back_key_suffix}",
                 width="stretch",
+                disabled=is_active,
             ):
                 logger.info("[user=%s] Navigation: %s -> %s",
                             st.session_state.get('username', 'unknown'),
                             current_page, page_id)
                 st.session_state.current_page = page_id
                 st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
-def render_analysis_navigation_buttons():
-    """Render navigation buttons for analysis results page."""
-    render_navigation_buttons(current_page='analysis', back_key_suffix='from_analysis')
+def _inject_ind_compact_dropdown_css():
+    """Shrink selectbox / multiselect widgets so they fit their text content."""
+    st.markdown(
+        """<style>
+        /* ── Compact dropdowns for IND Stocks module ────────── */
+        [data-testid="stSelectbox"] {
+            max-width: 260px !important;
+        }
+        [data-testid="stSelectbox"] > div > div {
+            min-height: 0 !important;
+            padding-top: 0.25rem !important;
+            padding-bottom: 0.25rem !important;
+            font-size: 0.85rem !important;
+            line-height: 1.4 !important;
+        }
+        [data-testid="stSelectbox"] label {
+            font-size: 0.82rem !important;
+            margin-bottom: 0 !important;
+        }
+        [data-testid="stMultiSelect"] {
+            max-width: 320px !important;
+        }
+        [data-testid="stMultiSelect"] > div > div {
+            min-height: 0 !important;
+            padding-top: 0.25rem !important;
+            padding-bottom: 0.25rem !important;
+            font-size: 0.85rem !important;
+            line-height: 1.4 !important;
+        }
+        [data-testid="stMultiSelect"] label {
+            font-size: 0.82rem !important;
+            margin-bottom: 0 !important;
+        }
+        /* Dropdown list items */
+        [data-baseweb="select"] [role="option"] {
+            font-size: 0.84rem !important;
+            padding-top: 0.25rem !important;
+            padding-bottom: 0.25rem !important;
+        }
+        /* Selected tag chips in multiselect */
+        [data-baseweb="tag"] {
+            font-size: 0.78rem !important;
+            padding: 0.1rem 0.3rem !important;
+            margin: 0.1rem !important;
+        }
+        </style>""",
+        unsafe_allow_html=True,
+    )
 
 
 def render_ind_navigation_buttons(
@@ -267,56 +311,47 @@ def render_ind_navigation_buttons(
     """Render navigation buttons for the Indian Stocks module.
 
     Shows a button for every Ind Stocks sub-page except the current one.
-    The Stock Analysis button only appears when results are available.
 
     Args:
         current_page: Current page identifier
         back_key_suffix: Suffix for button keys to avoid duplicates
     """
     _inject_nav_button_css()
-    has_results = (
-        st.session_state.get('analysis_complete', False)
-        and st.session_state.get('signals')
-    )
-
+    _inject_ind_compact_dropdown_css()
     all_pages = [
         ('main',         'Main'),
-        ('analysis',     'Analysis'),
         ('fundamental',  'Fundamentals'),
         ('backtesting',  'Backtest'),
-        ('verdict',      'Verdict'),
-        ('history',      'History'),
         ('screener',     'Screener'),
-        ('options',      'Options'),
+        ('verdict',      'Verdict'),
         ('ind_kite',     'Fly Kite'),
+        ('options',      'Options'),
+        ('history',      'History'),
     ]
 
-    buttons = [
-        (pid, label)
-        for pid, label in all_pages
-        if pid != current_page
-        and (pid != 'analysis' or has_results)
-    ]
-
-    n = len(buttons)
+    n = len(all_pages)
     if n == 0:
         return
 
     col_spec = [0.3] + [1] * n + [0.3]
+    st.markdown('<div class="centurion-nav">', unsafe_allow_html=True)
     cols = st.columns(col_spec, gap="small")
 
-    for i, (page_id, label) in enumerate(buttons):
+    for i, (page_id, label) in enumerate(all_pages):
+        is_active = page_id == current_page
         with cols[i + 1]:
             if st.button(
                 label,
                 key=f"ind_nav_{page_id}_{back_key_suffix}",
                 width="stretch",
+                disabled=is_active,
             ):
                 logger.info("[user=%s] Ind Navigation: %s -> %s",
                             st.session_state.get('username', 'unknown'),
                             current_page, page_id)
                 st.session_state.current_page = page_id
                 st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 def render_metrics_cards(signals: List[Any]):
@@ -440,7 +475,7 @@ def _fetch_ribbon_prices(market: str = "IND") -> list:
     items = []
     try:
         data = yf.download(
-            tickers, period="2d", progress=False, threads=True, group_by="ticker",
+            tickers, period="2d", progress=False, threads=False, group_by="ticker",
         )
         for sym in tickers:
             try:

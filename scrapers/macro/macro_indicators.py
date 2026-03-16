@@ -102,7 +102,7 @@ _TICKERS: Dict[str, str] = {
     "^NSEI":      "nifty50",
     "GC=F":       "gold_price",
     "CL=F":       "crude_oil_price",
-    "DX-Y.NYB":   "dxy_index",
+    "DX=F":       "dxy_index",
 }
 
 
@@ -119,9 +119,9 @@ class MacroIndicators:
         snap = mi.fetch(market="US")   # or "IND"
     """
 
-    # In-process cache (class-level singleton)
-    _cached_snapshot: Optional[MacroSnapshot] = None
-    _cache_ts: Optional[datetime] = None
+    # In-process cache (class-level, per-market)
+    _cached_snapshots: Dict[str, MacroSnapshot] = {}
+    _cache_timestamps: Dict[str, datetime] = {}
     _CACHE_TTL = timedelta(minutes=15)
 
     def fetch(self, market: str = "US") -> MacroSnapshot:
@@ -136,13 +136,15 @@ class MacroIndicators:
             A :class:`MacroSnapshot` with all available fields populated.
         """
         now = datetime.utcnow()
+        cached = MacroIndicators._cached_snapshots.get(market)
+        cached_ts = MacroIndicators._cache_timestamps.get(market)
         if (
-            MacroIndicators._cached_snapshot is not None
-            and MacroIndicators._cache_ts is not None
-            and (now - MacroIndicators._cache_ts) < self._CACHE_TTL
+            cached is not None
+            and cached_ts is not None
+            and (now - cached_ts) < self._CACHE_TTL
         ):
-            logger.debug("MacroIndicators: returning cached snapshot")
-            return MacroIndicators._cached_snapshot
+            logger.debug("MacroIndicators: returning cached snapshot for %s", market)
+            return cached
 
         snap = MacroSnapshot(timestamp=now)
 
@@ -153,7 +155,7 @@ class MacroIndicators:
                 symbols,
                 period="5d",
                 progress=False,
-                threads=True,
+                threads=False,
                 group_by="ticker",
             )
         except Exception as exc:
@@ -235,9 +237,11 @@ class MacroIndicators:
             else:
                 snap.macro_sentiment_label = "neutral"
 
-        # Cache
-        MacroIndicators._cached_snapshot = snap
-        MacroIndicators._cache_ts = now
+        # Cache only if we got meaningful data
+        has_data = snap.vix is not None or snap.india_vix is not None or snap.sp500_price is not None
+        if has_data:
+            MacroIndicators._cached_snapshots[market] = snap
+            MacroIndicators._cache_timestamps[market] = now
 
         logger.info(
             "MacroIndicators: VIX=%.1f  10Y=%.2f  S&P=%.0f  Macro=%s (%.2f)",
