@@ -31,46 +31,23 @@ def render_screener_page():
         back_key_suffix="from_screener",
     )
 
-    st.title("NSE Stock Screener & Auto-Trader")
+    st.subheader("NSE Stock Screener")
     st.caption(
-        "Screens the full NSE universe → filters by price / liquidity / trend / "
-        "volatility → analyses pullback, breakout & sector strategies → "
-        "computes RSI, Bollinger Bands, S/R levels → generates risk-managed "
-        "trade plans → optionally places orders via Zerodha Kite."
+        "Full NSE universe → Price · Liquidity · Trend · Volatility filters → "
+        "Pullback / Breakout / Sector strategies → RSI, Bollinger, S/R → "
+        "Risk-managed trade plans → Kite order placement"
     )
 
     # ── Sidebar-style config in expanders ──────────────────────
-    cfg_col, run_col = st.columns([2, 1])
+    screen_cfg, risk_cfg, auto_place = _render_config()
 
-    with cfg_col:
-        screen_cfg, risk_cfg, auto_place = _render_config()
-
-    with run_col:
-        st.markdown("### Run")
-        run_clicked = st.button(
-            "Screen & Analyse",
-            type="primary",
-            key="screener_run",
-            use_container_width=True,
-        )
-        st.markdown("---")
-        auto_exec_clicked = False
-        if auto_place:
-            auto_exec_clicked = st.button(
-                "Screen & Execute Orders",
-                type="secondary",
-                key="screener_exec",
-                use_container_width=True,
-            )
-            st.warning(
-                "⚠ This will place **real orders** via Kite. "
-                "Ensure your session is authenticated.",
-                icon="⚠️",
-            )
+    # ── Run button ─────────────────────────────────────────────
+    label = "Place Order (s)" if auto_place else "Screen"
+    run_clicked = st.button(label, type="primary", key="screener_run")
 
     # ── Execution ──────────────────────────────────────────────
-    if run_clicked or auto_exec_clicked:
-        _run_pipeline(screen_cfg, risk_cfg, auto_exec_clicked)
+    if run_clicked:
+        _run_pipeline(screen_cfg, risk_cfg, auto_place)
 
     # ── Show cached results if available ───────────────────────
     _show_cached_results()
@@ -89,16 +66,16 @@ def _render_config():
     scfg = ScreenerConfig()
     rcfg = RiskConfig()
 
-    with st.expander("Screening Criteria", expanded=False):
-        c1, c2 = st.columns(2)
-        with c1:
+    col_screen, col_method, col_risk = st.columns(3)
+
+    with col_screen:
+        with st.expander("Screening Criteria", expanded=False):
             scfg.min_price = st.number_input(
                 "Min Price (₹)", value=100.0, step=10.0, key="scr_price"
             )
             scfg.min_avg_volume = st.number_input(
                 "Min Avg Volume", value=500_000, step=50_000, key="scr_vol"
             )
-        with c2:
             scfg.min_beta = st.number_input(
                 "Min Beta", value=1.0, step=0.1, format="%.1f", key="scr_beta"
             )
@@ -106,9 +83,8 @@ def _render_config():
                 "Workers", value=8, min_value=1, max_value=16, key="scr_workers"
             )
 
-    with st.expander("Methodology Settings", expanded=False):
-        c1, c2 = st.columns(2)
-        with c1:
+    with col_method:
+        with st.expander("Methodology Settings", expanded=False):
             scfg.pullback_pct = st.slider(
                 "Pullback tolerance %", 1, 5, 2, key="scr_pb"
             ) / 100
@@ -116,14 +92,12 @@ def _render_config():
                 "Breakout volume multiplier", value=1.5, step=0.1,
                 format="%.1f", key="scr_bv"
             )
-        with c2:
             scfg.breakout_lookback = st.number_input(
                 "Breakout lookback days", value=20, step=5, key="scr_bl"
             )
 
-    with st.expander("Risk Management", expanded=False):
-        c1, c2 = st.columns(2)
-        with c1:
+    with col_risk:
+        with st.expander("Risk Management", expanded=False):
             rcfg.total_capital = st.number_input(
                 "Total Capital (₹)", value=500_000.0, step=50_000.0,
                 key="risk_cap"
@@ -131,7 +105,6 @@ def _render_config():
             rcfg.risk_per_trade_pct = st.slider(
                 "Risk per trade %", 1, 5, 2, key="risk_pct"
             ) / 100
-        with c2:
             rcfg.max_open_trades = st.number_input(
                 "Max open trades", value=10, min_value=1, max_value=50,
                 key="risk_max"
@@ -147,7 +120,7 @@ def _render_config():
             )
 
     auto_place = st.checkbox(
-        "Enable live order placement (requires Kite auth)",
+        "Enable to place live orders (requires Kite auth)",
         value=False,
         key="screener_auto_place",
     )
@@ -196,7 +169,7 @@ def _run_pipeline(screen_cfg, risk_cfg, auto_place: bool):
     m3.metric("Trade Plans", report.plans_count)
     m4.metric("Orders Placed", report.orders_placed)
 
-    st.success("Pipeline complete ✓ — scroll down for details.")
+    st.success("Pipeline complete — see results below")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -229,10 +202,10 @@ def _show_cached_results():
             "strategies",
         ]
         cols_present = [c for c in display_cols if c in screened_df.columns]
-        styled = screened_df[cols_present].style.applymap(
+        styled = screened_df[cols_present].style.map(
             _highlight_score, subset=["score"] if "score" in cols_present else []
         )
-        st.dataframe(styled, use_container_width=True, height=400)
+        st.dataframe(styled, width='stretch', height=400)
 
         # Allow CSV download
         csv = screened_df[cols_present].to_csv(index=False)
@@ -254,7 +227,7 @@ def _show_cached_results():
         st.subheader("Trade Plans (risk-managed)")
         plan_rows = [p.to_dict() for p in plans]
         plan_df = pd.DataFrame(plan_rows)
-        st.dataframe(plan_df, use_container_width=True)
+        st.dataframe(plan_df, width='stretch')
 
         st.download_button(
             "Download trade plans CSV",
@@ -269,24 +242,36 @@ def _show_cached_results():
         st.subheader("Order Execution Results")
         order_rows = [o.to_dict() for o in orders]
         order_df = pd.DataFrame(order_rows)
-        st.dataframe(order_df, use_container_width=True)
+        st.dataframe(order_df, width='stretch')
 
-    # Button to analyse screened stocks through normal pipeline
+    # Buttons to continue with screened stocks
     if st.session_state.get("screened_tickers_ns"):
         st.markdown("---")
-        if st.button(
-            "Run Full Analysis on Screened Stocks",
-            type="primary",
-            key="analyse_screened",
-        ):
-            tickers = st.session_state["screened_tickers_ns"]
-            st.session_state.tickers = tickers
-            st.session_state.analysis_tickers = tickers
-            st.session_state.analysis_complete = False
-            st.session_state.signals = []
-            st.session_state.progress_messages = []
-            st.session_state.analysis_run_id = (
-                st.session_state.get("analysis_run_id", 0) + 1
-            )
-            st.session_state.current_page = "analysis"
-            st.rerun()
+        btn_a, btn_v, _ = st.columns([1, 1, 2])
+        with btn_a:
+            if st.button(
+                "Analyze",
+                type="secondary",
+                key="analyse_screened",
+            ):
+                tickers = st.session_state["screened_tickers_ns"]
+                st.session_state.tickers = tickers
+                st.session_state.analysis_tickers = tickers
+                st.session_state.analysis_complete = False
+                st.session_state.signals = []
+                st.session_state.progress_messages = []
+                st.session_state.analysis_run_id = (
+                    st.session_state.get("analysis_run_id", 0) + 1
+                )
+                st.session_state.current_page = "main"
+                st.rerun()
+        with btn_v:
+            if st.button(
+                "Verdict",
+                type="primary",
+                key="verdict_screened",
+            ):
+                tickers = st.session_state["screened_tickers_ns"]
+                st.session_state["verdict_from_screener"] = tickers
+                st.session_state.current_page = "verdict"
+                st.rerun()

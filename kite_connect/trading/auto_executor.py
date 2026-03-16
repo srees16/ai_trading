@@ -148,7 +148,7 @@ class AutoExecutor:
 
         # ── 1.  Universe ───────────────────────────────────────
         if symbols is None:
-            _cb("Downloading NSE universe …")
+            _cb("Downloading NIFTY50 & NSE NEXT50")
             symbols = get_nse_universe(self.kite)
         report.universe_size = len(symbols)
         _cb(f"Universe: {len(symbols)} symbols")

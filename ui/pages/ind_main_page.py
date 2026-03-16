@@ -5,9 +5,10 @@ Contains the Indian stocks dashboard and control panel with ticker selection.
 Mirrors the US Stocks main page but with NSE/BSE defaults.
 """
 
+import asyncio
 import logging
 from pathlib import Path
-from typing import List
+from typing import Any, List
 
 import streamlit as st
 
@@ -16,8 +17,10 @@ from ui.components import (
     render_header,
     render_footer,
     render_ind_navigation_buttons,
+    render_metrics_cards,
     render_vix_indicator,
     render_stock_ticker_ribbon,
+    spinner_html,
 )
 from utils import parse_ticker_csv, validate_tickers, create_sample_csv
 
@@ -65,17 +68,12 @@ def _render_control_panel():
     """Render the control panel with Indian stock selection and settings."""
     st.markdown(
         """<style>
-        [data-testid="stRadio"] { margin-top: -0.5rem; margin-bottom: -0.8rem; }
-        [data-testid="stExpander"] { margin-top: -0.6rem; margin-bottom: -0.6rem; }
-        [data-testid="stTextArea"] { margin-top: -0.2rem; }
-        [data-testid="stFileUploader"] { margin-top: -0.6rem; }
-        [data-testid="stSelectbox"] { margin-bottom: -0.8rem; }
-        [data-testid="stCheckbox"] { margin-top: -0.5rem; margin-bottom: -0.5rem; }
-        [data-testid="stHorizontalBlock"] + [data-testid="stElementContainer"],
-        [data-testid="stHorizontalBlock"] + div {
-            margin-top: -1.5rem !important;
-        }
-        [data-testid="stAlert"] { margin-top: -0.5rem !important; margin-bottom: -0.5rem !important; }
+        [data-testid="stRadio"] { margin-top: -0.2rem; margin-bottom: -0.3rem; }
+        [data-testid="stExpander"] { margin-top: -0.3rem; margin-bottom: -0.3rem; }
+        [data-testid="stTextArea"] { margin-top: -0.1rem; }
+        [data-testid="stFileUploader"] { margin-top: -0.3rem; }
+        [data-testid="stSelectbox"] { margin-bottom: -0.3rem; }
+        [data-testid="stCheckbox"] { margin-top: -0.2rem; margin-bottom: -0.2rem; }
         </style>""",
         unsafe_allow_html=True,
     )
@@ -92,7 +90,7 @@ def _render_control_panel():
     st.session_state.tickers = tickers
 
     # Run Analysis section — full width below the settings
-    st.markdown('<div style="margin-top: -3.5rem;"></div>', unsafe_allow_html=True)
+    st.markdown('<div style="margin-top: -1.5rem;"></div>', unsafe_allow_html=True)
     run_clicked = _render_run_controls(tickers)
 
     if run_clicked and len(tickers) > 0:
@@ -104,8 +102,18 @@ def _render_control_panel():
         st.session_state.progress_messages = []
         st.session_state.analysis_tickers = list(tickers)
         st.session_state.analysis_run_id = st.session_state.get('analysis_run_id', 0) + 1
-        st.session_state.current_page = 'analysis'
-        st.rerun()
+
+        # Run analysis inline
+        _run_and_render_analysis(tickers)
+
+    elif (not st.session_state.get('analysis_complete', True)
+          and st.session_state.get('analysis_tickers')):
+        # Pending analysis triggered from another page (e.g. Screener)
+        _run_and_render_analysis(st.session_state.analysis_tickers)
+
+    elif st.session_state.get('analysis_complete') and st.session_state.get('signals'):
+        # Re-render previous results on page re-visit
+        _render_analysis_results(st.session_state.signals)
 
 
 def _render_ticker_selection() -> List[str]:
@@ -114,7 +122,7 @@ def _render_ticker_selection() -> List[str]:
 
     ticker_mode = st.radio(
         "Input method:",
-        ["Default Tickers", "NSE Screener", "Manual Entry", "Upload CSV"],
+        ["Default Tickers", "Manual Entry", "Upload CSV"],
         help="Select how you want to specify the Indian stocks to analyze",
         horizontal=True,
         key="ind_ticker_mode",
@@ -126,8 +134,6 @@ def _render_ticker_selection() -> List[str]:
 
     if ticker_mode == "Default Tickers":
         tickers = _handle_default_tickers()
-    elif ticker_mode == "NSE Screener":
-        tickers = _handle_nse_screener()
     elif ticker_mode == "Manual Entry":
         tickers = _handle_manual_entry()
     elif ticker_mode == "Upload CSV":
@@ -143,32 +149,6 @@ def _handle_default_tickers() -> List[str]:
         st.write(", ".join(display_names))
         st.caption("Tickers are automatically appended with .NS suffix for NSE data.")
     return IND_DEFAULT_TICKERS
-
-
-def _handle_nse_screener() -> List[str]:
-    """Navigate to the full NSE Screener page, or use cached results."""
-    # Check if screener already ran and produced tickers
-    cached = st.session_state.get("screened_tickers_ns")
-    if cached:
-        st.success(f"{len(cached)} stocks from last screener run")
-        with st.expander("View screened tickers"):
-            display = [t.replace(".NS", "") for t in cached]
-            st.write(", ".join(display))
-        return cached
-
-    st.info(
-        "The NSE Screener downloads all available stocks on NSE, "
-        "filters them by price / liquidity / trend / volatility, "
-        "analyses pullback & breakout strategies, and ranks them."
-    )
-    if st.button(
-        "Open NSE Screener",
-        type="primary",
-        key="goto_screener",
-    ):
-        st.session_state.current_page = "screener"
-        st.rerun()
-    return []
 
 
 def _handle_manual_entry() -> List[str]:
@@ -311,3 +291,66 @@ def _render_run_controls(tickers: List[str]) -> bool:
         )
 
     return run_button
+
+
+def _run_and_render_analysis(tickers: List[str]):
+    """Run analysis inline and display results below the button."""
+    _user = st.session_state.get('username', 'unknown')
+    logger.info("[user=%s] IND Analysis started for %d tickers: %s",
+                _user, len(tickers), ', '.join(tickers))
+
+    spinner_slot = st.empty()
+    spinner_slot.markdown(spinner_html("Loading analysis engine"), unsafe_allow_html=True)
+
+    def _on_progress(pct: int, label: str):
+        spinner_slot.markdown(
+            spinner_html(f"{label} — {pct}%"),
+            unsafe_allow_html=True,
+        )
+
+    from services.analysis import run_analysis_async  # deferred (heavy)
+    spinner_slot.markdown(spinner_html("Starting analysis…"), unsafe_allow_html=True)
+
+    st.session_state.signals = asyncio.run(
+        run_analysis_async(tickers, progress_callback=_on_progress)
+    )
+    st.session_state.analysis_complete = True
+    logger.info("[user=%s] IND Analysis completed — %d signals generated",
+                _user, len(st.session_state.signals))
+    spinner_slot.empty()
+    st.rerun()
+
+
+def _render_analysis_results(signals: List[Any]):
+    """Render analysis results inline on the IND main page."""
+    from ui.charts import render_decision_chart, render_sentiment_chart, render_score_distribution
+    from ui.tables import render_simple_summary_table, render_signals_table, render_top_signals
+
+    st.markdown("---")
+    render_simple_summary_table(signals)
+    st.markdown("---")
+    render_metrics_cards(signals)
+    st.markdown("---")
+
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "Overview",
+        "Detailed Table",
+        "Top Signals",
+        "Sentiment Charts",
+    ])
+
+    with tab1:
+        col1, col2 = st.columns(2)
+        with col1:
+            render_decision_chart(signals)
+        with col2:
+            render_score_distribution(signals)
+
+    with tab2:
+        render_signals_table(signals)
+
+    with tab3:
+        render_top_signals(signals)
+
+    with tab4:
+        render_sentiment_chart(signals)

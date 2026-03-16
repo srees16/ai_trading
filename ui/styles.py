@@ -219,14 +219,15 @@ def get_button_css() -> str:
     /* Fix button text overflow */
     .stButton > button {
         white-space: nowrap;
-        overflow: visible;
-        text-overflow: clip;
-        padding: 0.3rem 0.7rem;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        padding: 0.4rem 0.8rem;
         font-size: 0.9rem;
         font-weight: 500;
         background-color: #f0f2f6 !important;
         color: #1a1a2e !important;
         border: 1px solid #ccc !important;
+        line-height: 1.4;
     }
     .stButton > button:hover {
         background-color: #e0e2e6 !important;

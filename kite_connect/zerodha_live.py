@@ -787,7 +787,7 @@ def _render_dashboard():
     _auth_slot = st.empty()
     try:
         _auth_slot.markdown(
-            _spinner_html("Connecting to Kite… (complete 2FA in the browser window)"),
+            _spinner_html("Connecting to Kite"),
             unsafe_allow_html=True,
         )
         kite = get_kite_session()
