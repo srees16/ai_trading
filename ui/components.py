@@ -323,7 +323,6 @@ def render_ind_navigation_buttons(
         ('fundamental',  'Fundamentals'),
         ('backtesting',  'Backtest'),
         ('screener',     'Screener'),
-        ('verdict',      'Verdict'),
         ('ind_kite',     'Fly Kite'),
         ('options',      'Options'),
         ('history',      'History'),

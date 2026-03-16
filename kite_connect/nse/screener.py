@@ -285,7 +285,7 @@ class NSEScreener:
         _cb = progress_callback or (lambda m: None)
 
         # ── 0.  Download OHLCV data in batches ────────────────
-        _cb(f"Downloading price data for {len(symbols)} symbols …")
+        _cb(f"Downloading price data for {len(symbols)} symbols")
         ohlcv = self._download_all(symbols)
         if not ohlcv:
             logger.warning("No price data retrieved — aborting screen")

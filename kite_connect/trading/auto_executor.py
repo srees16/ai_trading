@@ -7,6 +7,7 @@ Orchestrates the full pipeline:
 2. Screen & rank          →  :mod:`kite_connect.nse.screener`
 3. Risk-manage & size     →  :mod:`kite_connect.trading.risk_manager`
 4. Place orders via Kite  →  :mod:`kite_connect.trading.order_service`
+5. Register with monitor  →  :mod:`kite_connect.trading.trade_monitor`
 
 Signal→Executor bridge: accepts analysis verdicts to filter
 execution to only high-conviction BUY / STRONG_BUY signals.
@@ -18,6 +19,7 @@ scheduled background job.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -32,6 +34,9 @@ logger = logging.getLogger(__name__)
 
 # Allowed verdict tags for execution (strict BUY-only filter)
 _BUY_TAGS = {"BUY", "STRONG_BUY"}
+
+# Rate-limiting: pause between Kite API calls (seconds)
+_ORDER_DELAY_S = 0.15
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -112,7 +117,7 @@ class AutoExecutor:
     ):
         self.kite = kite
         self.screener = NSEScreener(screener_cfg)
-        self.risk_mgr = RiskManager(risk_cfg)
+        self.risk_mgr = RiskManager(risk_cfg, kite=kite)
         self.auto_place = auto_place
 
     # ── Public API ─────────────────────────────────────────────
@@ -213,14 +218,42 @@ class AutoExecutor:
     def _place_orders(
         self, plans: List[TradePlan], _cb
     ) -> List[OrderResult]:
-        from kite_connect.trading.order_service import place_order
+        from kite_connect.trading.order_service import place_order, get_order_book
+        from kite_connect.trading.trade_monitor import TradeMonitor, MonitoredTrade
 
         results: List[OrderResult] = []
 
+        # ── Duplicate check: skip symbols with open BUY orders ─────
+        existing_symbols: set = set()
+        try:
+            order_book = get_order_book(self.kite)
+            for o in order_book:
+                if (
+                    o.get("status") in ("OPEN", "TRIGGER PENDING", "COMPLETE")
+                    and o.get("transaction_type") == "BUY"
+                ):
+                    existing_symbols.add(o.get("tradingsymbol", ""))
+        except Exception:
+            pass  # proceed without dedup if order book fails
+
+        # ── Monitor for post-trade SL/TP lifecycle ─────────────────
+        monitor = TradeMonitor(self.kite)
+
         for plan in plans:
+            # Skip if order already exists for this symbol
+            if plan.symbol in existing_symbols:
+                _cb(f"  Skipped {plan.symbol} — open order already exists")
+                results.append(OrderResult(
+                    symbol=plan.symbol, side=plan.side,
+                    quantity=plan.quantity, entry_price=plan.entry_price,
+                    stop_loss=plan.stop_loss, target_price=plan.target_price,
+                    success=False, error="Duplicate — open order exists",
+                ))
+                continue
+
             _cb(f"  Placing {plan.side} {plan.symbol} × {plan.quantity} …")
 
-            # Main entry order (LIMIT at entry price)
+            # Entry order (LIMIT at entry price)
             resp = place_order(
                 kite=self.kite,
                 symbol=plan.symbol,
@@ -231,6 +264,7 @@ class AutoExecutor:
                 product="CNC",
                 price=plan.entry_price,
             )
+            time.sleep(_ORDER_DELAY_S)
 
             result = OrderResult(
                 symbol=plan.symbol,
@@ -244,75 +278,27 @@ class AutoExecutor:
                 error=resp.get("error"),
             )
 
-            # If entry succeeded, place SL and TP orders
-            if result.success:
-                result.sl_order_id = self._place_sl_order(plan)
-                result.tp_order_id = self._place_tp_order(plan)
+            # Register with TradeMonitor — SL/TP will be placed
+            # AFTER the entry order fills (polled by TradeMonitor).
+            if result.success and result.order_id:
+                monitor.register_trade(MonitoredTrade(
+                    symbol=plan.symbol,
+                    side=plan.side,
+                    quantity=plan.quantity,
+                    entry_price=plan.entry_price,
+                    stop_loss=plan.stop_loss,
+                    target_price=plan.target_price,
+                    entry_order_id=result.order_id,
+                ))
+                existing_symbols.add(plan.symbol)
 
             results.append(result)
 
+        # Store monitor in session state for lifecycle management
+        try:
+            import streamlit as st
+            st.session_state["trade_monitor"] = monitor
+        except Exception:
+            pass  # non-Streamlit context (e.g. scheduled job)
+
         return results
-
-    def _place_sl_order(self, plan: TradePlan) -> Optional[str]:
-        """Place a stop-loss order to protect the position."""
-        from kite_connect.trading.order_service import place_order
-
-        # Reverse side for stop-loss exit
-        sl_side = "SELL" if plan.side == "BUY" else "BUY"
-
-        resp = place_order(
-            kite=self.kite,
-            symbol=plan.symbol,
-            exchange="NSE",
-            transaction_type=sl_side,
-            quantity=plan.quantity,
-            order_type="SL-M",
-            product="CNC",
-            trigger_price=plan.stop_loss,
-        )
-
-        if resp.get("success"):
-            logger.info(
-                "SL order placed for %s: trigger=%.2f, order_id=%s",
-                plan.symbol, plan.stop_loss, resp["order_id"],
-            )
-            return resp["order_id"]
-        else:
-            logger.error(
-                "SL order FAILED for %s: %s", plan.symbol, resp.get("error")
-            )
-            return None
-
-    def _place_tp_order(self, plan: TradePlan) -> Optional[str]:
-        """Place a take-profit LIMIT SELL at the target price.
-
-        Uses CNC product with DAY validity; for swing trades lasting
-        multiple days, the order should be re-placed daily or
-        converted to a GTT via the post-trade monitor.
-        """
-        from kite_connect.trading.order_service import place_order
-
-        tp_side = "SELL" if plan.side == "BUY" else "BUY"
-
-        resp = place_order(
-            kite=self.kite,
-            symbol=plan.symbol,
-            exchange="NSE",
-            transaction_type=tp_side,
-            quantity=plan.quantity,
-            order_type="LIMIT",
-            product="CNC",
-            price=plan.target_price,
-        )
-
-        if resp.get("success"):
-            logger.info(
-                "TP order placed for %s: target=%.2f, order_id=%s",
-                plan.symbol, plan.target_price, resp["order_id"],
-            )
-            return resp["order_id"]
-        else:
-            logger.error(
-                "TP order FAILED for %s: %s", plan.symbol, resp.get("error")
-            )
-            return None

@@ -124,6 +124,9 @@ class TradeMonitor:
                         "order_id": trade.entry_order_id,
                     })
                     logger.info("Entry FILLED: %s @ %.2f", trade.symbol, fill_price)
+                    # Now place SL and TP orders (only after entry fills)
+                    self._place_sl_for_trade(trade)
+                    self._place_tp_for_trade(trade)
                 elif entry_order.get("status") in ("CANCELLED", "REJECTED"):
                     trade.closed = True
                     events.append({
@@ -180,6 +183,63 @@ class TradeMonitor:
                         })
 
         return events
+
+    def _place_sl_for_trade(self, trade: MonitoredTrade) -> None:
+        """Place a stop-loss order after entry fills."""
+        if not self.kite:
+            return
+        try:
+            from kite_connect.trading.order_service import place_order
+            import time
+            sl_side = "SELL" if trade.side == "BUY" else "BUY"
+            resp = place_order(
+                kite=self.kite,
+                symbol=trade.symbol,
+                exchange="NSE",
+                transaction_type=sl_side,
+                quantity=trade.quantity,
+                order_type="SL",
+                product="CNC",
+                trigger_price=trade.stop_loss,
+                price=round(trade.stop_loss * 0.99, 2),  # SL limit 1% below trigger
+            )
+            time.sleep(0.15)
+            if resp.get("success"):
+                trade.sl_order_id = resp["order_id"]
+                logger.info("SL placed for %s: trigger=%.2f, id=%s",
+                            trade.symbol, trade.stop_loss, resp["order_id"])
+            else:
+                logger.error("SL FAILED for %s: %s", trade.symbol, resp.get("error"))
+        except Exception as exc:
+            logger.error("SL exception for %s: %s", trade.symbol, exc)
+
+    def _place_tp_for_trade(self, trade: MonitoredTrade) -> None:
+        """Place a take-profit order after entry fills."""
+        if not self.kite:
+            return
+        try:
+            from kite_connect.trading.order_service import place_order
+            import time
+            tp_side = "SELL" if trade.side == "BUY" else "BUY"
+            resp = place_order(
+                kite=self.kite,
+                symbol=trade.symbol,
+                exchange="NSE",
+                transaction_type=tp_side,
+                quantity=trade.quantity,
+                order_type="LIMIT",
+                product="CNC",
+                price=trade.target_price,
+            )
+            time.sleep(0.15)
+            if resp.get("success"):
+                trade.tp_order_id = resp["order_id"]
+                logger.info("TP placed for %s: target=%.2f, id=%s",
+                            trade.symbol, trade.target_price, resp["order_id"])
+            else:
+                logger.error("TP FAILED for %s: %s", trade.symbol, resp.get("error"))
+        except Exception as exc:
+            logger.error("TP exception for %s: %s", trade.symbol, exc)
 
     def _cancel_order(self, order_id: Optional[str], symbol: str, label: str):
         """Cancel an orphaned order (SL when TP fills, or vice versa)."""
