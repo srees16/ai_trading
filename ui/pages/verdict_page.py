@@ -250,19 +250,9 @@ def _execute_buy_verdicts(verdicts):
             f"{report.orders_failed} failed, "
             f"{report.signal_filtered_count} filtered by signal."
         )
-        if report.orders:
+        if report.order_results:
             import pandas as pd
-            order_rows = [
-                {
-                    "Symbol": o.symbol,
-                    "Side": o.side,
-                    "Qty": o.quantity,
-                    "Price": o.price,
-                    "Status": o.status,
-                    "Order ID": o.order_id or "—",
-                }
-                for o in report.orders
-            ]
+            order_rows = [o.to_dict() for o in report.order_results]
             st.dataframe(pd.DataFrame(order_rows), hide_index=True)
     except Exception as exc:
         logger.exception("Order execution failed")

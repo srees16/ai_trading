@@ -305,7 +305,7 @@ def _route_ind_stocks():
         _get_renderer('options')()
     elif current_page == 'screener':
         _get_renderer('screener')()
-    elif current_page in ('fundamental', 'backtesting', 'history', 'verdict'):
+    elif current_page in ('fundamental', 'backtesting', 'history'):
         # Reuse the same pages as US Stocks — they read current_market
         _get_renderer(current_page)()
     else:

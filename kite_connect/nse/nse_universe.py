@@ -171,25 +171,20 @@ def get_nse_default_tickers() -> List[str]:
 
 def get_nse_universe(kite=None) -> List[str]:
     """
-    Return the broadest available list of NSE equity symbols.
+    Return the NIFTY-50 + NIFTY-NEXT-50 universe (~100 stocks).
 
-    * If *kite* is provided and authenticated → full instruments list.
-    * Otherwise → NIFTY-50 + NIFTY-NEXT-50 (≈100 stocks).
+    This is the default screening universe — broad enough for
+    quality large-cap coverage while avoiding rate-limiting issues
+    with yfinance that arise from thousands of symbols.
 
     Parameters
     ----------
     kite : KiteConnect | None
-        Optionally supply an authenticated Kite session.
+        Currently unused; kept for API compatibility.
 
     Returns
     -------
     list[str]
         Plain NSE symbols (no ``.NS`` suffix).
     """
-    if kite is not None:
-        symbols = fetch_nse_symbols_from_kite(kite)
-        if symbols:
-            return symbols
-
-    # Default: Nifty50 + Nifty Next50 (≈100 stocks)
     return get_nse_default_tickers()

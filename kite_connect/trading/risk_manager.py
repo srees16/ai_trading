@@ -81,8 +81,29 @@ class TradePlan:
 class RiskManager:
     """Converts a screened-stock DataFrame into a list of *TradePlan* objects."""
 
-    def __init__(self, config: RiskConfig | None = None):
+    def __init__(self, config: RiskConfig | None = None, kite=None):
         self.cfg = config or RiskConfig()
+        self.kite = kite
+
+    def _available_capital(self) -> float:
+        """Return capital remaining after deducting open positions."""
+        if self.kite is None:
+            return self.cfg.total_capital
+        try:
+            from kite_connect.trading.order_service import get_positions
+            positions = get_positions(self.kite)
+            deployed = sum(
+                abs(float(p.get("quantity", 0))) * float(p.get("average_price", 0))
+                for p in positions.get("net", [])
+                if float(p.get("quantity", 0)) != 0
+            )
+            available = max(0, self.cfg.total_capital - deployed)
+            logger.info("Capital: %.0f total, %.0f deployed, %.0f available",
+                        self.cfg.total_capital, deployed, available)
+            return available
+        except Exception as exc:
+            logger.warning("Could not fetch positions for capital calc: %s", exc)
+            return self.cfg.total_capital
 
     def plan_trades(
         self,
@@ -109,19 +130,25 @@ class RiskManager:
             return []
 
         limit = max_trades or self.cfg.max_open_trades
+        available = self._available_capital()
         plans: List[TradePlan] = []
 
         for _, row in screened_df.head(limit).iterrows():
-            plan = self._build_plan(row)
+            if available <= 0:
+                logger.info("No capital remaining — stopping plan generation")
+                break
+            plan = self._build_plan(row, available)
             if plan is not None:
                 plans.append(plan)
+                # Deduct allocated capital
+                available -= plan.quantity * plan.entry_price
 
         logger.info("Generated %d trade plans (top-%d)", len(plans), limit)
         return plans
 
     # ── Internal ───────────────────────────────────────────────
 
-    def _build_plan(self, row: pd.Series) -> Optional[TradePlan]:
+    def _build_plan(self, row: pd.Series, available_capital: float) -> Optional[TradePlan]:
         entry = float(row["close"])
         ma50 = float(row.get("ma_50", 0))
         support = float(row.get("support", 0))
@@ -170,10 +197,10 @@ class RiskManager:
         else:
             effective_risk_pct = self.cfg.risk_per_trade_pct
 
-        max_risk = self.cfg.total_capital * effective_risk_pct
+        max_risk = available_capital * effective_risk_pct
         qty = max(1, math.floor(max_risk / risk_per_share))
-        # Also cap by total capital (can't exceed capital / entry)
-        max_qty_cap = math.floor(self.cfg.total_capital / entry)
+        # Also cap by available capital (can't exceed capital / entry)
+        max_qty_cap = math.floor(available_capital / entry) if entry > 0 else 0
         qty = min(qty, max_qty_cap)
 
         risk_amount = qty * risk_per_share
