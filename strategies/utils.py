@@ -300,3 +300,48 @@ def calculate_max_drawdown(values: pd.Series) -> float:
     peak = values.cummax()
     drawdown = (values - peak) / peak
     return float(drawdown.min() * 100)
+
+
+def apply_transaction_costs(
+    portfolio: pd.DataFrame,
+    signals: pd.DataFrame,
+    cost_pct: float = 0.001,
+    signal_col: str = "signal",
+) -> pd.DataFrame:
+    """
+    Deduct transaction costs from a portfolio DataFrame whenever
+    a position change (trade) occurs.
+
+    Args:
+        portfolio: DataFrame with a 'value' column (portfolio values over time).
+        signals: DataFrame with a signal column indicating position changes.
+        cost_pct: Round-trip cost as a fraction (0.001 = 0.1%).
+        signal_col: Name of the column containing trade signals.
+
+    Returns:
+        Portfolio DataFrame with costs deducted in-place.
+    """
+    if portfolio.empty or signals.empty or "value" not in portfolio.columns:
+        return portfolio
+
+    # Ensure value column is float to avoid dtype warnings
+    portfolio["value"] = portfolio["value"].astype(float)
+
+    sig_col = None
+    for c in (signal_col, "signal", "Signal", "position", "Position"):
+        if c in signals.columns:
+            sig_col = c
+            break
+    if sig_col is None:
+        return portfolio
+
+    # Detect position changes (trades)
+    sig = signals[sig_col].reindex(portfolio.index, method="ffill").fillna(0)
+    trades = sig.diff().fillna(0) != 0
+
+    # Deduct cost on each trade
+    cost_multiplier = 1.0 - cost_pct
+    for idx in portfolio.index[trades]:
+        portfolio.loc[idx:, "value"] *= cost_multiplier
+
+    return portfolio

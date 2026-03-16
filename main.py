@@ -27,6 +27,19 @@ from decision_engine import DecisionEngine
 from notifications import NotificationManager
 from storage import StorageManager
 
+# Infrastructure
+from infrastructure.event_bus import event_bus
+from infrastructure.execution_context import execution_ctx
+from infrastructure.latency_tracker import latency_tracker
+from infrastructure.replay_engine import replay_engine
+
+# ── Wire replay recording to event bus ──────────────────────────
+# Every event that flows through the bus is automatically captured
+# for deterministic replay in backtest mode.
+@event_bus.on("*")
+def _record_to_replay(event):
+    replay_engine.record_event(event.to_dict())
+
 # Setup Logging
 logging.basicConfig(
     level=logging.INFO,
@@ -67,6 +80,20 @@ class AlgoTradingSystem:
         self.broader_sentiment = GoogleSearchSentiment()
         
         logger.info("System initialized successfully!")
+
+        # Start event recording for deterministic replay
+        session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{market}"
+        try:
+            replay_engine.start_recording(session_id)
+        except Exception:
+            pass  # Recording is optional — don't block init
+
+        # Emit system init event
+        event_bus.emit(
+            "system.initialized",
+            payload={"market": market, "tickers": self.tickers},
+            source="AlgoTradingSystem",
+        )
     
     async def run(self):
         """Run the complete trading system pipeline."""
@@ -76,8 +103,10 @@ class AlgoTradingSystem:
         
         # Step 1: Scrape news
         logger.info(" Step 1: Scraping news from multiple sources")
-        all_news = await self.news_aggregator.fetch_news_for_tickers(self.tickers)
+        with latency_tracker.measure("pipeline.scrape_news"):
+            all_news = await self.news_aggregator.fetch_news_for_tickers(self.tickers)
         logger.info(f"Collected {len(all_news)} news items")
+        event_bus.emit("pipeline.news_scraped", payload={"count": len(all_news)}, source="main")
         
         if not all_news:
             logger.warning("No news found. Exiting.")
@@ -85,8 +114,10 @@ class AlgoTradingSystem:
         
         # Step 2: Analyze sentiment
         logger.info("Step 2: Analyzing sentiment")
-        analyzed_news = self.sentiment_analyzer.analyze_news_items(all_news)
+        with latency_tracker.measure("pipeline.sentiment"):
+            analyzed_news = self.sentiment_analyzer.analyze_news_items(all_news)
         logger.info(f"Analyzed sentiment for {len(analyzed_news)} items")
+        event_bus.emit("pipeline.sentiment_done", payload={"count": len(analyzed_news)}, source="main")
         
         # Step 3: Send notifications for high-confidence news
         logger.info("Step 3: Checking for high-confidence alerts")
@@ -125,6 +156,17 @@ class AlgoTradingSystem:
             signals.append(signal)
             
             logger.info(f"  {news_item.ticker}: Decision = {signal.decision.value}")
+
+            # Record signal event for replay
+            event_bus.emit(
+                "pipeline.signal_generated",
+                payload={
+                    "ticker": news_item.ticker,
+                    "decision": signal.decision.value,
+                    "score": signal.decision_score,
+                },
+                source="main",
+            )
             
             # Send notification for strong signals
             if signal.decision.value in ['STRONG_BUY', 'STRONG_SELL']:

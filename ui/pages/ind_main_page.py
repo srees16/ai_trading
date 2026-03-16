@@ -114,7 +114,7 @@ def _render_ticker_selection() -> List[str]:
 
     ticker_mode = st.radio(
         "Input method:",
-        ["Default Tickers", "Manual Entry", "Upload CSV"],
+        ["Default Tickers", "NSE Screener", "Manual Entry", "Upload CSV"],
         help="Select how you want to specify the Indian stocks to analyze",
         horizontal=True,
         key="ind_ticker_mode",
@@ -126,6 +126,8 @@ def _render_ticker_selection() -> List[str]:
 
     if ticker_mode == "Default Tickers":
         tickers = _handle_default_tickers()
+    elif ticker_mode == "NSE Screener":
+        tickers = _handle_nse_screener()
     elif ticker_mode == "Manual Entry":
         tickers = _handle_manual_entry()
     elif ticker_mode == "Upload CSV":
@@ -141,6 +143,32 @@ def _handle_default_tickers() -> List[str]:
         st.write(", ".join(display_names))
         st.caption("Tickers are automatically appended with .NS suffix for NSE data.")
     return IND_DEFAULT_TICKERS
+
+
+def _handle_nse_screener() -> List[str]:
+    """Navigate to the full NSE Screener page, or use cached results."""
+    # Check if screener already ran and produced tickers
+    cached = st.session_state.get("screened_tickers_ns")
+    if cached:
+        st.success(f"{len(cached)} stocks from last screener run")
+        with st.expander("View screened tickers"):
+            display = [t.replace(".NS", "") for t in cached]
+            st.write(", ".join(display))
+        return cached
+
+    st.info(
+        "The NSE Screener downloads all available stocks on NSE, "
+        "filters them by price / liquidity / trend / volatility, "
+        "analyses pullback & breakout strategies, and ranks them."
+    )
+    if st.button(
+        "Open NSE Screener",
+        type="primary",
+        key="goto_screener",
+    ):
+        st.session_state.current_page = "screener"
+        st.rerun()
+    return []
 
 
 def _handle_manual_entry() -> List[str]:

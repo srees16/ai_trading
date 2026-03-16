@@ -70,6 +70,18 @@ INDEX_CONSTITUENTS = {
         "HINDPETRO", "IOC", "NTPC", "ONGC", "POWERGRID",
         "RELIANCE", "TATAPOWER",
     ],
+    "NIFTY_NEXT50": [
+        "ABB", "ADANIENSOL", "ADANIGREEN", "ADANIPOWER", "AMBUJACEM",
+        "ATGL", "BANKBARODA", "BHEL", "BOSCHLTD", "BSE",
+        "CANBK", "CGPOWER", "CHOLAFIN", "COLPAL", "DLF",
+        "GAIL", "GODREJCP", "HAL", "HAVELLS", "HINDPETRO",
+        "ICICIPRULI", "INDHOTEL", "IOC", "IRCTC", "IRFC",
+        "JINDALSTEL", "JSWENERGY", "MAXHEALTH", "MOTHERSON", "NHPC",
+        "NMDC", "NYKAA", "OBEROIRLTY", "OFSS", "PAYTM",
+        "PFC", "PIDILITIND", "PNB", "POLYCAB", "RECLTD",
+        "SBICARD", "SIEMENS", "SJVN", "TATACOMM", "TATAELXSI",
+        "TATAPOWER", "TORNTPHARM", "UNITDSPR", "VBL", "ZOMATO",
+    ],
 }
 
 # ── Streamlit ──────────────────────────────────────────────────

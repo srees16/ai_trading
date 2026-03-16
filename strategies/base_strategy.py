@@ -79,6 +79,7 @@ class StrategyResult:
         error_message: Error message if execution failed
         execution_time: Time taken to execute in seconds
         metadata: Additional strategy-specific information
+        transaction_cost_pct: Round-trip transaction cost as a fraction (default 0.001 = 0.1%)
     """
     charts: list[ChartData] = field(default_factory=list)
     tables: list[TableData] = field(default_factory=list)
@@ -89,6 +90,7 @@ class StrategyResult:
     error_message: str = ""
     execution_time: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
+    transaction_cost_pct: float = 0.001  # 0.1% round-trip (IND default)
     
     def to_dict(self) -> dict:
         """

@@ -39,12 +39,28 @@ def render_verdict_page():
 # ─────────────────────────────────────────────────────────────────────
 
 def _render_controls(market: str):
+    # ── Default tickers based on market ──────────────────────
+    if market == "IND":
+        cached_key = f"{_PFX}nse_universe"
+        if cached_key not in st.session_state:
+            with st.spinner("Loading Nifty 50 + Nifty Next 50 …"):
+                from kite_connect.nse.nse_universe import get_nse_default_tickers
+                symbols = get_nse_default_tickers()
+                # Store with .NS suffix for yfinance compatibility
+                st.session_state[cached_key] = [
+                    f"{s}.NS" for s in symbols
+                ]
+        default_tickers = st.session_state[cached_key]
+    else:
+        default_tickers = st.session_state.get(
+            "tickers", ["AAPL", "MSFT", "GOOGL", "AMZN"],
+        )
+
     col1, col2, col3 = st.columns([2, 1, 1])
 
     with col1:
-        default_tickers = st.session_state.get("tickers", ["AAPL", "MSFT", "GOOGL", "AMZN"])
         tickers_input = st.text_input(
-            "Tickers (comma-separated)",
+            f"Tickers — {len(default_tickers)} loaded (comma-separated)",
             value=", ".join(default_tickers),
             key=f"{_PFX}tickers_input",
         )
@@ -62,7 +78,8 @@ def _render_controls(market: str):
         skip_options = st.multiselect(
             "Skip layers",
             options=["core", "strategy", "ml_features", "robustness", "rag"],
-            default=[],
+            default=["rag"],
+            help="RAG is skipped by default (LLM calls add latency with minimal scoring value)",
             key=f"{_PFX}skip_layers",
         )
 
@@ -73,7 +90,20 @@ def _render_controls(market: str):
         w_strat = w_col2.slider("Strategy", 0, 100, 25, key=f"{_PFX}w_strat")
         w_ml = w_col3.slider("ML Features", 0, 100, 15, key=f"{_PFX}w_ml")
         w_robust = w_col4.slider("Robustness", 0, 100, 20, key=f"{_PFX}w_robust")
-        w_rag = w_col5.slider("RAG", 0, 100, 10, key=f"{_PFX}w_rag")
+        w_rag = w_col5.slider("RAG", 0, 100, 0, key=f"{_PFX}w_rag")
+
+    # Batch size control (relevant when ticker count is large)
+    batch_size = 20
+    if market == "IND":
+        bs_col, _ = st.columns([1, 4])
+        with bs_col:
+            batch_size = st.selectbox(
+                "Batch size",
+                options=[20, 40, 60, 80, 100],
+                index=0,
+                help="Stocks are analysed in parallel batches to keep the app responsive.",
+                key=f"{_PFX}batch_size",
+            )
 
     if st.button("Run Integrated Analysis", type="primary", key=f"{_PFX}run_btn"):
         tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
@@ -97,19 +127,57 @@ def _render_controls(market: str):
             "rag": w_rag / total_w,
         }
 
-        with st.spinner(f"Evaluating {len(tickers)} ticker(s) across 5 layers…"):
-            from services.integrated_scorer import IntegratedScorer
-
-            scorer = IntegratedScorer(weights=weights)
-            verdicts = scorer.evaluate(
-                tickers=tickers,
-                market=market,
-                date_range=dr,
-                skip_layers=skip_options,
-            )
-            st.session_state[f"{_PFX}results"] = verdicts
-
+        _run_batched_analysis(tickers, market, dr, weights, skip_options, batch_size)
         st.rerun()
+
+
+def _run_batched_analysis(tickers, market, date_range, weights, skip_layers, batch_size):
+    """Evaluate tickers in concurrent batches."""
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from services.integrated_scorer import IntegratedScorer
+
+    total = len(tickers)
+    num_batches = (total + batch_size - 1) // batch_size
+
+    # Split tickers into batches
+    batches = [
+        tickers[i * batch_size : min((i + 1) * batch_size, total)]
+        for i in range(num_batches)
+    ]
+
+    def _evaluate_batch(batch_tickers):
+        scorer = IntegratedScorer(weights=weights)
+        return scorer.evaluate(
+            tickers=batch_tickers,
+            market=market,
+            date_range=date_range,
+            skip_layers=skip_layers,
+        )
+
+    # Run batches concurrently (cap workers to avoid overwhelming the system)
+    max_concurrent = min(num_batches, 3)
+    all_verdicts = []
+
+    with st.spinner(f"Analysing {total} stocks in {num_batches} parallel batches …"):
+        with ThreadPoolExecutor(max_workers=max_concurrent, thread_name_prefix="batch") as pool:
+            futures = {
+                pool.submit(_evaluate_batch, batch): idx
+                for idx, batch in enumerate(batches)
+            }
+            # Collect results preserving original ordering
+            results_by_idx = {}
+            for future in as_completed(futures):
+                idx = futures[future]
+                try:
+                    results_by_idx[idx] = future.result()
+                except Exception as exc:
+                    logger.error("Batch %d failed: %s", idx, exc)
+                    results_by_idx[idx] = []
+
+        for idx in range(num_batches):
+            all_verdicts.extend(results_by_idx.get(idx, []))
+
+    st.session_state[f"{_PFX}results"] = all_verdicts
 
 
 # ─────────────────────────────────────────────────────────────────────

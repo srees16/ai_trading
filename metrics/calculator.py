@@ -61,12 +61,38 @@ class MetricsCalculator:
         return metrics
 
     def _fetch_metrics(self, ticker: str) -> Optional[StockMetrics]:
-        """Actually fetch and compute metrics from yfinance."""
+        """Actually fetch and compute metrics from yfinance (or Tijori-first for IND)."""
         try:
             stock = yf.Ticker(ticker)
             
-            # Get stock info
-            info = stock.info
+            if self._is_indian_ticker(ticker):
+                # Tijori PRIMARY for Indian tickers — richer fundamentals
+                info = {}
+                try:
+                    import asyncio
+                    from scrapers.ind_fundamentals.tijori_adapter import TijoriAdapter
+                    adapter = TijoriAdapter()
+                    loop = asyncio.new_event_loop()
+                    try:
+                        tijori_data = loop.run_until_complete(
+                            adapter.fetch_fundamentals(ticker)
+                        )
+                        info.update(tijori_data)
+                    finally:
+                        loop.close()
+                    logger.debug("Tijori PRIMARY fetched %d fields for %s",
+                                 len(tijori_data), ticker)
+                except Exception as e:
+                    logger.debug("Tijori primary failed for %s: %s", ticker, e)
+                
+                # yfinance FALLBACK — fill any remaining gaps
+                yf_info = stock.info or {}
+                for key, val in yf_info.items():
+                    if info.get(key) is None and val is not None:
+                        info[key] = val
+            else:
+                # Non-Indian tickers: yfinance only
+                info = stock.info
             
             # Get historical data
             end_date = datetime.now()
@@ -162,11 +188,11 @@ class MetricsCalculator:
             fundamentals['free_cash_flow'] = float(fcf) if fcf else None
             
             # DCF Value (simplified calculation)
-            dcf = self._calculate_dcf(info)
+            dcf = self._calculate_dcf(info, ticker)
             fundamentals['dcf_value'] = dcf
             
             # Intrinsic Value (using Graham's formula)
-            intrinsic = self._calculate_intrinsic_value(info)
+            intrinsic = self._calculate_intrinsic_value(info, ticker)
             fundamentals['intrinsic_value'] = intrinsic
             
             # Advanced Fundamental Metrics
@@ -187,11 +213,18 @@ class MetricsCalculator:
         
         return fundamentals
     
-    def _calculate_dcf(self, info: dict) -> Optional[float]:
+    @staticmethod
+    def _is_indian_ticker(ticker: str) -> bool:
+        """Detect Indian tickers by .NS / .BO suffix."""
+        return ticker.upper().endswith((".NS", ".BO"))
+
+    def _calculate_dcf(self, info: dict, ticker: str = "") -> Optional[float]:
         """
         Calculate simplified DCF (Discounted Cash Flow) value.
-        
-        This is a simplified DCF calculation using free cash flow.
+
+        Uses market-appropriate discount and terminal-growth rates:
+        - India (.NS/.BO): discount 12%, terminal growth 6%
+        - US / default:    discount 10%, terminal growth 3%
         """
         try:
             fcf = info.get('freeCashflow')
@@ -200,9 +233,12 @@ class MetricsCalculator:
             if not fcf or not shares:
                 return None
             
-            # Simplified DCF with 10% discount rate and 3% growth
-            discount_rate = 0.10
-            growth_rate = 0.03
+            if self._is_indian_ticker(ticker):
+                discount_rate = 0.12   # higher risk-free + equity premium
+                growth_rate = 0.06     # nominal GDP-linked terminal growth
+            else:
+                discount_rate = 0.10
+                growth_rate = 0.03
             
             # Terminal value
             terminal_value = fcf * (1 + growth_rate) / (discount_rate - growth_rate)
@@ -212,15 +248,17 @@ class MetricsCalculator:
             
             return float(dcf_value)
         
-        except:
+        except Exception:
             return None
     
-    def _calculate_intrinsic_value(self, info: dict) -> Optional[float]:
+    def _calculate_intrinsic_value(self, info: dict, ticker: str = "") -> Optional[float]:
         """
         Calculate intrinsic value using Benjamin Graham's formula.
         
         IV = EPS × (8.5 + 2g) × 4.4 / Y
-        where g is growth rate and Y is current yield on AAA bonds (approx 4.5%)
+        where g is growth rate and Y is the benchmark bond yield:
+        - India: Y = 7.1  (10-year G-Sec yield)
+        - US:    Y = 4.5  (AAA corporate bond yield)
         """
         try:
             eps = info.get('trailingEps')
@@ -232,12 +270,14 @@ class MetricsCalculator:
             # Default growth rate if not available
             g = (growth * 100) if growth else 10
             
+            bond_yield = 7.1 if self._is_indian_ticker(ticker) else 4.5
+            
             # Graham's formula
-            intrinsic_value = eps * (8.5 + 2 * g) * 4.4 / 4.5
+            intrinsic_value = eps * (8.5 + 2 * g) * 4.4 / bond_yield
             
             return float(intrinsic_value)
         
-        except:
+        except Exception:
             return None
     
     def _calculate_technicals(self, hist: pd.DataFrame) -> Dict[str, Optional[float]]:

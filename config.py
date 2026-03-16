@@ -20,8 +20,9 @@ class Config:
     # =================================================================
     # Sentiment Analysis
     # =================================================================
-    SENTIMENT_MODEL: str = "distilbert-base-uncased-finetuned-sst-2-english"
+    SENTIMENT_MODEL: str = "ProsusAI/finbert"
     SENTIMENT_HIGH_CONFIDENCE_THRESHOLD: float = 0.85
+    SENTIMENT_CONFIDENCE_FLOOR: float = 0.70  # discard scores below this confidence
     
     # =================================================================
     # Storage / Output
@@ -61,12 +62,14 @@ class Config:
     
     # =================================================================
     # Decision Engine Weights (must sum to 1.0)
+    # Sentiment is computed and displayed in UI reasoning but excluded
+    # from the scoring formula (weight = 0).
     # =================================================================
-    SENTIMENT_WEIGHT: float = 0.30
-    FUNDAMENTAL_WEIGHT: float = 0.25
-    TECHNICAL_WEIGHT: float = 0.25
-    MACRO_WEIGHT: float = 0.10
-    PUBLIC_SENTIMENT_WEIGHT: float = 0.10
+    SENTIMENT_WEIGHT: float = 0.00
+    FUNDAMENTAL_WEIGHT: float = 0.35
+    TECHNICAL_WEIGHT: float = 0.35
+    MACRO_WEIGHT: float = 0.15
+    PUBLIC_SENTIMENT_WEIGHT: float = 0.15
     
     # =================================================================
     # Decision Thresholds
@@ -95,6 +98,7 @@ class Config:
     BREAKING_KEYWORDS: List[str] = ["breaking", "urgent", "alert", "just in"]
     DEALS_KEYWORDS: List[str] = ["merger", "acquisition", "deal", "buyout", "takeover"]
     MACRO_KEYWORDS: List[str] = ["fed", "interest rate", "inflation", "gdp", "unemployment", "treasury"]
+    INDIA_MACRO_KEYWORDS: List[str] = ["rbi", "repo rate", "inflation", "gdp", "fii", "dii", "nifty", "sensex", "rupee", "gst"]
     EARNINGS_KEYWORDS: List[str] = ["earnings", "quarterly", "q1", "q2", "q3", "q4", "revenue", "profit"]
     
     # =================================================================

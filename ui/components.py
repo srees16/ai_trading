@@ -220,7 +220,7 @@ def render_navigation_buttons(
         ('analysis',     'Stock Analysis'),
         ('fundamental',  'Fundamental Analysis'),
         ('backtesting',  'Backtest Strategy'),
-        ('verdict',      'Integrated Verdict'),
+        ('verdict',      'Verdict'),
         ('history',      'History'),
         ('us_holdings',  'Holdings'),
     ]
@@ -286,6 +286,7 @@ def render_ind_navigation_buttons(
         ('backtesting',  'Backtest'),
         ('verdict',      'Verdict'),
         ('history',      'History'),
+        ('screener',     'Screener'),
         ('options',      'Options'),
         ('ind_kite',     'Fly Kite'),
     ]
@@ -662,6 +663,103 @@ def render_vix_indicator(market: str = "US"):
         <span class="pill" style="background:{pill_bg}; color:{pill_fg};">{sent_label}</span>
         {index_html}
         {extras_html}
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_india_fear_greed():
+    """Render an India Fear & Greed gauge widget on the IND landing page."""
+    import streamlit as st
+
+    try:
+        import asyncio
+        from scrapers.macro.india_fear_greed import IndiaFearGreedIndex
+        from scrapers.macro.macro_indicators import MacroIndicators
+        from scrapers.ind_news.fii_dii_flows import FIIDIIFlows
+
+        snap = MacroIndicators().fetch(market="IND")
+
+        loop = asyncio.new_event_loop()
+        try:
+            flow = loop.run_until_complete(FIIDIIFlows().fetch())
+        finally:
+            loop.close()
+
+        fg = IndiaFearGreedIndex()
+        loop2 = asyncio.new_event_loop()
+        try:
+            result = loop2.run_until_complete(fg.compute(
+                india_vix=snap.india_vix,
+                fii_net_crore=flow.fii_net,
+                nifty_change_pct=snap.nifty50_change_pct,
+            ))
+        finally:
+            loop2.close()
+
+        score = result.score
+        label = result.label or "N/A"
+    except Exception:
+        score = None
+        label = "N/A"
+
+    if score is None:
+        return
+
+    # Color based on score
+    if score <= 20:
+        color = "#dc2626"
+    elif score <= 40:
+        color = "#ea580c"
+    elif score <= 60:
+        color = "#ca8a04"
+    elif score <= 80:
+        color = "#16a34a"
+    else:
+        color = "#15803d"
+
+    st.markdown(f"""
+    <style>
+        .fg-gauge {{
+            background: #ffffff;
+            padding: 0.6rem 1.2rem;
+            border-radius: 8px;
+            margin-bottom: 0.5rem;
+            border-left: 4px solid {color};
+            box-shadow: 0 1px 4px rgba(0,0,0,0.10);
+            display: flex;
+            align-items: center;
+            gap: 0.8rem;
+        }}
+        .fg-gauge .fg-score {{
+            font-size: 1.5rem;
+            font-weight: 800;
+            color: {color};
+        }}
+        .fg-gauge .fg-label {{
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #374151;
+        }}
+        .fg-gauge .fg-bar {{
+            flex: 1;
+            height: 8px;
+            background: #e5e7eb;
+            border-radius: 4px;
+            position: relative;
+            min-width: 120px;
+        }}
+        .fg-gauge .fg-bar-fill {{
+            height: 100%;
+            border-radius: 4px;
+            background: {color};
+            width: {score:.0f}%;
+        }}
+    </style>
+    <div class="fg-gauge">
+        <span class="fg-label">India F&G</span>
+        <span class="fg-score">{score:.0f}</span>
+        <span style="color:#6b7280; font-size:0.75rem;">{label}</span>
+        <div class="fg-bar"><div class="fg-bar-fill"></div></div>
     </div>
     """, unsafe_allow_html=True)
 
