@@ -60,6 +60,10 @@ class MacroSnapshot:
     crude_oil_price: Optional[float] = None
     dxy_index: Optional[float] = None
 
+    # FII/DII flows (IND only)
+    fii_net_crore: Optional[float] = None
+    fii_flow_sentiment: Optional[float] = None  # -1 … +1
+
     # Derived sentiment
     macro_sentiment_score: Optional[float] = None   # -1 (fear) … +1 (greed)
     macro_sentiment_label: Optional[str] = None      # fearful / neutral / greedy
@@ -80,6 +84,8 @@ class MacroSnapshot:
             "gold_price": self.gold_price,
             "crude_oil_price": self.crude_oil_price,
             "dxy_index": self.dxy_index,
+            "fii_net_crore": self.fii_net_crore,
+            "fii_flow_sentiment": self.fii_flow_sentiment,
             "macro_sentiment_score": self.macro_sentiment_score,
             "macro_sentiment_label": self.macro_sentiment_label,
         }
@@ -204,6 +210,21 @@ class MacroIndicators:
         if snap.us_10y_yield is not None and snap.us_13w_yield is not None:
             snap.yield_curve_spread = snap.us_10y_yield - snap.us_13w_yield
 
+        # ── FII/DII flows (IND market only) ──────────────────────────
+        if market == "IND":
+            try:
+                import asyncio
+                from scrapers.ind_news.fii_dii_flows import FIIDIIFlows
+                loop = asyncio.new_event_loop()
+                try:
+                    flow_snap = loop.run_until_complete(FIIDIIFlows().fetch())
+                finally:
+                    loop.close()
+                snap.fii_net_crore = flow_snap.fii_net
+                snap.fii_flow_sentiment = flow_snap.flow_sentiment
+            except Exception as exc:
+                logger.debug("MacroIndicators: FII/DII fetch failed — %s", exc)
+
         # ── Derive composite sentiment score ─────────────────────────
         snap.macro_sentiment_score = self._compute_sentiment(snap, market)
         if snap.macro_sentiment_score is not None:
@@ -273,6 +294,10 @@ class MacroIndicators:
         if change is not None:
             clamped = max(-3.0, min(3.0, change))  # cap at ±3%
             scores.append(clamped / 3.0)
+
+        # --- FII/DII flow sentiment (IND only) ---
+        if market == "IND" and snap.fii_flow_sentiment is not None:
+            scores.append(snap.fii_flow_sentiment)
 
         if not scores:
             return None

@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+import pandas as pd
 
 from config import Config
 
@@ -32,11 +33,11 @@ logger = logging.getLogger(__name__)
 # Default weights (sum to 1.0)
 # ---------------------------------------------------------------------------
 DEFAULT_WEIGHTS = {
-    "core": 0.30,
+    "core": 0.35,
     "strategy": 0.25,
     "ml_features": 0.15,
-    "robustness": 0.20,
-    "rag": 0.10,
+    "robustness": 0.25,
+    "rag": 0.00,           # disabled — LLM calls add latency with minimal value
 }
 
 
@@ -199,6 +200,7 @@ def _run_layer_core(ticker: str, market: str) -> Dict[str, Any]:
             )
 
         # Weighted core score (replicates DecisionEngine logic)
+        # Sentiment weight is 0 — sentiment is for display only
         w = {
             "sent": Config.SENTIMENT_WEIGHT,
             "fund": Config.FUNDAMENTAL_WEIGHT,
@@ -241,7 +243,7 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
         from strategies import StrategyRegistry, load_all_strategies
 
         load_all_strategies()
-        all_strategies = StrategyRegistry.list_all()
+        all_strategies = StrategyRegistry._strategies
 
         if not all_strategies:
             return {"score": None, "details": {"error": "No strategies registered"}}
@@ -265,6 +267,18 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
                 if not result.success:
                     strategy_results[name] = {"error": result.error_message}
                     continue
+
+                # Apply transaction costs to portfolio if available
+                if (result.portfolio is not None and not result.portfolio.empty
+                        and result.signals is not None and not result.signals.empty):
+                    from strategies.utils import apply_transaction_costs
+                    try:
+                        result.portfolio = apply_transaction_costs(
+                            result.portfolio, result.signals,
+                            cost_pct=result.transaction_cost_pct,
+                        )
+                    except Exception:
+                        pass  # degrade gracefully
 
                 # Extract signal direction from the last row of signals
                 if result.signals is not None and not result.signals.empty:
@@ -436,6 +450,115 @@ def _run_layer_ml(ticker: str) -> Dict[str, Any]:
         except Exception as e:
             details["backtest_stats_error"] = str(e)
 
+        # ── ch03: Triple-Barrier Labeling ──
+        try:
+            ch03 = _load_module(
+                str(_FML_APPLIED / "ch03_labeling.py"), "fml_ch03",
+            )
+            getDailyVol = ch03.getDailyVol
+            applyPtSlOnT1 = ch03.applyPtSlOnT1
+            getEvents = ch03.getEvents
+            getBins = ch03.getBins
+
+            close_series = close.copy()
+            close_series.index = pd.to_datetime(close_series.index)
+
+            daily_vol = getDailyVol(close_series, span0=50)
+
+            # Use simple CUSUM-like trigger: price crosses 1 std dev
+            t_events = close_series.index[50:]  # skip warmup
+
+            # Get events with symmetric barriers (pt_sl = [1, 1])
+            events = getEvents(
+                close_series, tEvents=t_events, ptSl=[1, 1],
+                trgt=daily_vol, minRet=0.0,
+                numThreads=1, t1=pd.Series(
+                    data=[t_events[-1]] * len(t_events),
+                    index=t_events,
+                ),
+            )
+            if events is not None and not events.empty:
+                bins = getBins(events, close_series)
+                if bins is not None and not bins.empty:
+                    # Recent label distribution → bullish/bearish signal
+                    recent = bins.tail(20)
+                    buy_ratio = (recent["bin"] == 1).mean()
+                    sell_ratio = (recent["bin"] == -1).mean()
+                    tb_score = _clamp((buy_ratio - sell_ratio) * 2)
+                    details["triple_barrier_buy_pct"] = round(float(buy_ratio), 4)
+                    details["triple_barrier_sell_pct"] = round(float(sell_ratio), 4)
+                    sub_scores.append(tb_score)
+        except Exception as e:
+            details["triple_barrier_error"] = str(e)
+
+        # ── ch07: Purged K-Fold CV (strategy robustness) ──
+        try:
+            ch07 = _load_module(
+                str(_FML_APPLIED / "ch07_cross_validation_in_finance.py"), "fml_ch07",
+            )
+            PurgedKFold = ch07.PurgedKFold
+
+            returns = close.pct_change().dropna()
+            if len(returns) >= 200:
+                from sklearn.linear_model import SGDClassifier
+
+                # Binary classification: next-day up/down
+                X = returns.values[:-1].reshape(-1, 1)
+                y = (returns.values[1:] > 0).astype(int)
+                t1 = pd.Series(
+                    data=returns.index[1:],
+                    index=returns.index[:-1],
+                )
+
+                pkf = PurgedKFold(n_splits=5, t1=t1, pctEmbargo=0.01)
+                cv_scores = []
+                for train_idx, test_idx in pkf.split(X):
+                    clf = SGDClassifier(loss="log_loss", random_state=42, max_iter=200)
+                    clf.fit(X[train_idx], y[train_idx])
+                    cv_scores.append(float(clf.score(X[test_idx], y[test_idx])))
+
+                mean_cv = float(np.mean(cv_scores))
+                # CV accuracy > 0.55 = meaningful edge
+                cv_score = _clamp((mean_cv - 0.5) * 4)
+                details["purged_cv_mean_accuracy"] = round(mean_cv, 4)
+                details["purged_cv_scores"] = [round(s, 4) for s in cv_scores]
+                sub_scores.append(cv_score)
+        except Exception as e:
+            details["purged_cv_error"] = str(e)
+
+        # ── ch10: Bet Sizing (Kelly confidence) ──
+        try:
+            ch10 = _load_module(
+                str(_FML_APPLIED / "ch10_bet_sizing.py"), "fml_ch10",
+            )
+            discreteSignal = ch10.discreteSignal
+
+            returns = close.pct_change().dropna()
+            if len(returns) >= 100:
+                # Use recent Sharpe as signal strength proxy
+                recent_ret = returns.tail(60)
+                signal_strength = float(
+                    recent_ret.mean() / (recent_ret.std() + 1e-10) * np.sqrt(252)
+                )
+                # Bound signal to reasonable range before passing to Kelly
+                bounded_signal = max(-3.0, min(3.0, signal_strength))
+                bet_size = discreteSignal(
+                    signal0=bounded_signal, stepSize=0.1,
+                    nClasses=10, prob=0.5 + abs(bounded_signal) / 10,
+                    pred=1 if bounded_signal > 0 else 0,
+                    numClasses=2,
+                )
+                # bet_size in [0,1]: high = confident → positive score
+                if bounded_signal > 0:
+                    kelly_score = _clamp(float(bet_size) * 0.5)
+                else:
+                    kelly_score = _clamp(-float(bet_size) * 0.5)
+                details["kelly_bet_size"] = round(float(bet_size), 4)
+                details["kelly_signal_strength"] = round(signal_strength, 4)
+                sub_scores.append(kelly_score)
+        except Exception as e:
+            details["bet_sizing_error"] = str(e)
+
         score = _safe_mean(sub_scores) if sub_scores else None
         return {"score": _clamp(score) if score is not None else None, "details": details}
 
@@ -581,55 +704,33 @@ def _run_layer_robustness(ticker: str, date_range: tuple) -> Dict[str, Any]:
 # ===================================================================
 
 def _run_layer_rag(ticker: str) -> Dict[str, Any]:
-    """Query RAG engine for qualitative insights on the ticker."""
-    try:
-        from rag_pipeline.config import RAGConfig
-        from rag_pipeline.storage.vector_store import VectorStoreManager
-        from rag_pipeline.core.query_engine import RAGQueryEngine
+    """Query RAG engine for qualitative insights on the ticker.
 
-        config = RAGConfig()
-        vector_store = VectorStoreManager(config)
-        engine = RAGQueryEngine(vector_store, config)
-        query_text = (
-            f"What are the key risk factors and investment thesis for {ticker} "
-            "based on quantitative finance principles?"
-        )
-        response = engine.query(query_text, top_k=5)
+    .. note::
 
-        answer = response.answer.strip() if response.answer else ""
-        if not answer:
-            return {"score": None, "details": {"note": "RAG returned empty answer"}}
+       This layer is **disabled by default** in the verdict pipeline.
+       The RAG engine calls Anthropic / Ollama LLMs which adds significant
+       latency (~5-15 s per ticker) while the scoring contribution is
+       minimal: the full LLM answer is reduced to naive keyword counting
+       and capped at 10 % weight.  The vector store also contains
+       user-uploaded domain documents, not per-ticker equity research,
+       so retrieval relevance is low.
 
-        # Simple keyword-based qualitative flag
-        answer_lower = answer.lower()
-        bullish_kw = ["bullish", "upside", "outperform", "strong buy", "growth", "positive"]
-        bearish_kw = ["bearish", "downside", "underperform", "risk", "decline", "negative"]
-        bull_hits = sum(1 for k in bullish_kw if k in answer_lower)
-        bear_hits = sum(1 for k in bearish_kw if k in answer_lower)
-
-        if bull_hits > bear_hits:
-            flag = "bullish"
-            score = _clamp(0.3 + (bull_hits - bear_hits) * 0.1)
-        elif bear_hits > bull_hits:
-            flag = "bearish"
-            score = _clamp(-0.3 - (bear_hits - bull_hits) * 0.1)
-        else:
-            flag = "neutral"
-            score = 0.0
-
-        return {
-            "score": score,
-            "details": {
-                "qualitative_flag": flag,
-                "bullish_keywords": bull_hits,
-                "bearish_keywords": bear_hits,
-                "answer_preview": answer[:300],
-                "sources": [c.source for c in response.chunks[:3]],
-            },
-        }
-    except Exception as exc:
-        logger.info("Layer 5 (RAG) skipped for %s: %s", ticker, exc)
-        return {"score": None, "details": {"note": f"RAG unavailable: {exc}"}}
+       Enable manually from the UI if the ChromaDB store has been
+       populated with relevant per-stock research.
+    """
+    # Short-circuit: no LLM calls.  Return a neutral placeholder so the
+    # layer is scored as "skipped" and its weight is redistributed.
+    return {
+        "score": None,
+        "details": {
+            "note": (
+                "RAG layer disabled — LLM calls (Anthropic/Ollama) "
+                "provide minimal scoring value for the verdict pipeline. "
+                "Remove 'rag' from skip_layers to re-enable."
+            ),
+        },
+    }
 
 
 # ===================================================================

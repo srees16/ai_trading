@@ -11,15 +11,17 @@ from models import NewsItem, StockMetrics, TradingSignal, DecisionTag, Sentiment
 
 class DecisionEngine:
     """
-    Combines sentiment, fundamental, technical, macro-economic, and
+    Combines fundamental, technical, macro-economic, and
     public-sentiment analysis to generate trading decisions.
 
     Score composition (when all layers are available):
-        news sentiment   30 %
-        fundamentals     25 %
-        technicals       25 %
-        macro-economic   10 %
-        public sentiment 10 %
+        fundamentals     35 %
+        technicals       35 %
+        macro-economic   15 %
+        public sentiment 15 %
+
+    News sentiment is still computed and displayed in the reasoning
+    text but excluded from the weighted score (weight = 0 %).
 
     When macro or public sentiment data is unavailable the weights
     are automatically redistributed among the remaining components.
@@ -124,6 +126,11 @@ class DecisionEngine:
         if news_item.sentiment_score is None:
             return 0.0
         
+        # Gate low-confidence sentiment — treat as neutral
+        if (news_item.sentiment_confidence is not None
+                and news_item.sentiment_confidence < Config.SENTIMENT_CONFIDENCE_FLOOR):
+            return 0.0
+
         # Boost score if high confidence
         score = news_item.sentiment_score
         if news_item.sentiment_confidence and news_item.sentiment_confidence > Config.SENTIMENT_HIGH_CONFIDENCE_THRESHOLD:
