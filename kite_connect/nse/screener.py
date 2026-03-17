@@ -53,6 +53,11 @@ class ScreenerConfig:
     min_beta: float = 1.0
     history_days: int = 250          # ~1 year of trading days
 
+    # Index mode — relaxed filters for blue-chip NIFTY50/Next50 universe.
+    # When True: lower beta threshold (0.3), require only Close > MA200
+    # (allow pullback entries below MA50), lower volume floor.
+    index_mode: bool = False
+
     # Stage 2 — methodology
     pullback_pct: float = 0.02       # within 2 % of MA
     breakout_vol_mult: float = 1.5   # volume must be 1.5× average
@@ -423,23 +428,33 @@ class NSEScreener:
             if last_close < self.cfg.min_price:
                 continue
 
-            # Volume filter
+            # Volume filter (relaxed in index mode: 200K floor)
+            vol_floor = 200_000 if self.cfg.index_mode else self.cfg.min_avg_volume
             avg_vol = float(volume.tail(20).mean()) if len(volume) >= 20 else 0
-            if avg_vol < self.cfg.min_avg_volume:
+            if avg_vol < vol_floor:
                 continue
 
-            # Trend filter — above 50-MA & 200-MA
+            # Trend filter
             ma50 = float(_sma(close, 50).iloc[-1]) if len(close) >= 50 else 0
             ma200 = float(_sma(close, 200).iloc[-1]) if len(close) >= 200 else 0
-            if ma50 == 0 or ma200 == 0:
+            if ma200 == 0:
                 continue
-            if last_close < ma50 or last_close < ma200:
-                continue
+            if self.cfg.index_mode:
+                # Index mode: only require Close > MA200 (allow pullback below MA50)
+                if last_close < ma200:
+                    continue
+            else:
+                # Full mode: require Close > MA50 AND Close > MA200
+                if ma50 == 0:
+                    continue
+                if last_close < ma50 or last_close < ma200:
+                    continue
 
-            # Volatility / beta filter
+            # Volatility / beta filter (relaxed in index mode: min 0.3)
+            beta_floor = 0.3 if self.cfg.index_mode else self.cfg.min_beta
             stock_ret = close.pct_change().dropna()
             b = _beta(stock_ret, nifty_returns) if nifty_returns is not None else 1.0
-            if b < self.cfg.min_beta:
+            if b < beta_floor:
                 continue
 
             ma20 = float(_sma(close, 20).iloc[-1]) if len(close) >= 20 else last_close

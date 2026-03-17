@@ -46,6 +46,9 @@ def render_screener_page():
         back_key_suffix="from_screener",
     )
 
+    # ── Kite session heartbeat: detect expired access token early ──
+    _check_kite_session_health()
+
     st.subheader("NSE Stock Screener")
     st.caption(
         "Full NSE universe → Price · Liquidity · Trend · Volatility filters → "
@@ -72,6 +75,9 @@ def render_screener_page():
 
     if full_pipeline:
         _run_full_pipeline(screen_cfg, risk_cfg)
+
+    # ── Show latest scheduled scan results (if scheduler has run) ─
+    _show_scheduled_scan_banner()
 
     # ── Show cached results if available ───────────────────────
     _show_cached_results(risk_cfg, auto_place)
@@ -105,6 +111,13 @@ def _render_config():
             )
             scfg.max_workers = st.number_input(
                 "Workers", value=8, min_value=1, max_value=16, key="scr_workers"
+            )
+            scfg.index_mode = st.checkbox(
+                "Index mode (relaxed filters for NIFTY50/Next50)",
+                value=True,
+                key="scr_index_mode",
+                help="Lowers beta floor to 0.3, allows pullback below MA50, "
+                     "reduces volume threshold. Recommended for blue-chip universe.",
             )
 
     with col_method:
@@ -184,6 +197,62 @@ def _start_kite_session_inline():
     except Exception as exc:
         logger.error("Inline Kite auth failed: %s", exc)
         st.error(f"Kite authentication failed: {exc}")
+
+
+def _check_kite_session_health():
+    """Proactively detect expired Kite access tokens.
+
+    Called on every page render. If `kite` is in session_state but the
+    token has expired, clear it and show a re-auth banner so the user
+    doesn't discover the failure only at order-placement time.
+    """
+    import time as _time
+
+    kite = st.session_state.get("kite")
+    if kite is None:
+        return
+
+    # Throttle: only check once every 5 minutes
+    last_check = st.session_state.get("_kite_heartbeat_ts", 0)
+    now = _time.time()
+    if now - last_check < 300:
+        return
+    st.session_state["_kite_heartbeat_ts"] = now
+
+    try:
+        kite.profile()
+    except Exception:
+        # Session expired — remove stale reference
+        st.session_state.pop("kite", None)
+        st.session_state.pop("kite_session_started", None)
+        st.warning(
+            "Kite session has expired. Please re-authenticate to place orders.",
+            icon="🔒",
+        )
+        if st.button("Re-authenticate Kite", key="kite_reauth_heartbeat", type="primary"):
+            _start_kite_session_inline()
+
+
+def _show_scheduled_scan_banner():
+    """Show a compact info box if the background scheduler has cached results."""
+    try:
+        from scheduler import get_latest_run
+        latest = get_latest_run()
+        if latest is None:
+            return
+        ts = latest.get("timestamp", "")
+        buy = latest.get("buy_signals", 0)
+        sell = latest.get("sell_signals", 0)
+        run_type = latest.get("run_type", "")
+        if buy > 0 or sell > 0:
+            st.info(
+                f"**Scheduled {run_type} scan** ({ts[:16]}): "
+                f"**{buy}** BUY · **{sell}** SELL signals detected. "
+                "Run the pipeline below to review and place orders.",
+                icon="📡",
+            )
+    except Exception:
+        pass  # scheduler module may not be available
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -551,16 +620,33 @@ def _render_verdict_results(verdicts, risk_cfg, auto_place: bool):
         st.success(f"**{len(buy_verdicts)} BUY signals**: {', '.join(buy_syms)}")
 
         kite = st.session_state.get("kite")
+        strong_buy_count = sum(1 for v in buy_verdicts if v.classification == "STRONG_BUY")
+
         if kite is None:
-            auth_c1, auth_c2 = st.columns([4, 1])
-            auth_c1.markdown(
-                '<span style="font-size:0.78rem; color:#1e40af; background:#dbeafe; '
-                'padding:0.2rem 0.6rem; border-radius:6px;">'
-                'ℹ️ Kite not authenticated — orders will be dry-run only.</span>',
-                unsafe_allow_html=True,
-            )
-            if auth_c2.button("Authenticate Kite", key="verdict_kite_auth", type="primary"):
-                _start_kite_session_inline()
+            # Proactive 2FA prompt — prominent when STRONG_BUY exists
+            if strong_buy_count > 0:
+                st.error(
+                    f"**{strong_buy_count} STRONG_BUY signal(s) detected** — "
+                    "authenticate Kite now to place live orders!",
+                    icon="🔑",
+                )
+                if st.button(
+                    "🔑 Authenticate Kite & Place Orders",
+                    key="proactive_kite_auth",
+                    type="primary",
+                    use_container_width=True,
+                ):
+                    _start_kite_session_inline()
+            else:
+                auth_c1, auth_c2 = st.columns([4, 1])
+                auth_c1.markdown(
+                    '<span style="font-size:0.78rem; color:#1e40af; background:#dbeafe; '
+                    'padding:0.2rem 0.6rem; border-radius:6px;">'
+                    'ℹ️ Kite not authenticated — orders will be dry-run only.</span>',
+                    unsafe_allow_html=True,
+                )
+                if auth_c2.button("Authenticate Kite", key="verdict_kite_auth", type="primary"):
+                    _start_kite_session_inline()
 
         # Two-step confirmation for order placement
         if auto_place and kite is not None:
@@ -692,7 +778,7 @@ def _execute_buy_verdicts(verdicts, risk_cfg):
 
 def _render_sell_exit_section(sell_verdicts, kite):
     """Show SELL/STRONG_SELL signals matched against current holdings."""
-    from kite_connect.trading.order_service import get_holdings, place_order
+    from kite_connect.trading.order_service import get_holdings
 
     sell_syms = {
         v.ticker.replace(".NS", "").replace(".BO", ""): v
@@ -718,8 +804,17 @@ def _render_sell_exit_section(sell_verdicts, kite):
     if not matching:
         return  # No SELL signals match current holdings
 
+    strong_sell_count = sum(1 for m in matching if m["verdict"] == "STRONG_SELL")
+
     st.markdown("---")
-    st.warning(f"**{len(matching)} SELL signals** match your holdings:")
+    if strong_sell_count > 0:
+        st.error(
+            f"**{strong_sell_count} STRONG_SELL** + "
+            f"{len(matching) - strong_sell_count} SELL signals match your holdings:",
+            icon="🔴",
+        )
+    else:
+        st.warning(f"**{len(matching)} SELL signals** match your holdings:")
     sell_df = pd.DataFrame(matching)
     st.dataframe(sell_df, hide_index=True)
 
@@ -730,20 +825,19 @@ def _render_sell_exit_section(sell_verdicts, kite):
     )
     if confirm_sell:
         if st.button(f"Exit {len(matching)} Positions", type="primary", key="sell_exit_btn"):
-            for row in matching:
-                resp = place_order(
-                    kite=kite,
-                    symbol=row["symbol"],
-                    exchange="NSE",
-                    transaction_type="SELL",
-                    quantity=row["quantity"],
-                    order_type="MARKET",
-                    product="CNC",
-                )
-                if resp.get("success"):
-                    st.success(f"SELL {row['symbol']} × {row['quantity']} — ID: {resp['order_id']}")
-                else:
-                    st.error(f"SELL {row['symbol']} failed: {resp.get('error')}")
+            from kite_connect.trading.auto_executor import AutoExecutor
+            executor = AutoExecutor(kite=kite, auto_place=True)
+            with st.spinner(f"Placing {len(matching)} SELL orders …"):
+                results = executor.run_sell_pipeline(sell_verdicts)
+            placed = sum(1 for r in results if r.success)
+            failed = sum(1 for r in results if not r.success)
+            if placed:
+                st.success(f"{placed} SELL orders placed successfully")
+            if failed:
+                st.error(f"{failed} SELL orders failed")
+            if results:
+                order_rows = [r.to_dict() for r in results]
+                st.dataframe(pd.DataFrame(order_rows), hide_index=True)
 
 
 # ═══════════════════════════════════════════════════════════════

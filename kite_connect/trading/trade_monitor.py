@@ -206,7 +206,29 @@ class TradeMonitor:
                 if trail_event:
                     events.append(trail_event)
 
+        # ── Desktop notifications for SL/TP events ────────────
+        self._dispatch_notifications(events)
+
         return events
+
+    @staticmethod
+    def _dispatch_notifications(events: List[Dict]):
+        """Send desktop notifications for important trade events."""
+        if not events:
+            return
+        try:
+            from notifications.manager import NotificationManager
+            nm = NotificationManager()
+            for ev in events:
+                etype = ev.get("type", "")
+                if etype in ("SL_TRIGGERED", "TP_FILLED", "TRAILING_SL_UPDATED"):
+                    nm.notify_sl_tp_event(
+                        etype,
+                        ev.get("symbol", ""),
+                        ev.get("exit_price", ev.get("new_sl", 0)),
+                    )
+        except Exception:
+            pass  # notifications are non-critical
 
     def _place_sl_for_trade(self, trade: MonitoredTrade) -> None:
         """Place a stop-loss order after entry fills."""

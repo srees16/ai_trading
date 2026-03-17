@@ -133,6 +133,67 @@ class NotificationManager:
             )
             self.send_notification(title, message)
 
+    # ── Pipeline / Order event notifications ─────────────────────────
+
+    def notify_pipeline_signals(self, buy_verdicts: list, sell_verdicts: list):
+        """Notify when the screener/scorer pipeline finds actionable signals."""
+        parts = []
+        if buy_verdicts:
+            syms = ", ".join(
+                getattr(v, "ticker", str(v)).replace(".NS", "")
+                for v in buy_verdicts[:5]
+            )
+            parts.append(f"{len(buy_verdicts)} BUY: {syms}")
+        if sell_verdicts:
+            syms = ", ".join(
+                getattr(v, "ticker", str(v)).replace(".NS", "")
+                for v in sell_verdicts[:5]
+            )
+            parts.append(f"{len(sell_verdicts)} SELL: {syms}")
+        if parts:
+            self.send_notification(
+                "Centurion — Signals Detected",
+                " | ".join(parts),
+                duration=15,
+            )
+
+    def notify_order_placed(self, symbol: str, side: str, qty: int,
+                            price: float, order_id: str):
+        """Notify after a Kite order is successfully placed."""
+        self.send_notification(
+            f"{side} Order Placed: {symbol}",
+            f"{side} {symbol} × {qty} @ ₹{price:.2f}\nOrder ID: {order_id}",
+        )
+
+    def notify_order_failed(self, symbol: str, side: str, error: str):
+        """Notify when an order fails."""
+        self.send_notification(
+            f"Order FAILED: {symbol}",
+            f"{side} {symbol} — {error}",
+        )
+
+    def notify_sl_tp_event(self, event_type: str, symbol: str,
+                           exit_price: float = 0):
+        """Notify on SL trigger, TP fill, or trailing SL update."""
+        labels = {
+            "SL_TRIGGERED": "Stop-Loss Hit",
+            "TP_FILLED": "Target Reached",
+            "TRAILING_SL_UPDATED": "Trailing SL Moved Up",
+        }
+        label = labels.get(event_type, event_type)
+        msg = f"{label}: {symbol}"
+        if exit_price > 0:
+            msg += f" @ ₹{exit_price:.2f}"
+        self.send_notification(f"Trade {label}", msg)
+
+    def notify_session_expired(self):
+        """Notify when Kite session has expired."""
+        self.send_notification(
+            "Kite Session Expired",
+            "Re-authenticate to continue placing orders.",
+            duration=30,
+        )
+
     # ── Email helpers ────────────────────────────────────────────────
 
     @staticmethod
