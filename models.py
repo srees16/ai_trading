@@ -111,6 +111,10 @@ class StockMetrics:
     bollinger_lower: Optional[float] = None
     max_drawdown: Optional[float] = None
     current_price: Optional[float] = None
+    adx: Optional[float] = None            # Average Directional Index (trend strength)
+    obv: Optional[float] = None            # On-Balance Volume (latest)
+    obv_sma: Optional[float] = None        # On-Balance Volume smoothed
+    volume_sma_20: Optional[float] = None  # 20-day volume moving average
 
     def __repr__(self) -> str:
         return (

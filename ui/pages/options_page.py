@@ -16,8 +16,7 @@ from ui.components import (
     render_page_header,
     render_footer,
     render_ind_navigation_buttons,
-    render_stock_ticker_ribbon,
-    render_vix_indicator,
+    render_ribbon_and_vix,
 )
 
 logger = logging.getLogger(__name__)
@@ -137,9 +136,7 @@ def render_options_page():
         subtitle="Live Derivative Prices · Option Chains · Index Quotes",
     )
 
-    render_stock_ticker_ribbon(market="IND")
-
-    render_vix_indicator(market="IND")
+    render_ribbon_and_vix(market="IND")
 
     render_ind_navigation_buttons(
         current_page="options",

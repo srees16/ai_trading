@@ -243,7 +243,7 @@ class KiteWebSocketService:
         self._batch_thread.start()
 
         # KiteTicker.connect(threaded=True) spawns its own daemon thread
-        logger.info("Starting Kite WebSocket (tokens=%d)…", len(self._instrument_tokens))
+        logger.info("Starting Kite WebSocket (tokens=%d)", len(self._instrument_tokens))
         self._ticker.connect(threaded=True)
 
         # Dispatch connection event

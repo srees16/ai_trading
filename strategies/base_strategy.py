@@ -90,7 +90,7 @@ class StrategyResult:
     error_message: str = ""
     execution_time: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
-    transaction_cost_pct: float = 0.001  # 0.1% round-trip (IND default)
+    transaction_cost_pct: float = 0.0015  # 0.15% round-trip (NSE: STT + brokerage + GST + stamp)
     
     def to_dict(self) -> dict:
         """

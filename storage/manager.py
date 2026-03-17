@@ -31,8 +31,11 @@ def _get_minio():
 class StorageManager:
     """Manages storage of trading signals to MinIO (with local fallback)."""
 
-    # MinIO object path for the signals file
-    _MINIO_OBJECT = "signals/daily_stock_news.xlsx"
+    @staticmethod
+    def _minio_object_path() -> str:
+        """Return timestamped MinIO object path: signals/YYYYMMDD_HHMMSS/daily_stock_news.xlsx"""
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        return f"signals/{ts}/daily_stock_news.xlsx"
 
     def __init__(self, output_file: str = None):
         """
@@ -81,22 +84,27 @@ class StorageManager:
         try:
             minio.ensure_bucket_ready()
             bucket = minio._config.bucket_name
-            obj_name = self._MINIO_OBJECT
+            obj_name = self._minio_object_path()
             df_to_save = new_df
 
             # Append: download existing file, merge, dedup
             if append:
                 try:
-                    resp = minio.client.get_object(bucket, obj_name)
-                    existing_df = pd.read_excel(io.BytesIO(resp.read()))
-                    resp.close()
-                    resp.release_conn()
-                    combined = pd.concat([existing_df, new_df], ignore_index=True)
-                    combined = combined.drop_duplicates(
-                        subset=["ticker", "source", "title"], keep="last",
-                    )
-                    df_to_save = combined
-                    logger.info("Appended %d signals to existing MinIO object", len(new_df))
+                    # Find the latest existing signals file
+                    objects = list(minio.client.list_objects(bucket, prefix="signals/", recursive=True))
+                    xlsx_objects = [o for o in objects if o.object_name.endswith(".xlsx")]
+                    if xlsx_objects:
+                        latest = max(xlsx_objects, key=lambda o: o.last_modified)
+                        resp = minio.client.get_object(bucket, latest.object_name)
+                        existing_df = pd.read_excel(io.BytesIO(resp.read()))
+                        resp.close()
+                        resp.release_conn()
+                        combined = pd.concat([existing_df, new_df], ignore_index=True)
+                        combined = combined.drop_duplicates(
+                            subset=["ticker", "source", "title"], keep="last",
+                        )
+                        df_to_save = combined
+                        logger.info("Appended %d signals to existing MinIO object", len(new_df))
                 except Exception:
                     # Object doesn't exist yet — first write
                     logger.info("No existing signals in MinIO — creating new object")

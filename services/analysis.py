@@ -216,27 +216,6 @@ async def _execute_analysis(
     if progress_callback:
         progress_callback(55, "\u2705 Macro indicators loaded")
 
-    # ── Step 2c: Google search public sentiment ──────────────────────
-    if progress_callback:
-        progress_callback(56, " Analyzing public sentiment")
-
-    try:
-        unique_tickers_for_gs = list({item.ticker for item in analyzed_news})
-        public_sentiments = await system.broader_sentiment.analyze_multiple(
-            unique_tickers_for_gs
-        )
-        system.decision_engine.set_public_sentiments(public_sentiments)
-        for t, ps in public_sentiments.items():
-            logger.info(
-                "Public sentiment %s: %s (%.2f, %d pages)",
-                t, ps.sentiment_label, ps.avg_sentiment_score, ps.results_analyzed,
-            )
-    except Exception as exc:
-        logger.warning("Google public sentiment unavailable: %s", exc)
-
-    if progress_callback:
-        progress_callback(58, "\u2705 Public sentiment analyzed")
-    
     # ── Step 3: Metrics + signals ────────────────────────────────────
     # (Spinner already shows status; skip redundant info notification)
     if progress_callback:

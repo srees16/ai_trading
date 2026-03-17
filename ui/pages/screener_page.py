@@ -19,6 +19,7 @@ from ui.components import (
     render_header,
     render_footer,
     render_ind_navigation_buttons,
+    render_ribbon_and_vix,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ _COLOUR_MAP = {
 def render_screener_page():
     """Entry point for the NSE Screener & Auto-Trade page."""
     render_header()
+    render_ribbon_and_vix(market="IND")
     render_ind_navigation_buttons(
         current_page="screener",
         back_key_suffix="from_screener",
@@ -54,12 +56,22 @@ def render_screener_page():
     # ── Sidebar-style config in expanders ──────────────────────
     screen_cfg, risk_cfg, auto_place = _render_config()
 
-    # ── Run button ─────────────────────────────────────────────
-    run_clicked = st.button("Screen", type="primary", key="screener_run")
+    # ── Run buttons ─────────────────────────────────────────────
+    btn_col1, btn_col2 = st.columns(2)
+    run_clicked = btn_col1.button("Screen", type="primary", key="screener_run")
+    full_pipeline = btn_col2.button(
+        "Run Full Pipeline",
+        type="secondary",
+        key="screener_full_pipeline",
+        help="Screen → Verdict → Auto-place BUY orders (requires Kite auth)",
+    )
 
     # ── Execution ──────────────────────────────────────────────
     if run_clicked:
         _run_pipeline(screen_cfg, risk_cfg)
+
+    if full_pipeline:
+        _run_full_pipeline(screen_cfg, risk_cfg)
 
     # ── Show cached results if available ───────────────────────
     _show_cached_results(risk_cfg, auto_place)
@@ -131,21 +143,47 @@ def _render_config():
                 key="risk_sl",
             )
 
-    # Auth status warning (shown before checkbox so user knows upfront)
-    if st.session_state.get("kite") is None:
-        st.warning(
-            "Kite session not authenticated - orders will be dry-run only. "
-            "Visit **Fly Kite** to authenticate.",
-            icon="⚠️",
-        )
-
     auto_place = st.checkbox(
         "Enable to place live orders (requires Kite auth)",
         value=False,
         key="screener_auto_place",
     )
 
+    # Auth status warning (shown after checkbox)
+    if st.session_state.get("kite") is None:
+        auth_col1, auth_col2 = st.columns([4, 1])
+        auth_col1.markdown(
+            '<span style="font-size:0.78rem; color:#92400e; background:#fef3c7; '
+            'padding:0.2rem 0.6rem; border-radius:6px;">'
+            '⚠️ Kite session not authenticated — orders will be dry-run only.</span>',
+            unsafe_allow_html=True,
+        )
+        if auth_col2.button("Start Kite Session", key="screener_kite_auth", type="primary"):
+            _start_kite_session_inline()
+
     return scfg, rcfg, auto_place
+
+
+# ═══════════════════════════════════════════════════════════════
+# Inline Kite authentication
+# ═══════════════════════════════════════════════════════════════
+
+def _start_kite_session_inline():
+    """Trigger Kite Connect login flow and store session in session_state."""
+    try:
+        with st.spinner("Starting Kite session — complete TOTP in the browser …"):
+            from kite_connect.auth.kite_session import create_kite_session
+            kite = create_kite_session()
+            if kite is not None:
+                st.session_state["kite"] = kite
+                st.session_state["kite_session_started"] = True
+                st.success("Kite session authenticated successfully")
+                st.rerun()
+            else:
+                st.error("Kite session creation failed — check logs")
+    except Exception as exc:
+        logger.error("Inline Kite auth failed: %s", exc)
+        st.error(f"Kite authentication failed: {exc}")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -164,23 +202,15 @@ def _run_pipeline(screen_cfg, risk_cfg):
         auto_place=False,  # Never place orders at screening stage
     )
 
-    progress_area = st.empty()
-    status_messages: List[str] = []
-
-    def _progress(msg: str):
-        status_messages.append(msg)
-        progress_area.info("\n\n".join(status_messages[-5:]))
-
     with st.spinner("Running NSE screener pipeline …"):
-        report = executor.run(progress_callback=_progress)
-
-    progress_area.empty()
+        report = executor.run()
 
     # Persist to session for re-display
     st.session_state["screener_report"] = report
     st.session_state["screener_screened_df"] = report.screened_df
     st.session_state["screener_plans"] = report.trade_plans
     st.session_state["screener_orders"] = report.order_results
+    st.session_state["screener_screen_cfg"] = screen_cfg  # save for order execution
     # Clear stale verdict results from previous runs
     st.session_state.pop(f"{_PFX}results", None)
 
@@ -191,7 +221,104 @@ def _run_pipeline(screen_cfg, risk_cfg):
     m3.metric("Trade Plans", report.plans_count)
     m4.metric("Orders Placed", report.orders_placed)
 
-    st.success("Screening complete — see results below")
+
+def _run_full_pipeline(screen_cfg, risk_cfg):
+    """One-click: Screen → IntegratedScorer Verdict → Place BUY orders."""
+    from kite_connect.trading.auto_executor import AutoExecutor
+
+    kite = st.session_state.get("kite")
+    auto_place = kite is not None
+
+    # Step 1: Screen
+    with st.spinner("Step 1/3 — Running NSE screener …"):
+        executor = AutoExecutor(
+            kite=kite,
+            screener_cfg=screen_cfg,
+            risk_cfg=risk_cfg,
+            auto_place=False,
+        )
+        report = executor.run()
+
+    st.session_state["screener_report"] = report
+    st.session_state["screener_screened_df"] = report.screened_df
+    st.session_state["screener_plans"] = report.trade_plans
+    st.session_state["screener_screen_cfg"] = screen_cfg
+
+    if report.screened_df.empty:
+        st.warning("No stocks passed screening — pipeline stopped.")
+        return
+
+    # Step 2: Verdict
+    ns_tickers = [f"{s}.NS" for s in report.screened_df["symbol"].tolist()]
+    st.session_state["screened_tickers_ns"] = ns_tickers
+
+    from services.integrated_scorer import IntegratedScorer
+    from datetime import date, timedelta
+
+    end_dt = date.today()
+    start_dt = end_dt - timedelta(days=365)
+
+    with st.spinner(f"Step 2/3 — Running IntegratedScorer on {len(ns_tickers)} stocks …"):
+        scorer = IntegratedScorer()
+        verdicts = scorer.evaluate(
+            tickers=ns_tickers, market="IND",
+            date_range=(str(start_dt), str(end_dt)),
+        )
+
+    st.session_state[f"{_PFX}results"] = verdicts
+
+    buy_verdicts = [v for v in verdicts if v.classification in ("BUY", "STRONG_BUY")]
+    if not buy_verdicts:
+        st.info(
+            f"Screened {report.screened_count} stocks, "
+            f"but no BUY/STRONG_BUY verdicts — no orders to place."
+        )
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Screened", report.screened_count)
+        m2.metric("Verdicts", len(verdicts))
+        m3.metric("BUY Signals", 0)
+        return
+
+    buy_syms = [v.ticker.replace(".NS", "").replace(".BO", "") for v in buy_verdicts]
+    st.success(f"**{len(buy_verdicts)} BUY signals**: {', '.join(buy_syms)}")
+
+    # Step 3: Place orders (if Kite authenticated)
+    if not auto_place:
+        st.warning("Kite not authenticated — showing dry-run results only.")
+
+    signal_dict = {
+        v.ticker.replace(".NS", "").replace(".BO", ""): v.classification
+        for v in verdicts
+    }
+    pre_screened = report.screened_df[
+        report.screened_df["symbol"].isin(buy_syms)
+    ].copy()
+
+    with st.spinner(f"Step 3/3 — {'Placing' if auto_place else 'Dry-running'} {len(buy_syms)} orders …"):
+        order_executor = AutoExecutor(
+            kite=kite,
+            screener_cfg=screen_cfg,
+            risk_cfg=risk_cfg,
+            auto_place=auto_place,
+        )
+        order_report = order_executor.run(
+            symbols=buy_syms,
+            signal_verdicts=signal_dict,
+            pre_screened_df=pre_screened,
+        )
+
+    st.session_state["screener_orders"] = order_report.order_results
+    st.session_state["screener_plans"] = order_report.trade_plans
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Screened", report.screened_count)
+    m2.metric("BUY Signals", len(buy_verdicts))
+    m3.metric("Orders Placed", order_report.orders_placed)
+    m4.metric("Failed", order_report.orders_failed)
+
+    if order_report.order_results:
+        order_rows = [o.to_dict() for o in order_report.order_results]
+        st.dataframe(pd.DataFrame(order_rows), hide_index=True)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -232,7 +359,7 @@ def _show_cached_results(risk_cfg, auto_place: bool):
         # Allow CSV download
         csv = screened_df[cols_present].to_csv(index=False)
         st.download_button(
-            "Download screened stocks CSV",
+            "Download Screened Stocks",
             csv,
             file_name="nse_screened_stocks.csv",
             mime="text/csv",
@@ -252,7 +379,7 @@ def _show_cached_results(risk_cfg, auto_place: bool):
         st.dataframe(plan_df, width='stretch')
 
         st.download_button(
-            "Download trade plans CSV",
+            "Download Trade Plans",
             plan_df.to_csv(index=False),
             file_name="nse_trade_plans.csv",
             mime="text/csv",
@@ -270,6 +397,9 @@ def _show_cached_results(risk_cfg, auto_place: bool):
     if st.session_state.get("screened_tickers_ns"):
         st.markdown("---")
         _render_verdict_section(risk_cfg, auto_place)
+
+    # ── Trade monitor: poll SL/TP lifecycle ────────────────────
+    _render_trade_monitor()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -289,9 +419,8 @@ def _render_verdict_section(risk_cfg, auto_place: bool):
     with col1:
         skip_options = st.multiselect(
             "Skip layers",
-            options=["core", "strategy", "ml_features", "robustness", "rag"],
-            default=["rag"],
-            help="RAG is skipped by default (LLM calls add latency)",
+            options=["core", "strategy", "ml_features", "robustness"],
+            default=[],
             key=f"{_PFX}skip_layers",
         )
 
@@ -305,15 +434,14 @@ def _render_verdict_section(risk_cfg, auto_place: bool):
         )
 
     with st.expander("Layer weights", expanded=False):
-        w_col1, w_col2, w_col3, w_col4, w_col5 = st.columns(5)
-        w_core = w_col1.slider("Core", 0, 100, 30, key=f"{_PFX}w_core")
+        w_col1, w_col2, w_col3, w_col4 = st.columns(4)
+        w_core = w_col1.slider("Core", 0, 100, 35, key=f"{_PFX}w_core")
         w_strat = w_col2.slider("Strategy", 0, 100, 25, key=f"{_PFX}w_strat")
         w_ml = w_col3.slider("ML Features", 0, 100, 15, key=f"{_PFX}w_ml")
-        w_robust = w_col4.slider("Robustness", 0, 100, 20, key=f"{_PFX}w_robust")
-        w_rag = w_col5.slider("RAG", 0, 100, 0, key=f"{_PFX}w_rag")
+        w_robust = w_col4.slider("Robustness", 0, 100, 25, key=f"{_PFX}w_robust")
 
     if st.button("Run Verdict", type="primary", key=f"{_PFX}run_btn"):
-        total_w = w_core + w_strat + w_ml + w_robust + w_rag
+        total_w = w_core + w_strat + w_ml + w_robust
         if total_w == 0:
             total_w = 1
         weights = {
@@ -321,7 +449,6 @@ def _render_verdict_section(risk_cfg, auto_place: bool):
             "strategy": w_strat / total_w,
             "ml_features": w_ml / total_w,
             "robustness": w_robust / total_w,
-            "rag": w_rag / total_w,
         }
         _run_batched_verdict(ns_tickers, weights, skip_options, batch_size)
         st.rerun()
@@ -399,7 +526,6 @@ def _render_verdict_results(verdicts, risk_cfg, auto_place: bool):
             "Strategy": _fmt_score(v.layer_scores.get("strategy")),
             "ML": _fmt_score(v.layer_scores.get("ml_features")),
             "Robustness": _fmt_score(v.layer_scores.get("robustness")),
-            "RAG": _fmt_score(v.layer_scores.get("rag")),
         })
 
     df = pd.DataFrame(rows)
@@ -426,8 +552,15 @@ def _render_verdict_results(verdicts, risk_cfg, auto_place: bool):
 
         kite = st.session_state.get("kite")
         if kite is None:
-            st.info("Kite session not authenticated — orders will be dry-run only. "
-                    "Visit **Fly Kite** to authenticate.", icon="ℹ️")
+            auth_c1, auth_c2 = st.columns([4, 1])
+            auth_c1.markdown(
+                '<span style="font-size:0.78rem; color:#1e40af; background:#dbeafe; '
+                'padding:0.2rem 0.6rem; border-radius:6px;">'
+                'ℹ️ Kite not authenticated — orders will be dry-run only.</span>',
+                unsafe_allow_html=True,
+            )
+            if auth_c2.button("Authenticate Kite", key="verdict_kite_auth", type="primary"):
+                _start_kite_session_inline()
 
         # Two-step confirmation for order placement
         if auto_place and kite is not None:
@@ -456,6 +589,16 @@ def _render_verdict_results(verdicts, risk_cfg, auto_place: bool):
             ):
                 _execute_buy_verdicts(verdicts, risk_cfg)
 
+    # ── SELL signal exit section ─────────────────────────────
+    sell_verdicts = [
+        v for v in verdicts
+        if v.classification in ("SELL", "STRONG_SELL")
+    ]
+    if sell_verdicts:
+        kite = st.session_state.get("kite")
+        if kite is not None:
+            _render_sell_exit_section(sell_verdicts, kite)
+
     # Per-ticker expandable breakdown
     for v in verdicts:
         with st.expander(
@@ -467,7 +610,7 @@ def _render_verdict_results(verdicts, risk_cfg, auto_place: bool):
             if radar_bytes:
                 st.image(radar_bytes, width=400)
 
-            for layer_name in ("core", "strategy", "ml_features", "robustness", "rag"):
+            for layer_name in ("core", "strategy", "ml_features", "robustness"):
                 details = v.layer_details.get(layer_name, {})
                 score = v.layer_scores.get(layer_name)
                 header = f"**{layer_name.replace('_', ' ').title()}**"
@@ -511,9 +654,19 @@ def _execute_buy_verdicts(verdicts, risk_cfg):
     try:
         from kite_connect.trading.auto_executor import AutoExecutor
 
+        # Retrieve saved config + pre-screened data (H1+H2 fix)
+        screen_cfg = st.session_state.get("screener_screen_cfg")
+        screened_df = st.session_state.get("screener_screened_df")
+        # Filter pre-screened data to only BUY symbols
+        if screened_df is not None and not screened_df.empty:
+            pre_screened = screened_df[screened_df["symbol"].isin(buy_symbols)].copy()
+        else:
+            pre_screened = None
+
         auto_place = kite is not None
         executor = AutoExecutor(
             kite=kite,
+            screener_cfg=screen_cfg,
             risk_cfg=risk_cfg,
             auto_place=auto_place,
         )
@@ -521,6 +674,7 @@ def _execute_buy_verdicts(verdicts, risk_cfg):
             report = executor.run(
                 symbols=buy_symbols,
                 signal_verdicts=signal_dict,
+                pre_screened_df=pre_screened,
             )
         st.success(
             f"Execution complete — "
@@ -534,6 +688,142 @@ def _execute_buy_verdicts(verdicts, risk_cfg):
     except Exception as exc:
         logger.exception("Order execution failed")
         st.error(f"Order execution error: {exc}")
+
+
+def _render_sell_exit_section(sell_verdicts, kite):
+    """Show SELL/STRONG_SELL signals matched against current holdings."""
+    from kite_connect.trading.order_service import get_holdings, place_order
+
+    sell_syms = {
+        v.ticker.replace(".NS", "").replace(".BO", ""): v
+        for v in sell_verdicts
+    }
+
+    # Cross-reference with holdings
+    holdings = get_holdings(kite)
+    matching = []
+    for h in holdings:
+        sym = h.get("tradingsymbol", "")
+        if sym in sell_syms and float(h.get("quantity", 0)) > 0:
+            matching.append({
+                "symbol": sym,
+                "quantity": int(h.get("quantity", 0)),
+                "avg_price": float(h.get("average_price", 0)),
+                "ltp": float(h.get("last_price", 0)),
+                "pnl": float(h.get("pnl", 0)),
+                "verdict": sell_syms[sym].classification,
+                "score": sell_syms[sym].final_score,
+            })
+
+    if not matching:
+        return  # No SELL signals match current holdings
+
+    st.markdown("---")
+    st.warning(f"**{len(matching)} SELL signals** match your holdings:")
+    sell_df = pd.DataFrame(matching)
+    st.dataframe(sell_df, hide_index=True)
+
+    confirm_sell = st.checkbox(
+        f"I confirm: place {len(matching)} SELL orders to exit positions",
+        value=False,
+        key="confirm_sell_exit",
+    )
+    if confirm_sell:
+        if st.button(f"Exit {len(matching)} Positions", type="primary", key="sell_exit_btn"):
+            for row in matching:
+                resp = place_order(
+                    kite=kite,
+                    symbol=row["symbol"],
+                    exchange="NSE",
+                    transaction_type="SELL",
+                    quantity=row["quantity"],
+                    order_type="MARKET",
+                    product="CNC",
+                )
+                if resp.get("success"):
+                    st.success(f"SELL {row['symbol']} × {row['quantity']} — ID: {resp['order_id']}")
+                else:
+                    st.error(f"SELL {row['symbol']} failed: {resp.get('error')}")
+
+
+# ═══════════════════════════════════════════════════════════════
+# Trade Monitor — poll SL/TP lifecycle (C1 fix)
+# ═══════════════════════════════════════════════════════════════
+
+def _render_trade_monitor():
+    """Show trade-monitor status and auto-poll for SL/TP events."""
+    monitor = st.session_state.get("trade_monitor")
+    if monitor is None or not monitor.all_trades:
+        return
+
+    st.markdown("---")
+    st.subheader("Trade Monitor")
+
+    # Auto-poll on every page render (cheap Kite order-book call)
+    events = monitor.poll()
+
+    if events:
+        for ev in events:
+            ev_type = ev.get("type", "")
+            sym = ev.get("symbol", "")
+            if ev_type == "ENTRY_FILLED":
+                st.success(
+                    f"Entry filled: {sym} @ "
+                    f"\u20b9{ev.get('fill_price', 0):.2f}"
+                )
+            elif ev_type == "SL_TRIGGERED":
+                st.error(
+                    f"Stop-loss hit: {sym} @ "
+                    f"\u20b9{ev.get('exit_price', 0):.2f}"
+                )
+            elif ev_type == "TP_FILLED":
+                st.success(
+                    f"Target hit: {sym} @ "
+                    f"\u20b9{ev.get('exit_price', 0):.2f}"
+                )
+            elif ev_type == "ENTRY_REJECTED":
+                st.warning(
+                    f"Entry rejected: {sym} — {ev.get('reason', '')}"
+                )
+            elif ev_type == "TP_REPLACED":
+                st.info(
+                    f"TP re-placed: {sym} order {ev.get('new_order_id', '')}"
+                )
+            elif ev_type == "ENTRY_CANCELLED_STALE":
+                st.warning(
+                    f"Stale entry cancelled: {sym} "
+                    f"(unfilled for {ev.get('age_minutes', '?')} min)"
+                )
+
+    summary = monitor.summary()
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Total Registered", summary["total_registered"])
+    m2.metric("Active", summary["active"])
+    m3.metric("Closed", summary["closed"])
+
+    # Active trades table
+    active = monitor.active_trades
+    if active:
+        rows = []
+        for t in active:
+            rows.append({
+                "Symbol": t.symbol,
+                "Qty": t.quantity,
+                "Entry": f"\u20b9{t.entry_price:.2f}",
+                "SL": f"\u20b9{t.stop_loss:.2f}",
+                "TP": f"\u20b9{t.target_price:.2f}",
+                "SL Order": t.sl_order_id or "Pending",
+                "TP Order": t.tp_order_id or "Pending",
+            })
+        st.dataframe(pd.DataFrame(rows), hide_index=True)
+
+    # Pending (unfilled) entries
+    pending = [t for t in monitor.all_trades if not t.entry_filled and not t.closed]
+    if pending:
+        st.caption(f"{len(pending)} entry orders awaiting fill")
+
+    if st.button("Refresh Monitor", key="poll_monitor_btn"):
+        st.rerun()
 
 
 # ═══════════════════════════════════════════════════════════════

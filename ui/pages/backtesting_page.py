@@ -15,7 +15,7 @@ import streamlit as st
 
 from config import Config
 from trading_strategies import list_strategies
-from ui.components import render_page_header, render_footer, render_navigation_buttons, render_ind_navigation_buttons, render_stock_ticker_ribbon, render_vix_indicator, render_no_data_warning
+from ui.components import render_page_header, render_footer, render_navigation_buttons, render_ind_navigation_buttons, render_ribbon_and_vix, render_no_data_warning
 
 logger = logging.getLogger(__name__)
 
@@ -111,18 +111,16 @@ def render_backtesting_page():
 
     # Navigation buttons
     if market == 'IND':
-        render_stock_ticker_ribbon(market="IND")
-        render_vix_indicator(market="IND")
+        render_ribbon_and_vix(market="IND")
         render_ind_navigation_buttons(current_page='backtesting', back_key_suffix='from_backtest')
     else:
-        render_stock_ticker_ribbon(market="US")
-        render_vix_indicator(market="US")
+        render_ribbon_and_vix(market="US")
         render_navigation_buttons(
             current_page='backtesting',
             back_key_suffix='from_backtest'
         )
     
-    st.markdown("---")
+    st.markdown('<hr class="nav-sep">', unsafe_allow_html=True)
 
     # Guard: if no analysis has been run yet, show a helpful warning
     if not st.session_state.get('analysis_complete', False):

@@ -32,7 +32,7 @@ from core.config import (
     API_KEY, LOGIN_URL, KITE_APP_FILE,
     ZERODHA_USER_ID, ZERODHA_PASSWORD,
 )
-from core.selenium_service import get_driver
+from core.selenium_service import get_driver, show_driver
 
 captured_token = None
 
@@ -50,13 +50,7 @@ class CallbackHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'text/html')
             self.end_headers()
-            html = f"""
-            <html><body style="font-family:Arial; text-align:center; margin-top:80px;">
-                <h2>Request Token Captured!</h2>
-                <p><b>Token:</b> <code>{captured_token}</code></p>
-                <p style="color:green;">You can close this tab now.</p>
-            </body></html>
-            """
+            html = "<html><body><script>window.close();</script></body></html>"
             self.wfile.write(html.encode())
         else:
             self.send_response(400)
@@ -121,7 +115,7 @@ def fetch_request_token():
 
         print("  Launching browser with auto-fill via Selenium...\n")
 
-        driver = get_driver()
+        driver = get_driver(hidden=True)
         selenium_driver = driver
 
         # Navigate to login page
@@ -140,7 +134,6 @@ def fetch_request_token():
         password_field.send_keys(ZERODHA_PASSWORD)
 
         print(f"  [OK] Auto-filled User ID and Password")
-        print("  Waiting for you to complete TOTP/2FA and authorize...\n")
 
         # Click the login/submit button
         try:
@@ -149,6 +142,23 @@ def fetch_request_token():
             print("  [OK] Clicked Login button")
         except Exception:
             print("  [!] Could not auto-click Login button - please click it manually")
+
+        # Wait for the TOTP / 2FA input to appear, then show browser
+        # First wait for the login form's password field to go stale (page transition)
+        try:
+            WebDriverWait(driver, 10).until(EC.staleness_of(password_field))
+            # Now wait for the new TOTP input to appear on the 2FA page
+            WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR,
+                    'input[type="text"], input[type="number"], input[type="tel"]'))
+            )
+            print("  [OK] 2FA / TOTP screen detected")
+        except Exception:
+            print("  [!] Could not detect TOTP field - showing browser anyway")
+
+        # Bring the browser window on-screen for the user to enter TOTP
+        show_driver(driver)
+        print("  Waiting for you to complete TOTP/2FA and authorize...\n")
 
         print("  Waiting for login redirect... (Ctrl+C to cancel)\n")
 
@@ -208,10 +218,8 @@ def fetch_request_token():
         # Close the fallback browser
         if browser_proc is not None:
             try:
-                time.sleep(1)
                 browser_proc.kill()
                 browser_proc.wait(timeout=5)
-                print("  [OK] Browser window closed.")
             except Exception:
                 pass
             if temp_profile and os.path.isdir(temp_profile):
@@ -235,12 +243,10 @@ def fetch_request_token():
         httpd.server_close()
 
     finally:
-        # Close Selenium browser after token is captured
+        # Close Selenium browser immediately after token is captured
         if selenium_driver is not None:
             try:
-                time.sleep(1)
                 selenium_driver.quit()
-                print("  [OK] Browser window closed.")
             except Exception:
                 pass
 

@@ -127,6 +127,7 @@ class AutoExecutor:
         symbols: Optional[List[str]] = None,
         progress_callback=None,
         signal_verdicts: Optional[Dict[str, str]] = None,
+        pre_screened_df: Optional[pd.DataFrame] = None,
     ) -> ExecutionReport:
         """
         Execute the full pipeline.
@@ -143,6 +144,9 @@ class AutoExecutor:
             pipeline (e.g. ``{"RELIANCE": "STRONG_BUY", "TCS": "HOLD"}``).
             When provided, only symbols with BUY / STRONG_BUY tags
             are allowed through to execution (strict filter).
+        pre_screened_df : pd.DataFrame | None
+            Already-screened DataFrame from a prior pipeline run.
+            When provided, the screening step is skipped entirely.
 
         Returns
         -------
@@ -151,23 +155,36 @@ class AutoExecutor:
         _cb = progress_callback or (lambda m: None)
         report = ExecutionReport(timestamp=datetime.now().isoformat())
 
-        # ── 1.  Universe ───────────────────────────────────────
-        if symbols is None:
-            _cb("Downloading NIFTY50 & NSE NEXT50")
-            symbols = get_nse_universe(self.kite)
-        report.universe_size = len(symbols)
-        _cb(f"Universe: {len(symbols)} symbols")
+        # ── Fast-path: use pre-screened data (skip re-download) ─
+        if pre_screened_df is not None and not pre_screened_df.empty:
+            screened_df = pre_screened_df
+            report.universe_size = len(screened_df)
+            report.screened_count = len(screened_df)
+            _cb(f"Using pre-screened data: {len(screened_df)} stocks")
+        else:
+            # ── 1.  Universe ───────────────────────────────────
+            if symbols is None:
+                _cb("Downloading NIFTY50 & NSE NEXT50")
+                symbols = get_nse_universe(self.kite)
+            report.universe_size = len(symbols)
+            _cb(f"Universe: {len(symbols)} symbols")
 
-        # ── 2.  Screen ─────────────────────────────────────────
-        screened_df = self.screener.screen(symbols, progress_callback=_cb)
+            # ── 2.  Screen ─────────────────────────────────────
+            screened_df = self.screener.screen(symbols, progress_callback=_cb)
+            report.screened_count = len(screened_df)
+
+            if screened_df.empty:
+                _cb("No stocks passed screening criteria")
+                report.screened_df = screened_df
+                return report
+
         report.screened_df = screened_df
-        report.screened_count = len(screened_df)
-
-        if screened_df.empty:
-            _cb("No stocks passed screening criteria")
-            return report
 
         # ── 2b. Signal→Executor bridge: strict BUY-only filter ─
+        # If no verdicts provided, auto-generate them via IntegratedScorer
+        if signal_verdicts is None and not screened_df.empty:
+            signal_verdicts = self._auto_evaluate_verdicts(screened_df, _cb)
+
         if signal_verdicts:
             pre_filter = len(screened_df)
             allowed = [
@@ -185,7 +202,12 @@ class AutoExecutor:
                 _cb("No stocks have BUY/STRONG_BUY signal — skipping execution")
                 return report
 
-        # ── 3.  Risk management / trade plans ──────────────────
+        # ── 3.  Enrich with live prices if Kite available ──────
+        if self.kite is not None and not screened_df.empty:
+            screened_df = self._enrich_with_ltp(screened_df, _cb)
+            report.screened_df = screened_df
+
+        # ── 4.  Risk management / trade plans ──────────────────
         _cb("Generating trade plans with risk management …")
         plans = self.risk_mgr.plan_trades(screened_df)
         report.trade_plans = plans
@@ -195,7 +217,7 @@ class AutoExecutor:
             _cb("No trade plans met the R:R threshold")
             return report
 
-        # ── 4.  Order placement ────────────────────────────────
+        # ── 5.  Order placement ────────────────────────────────
         if self.auto_place and self.kite is not None:
             _cb(f"Placing {len(plans)} orders via Kite …")
             report.order_results = self._place_orders(plans, _cb)
@@ -205,6 +227,8 @@ class AutoExecutor:
                 f"Orders: {report.orders_placed} placed, "
                 f"{report.orders_failed} failed"
             )
+            # M2 fix: persist orders to database
+            self._persist_orders(report.order_results, plans)
         else:
             _cb(
                 f"Dry run — {len(plans)} plans generated "
@@ -212,6 +236,200 @@ class AutoExecutor:
             )
 
         return report
+
+    # ── Order persistence ──────────────────────────────────────
+
+    @staticmethod
+    def _persist_orders(order_results: list, trade_plans: list) -> None:
+        """Best-effort save of order records to the database."""
+        try:
+            from database.service import DatabaseService
+            db = DatabaseService()
+            db.save_orders(order_results, trade_plans)
+        except Exception as exc:
+            logger.warning("Order persistence failed (non-fatal): %s", exc)
+
+    # ── Live price enrichment ──────────────────────────────────
+
+    def _enrich_with_ltp(
+        self, screened_df: pd.DataFrame, _cb
+    ) -> pd.DataFrame:
+        """Replace stale 'close' prices with live LTP from Kite."""
+        try:
+            symbols = screened_df["symbol"].tolist()
+            instrument_keys = [f"NSE:{s}" for s in symbols]
+            ltp_data = self.kite.ltp(instrument_keys)
+            updated = 0
+            df = screened_df.copy()
+            for idx, row in df.iterrows():
+                key = f"NSE:{row['symbol']}"
+                if key in ltp_data:
+                    live_price = ltp_data[key].get("last_price")
+                    if live_price and live_price > 0:
+                        df.at[idx, "close"] = live_price
+                        updated += 1
+            _cb(f"Enriched {updated}/{len(symbols)} stocks with live prices")
+            return df
+        except Exception as exc:
+            logger.warning("LTP enrichment failed, using screener close: %s", exc)
+            _cb("Live price fetch failed — using screener close prices")
+            return screened_df
+
+    # ── Auto-verdict via IntegratedScorer ─────────────────────
+
+    @staticmethod
+    def _auto_evaluate_verdicts(
+        screened_df: pd.DataFrame, _cb
+    ) -> Dict[str, str]:
+        """Run IntegratedScorer on screened stocks to generate BUY/SELL verdicts.
+
+        This ensures every auto-placed order passes through fundamental,
+        technical, macro, and robustness validation — not just the
+        technical screener.
+        """
+        try:
+            from services.integrated_scorer import IntegratedScorer
+            from datetime import date, timedelta
+
+            symbols = screened_df["symbol"].tolist()
+            ns_tickers = [f"{s}.NS" for s in symbols]
+            _cb(f"Running IntegratedScorer on {len(ns_tickers)} stocks …")
+
+            scorer = IntegratedScorer()
+            end_dt = date.today()
+            start_dt = end_dt - timedelta(days=365)
+            verdicts = scorer.evaluate(
+                tickers=ns_tickers,
+                market="IND",
+                date_range=(str(start_dt), str(end_dt)),
+            )
+
+            signal_dict: Dict[str, str] = {}
+            buy_count = 0
+            for v in verdicts:
+                bare = v.ticker.replace(".NS", "").replace(".BO", "")
+                signal_dict[bare] = v.classification
+                if v.classification in _BUY_TAGS:
+                    buy_count += 1
+
+            _cb(
+                f"Verdict: {buy_count} BUY/STRONG_BUY, "
+                f"{len(signal_dict) - buy_count} HOLD/SELL out of {len(signal_dict)}"
+            )
+            return signal_dict
+        except Exception as exc:
+            logger.warning("Auto-verdict failed (non-fatal): %s", exc)
+            _cb("IntegratedScorer unavailable — proceeding without verdict filter")
+            return {}
+
+    # ── Market hours check ───────────────────────────────────
+
+    @staticmethod
+    def _is_nse_market_open() -> bool:
+        """Check if NSE is within trading hours (9:15 AM – 3:30 PM IST, weekdays)."""
+        from datetime import timezone, timedelta
+        _IST = timezone(timedelta(hours=5, minutes=30))
+        now = datetime.now(_IST)
+        if now.weekday() > 4:  # Saturday=5, Sunday=6
+            return False
+        market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
+        market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
+        return market_open <= now <= market_close
+
+    def _is_at_circuit_limit(self, symbol: str) -> bool:
+        """Check if a stock is at its upper/lower circuit limit.
+
+        Uses Kite OHLC data: if the daily move exceeds the circuit
+        threshold (default 20%), or if the stock's last traded price
+        equals the upper/lower circuit price, skip the order.
+        """
+        if self.kite is None:
+            return False
+        try:
+            from config import Config
+            key = f"NSE:{symbol}"
+            data = self.kite.ohlc([key])
+            ohlc = data.get(key, {}).get("ohlc", {})
+            ltp = data.get(key, {}).get("last_price", 0)
+            day_open = ohlc.get("open", 0)
+
+            if day_open > 0 and ltp > 0:
+                daily_move = abs(ltp - day_open) / day_open
+                if daily_move >= Config.CIRCUIT_BREAKER_PCT:
+                    logger.warning(
+                        "%s: daily move %.1f%% >= %.0f%% circuit threshold — skipping",
+                        symbol, daily_move * 100, Config.CIRCUIT_BREAKER_PCT * 100,
+                    )
+                    return True
+
+            # Also check if lower_circuit_limit / upper_circuit_limit
+            # are available in the instrument data
+            lower = data.get(key, {}).get("lower_circuit_limit", 0)
+            upper = data.get(key, {}).get("upper_circuit_limit", 0)
+            if lower and ltp and ltp <= lower:
+                return True
+            if upper and ltp and ltp >= upper:
+                return True
+
+        except Exception as exc:
+            logger.debug("Circuit-breaker check failed for %s: %s", symbol, exc)
+        return False
+
+    # ── Earnings blackout detection ────────────────────────────
+
+    @staticmethod
+    def _get_earnings_blackout_symbols(symbols: List[str]) -> set:
+        """Return symbols that are near earnings announcements.
+
+        Uses yfinance calendar data to detect upcoming/recent earnings.
+        Returns a set of symbols in blackout (BUY suppressed).
+        """
+        blackout: set = set()
+        try:
+            import yfinance as yf
+            from config import Config
+
+            before = getattr(Config, "EARNINGS_BLACKOUT_DAYS_BEFORE", 2)
+            after = getattr(Config, "EARNINGS_BLACKOUT_DAYS_AFTER", 1)
+            today = datetime.now().date()
+
+            for sym in symbols:
+                try:
+                    ticker = yf.Ticker(f"{sym}.NS")
+                    cal = ticker.calendar
+                    if cal is None or (hasattr(cal, 'empty') and cal.empty):
+                        continue
+                    # yfinance calendar may be a dict or DataFrame
+                    earnings_date = None
+                    if isinstance(cal, dict):
+                        ed = cal.get("Earnings Date")
+                        if ed:
+                            earnings_date = ed[0] if isinstance(ed, list) else ed
+                    elif hasattr(cal, "loc"):
+                        try:
+                            ed = cal.loc["Earnings Date"]
+                            earnings_date = ed.iloc[0] if hasattr(ed, 'iloc') else ed
+                        except Exception:
+                            pass
+
+                    if earnings_date is not None:
+                        if hasattr(earnings_date, 'date'):
+                            earnings_date = earnings_date.date()
+                        from datetime import timedelta
+                        window_start = earnings_date - timedelta(days=before)
+                        window_end = earnings_date + timedelta(days=after)
+                        if window_start <= today <= window_end:
+                            blackout.add(sym)
+                            logger.info(
+                                "%s: earnings on %s — blackout active",
+                                sym, earnings_date,
+                            )
+                except Exception:
+                    continue  # Skip if calendar unavailable
+        except Exception as exc:
+            logger.debug("Earnings blackout check failed: %s", exc)
+
+        return blackout
 
     # ── Order placement ────────────────────────────────────────
 
@@ -222,6 +440,34 @@ class AutoExecutor:
         from kite_connect.trading.trade_monitor import TradeMonitor, MonitoredTrade
 
         results: List[OrderResult] = []
+
+        # ── L1 fix: session expiry fast-fail ───────────────────────
+        try:
+            self.kite.profile()
+        except Exception as exc:
+            _cb("Kite session expired — please re-authenticate via Fly Kite")
+            logger.error("Kite session check failed: %s", exc)
+            for plan in plans:
+                results.append(OrderResult(
+                    symbol=plan.symbol, side=plan.side,
+                    quantity=plan.quantity, entry_price=plan.entry_price,
+                    stop_loss=plan.stop_loss, target_price=plan.target_price,
+                    success=False, error="Kite session expired — re-authenticate",
+                ))
+            return results
+
+        # ── Market hours guard ─────────────────────────────────────
+        if not self._is_nse_market_open():
+            _cb("NSE market is closed — orders not placed")
+            logger.warning("Order placement blocked: NSE market is closed")
+            for plan in plans:
+                results.append(OrderResult(
+                    symbol=plan.symbol, side=plan.side,
+                    quantity=plan.quantity, entry_price=plan.entry_price,
+                    stop_loss=plan.stop_loss, target_price=plan.target_price,
+                    success=False, error="Market closed (NSE hours: 9:15 AM – 3:30 PM IST)",
+                ))
+            return results
 
         # ── Duplicate check: skip symbols with open BUY orders ─────
         existing_symbols: set = set()
@@ -236,8 +482,23 @@ class AutoExecutor:
         except Exception:
             pass  # proceed without dedup if order book fails
 
-        # ── Monitor for post-trade SL/TP lifecycle ─────────────────
-        monitor = TradeMonitor(self.kite)
+        # ── Monitor for post-trade SL/TP lifecycle (reuse existing) ─
+        monitor = None
+        try:
+            import streamlit as st
+            existing = st.session_state.get("trade_monitor")
+            if existing is not None:
+                existing.kite = self.kite
+                monitor = existing
+        except Exception:
+            pass
+        if monitor is None:
+            monitor = TradeMonitor(self.kite)
+
+        # ── Pre-compute earnings blackout set ──────────────────────
+        earnings_blackout_syms = self._get_earnings_blackout_symbols(
+            [p.symbol for p in plans]
+        )
 
         for plan in plans:
             # Skip if order already exists for this symbol
@@ -248,6 +509,30 @@ class AutoExecutor:
                     quantity=plan.quantity, entry_price=plan.entry_price,
                     stop_loss=plan.stop_loss, target_price=plan.target_price,
                     success=False, error="Duplicate — open order exists",
+                ))
+                continue
+
+            # ── Earnings blackout check ────────────────────────────
+            if plan.symbol in earnings_blackout_syms:
+                _cb(f"  Skipped {plan.symbol} — earnings blackout period")
+                results.append(OrderResult(
+                    symbol=plan.symbol, side=plan.side,
+                    quantity=plan.quantity, entry_price=plan.entry_price,
+                    stop_loss=plan.stop_loss, target_price=plan.target_price,
+                    success=False,
+                    error="Earnings blackout — BUY suppressed near results",
+                ))
+                continue
+
+            # ── S8: Circuit-breaker check ──────────────────────────
+            if self._is_at_circuit_limit(plan.symbol):
+                _cb(f"  Skipped {plan.symbol} — at circuit limit")
+                results.append(OrderResult(
+                    symbol=plan.symbol, side=plan.side,
+                    quantity=plan.quantity, entry_price=plan.entry_price,
+                    stop_loss=plan.stop_loss, target_price=plan.target_price,
+                    success=False,
+                    error="Circuit limit hit — stock frozen",
                 ))
                 continue
 

@@ -18,8 +18,7 @@ from ui.components import (
     render_footer,
     render_ind_navigation_buttons,
     render_metrics_cards,
-    render_vix_indicator,
-    render_stock_ticker_ribbon,
+    render_ribbon_and_vix,
     spinner_html,
 )
 from utils import parse_ticker_csv, validate_tickers, create_sample_csv
@@ -39,22 +38,13 @@ def render_ind_main_page():
                 st.session_state.get('username', 'unknown'))
     render_header()
 
-    # Scrolling ribbon — top 10 Indian stocks by market cap
-    render_stock_ticker_ribbon(market="IND")
-
-    # VIX indicator bar
-    render_vix_indicator(market="IND")
+    # Scrolling ribbon + VIX indicator (merged into single DOM element)
+    render_ribbon_and_vix(market="IND")
 
     # Navigation buttons
     render_ind_navigation_buttons(
         current_page='main',
         back_key_suffix='from_ind_main',
-    )
-
-    # Tighten the gap between nav buttons and control panel
-    st.markdown(
-        '<div style="margin-top: -1.5rem;"></div>',
-        unsafe_allow_html=True,
     )
 
     # Render control panel
@@ -144,7 +134,7 @@ def _render_ticker_selection() -> List[str]:
 
 def _handle_default_tickers() -> List[str]:
     """Handle default Indian tickers selection."""
-    with st.expander(" View default tickers (NSE)"):
+    with st.expander(" View default tickers"):
         display_names = [t.replace('.NS', '') for t in IND_DEFAULT_TICKERS]
         st.write(", ".join(display_names))
         st.caption("Tickers are automatically appended with .NS suffix for NSE data.")
@@ -323,7 +313,7 @@ def _run_and_render_analysis(tickers: List[str]):
 
 def _render_analysis_results(signals: List[Any]):
     """Render analysis results inline on the IND main page."""
-    from ui.charts import render_decision_chart, render_sentiment_chart, render_score_distribution
+    from ui.charts import render_decision_chart, render_score_distribution
     from ui.tables import render_simple_summary_table, render_signals_table, render_top_signals
 
     st.markdown("---")
@@ -332,11 +322,10 @@ def _render_analysis_results(signals: List[Any]):
     render_metrics_cards(signals)
     st.markdown("---")
 
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3 = st.tabs([
         "Overview",
         "Detailed Table",
         "Top Signals",
-        "Sentiment Charts",
     ])
 
     with tab1:
@@ -351,6 +340,3 @@ def _render_analysis_results(signals: List[Any]):
 
     with tab3:
         render_top_signals(signals)
-
-    with tab4:
-        render_sentiment_chart(signals)

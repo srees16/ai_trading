@@ -21,8 +21,7 @@ from ui.components import (
     render_page_header,
     render_footer,
     render_no_data_warning,
-    render_stock_ticker_ribbon,
-    render_vix_indicator,
+    render_ribbon_and_vix,
     spinner_html,
 )
 
@@ -85,8 +84,7 @@ def render_crypto_page():
     logger.info("[user=%s] Viewing Crypto page",
                 st.session_state.get('username', 'unknown'))
     render_page_header("₿ Crypto Strategies")
-    render_stock_ticker_ribbon(market="US")
-    render_vix_indicator(market="US")
+    render_ribbon_and_vix(market="US")
     st.markdown("---")
 
     # Get only crypto-category strategies

@@ -44,7 +44,7 @@ def _resolve_edge_service():
     return EdgeService()
 
 
-def get_driver(download_dir=None, stealth=False):
+def get_driver(download_dir=None, stealth=False, hidden=False):
     """
     Create and return a Selenium WebDriver (Chrome first, then Edge).
 
@@ -57,6 +57,9 @@ def get_driver(download_dir=None, stealth=False):
         If ``True``, apply anti-bot / anti-automation tweaks (custom
         user-agent, hide ``navigator.webdriver`` flag, etc.).  Needed
         for sites like NSE that block automated browsers.
+    hidden : bool, optional
+        If ``True``, start the browser window off-screen so it is not
+        visible.  Call ``show_driver(driver)`` to bring it back.
 
     Returns
     -------
@@ -71,6 +74,8 @@ def get_driver(download_dir=None, stealth=False):
     for name, options_fn, driver_cls, service_fn in browsers:
         try:
             options = options_fn(download_dir, stealth)
+            if hidden:
+                options.add_argument("--window-position=-10000,-10000")
             service = service_fn()
             driver = driver_cls(service=service, options=options)
 
@@ -91,6 +96,12 @@ def get_driver(download_dir=None, stealth=False):
     raise RuntimeError(
         f"No Selenium-compatible browser found (Chrome or Edge). Last error: {last_error}"
     )
+
+
+def show_driver(driver):
+    """Move a hidden browser window back on-screen and bring it to front."""
+    driver.set_window_position(100, 100)
+    driver.set_window_size(1100, 800)
 
 
 # ── Private helpers ────────────────────────────────────────────

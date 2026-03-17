@@ -40,12 +40,12 @@ export ZERODHA_API_KEY="YOUR_KEY_HERE" ZERODHA_API_SECRET="YOUR_SECRET_HERE" ZER
 
 **Windows PowerShell:**
 ```powershell
-docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15; docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"; Start-Sleep -Seconds 9; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;"; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15; docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"; Start-Sleep -Seconds 9; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;"; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"; python -c "from database.connection import DatabaseManager; dm = DatabaseManager(); dm.initialize_database()"
 ```
 
 **macOS / Linux:**
 ```bash
-docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15 && docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001" && sleep 9 && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;" && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15 && docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001" && sleep 9 && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;" && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;" && python -c "from database.connection import DatabaseManager; dm = DatabaseManager(); dm.initialize_database()"
 ```
 
 This creates three databases: `centurion_trading` (stores backtest results, strategy metrics, Financial ML and Test & Tune chapter outputs), `centurion_rag` (RAG pipeline), `livestocks_ind` (Kite/Zerodha).
