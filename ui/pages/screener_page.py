@@ -199,6 +199,59 @@ def _start_kite_session_inline():
         st.error(f"Kite authentication failed: {exc}")
 
 
+def _auto_authenticate_and_place(verdicts, buy_verdicts, risk_cfg):
+    """Auto-authenticate Kite (TOTP auto-filled if secret configured) and place orders.
+
+    Triggered automatically when STRONG_BUY signals are detected and Kite
+    session is not active. If ZERODHA_TOTP_SECRET is set in .env, the entire
+    flow is zero-click. Otherwise falls back to showing the browser for
+    manual TOTP entry.
+    """
+    try:
+        from notifications.manager import NotificationManager
+        nm = NotificationManager()
+        syms = ", ".join(v.ticker.replace(".NS", "") for v in buy_verdicts[:5])
+        nm.send_notification(
+            "Centurion — Auto-Auth Triggered",
+            f"STRONG_BUY detected: {syms}. Authenticating Kite…",
+            duration=10,
+        )
+    except Exception:
+        pass
+
+    try:
+        with st.spinner("Auto-authenticating Kite for STRONG_BUY signals…"):
+            from kite_connect.auth.kite_session import create_kite_session
+            kite = create_kite_session()
+
+        if kite is not None:
+            st.session_state["kite"] = kite
+            st.session_state["kite_session_started"] = True
+            st.success("Kite auto-authenticated — placing orders…")
+
+            # Auto-place orders for BUY/STRONG_BUY verdicts
+            _execute_buy_verdicts(verdicts, risk_cfg)
+        else:
+            st.error("Auto-authentication failed — authenticate manually.")
+            if st.button(
+                "🔑 Authenticate Kite Manually",
+                key="proactive_kite_auth_fallback",
+                type="primary",
+                use_container_width=True,
+            ):
+                _start_kite_session_inline()
+    except Exception as exc:
+        logger.error("Auto-authenticate failed: %s", exc)
+        st.error(f"Auto-authentication failed: {exc}")
+        if st.button(
+            "🔑 Authenticate Kite Manually",
+            key="proactive_kite_auth_error",
+            type="primary",
+            use_container_width=True,
+        ):
+            _start_kite_session_inline()
+
+
 def _check_kite_session_health():
     """Proactively detect expired Kite access tokens.
 
@@ -623,20 +676,14 @@ def _render_verdict_results(verdicts, risk_cfg, auto_place: bool):
         strong_buy_count = sum(1 for v in buy_verdicts if v.classification == "STRONG_BUY")
 
         if kite is None:
-            # Proactive 2FA prompt — prominent when STRONG_BUY exists
+            # Auto-trigger Kite auth when STRONG_BUY signals detected
             if strong_buy_count > 0:
-                st.error(
+                st.info(
                     f"**{strong_buy_count} STRONG_BUY signal(s) detected** — "
-                    "authenticate Kite now to place live orders!",
+                    "auto-authenticating Kite to place live orders…",
                     icon="🔑",
                 )
-                if st.button(
-                    "🔑 Authenticate Kite & Place Orders",
-                    key="proactive_kite_auth",
-                    type="primary",
-                    use_container_width=True,
-                ):
-                    _start_kite_session_inline()
+                _auto_authenticate_and_place(verdicts, buy_verdicts, risk_cfg)
             else:
                 auth_c1, auth_c2 = st.columns([4, 1])
                 auth_c1.markdown(

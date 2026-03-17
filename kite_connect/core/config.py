@@ -30,6 +30,7 @@ LOGIN_URL = f"https://kite.zerodha.com/connect/login?api_key={API_KEY}"
 # ── Zerodha Login Credentials (for Selenium auto-fill) ────────
 ZERODHA_USER_ID = os.getenv("ZERODHA_USER_ID", "")
 ZERODHA_PASSWORD = os.getenv("ZERODHA_PASSWORD", "")
+ZERODHA_TOTP_SECRET = os.getenv("ZERODHA_TOTP_SECRET", "")  # base32 TOTP seed for auto-2FA
 
 # ── NSE ────────────────────────────────────────────────────────
 NSE_URL = "https://www.nseindia.com/market-data/live-equity-market"
