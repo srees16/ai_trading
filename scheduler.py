@@ -127,9 +127,9 @@ def get_latest_run(run_type: Optional[str] = None) -> Optional[dict]:
 def run_pipeline(run_type: str = "pre_market"):
     """Execute the full screening + scoring pipeline headless.
 
-    This does NOT place orders — it only identifies signals and caches
-    them. The user places orders via Streamlit or REST API after
-    reviewing the results and authenticating with Kite.
+    When STRONG_BUY signals are detected, auto-authenticates with Kite
+    (using TOTP auto-fill if ``ZERODHA_TOTP_SECRET`` is configured) and
+    places orders automatically via AutoExecutor.
     """
     logger.info("=== Pipeline run started: %s ===", run_type)
 
@@ -191,6 +191,11 @@ def run_pipeline(run_type: str = "pre_market"):
         if buy_verdicts or sell_verdicts:
             _notify_signals(buy_verdicts, sell_verdicts)
 
+        # 5. Auto-authenticate Kite & place orders for STRONG_BUY signals
+        strong_buy = [v for v in buy_verdicts if v.classification == "STRONG_BUY"]
+        if strong_buy:
+            _auto_place_orders(verdicts, screened_df)
+
         logger.info(
             "=== Pipeline complete: %d BUY, %d SELL signals ===",
             len(buy_verdicts), len(sell_verdicts),
@@ -222,6 +227,69 @@ def _notify_signals(buy_verdicts: list, sell_verdicts: list):
         )
     except Exception as exc:
         logger.debug("Notification failed (non-fatal): %s", exc)
+
+
+def _auto_place_orders(verdicts: list, screened_df):
+    """Auto-authenticate Kite and place orders for BUY/STRONG_BUY verdicts.
+
+    Called by the scheduler when STRONG_BUY signals are detected. Uses
+    the auto-TOTP flow (pyotp) when ``ZERODHA_TOTP_SECRET`` is configured,
+    making the entire pipeline zero-touch.
+    """
+    try:
+        from kite_connect.auth.kite_session import create_kite_session
+        logger.info("Auto-authenticating Kite for STRONG_BUY order placement…")
+        kite = create_kite_session()
+    except Exception as exc:
+        logger.error("Kite auto-auth failed: %s — orders skipped", exc)
+        try:
+            from notifications.manager import NotificationManager
+            NotificationManager().send_notification(
+                "Centurion — Auth Failed",
+                f"Could not auto-authenticate Kite: {exc}",
+            )
+        except Exception:
+            pass
+        return
+
+    if kite is None:
+        logger.warning("Kite session is None — orders skipped")
+        return
+
+    try:
+        from kite_connect.trading.auto_executor import AutoExecutor
+        from kite_connect.nse.screener import ScreenerConfig
+
+        signal_dict = {
+            v.ticker.replace(".NS", "").replace(".BO", ""): v.classification
+            for v in verdicts
+        }
+        buy_symbols = [
+            sym for sym, tag in signal_dict.items()
+            if tag in ("BUY", "STRONG_BUY")
+        ]
+
+        if not buy_symbols:
+            logger.info("No BUY symbols to execute")
+            return
+
+        executor = AutoExecutor(
+            kite=kite,
+            screener_cfg=ScreenerConfig(index_mode=True),
+            auto_place=True,
+        )
+        report = executor.run(
+            symbols=buy_symbols,
+            signal_verdicts=signal_dict,
+            pre_screened_df=screened_df,
+        )
+        logger.info(
+            "Auto-orders: %d placed, %d failed, %d filtered",
+            report.orders_placed, report.orders_failed,
+            report.signal_filtered_count,
+        )
+    except Exception as exc:
+        logger.exception("Auto-order placement failed: %s", exc)
 
 
 # ═══════════════════════════════════════════════════════════════

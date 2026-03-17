@@ -30,7 +30,7 @@ if _kite_root not in sys.path:
 
 from core.config import (
     API_KEY, LOGIN_URL, KITE_APP_FILE,
-    ZERODHA_USER_ID, ZERODHA_PASSWORD,
+    ZERODHA_USER_ID, ZERODHA_PASSWORD, ZERODHA_TOTP_SECRET,
 )
 from core.selenium_service import get_driver, show_driver
 
@@ -143,12 +143,13 @@ def fetch_request_token():
         except Exception:
             print("  [!] Could not auto-click Login button - please click it manually")
 
-        # Wait for the TOTP / 2FA input to appear, then show browser
+        # Wait for the TOTP / 2FA input to appear
         # First wait for the login form's password field to go stale (page transition)
+        totp_field = None
         try:
             WebDriverWait(driver, 10).until(EC.staleness_of(password_field))
             # Now wait for the new TOTP input to appear on the 2FA page
-            WebDriverWait(driver, 10).until(
+            totp_field = WebDriverWait(driver, 10).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR,
                     'input[type="text"], input[type="number"], input[type="tel"]'))
             )
@@ -156,9 +157,65 @@ def fetch_request_token():
         except Exception:
             print("  [!] Could not detect TOTP field - showing browser anyway")
 
-        # Bring the browser window on-screen for the user to enter TOTP
-        show_driver(driver)
-        print("  Waiting for you to complete TOTP/2FA and authorize...\n")
+        # Auto-fill TOTP if secret is configured, otherwise show browser
+        totp_auto_filled = False
+        if ZERODHA_TOTP_SECRET and totp_field is not None:
+            try:
+                import pyotp
+                totp_code = pyotp.TOTP(ZERODHA_TOTP_SECRET).now()
+                totp_field.clear()
+                totp_field.send_keys(totp_code)
+                print(f"  [OK] Auto-filled TOTP code")
+
+                # Submit TOTP via JavaScript to avoid blocking on click().
+                # The redirect happens instantly after TOTP submit, sending
+                # the browser to 127.0.0.1:5000 — if we use click() it
+                # blocks waiting for a Selenium response that never comes
+                # because the page navigates away.
+                try:
+                    totp_submit = driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]')
+                    driver.execute_script("arguments[0].click();", totp_submit)
+                except Exception:
+                    try:
+                        from selenium.webdriver.common.keys import Keys
+                        totp_field.send_keys(Keys.RETURN)
+                    except Exception:
+                        pass  # redirect may already be in progress
+
+                totp_auto_filled = True
+                print("  [OK] TOTP submitted — waiting for redirect...\n")
+            except ImportError:
+                print("  [!] pyotp not installed — falling back to manual TOTP entry")
+                print("  [!] Install it with: pip install pyotp")
+            except Exception as totp_err:
+                print(f"  [!] Auto-TOTP failed ({totp_err}) — showing browser for manual entry")
+
+        if not totp_auto_filled:
+            # Headless browser can't be shown — restart visible for manual TOTP
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            selenium_driver = None
+
+            print("  [!] Restarting browser in visible mode for manual TOTP…\n")
+            driver = get_driver(hidden=False)
+            selenium_driver = driver
+            driver.get(LOGIN_URL)
+
+            # Re-fill credentials in the visible browser
+            wait2 = WebDriverWait(driver, 15)
+            uid2 = wait2.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, 'input[type="text"]'))
+            )
+            pwd2 = driver.find_element(By.CSS_SELECTOR, 'input[type="password"]')
+            uid2.clear(); uid2.send_keys(ZERODHA_USER_ID)
+            pwd2.clear(); pwd2.send_keys(ZERODHA_PASSWORD)
+            try:
+                driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
+            except Exception:
+                pass
+            print("  Please complete TOTP/2FA in the browser window…\n")
 
         print("  Waiting for login redirect... (Ctrl+C to cancel)\n")
 

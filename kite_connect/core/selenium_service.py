@@ -75,7 +75,7 @@ def get_driver(download_dir=None, stealth=False, hidden=False):
         try:
             options = options_fn(download_dir, stealth)
             if hidden:
-                options.add_argument("--window-position=-10000,-10000")
+                options.add_argument("--headless=new")
             service = service_fn()
             driver = driver_cls(service=service, options=options)
 
