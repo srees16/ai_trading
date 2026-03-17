@@ -166,6 +166,9 @@ class AutoExecutor:
             if symbols is None:
                 _cb("Downloading NIFTY50 & NSE NEXT50")
                 symbols = get_nse_universe(self.kite)
+                # Auto-enable index mode for blue-chip universe
+                if not self.screener.cfg.index_mode:
+                    self.screener.cfg.index_mode = True
             report.universe_size = len(symbols)
             _cb(f"Universe: {len(symbols)} symbols")
 
@@ -538,17 +541,21 @@ class AutoExecutor:
 
             _cb(f"  Placing {plan.side} {plan.symbol} × {plan.quantity} …")
 
-            # Entry order (LIMIT at entry price)
-            resp = place_order(
+            # SELL exits use MARKET; BUY entries use LIMIT
+            order_type = "MARKET" if plan.side == "SELL" else "LIMIT"
+            order_kwargs = dict(
                 kite=self.kite,
                 symbol=plan.symbol,
                 exchange="NSE",
                 transaction_type=plan.side,
                 quantity=plan.quantity,
-                order_type="LIMIT",
+                order_type=order_type,
                 product="CNC",
-                price=plan.entry_price,
             )
+            if order_type == "LIMIT":
+                order_kwargs["price"] = plan.entry_price
+
+            resp = place_order(**order_kwargs)
             time.sleep(_ORDER_DELAY_S)
 
             result = OrderResult(
@@ -563,19 +570,27 @@ class AutoExecutor:
                 error=resp.get("error"),
             )
 
-            # Register with TradeMonitor — SL/TP will be placed
+            # Register BUY orders with TradeMonitor — SL/TP will be placed
             # AFTER the entry order fills (polled by TradeMonitor).
+            # SELL exits don't need SL/TP monitoring.
             if result.success and result.order_id:
-                monitor.register_trade(MonitoredTrade(
-                    symbol=plan.symbol,
-                    side=plan.side,
-                    quantity=plan.quantity,
-                    entry_price=plan.entry_price,
-                    stop_loss=plan.stop_loss,
-                    target_price=plan.target_price,
-                    entry_order_id=result.order_id,
-                ))
+                if plan.side == "BUY":
+                    monitor.register_trade(MonitoredTrade(
+                        symbol=plan.symbol,
+                        side=plan.side,
+                        quantity=plan.quantity,
+                        entry_price=plan.entry_price,
+                        stop_loss=plan.stop_loss,
+                        target_price=plan.target_price,
+                        entry_order_id=result.order_id,
+                    ))
                 existing_symbols.add(plan.symbol)
+                # Desktop notification on successful order
+                self._notify_order(plan.symbol, plan.side, plan.quantity,
+                                   plan.entry_price, result.order_id)
+            elif not result.success:
+                self._notify_order_failure(plan.symbol, plan.side,
+                                           result.error or "Unknown error")
 
             results.append(result)
 
@@ -587,3 +602,69 @@ class AutoExecutor:
             pass  # non-Streamlit context (e.g. scheduled job)
 
         return results
+
+    # ── Notification helpers ───────────────────────────────────
+
+    @staticmethod
+    def _notify_order(symbol: str, side: str, qty: int, price: float, order_id: str):
+        try:
+            from notifications.manager import NotificationManager
+            NotificationManager().notify_order_placed(symbol, side, qty, price, order_id)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _notify_order_failure(symbol: str, side: str, error: str):
+        try:
+            from notifications.manager import NotificationManager
+            NotificationManager().notify_order_failed(symbol, side, error)
+        except Exception:
+            pass
+
+    # ── SELL pipeline ──────────────────────────────────────────
+
+    def run_sell_pipeline(
+        self,
+        sell_verdicts: list,
+        progress_callback=None,
+    ) -> List[OrderResult]:
+        """Automated exit: match SELL/STRONG_SELL verdicts against holdings.
+
+        Parameters
+        ----------
+        sell_verdicts : list[StockVerdict]
+            Verdicts with classification SELL or STRONG_SELL.
+        progress_callback : callable | None
+            Progress reporter.
+
+        Returns
+        -------
+        list[OrderResult]
+            Results for each SELL order placed (or skipped).
+        """
+        _cb = progress_callback or (lambda m: None)
+
+        if self.kite is None:
+            _cb("Kite not authenticated — cannot place SELL orders")
+            return []
+
+        # Fetch current holdings
+        from kite_connect.trading.order_service import get_holdings
+        holdings = get_holdings(self.kite)
+        if not holdings:
+            _cb("No holdings found — nothing to exit")
+            return []
+
+        sell_syms = [
+            v.ticker.replace(".NS", "").replace(".BO", "")
+            for v in sell_verdicts
+        ]
+
+        # Build SELL plans
+        plans = self.risk_mgr.plan_exits(sell_syms, holdings)
+        if not plans:
+            _cb("No SELL verdicts match current holdings")
+            return []
+
+        _cb(f"Placing {len(plans)} SELL orders …")
+        return self._place_orders(plans, _cb)

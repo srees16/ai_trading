@@ -153,6 +153,21 @@ class RiskManager:
         sector_trade_count: Dict[str, int] = {}
         sector_capital: Dict[str, float] = {}
 
+        # Portfolio-aware allocation: check existing sector weights
+        portfolio_snap = None
+        try:
+            from services.portfolio_analyzer import PortfolioAnalyzer
+            analyzer = PortfolioAnalyzer(self.kite)
+            portfolio_snap = analyzer.snapshot()
+            # Pre-load sector capital from existing holdings
+            for sec, val in portfolio_snap.sector_values.items():
+                sector_capital[sec] = val
+            if portfolio_snap.concentration_warnings:
+                for w in portfolio_snap.concentration_warnings:
+                    logger.info("Portfolio warning: %s", w)
+        except Exception as exc:
+            logger.debug("Portfolio analysis unavailable: %s", exc)
+
         # R4: Market regime scaling (VIX + ADX)
         regime_scale = self._get_regime_scale()
         if regime_scale <= 0:
@@ -307,3 +322,58 @@ class RiskManager:
             rr_ratio=rr_ratio,
             score=score,
         )
+
+    # ── SELL-side exit planning ────────────────────────────────
+
+    def plan_exits(
+        self,
+        sell_symbols: List[str],
+        holdings: List[dict],
+    ) -> List[TradePlan]:
+        """Generate SELL trade plans for held stocks with SELL/STRONG_SELL verdicts.
+
+        Parameters
+        ----------
+        sell_symbols : list[str]
+            Symbols flagged as SELL/STRONG_SELL by IntegratedScorer.
+        holdings : list[dict]
+            Kite holdings response (each dict has ``tradingsymbol``,
+            ``quantity``, ``average_price``, ``last_price``).
+
+        Returns
+        -------
+        list[TradePlan]
+            SELL plans for matching held positions (full exit).
+        """
+        held_map = {}
+        for h in holdings:
+            sym = h.get("tradingsymbol", "")
+            qty = int(h.get("quantity", 0))
+            if sym and qty > 0:
+                held_map[sym] = h
+
+        plans: List[TradePlan] = []
+        for sym in sell_symbols:
+            if sym not in held_map:
+                continue
+            h = held_map[sym]
+            qty = int(h.get("quantity", 0))
+            avg_price = float(h.get("average_price", 0))
+            ltp = float(h.get("last_price", avg_price))
+
+            plans.append(TradePlan(
+                symbol=sym,
+                side="SELL",
+                entry_price=ltp,           # current LTP (exit price)
+                stop_loss=0.0,             # not applicable for exits
+                target_price=0.0,
+                quantity=qty,
+                risk_amount=0.0,
+                reward_amount=0.0,
+                rr_ratio=0.0,
+                score=0.0,
+            ))
+            logger.info("Exit plan: SELL %s × %d @ ~%.2f (avg %.2f)",
+                        sym, qty, ltp, avg_price)
+
+        return plans

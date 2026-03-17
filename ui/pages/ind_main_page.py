@@ -340,3 +340,94 @@ def _render_analysis_results(signals: List[Any]):
 
     with tab3:
         render_top_signals(signals)
+
+    # ── Quick Verdict + Order section ─────────────────────────
+    _render_quick_verdict_section()
+
+
+def _render_quick_verdict_section():
+    """Run IntegratedScorer on analysed tickers and offer order placement."""
+    tickers = st.session_state.get("analysis_tickers", [])
+    if not tickers:
+        return
+
+    st.markdown("---")
+    st.subheader("Quick Verdict & Order")
+
+    if st.button("Run IntegratedScorer Verdict", key="ind_main_verdict_btn"):
+        from services.integrated_scorer import IntegratedScorer
+        from datetime import date, timedelta
+
+        end_dt = date.today()
+        start_dt = end_dt - timedelta(days=365)
+        # Ensure .NS suffix
+        ns_tickers = [t if t.endswith(".NS") else f"{t}.NS" for t in tickers]
+
+        with st.spinner(f"Scoring {len(ns_tickers)} stocks …"):
+            scorer = IntegratedScorer()
+            verdicts = scorer.evaluate(
+                tickers=ns_tickers, market="IND",
+                date_range=(str(start_dt), str(end_dt)),
+            )
+        st.session_state["ind_main_verdicts"] = verdicts
+
+    verdicts = st.session_state.get("ind_main_verdicts")
+    if not verdicts:
+        return
+
+    import pandas as pd
+    _COLOUR_MAP = {
+        "STRONG_BUY": "#00c853", "BUY": "#66bb6a",
+        "HOLD": "#ffa726", "SELL": "#ef5350", "STRONG_SELL": "#b71c1c",
+    }
+
+    rows = []
+    for v in verdicts:
+        rows.append({
+            "Ticker": v.ticker,
+            "Score": f"{v.final_score:+.2f}",
+            "Verdict": v.classification,
+            "Confidence": f"{v.confidence:.0%}",
+        })
+    df = pd.DataFrame(rows)
+
+    def _colour_verdict(row):
+        colour = _COLOUR_MAP.get(row["Verdict"], "#888")
+        return [
+            f"color: {colour}; font-weight: bold" if col == "Verdict" else ""
+            for col in row.index
+        ]
+
+    styled = df.style.apply(_colour_verdict, axis=1)
+    st.dataframe(styled, hide_index=True, use_container_width=True)
+
+    buy_verdicts = [v for v in verdicts if v.classification in ("BUY", "STRONG_BUY")]
+    if buy_verdicts:
+        buy_syms = [v.ticker.replace(".NS", "") for v in buy_verdicts]
+        st.success(f"**{len(buy_verdicts)} BUY signals**: {', '.join(buy_syms)}")
+
+        kite = st.session_state.get("kite")
+        if kite is None:
+            st.info("Authenticate Kite on the Screener page to place live orders.")
+        else:
+            if st.checkbox("Confirm: place BUY orders", key="ind_main_confirm_buy"):
+                if st.button("Place Orders", type="primary", key="ind_main_place_btn"):
+                    from kite_connect.trading.auto_executor import AutoExecutor
+                    from kite_connect.trading.risk_manager import RiskConfig
+
+                    signal_dict = {
+                        v.ticker.replace(".NS", ""): v.classification
+                        for v in verdicts
+                    }
+                    executor = AutoExecutor(kite=kite, auto_place=True)
+                    with st.spinner("Placing orders …"):
+                        report = executor.run(
+                            symbols=buy_syms,
+                            signal_verdicts=signal_dict,
+                        )
+                    st.success(
+                        f"{report.orders_placed} placed, {report.orders_failed} failed"
+                    )
+                    if report.order_results:
+                        order_rows = [o.to_dict() for o in report.order_results]
+                        st.dataframe(pd.DataFrame(order_rows), hide_index=True)
