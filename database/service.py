@@ -388,6 +388,63 @@ class DatabaseService:
             return 0
     
     # =================================================================
+    # Order Persistence
+    # =================================================================
+
+    def save_orders(self, order_results: list, trade_plans: list = None) -> int:
+        """
+        Persist order results to the database for lifecycle recovery.
+
+        Parameters
+        ----------
+        order_results : list[OrderResult]
+            Results returned by AutoExecutor._place_orders().
+        trade_plans : list[TradePlan] | None
+            Corresponding trade plans (for risk metrics).
+
+        Returns
+        -------
+        int
+            Number of records saved.
+        """
+        from database.models import OrderRecord, OrderStatus
+
+        plan_map = {}
+        if trade_plans:
+            for p in trade_plans:
+                plan_map[p.symbol] = p
+
+        try:
+            with self.get_session() as session:
+                saved = 0
+                for o in order_results:
+                    sym = o.symbol if hasattr(o, 'symbol') else o.get('symbol', '')
+                    plan = plan_map.get(sym)
+                    record = OrderRecord(
+                        symbol=sym,
+                        side=o.side if hasattr(o, 'side') else o.get('side', 'BUY'),
+                        quantity=o.quantity if hasattr(o, 'quantity') else o.get('quantity', 0),
+                        entry_price=o.entry_price if hasattr(o, 'entry_price') else o.get('entry_price', 0),
+                        stop_loss=o.stop_loss if hasattr(o, 'stop_loss') else o.get('stop_loss'),
+                        target_price=o.target_price if hasattr(o, 'target_price') else o.get('target_price'),
+                        entry_order_id=o.order_id if hasattr(o, 'order_id') else o.get('order_id'),
+                        status=OrderStatus.PLACED if (o.success if hasattr(o, 'success') else o.get('success')) else OrderStatus.FAILED,
+                        error_message=o.error if hasattr(o, 'error') else o.get('error'),
+                        risk_amount=plan.risk_amount if plan else None,
+                        reward_amount=plan.reward_amount if plan else None,
+                        rr_ratio=plan.rr_ratio if plan else None,
+                        score=plan.score if plan else None,
+                    )
+                    session.add(record)
+                    saved += 1
+                session.commit()
+                logger.info("Persisted %d order records to database", saved)
+                return saved
+        except Exception as e:
+            logger.error("Failed to persist orders: %s", e)
+            return 0
+
+    # =================================================================
     # Backtest Operations
     # =================================================================
     

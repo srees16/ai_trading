@@ -133,16 +133,8 @@ class AlgoTradingSystem:
             macro_snap.macro_sentiment_score or 0,
         )
 
-        # Step 5: Google search public sentiment
-        logger.info("Step 5: Analyzing public sentiment via Google search")
-        unique_tickers = list({item.ticker for item in analyzed_news})
-        public_sentiments = await self.broader_sentiment.analyze_multiple(unique_tickers)
-        self.decision_engine.set_public_sentiments(public_sentiments)
-        for t, ps in public_sentiments.items():
-            logger.info("  %s: %s (score=%.2f)", t, ps.sentiment_label, ps.avg_sentiment_score)
-
-        # Step 6: Calculate metrics and generate signals
-        logger.info("Step 6: Calculating metrics and generating trading signals")
+        # Step 5: Calculate metrics and generate signals
+        logger.info("Step 5: Calculating metrics and generating trading signals")
         signals: List[TradingSignal] = []
         
         for news_item in analyzed_news:

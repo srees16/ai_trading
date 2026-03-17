@@ -3,42 +3,33 @@ Decision engine that combines sentiment, fundamentals, technicals,
 macro-economic indicators, and public (Google search) sentiment.
 """
 
+import logging
+from datetime import datetime, timedelta
 from typing import Optional
 
 from config import Config
 from models import NewsItem, StockMetrics, TradingSignal, DecisionTag, SentimentLabel
 
+logger = logging.getLogger(__name__)
+
 
 class DecisionEngine:
-    """
-    Combines fundamental, technical, macro-economic, and
-    public-sentiment analysis to generate trading decisions.
+    """Combines fundamental, technical, and macro-economic
+    analysis to generate trading decisions.
 
     Score composition (when all layers are available):
-        fundamentals     35 %
-        technicals       35 %
-        macro-economic   15 %
-        public sentiment 15 %
-
-    News sentiment is still computed and displayed in the reasoning
-    text but excluded from the weighted score (weight = 0 %).
-
-    When macro or public sentiment data is unavailable the weights
-    are automatically redistributed among the remaining components.
+        fundamentals     40 %
+        technicals       40 %
+        macro-economic   20 %
     """
     
     def __init__(self):
         """Initialize the decision engine."""
         self._macro_snapshot = None
-        self._public_sentiments = {} # ticker PublicSentiment
 
     def set_macro_snapshot(self, snapshot) -> None:
         """Inject a ``MacroSnapshot`` for the current analysis cycle."""
         self._macro_snapshot = snapshot
-
-    def set_public_sentiments(self, sentiments: dict) -> None:
-        """Inject ``{ticker: PublicSentiment}`` for the current cycle."""
-        self._public_sentiments = sentiments or {}
 
     def generate_signal(
         self, 
@@ -56,39 +47,87 @@ class DecisionEngine:
             TradingSignal with decision and reasoning
         """
         # Calculate component scores
-        sentiment_score = self._calculate_sentiment_score(news_item)
         fundamental_score = self._calculate_fundamental_score(metrics)
         technical_score = self._calculate_technical_score(metrics)
         macro_score = self._calculate_macro_score()
-        public_score = self._calculate_public_sentiment_score(news_item.ticker)
 
-        # Dynamic weighting — redistribute if macro / public unavailable
-        w_sent = Config.SENTIMENT_WEIGHT
+        # ── S3: Signal freshness gate ────────────────────────
+        # Demote stale data: if metrics timestamp is more than N hours
+        # old, decay confidence by pushing score toward HOLD.
+        staleness_penalty = 0.0
+        if metrics and metrics.timestamp:
+            age = datetime.now() - metrics.timestamp
+            max_hours = Config.SIGNAL_FRESHNESS_MAX_HOURS
+            if age > timedelta(hours=max_hours):
+                hours_stale = age.total_seconds() / 3600
+                # Linear decay: 10% penalty per hour beyond threshold
+                staleness_penalty = min(0.5, (hours_stale - max_hours) * 0.10)
+                logger.info(
+                    "%s: data is %.1fh old — applying %.0f%% staleness penalty",
+                    news_item.ticker, hours_stale, staleness_penalty * 100,
+                )
+
+        # ── S7: Earnings blackout guard ──────────────────────
+        # Suppress BUY signals near earnings announcements:
+        # detected via news keyword matching on recent articles.
+        earnings_blackout = False
+        if news_item.category and news_item.category.value == "earnings":
+            earnings_blackout = True
+            logger.info(
+                "%s: earnings-related news detected — blackout active",
+                news_item.ticker,
+            )
+
+        # Dynamic weighting — redistribute if macro unavailable
         w_fund = Config.FUNDAMENTAL_WEIGHT
         w_tech = Config.TECHNICAL_WEIGHT
         w_macro = Config.MACRO_WEIGHT
-        w_pub = Config.PUBLIC_SENTIMENT_WEIGHT
 
         if macro_score is None:
             w_macro = 0.0
-        if public_score is None:
-            w_pub = 0.0
 
-        total_w = w_sent + w_fund + w_tech + w_macro + w_pub
+        total_w = w_fund + w_tech + w_macro
         if total_w > 0:
-            w_sent /= total_w
             w_fund /= total_w
             w_tech /= total_w
             w_macro /= total_w
-            w_pub /= total_w
 
         combined_score = (
-            sentiment_score * w_sent
-            + fundamental_score * w_fund
+            fundamental_score * w_fund
             + technical_score * w_tech
             + (macro_score or 0) * w_macro
-            + (public_score or 0) * w_pub
         )
+
+        # Apply staleness penalty (decays toward zero)
+        if staleness_penalty > 0:
+            combined_score *= (1.0 - staleness_penalty)
+
+        # Earnings blackout: clamp positive scores to HOLD zone
+        if earnings_blackout and combined_score > 0:
+            combined_score = min(combined_score, Config.BUY_THRESHOLD - 0.01)
+
+        # ── VIX regime gate ────────────────────────────────
+        # High VIX = high fear. Suppress BUY signals in panic;
+        # dampen buy signals in caution zone.
+        if self._macro_snapshot is not None:
+            vix_val = getattr(self._macro_snapshot, 'india_vix', None)
+            if vix_val is None:
+                vix_val = getattr(self._macro_snapshot, 'vix', None)
+            if vix_val is not None:
+                if vix_val >= Config.VIX_PANIC_THRESHOLD and combined_score > 0:
+                    # Panic zone: clamp to HOLD
+                    combined_score = min(combined_score, Config.BUY_THRESHOLD - 0.01)
+                    logger.info(
+                        "%s: VIX=%.1f (panic) — suppressing BUY signal",
+                        news_item.ticker, vix_val,
+                    )
+                elif vix_val >= Config.VIX_CAUTION_THRESHOLD and combined_score > 0:
+                    # Caution zone: scale down
+                    combined_score *= Config.VIX_POSITION_SCALE
+                    logger.info(
+                        "%s: VIX=%.1f (caution) — scaling BUY signal by %.0f%%",
+                        news_item.ticker, vix_val, Config.VIX_POSITION_SCALE * 100,
+                    )
         
         # Determine decision
         decision = self._score_to_decision(combined_score)
@@ -97,12 +136,10 @@ class DecisionEngine:
         reasoning = self._generate_reasoning(
             news_item,
             metrics,
-            sentiment_score,
             fundamental_score,
             technical_score,
             combined_score,
             macro_score=macro_score,
-            public_score=public_score,
         )
         
         # Create signal
@@ -197,6 +234,32 @@ class DecisionEngine:
             elif value_ratio < 1.0:  # Overvalued
                 score -= 0.3
             count += 1
+
+        # Piotroski F-Score (0–9; higher = healthier)
+        if metrics.piotroski_f_score is not None:
+            if metrics.piotroski_f_score >= 7:
+                score += 0.4   # Strong financial health
+            elif metrics.piotroski_f_score >= 5:
+                score += 0.1
+            elif metrics.piotroski_f_score <= 2:
+                score -= 0.4   # Weak / distressed
+            count += 1
+
+        # Beneish M-Score (< -1.78 = unlikely fraud; > -1.78 = red flag)
+        if metrics.beneish_m_score is not None:
+            if metrics.beneish_m_score > -1.78:
+                score -= 0.5   # Likely earnings manipulation
+            elif metrics.beneish_m_score < -2.5:
+                score += 0.2   # Clean financials
+            count += 1
+
+        # Altman Z-Score (> 2.99 = safe; 1.81–2.99 = grey; < 1.81 = distress)
+        if metrics.altman_z_score is not None:
+            if metrics.altman_z_score > 2.99:
+                score += 0.3   # Minimal bankruptcy risk
+            elif metrics.altman_z_score < 1.81:
+                score -= 0.5   # High distress / bankruptcy risk
+            count += 1
         
         # Average the score
         if count > 0:
@@ -229,12 +292,16 @@ class DecisionEngine:
                 score -= 0.2
             count += 1
         
-        # MACD (histogram positive = bullish)
+        # MACD (histogram magnitude → proportional score)
         if metrics.macd_histogram is not None:
-            if metrics.macd_histogram > 0:
-                score += 0.3
+            if metrics.current_price and metrics.current_price > 0:
+                # Normalise histogram by price so large-cap and small-cap
+                # stocks get comparable scores.
+                norm_hist = metrics.macd_histogram / metrics.current_price * 100
+                macd_score = max(-0.5, min(0.5, norm_hist * 0.15))
             else:
-                score -= 0.3
+                macd_score = 0.3 if metrics.macd_histogram > 0 else -0.3
+            score += macd_score
             count += 1
         
         # Bollinger Bands (price near lower band = buy, upper band = sell)
@@ -265,10 +332,42 @@ class DecisionEngine:
             elif metrics.max_drawdown < -20:
                 score -= 0.1
             count += 1
+
+        # ── S1: ADX regime detection ─────────────────────────
+        # If ADX is below the trend threshold, the market is choppy
+        # and momentum signals (RSI, MACD) are less reliable → dampen.
+        adx_dampening = 1.0
+        if metrics.adx is not None:
+            if metrics.adx < Config.ADX_TREND_THRESHOLD:
+                # In range-bound markets, halve the technical signal
+                adx_dampening = 0.5
+            count += 1
+
+        # ── S5: OBV volume confirmation ──────────────────────
+        # Bullish divergence (price up, OBV down) weakens BUY signal.
+        # Bearish divergence (price down, OBV up) weakens SELL signal.
+        obv_adjustment = 0.0
+        if metrics.obv is not None and metrics.obv_sma is not None:
+            obv_rising = metrics.obv > metrics.obv_sma
+            price_bullish = score > 0
+            if price_bullish and obv_rising:
+                obv_adjustment = 0.15    # volume confirms bullish move
+            elif price_bullish and not obv_rising:
+                obv_adjustment = -0.15   # bearish divergence warning
+            elif not price_bullish and not obv_rising:
+                obv_adjustment = -0.10   # volume confirms bearish move
+            elif not price_bullish and obv_rising:
+                obv_adjustment = 0.10    # bullish divergence hint
+            count += 1
         
         # Average the score
         if count > 0:
             score = score / count
+
+        # Apply ADX regime dampening (choppy market → weaker signal)
+        score *= adx_dampening
+        # Apply OBV volume confirmation/divergence
+        score += obv_adjustment
         
         # Clamp to [-1, 1]
         return max(-1.0, min(1.0, score))
@@ -300,17 +399,6 @@ class DecisionEngine:
             return max(-1.0, min(1.0, snap.macro_sentiment_score))
         return None
 
-    # ── Public (Google search) sentiment scoring ─────────────────────
-
-    def _calculate_public_sentiment_score(self, ticker: str) -> Optional[float]:
-        """
-        Return the Google-search-derived public sentiment for *ticker*,
-        or ``None`` if not available.
-        """
-        ps = self._public_sentiments.get(ticker)
-        if ps is None or ps.results_analyzed == 0:
-            return None
-        return max(-1.0, min(1.0, ps.avg_sentiment_score))
 
     # ── Reasoning ────────────────────────────────────────────────────
     
@@ -318,24 +406,14 @@ class DecisionEngine:
         self,
         news_item: NewsItem,
         metrics: Optional[StockMetrics],
-        sentiment_score: float,
         fundamental_score: float,
         technical_score: float,
         combined_score: float,
         *,
         macro_score: Optional[float] = None,
-        public_score: Optional[float] = None,
     ) -> str:
         """Generate human-readable reasoning for the decision."""
         reasons = []
-        
-        # Sentiment
-        if news_item.sentiment_label == SentimentLabel.POSITIVE:
-            conf = news_item.sentiment_confidence or 0
-            reasons.append(f"Positive news sentiment ({conf:.2%} confidence)")
-        elif news_item.sentiment_label == SentimentLabel.NEGATIVE:
-            conf = news_item.sentiment_confidence or 0
-            reasons.append(f"Negative news sentiment ({conf:.2%} confidence)")
         
         # Fundamentals
         if metrics:
@@ -370,15 +448,6 @@ class DecisionEngine:
             reasons.append(f"Macro: {label} ({macro_score:+.2f})")
             if snap and snap.vix is not None:
                 reasons.append(f"VIX={snap.vix:.1f}")
-
-        # Public sentiment
-        if public_score is not None:
-            ps = self._public_sentiments.get(news_item.ticker)
-            if ps:
-                reasons.append(
-                    f"Public sentiment: {ps.sentiment_label} "
-                    f"({public_score:+.2f}, {ps.results_analyzed} pages)"
-                )
         
         # Combine
         reasoning = "; ".join(reasons) if reasons else "Based on available data"

@@ -14,7 +14,7 @@ from uuid import UUID
 import streamlit as st
 
 from config import Config
-from ui.components import render_page_header, render_footer, render_navigation_buttons, render_ind_navigation_buttons, render_stock_ticker_ribbon, render_vix_indicator, get_decision_emoji
+from ui.components import render_page_header, render_footer, render_navigation_buttons, render_ind_navigation_buttons, render_ribbon_and_vix, get_decision_emoji
 
 logger = logging.getLogger(__name__)
 
@@ -75,18 +75,16 @@ def render_history_page():
 
     # Navigation
     if market == 'IND':
-        render_stock_ticker_ribbon(market="IND")
-        render_vix_indicator(market="IND")
+        render_ribbon_and_vix(market="IND")
         render_ind_navigation_buttons(current_page='history', back_key_suffix='history')
     else:
-        render_stock_ticker_ribbon(market="US")
-        render_vix_indicator(market="US")
+        render_ribbon_and_vix(market="US")
         render_navigation_buttons(
             current_page='history',
             back_key_suffix="history"
         )
 
-    st.markdown("---")
+    st.markdown('<hr class="nav-sep">', unsafe_allow_html=True)
 
     if not DB_AVAILABLE:
         _render_db_unavailable()

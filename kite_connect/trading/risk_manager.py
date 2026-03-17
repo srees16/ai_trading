@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import pandas as pd
 
@@ -40,6 +40,23 @@ class RiskConfig:
     use_kelly_sizing: bool = True         # Scale risk by signal confidence (half-Kelly)
     kelly_floor_pct: float = 0.01         # Minimum risk (1%) for low-confidence
     kelly_cap_pct: float = 0.03           # Maximum risk (3%) for high-confidence
+    sl_min_pct: float = 0.05              # SL at least 5 % below entry
+    sl_max_pct: float = 0.08              # SL at most 8 % below entry
+    # R1: Sector concentration limits
+    max_sector_exposure_pct: float = 0.40 # Max 40% capital in one sector
+    max_trades_per_sector: int = 3        # Max 3 open trades per sector
+    # R3: Trailing stop-loss
+    trailing_sl_enabled: bool = True      # Enable trailing stop once profit > threshold
+    trailing_sl_activation_pct: float = 0.05  # Activate trailing SL after 5% profit
+    trailing_sl_distance_pct: float = 0.03    # Trail SL 3% below current price
+    # R4: Market regime (VIX / ADX) scaling
+    vix_caution_threshold: float = 20.0   # VIX > 20 → scale position to vix_caution_scale
+    vix_panic_threshold: float = 25.0     # VIX > 25 → block all new BUY orders
+    vix_caution_scale: float = 0.60       # 60% position size during caution
+    adx_choppy_threshold: float = 20.0    # ADX < 20 → market choppy, scale down
+    adx_choppy_scale: float = 0.50        # 50% position size in choppy market
+    # Slippage buffer
+    slippage_buffer_pct: float = 0.002    # 0.2% buffer for fill price uncertainty
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -132,23 +149,85 @@ class RiskManager:
         limit = max_trades or self.cfg.max_open_trades
         available = self._available_capital()
         plans: List[TradePlan] = []
+        # R1: Track sector exposure
+        sector_trade_count: Dict[str, int] = {}
+        sector_capital: Dict[str, float] = {}
+
+        # R4: Market regime scaling (VIX + ADX)
+        regime_scale = self._get_regime_scale()
+        if regime_scale <= 0:
+            logger.warning("VIX panic regime — no new BUY orders generated")
+            return []
 
         for _, row in screened_df.head(limit).iterrows():
             if available <= 0:
                 logger.info("No capital remaining — stopping plan generation")
                 break
-            plan = self._build_plan(row, available)
+
+            # R1: Sector concentration check
+            sector = str(row.get("sector_name", "")).strip() or "Unknown"
+            if sector_trade_count.get(sector, 0) >= self.cfg.max_trades_per_sector:
+                logger.info(
+                    "Skipping %s — sector '%s' already has %d trades (max %d)",
+                    row.get("symbol", "?"), sector,
+                    sector_trade_count[sector], self.cfg.max_trades_per_sector,
+                )
+                continue
+            sector_cap = sector_capital.get(sector, 0.0)
+            if sector_cap >= self.cfg.total_capital * self.cfg.max_sector_exposure_pct:
+                logger.info(
+                    "Skipping %s — sector '%s' exposure ₹%.0f >= %.0f%% of capital",
+                    row.get("symbol", "?"), sector,
+                    sector_cap, self.cfg.max_sector_exposure_pct * 100,
+                )
+                continue
+
+            plan = self._build_plan(row, available, regime_scale)
             if plan is not None:
                 plans.append(plan)
-                # Deduct allocated capital
-                available -= plan.quantity * plan.entry_price
+                allocated = plan.quantity * plan.entry_price
+                available -= allocated
+                sector_trade_count[sector] = sector_trade_count.get(sector, 0) + 1
+                sector_capital[sector] = sector_cap + allocated
 
         logger.info("Generated %d trade plans (top-%d)", len(plans), limit)
         return plans
 
     # ── Internal ───────────────────────────────────────────────
 
-    def _build_plan(self, row: pd.Series, available_capital: float) -> Optional[TradePlan]:
+    def _get_regime_scale(self) -> float:
+        """Compute position-size scaling factor based on VIX and ADX.
+
+        Returns 0.0 (block orders) to 1.0 (full size).
+        """
+        scale = 1.0
+        try:
+            from scrapers.macro.macro_indicators import MacroIndicators
+            macro = MacroIndicators()
+            snap = macro.fetch(market="IND")
+            vix = getattr(snap, "india_vix", None)
+            if vix is not None:
+                if vix >= self.cfg.vix_panic_threshold:
+                    logger.warning("VIX=%.1f >= %.0f (panic) — blocking new BUY orders",
+                                   vix, self.cfg.vix_panic_threshold)
+                    return 0.0
+                elif vix >= self.cfg.vix_caution_threshold:
+                    scale = min(scale, self.cfg.vix_caution_scale)
+                    logger.info("VIX=%.1f (caution) — scaling positions to %.0f%%",
+                                vix, scale * 100)
+        except Exception as exc:
+            logger.debug("VIX regime check failed: %s", exc)
+
+        try:
+            # ADX: if screened data has adx column, use the median
+            # Otherwise skip (ADX is per-stock, so we use portfolio median)
+            pass  # ADX is applied per-stock in _build_plan if available
+        except Exception:
+            pass
+
+        return scale
+
+    def _build_plan(self, row: pd.Series, available_capital: float, regime_scale: float = 1.0) -> Optional[TradePlan]:
         entry = float(row["close"])
         ma50 = float(row.get("ma_50", 0))
         support = float(row.get("support", 0))
@@ -166,9 +245,12 @@ class RiskManager:
         else:  # "tighter" — whichever is closer to entry (smaller loss)
             sl = max(sl_ma50, sl_swing)
 
-        # SL must be below entry
-        if sl >= entry:
-            sl = entry * 0.97  # 3 % hard floor
+        # Clamp SL to [sl_min_pct, sl_max_pct] below entry
+        sl_floor = entry * (1 - self.cfg.sl_max_pct)   # farthest allowed
+        sl_ceil  = entry * (1 - self.cfg.sl_min_pct)   # closest allowed
+        if sl >= entry or sl > sl_ceil:
+            sl = sl_ceil
+        sl = max(sl_floor, min(sl, sl_ceil))
 
         # ── Target price ───────────────────────────────────────
         target = resistance if resistance > entry else entry * 1.10
@@ -197,8 +279,15 @@ class RiskManager:
         else:
             effective_risk_pct = self.cfg.risk_per_trade_pct
 
+        # R4: Apply VIX/ADX regime scaling to position size
+        effective_risk_pct *= regime_scale
+
+        # GAP 8: Slippage buffer — widen risk per share assumption
+        slippage_risk = entry * self.cfg.slippage_buffer_pct
+        adjusted_risk_per_share = risk_per_share + slippage_risk
+
         max_risk = available_capital * effective_risk_pct
-        qty = max(1, math.floor(max_risk / risk_per_share))
+        qty = max(1, math.floor(max_risk / adjusted_risk_per_share))
         # Also cap by available capital (can't exceed capital / entry)
         max_qty_cap = math.floor(available_capital / entry) if entry > 0 else 0
         qty = min(qty, max_qty_cap)

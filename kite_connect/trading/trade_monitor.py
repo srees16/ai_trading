@@ -135,6 +135,22 @@ class TradeMonitor:
                         "order_id": trade.entry_order_id,
                         "reason": entry_order.get("status_message", ""),
                     })
+                else:
+                    # M1 fix: cancel stale unfilled entries (>2 hours old)
+                    age_minutes = (datetime.now() - trade.opened_at).total_seconds() / 60
+                    if age_minutes > 120:
+                        self._cancel_order(trade.entry_order_id, trade.symbol, "ENTRY")
+                        trade.closed = True
+                        events.append({
+                            "type": "ENTRY_CANCELLED_STALE",
+                            "symbol": trade.symbol,
+                            "order_id": trade.entry_order_id,
+                            "age_minutes": int(age_minutes),
+                        })
+                        logger.info(
+                            "Stale entry cancelled: %s (%.0f min old)",
+                            trade.symbol, age_minutes,
+                        )
                 continue  # Wait for entry to fill before checking SL/TP
 
             # Check SL
@@ -181,6 +197,14 @@ class TradeMonitor:
                             "symbol": trade.symbol,
                             "new_order_id": new_tp_id,
                         })
+
+            # ── R3: Trailing stop-loss ─────────────────────────
+            # If price has moved > activation_pct above entry,
+            # ratchet the SL up to trail_pct below current price.
+            if trade.entry_filled and not trade.closed:
+                trail_event = self._maybe_trail_sl(trade)
+                if trail_event:
+                    events.append(trail_event)
 
         return events
 
@@ -240,6 +264,60 @@ class TradeMonitor:
                 logger.error("TP FAILED for %s: %s", trade.symbol, resp.get("error"))
         except Exception as exc:
             logger.error("TP exception for %s: %s", trade.symbol, exc)
+
+    def _maybe_trail_sl(self, trade: MonitoredTrade) -> Optional[Dict]:
+        """Ratchet the stop-loss upward when price moves in our favour.
+
+        Activation: current price > entry * (1 + activation_pct)
+        New SL:     max(existing SL, current_price * (1 - trail_distance_pct))
+        """
+        if not self.kite or not trade.sl_order_id:
+            return None
+        try:
+            activation_pct = 0.05   # 5% profit triggers trailing
+            trail_pct = 0.03        # trail 3% below current price
+
+            key = f"NSE:{trade.symbol}"
+            ltp_data = self.kite.ltp([key])
+            ltp = ltp_data.get(key, {}).get("last_price", 0)
+            if ltp <= 0:
+                return None
+
+            # Not enough profit yet to activate trailing
+            profit_pct = (ltp - trade.entry_price) / trade.entry_price
+            if profit_pct < activation_pct:
+                return None
+
+            new_sl = round(ltp * (1 - trail_pct), 2)
+            # Only ratchet up, never down
+            if new_sl <= trade.stop_loss:
+                return None
+
+            # Modify existing SL order
+            from kite_connect.trading.order_service import modify_order
+            resp = modify_order(
+                self.kite, trade.sl_order_id,
+                trigger_price=new_sl,
+                price=round(new_sl * 0.99, 2),
+            )
+            if resp.get("success"):
+                old_sl = trade.stop_loss
+                trade.stop_loss = new_sl
+                logger.info(
+                    "Trailing SL: %s ratcheted %.2f → %.2f (LTP=%.2f, profit=%.1f%%)",
+                    trade.symbol, old_sl, new_sl, ltp, profit_pct * 100,
+                )
+                return {
+                    "type": "TRAILING_SL_UPDATED",
+                    "symbol": trade.symbol,
+                    "old_sl": old_sl,
+                    "new_sl": new_sl,
+                    "ltp": ltp,
+                    "profit_pct": round(profit_pct * 100, 1),
+                }
+        except Exception as exc:
+            logger.debug("Trailing SL check failed for %s: %s", trade.symbol, exc)
+        return None
 
     def _cancel_order(self, order_id: Optional[str], symbol: str, label: str):
         """Cancel an orphaned order (SL when TP fills, or vice versa)."""

@@ -765,7 +765,7 @@ class ClaudeLLMBackend:
 
         except Exception as e:
             logger.error("Claude streaming error: %s", e, exc_info=True)
-            yield f"\n\u26a0\ufe0f Claude streaming error: {e}"
+            yield f"\u26a0\ufe0f Claude streaming error: {e}"
 
     def is_available(self) -> bool:
         """Check if the Claude API key is set and client can be created."""
@@ -938,7 +938,7 @@ class OpenAILLMBackend:
 
         except Exception as e:
             logger.error("OpenAI streaming error: %s", e, exc_info=True)
-            yield f"\n\u26a0\ufe0f OpenAI streaming error: {e}"
+            yield f"\u26a0\ufe0f OpenAI streaming error: {e}"
 
     def is_available(self) -> bool:
         """Check if the OpenAI API key is set and client can be created."""
@@ -1066,7 +1066,7 @@ class _FallbackChainBackend:
         try:
             answer = self._primary.generate(query, context)
             # Detect error responses from the primary backend
-            if answer.startswith("\u26a0\ufe0f"):
+            if self._is_error_token(answer):
                 logger.warning(
                     "%s returned error — falling back to %s",
                     self._primary_name, self._fallback_name,
@@ -1080,25 +1080,73 @@ class _FallbackChainBackend:
             )
             return self._fallback.generate(query, context)
 
+    @staticmethod
+    def _is_error_token(text: str) -> bool:
+        """Return True if *text* looks like an LLM-backend error string."""
+        return text.lstrip().startswith("\u26a0\ufe0f")
+
     def generate_stream(
         self, query: str, context: str
     ) -> Generator[str, None, None]:
+        """Stream with immediate fallback on first-token error detection.
+
+        Instead of buffering *all* primary tokens (which defeats
+        streaming), we peek at the first token.  If it is an error
+        marker we switch to the fallback immediately so the user sees
+        output without delay.
+        """
         try:
-            # Try primary streaming first
-            tokens = list(self._primary.generate_stream(query, context))
-            full = "".join(tokens)
-            if full.startswith("\u26a0\ufe0f"):
+            primary_gen = self._primary.generate_stream(query, context)
+            first_token = next(primary_gen, None)
+
+            # Primary yielded nothing — fall back
+            if first_token is None:
                 logger.warning(
-                    "%s stream returned error — falling back to %s",
+                    "%s stream yielded nothing — falling back to %s",
                     self._primary_name, self._fallback_name,
                 )
                 yield from self._fallback.generate_stream(query, context)
-            else:
-                yield from tokens
+                return
+
+            # First token is an error — fall back
+            if self._is_error_token(first_token):
+                logger.warning(
+                    "%s stream returned error — falling back to %s: %s",
+                    self._primary_name, self._fallback_name,
+                    first_token[:120],
+                )
+                yield (
+                    f"\u26a0\ufe0f *Claude LLM unavailable - "
+                    f"Ollama invoked as fallback*\n\n"
+                )
+                yield from self._fallback.generate_stream(query, context)
+                return
+
+            # Primary is healthy — stream normally
+            yield first_token
+            for token in primary_gen:
+                # Mid-stream error (rare but possible)
+                if self._is_error_token(token):
+                    logger.warning(
+                        "%s mid-stream error — falling back to %s",
+                        self._primary_name, self._fallback_name,
+                    )
+                    yield (
+                        f"\n\n\u26a0\ufe0f *{self._primary_name} failed mid-stream — "
+                        f"re-generating via Ollama…*\n\n"
+                    )
+                    yield from self._fallback.generate_stream(query, context)
+                    return
+                yield token
+
         except Exception as e:
             logger.error(
                 "%s stream failed (%s) — falling back to %s",
                 self._primary_name, e, self._fallback_name,
+            )
+            yield (
+                f"\u26a0\ufe0f *Claude LLM unavailable - "
+                f"Ollama invoked as fallback*\n\n"
             )
             yield from self._fallback.generate_stream(query, context)
 

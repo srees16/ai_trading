@@ -23,17 +23,15 @@ def render_verdict_page():
         render_footer,
         render_navigation_buttons,
         render_ind_navigation_buttons,
-        render_stock_ticker_ribbon,
-        render_vix_indicator,
+        render_ribbon_and_vix,
     )
 
     market = st.session_state.get("current_market", "US")
     market_label = "Indian" if market == "IND" else "US"
     render_page_header(f"{market_label} Integrated Verdict")
 
-    # Scrolling ribbon + VIX indicator
-    render_stock_ticker_ribbon(market=market)
-    render_vix_indicator(market=market)
+    # Scrolling ribbon + VIX indicator (merged into single DOM element)
+    render_ribbon_and_vix(market=market)
 
     # Navigation buttons (same pattern as all other pages)
     if market == "IND":
@@ -41,7 +39,7 @@ def render_verdict_page():
     else:
         render_navigation_buttons(current_page='verdict', back_key_suffix='from_verdict')
 
-    st.markdown("---")
+    st.markdown('<hr class="nav-sep">', unsafe_allow_html=True)
 
     _render_controls(market)
 
@@ -102,20 +100,18 @@ def _render_controls(market: str):
     with col3:
         skip_options = st.multiselect(
             "Skip layers",
-            options=["core", "strategy", "ml_features", "robustness", "rag"],
-            default=["rag"],
-            help="RAG is skipped by default (LLM calls add latency with minimal scoring value)",
+            options=["core", "strategy", "ml_features", "robustness"],
+            default=[],
             key=f"{_PFX}skip_layers",
         )
 
     # Weight sliders in an expander
     with st.expander("Layer weights", expanded=False):
-        w_col1, w_col2, w_col3, w_col4, w_col5 = st.columns(5)
-        w_core = w_col1.slider("Core", 0, 100, 30, key=f"{_PFX}w_core")
+        w_col1, w_col2, w_col3, w_col4 = st.columns(4)
+        w_core = w_col1.slider("Core", 0, 100, 35, key=f"{_PFX}w_core")
         w_strat = w_col2.slider("Strategy", 0, 100, 25, key=f"{_PFX}w_strat")
         w_ml = w_col3.slider("ML Features", 0, 100, 15, key=f"{_PFX}w_ml")
-        w_robust = w_col4.slider("Robustness", 0, 100, 20, key=f"{_PFX}w_robust")
-        w_rag = w_col5.slider("RAG", 0, 100, 0, key=f"{_PFX}w_rag")
+        w_robust = w_col4.slider("Robustness", 0, 100, 25, key=f"{_PFX}w_robust")
 
     # Batch size control (relevant when ticker count is large)
     batch_size = 20
@@ -141,7 +137,7 @@ def _render_controls(market: str):
         else:
             dr = (str(start_dt), str(end_dt))
 
-        total_w = w_core + w_strat + w_ml + w_robust + w_rag
+        total_w = w_core + w_strat + w_ml + w_robust
         if total_w == 0:
             total_w = 1
         weights = {
@@ -149,7 +145,6 @@ def _render_controls(market: str):
             "strategy": w_strat / total_w,
             "ml_features": w_ml / total_w,
             "robustness": w_robust / total_w,
-            "rag": w_rag / total_w,
         }
 
         _run_batched_analysis(tickers, market, dr, weights, skip_options, batch_size)
@@ -183,7 +178,7 @@ def _run_batched_analysis(tickers, market, date_range, weights, skip_layers, bat
     max_concurrent = min(num_batches, 3)
     all_verdicts = []
 
-    with st.spinner(f"Analysing {total} stocks in {num_batches} parallel batches …"):
+    with st.spinner(f"Analysing {total} stocks in {num_batches} parallel batches"):
         with ThreadPoolExecutor(max_workers=max_concurrent, thread_name_prefix="batch") as pool:
             futures = {
                 pool.submit(_evaluate_batch, batch): idx
@@ -218,47 +213,6 @@ _COLOUR_MAP = {
 }
 
 
-def _execute_buy_verdicts(verdicts):
-    """Place orders for BUY/STRONG_BUY verdicts via AutoExecutor."""
-    kite = st.session_state.get("kite")
-    signal_dict = {
-        v.ticker.replace(".NS", "").replace(".BO", ""): v.classification
-        for v in verdicts
-    }
-    buy_symbols = [
-        sym for sym, tag in signal_dict.items()
-        if tag in ("BUY", "STRONG_BUY")
-    ]
-
-    if not buy_symbols:
-        st.warning("No BUY/STRONG_BUY signals to execute.")
-        return
-
-    try:
-        from kite_connect.trading.auto_executor import AutoExecutor
-
-        auto_place = kite is not None
-        executor = AutoExecutor(kite=kite, auto_place=auto_place)
-        with st.spinner(f"Executing orders for {len(buy_symbols)} symbols…"):
-            report = executor.run(
-                symbols=buy_symbols,
-                signal_verdicts=signal_dict,
-            )
-        st.success(
-            f"Execution complete — "
-            f"{report.orders_placed} orders placed, "
-            f"{report.orders_failed} failed, "
-            f"{report.signal_filtered_count} filtered by signal."
-        )
-        if report.order_results:
-            import pandas as pd
-            order_rows = [o.to_dict() for o in report.order_results]
-            st.dataframe(pd.DataFrame(order_rows), hide_index=True)
-    except Exception as exc:
-        logger.exception("Order execution failed")
-        st.error(f"Order execution error: {exc}")
-
-
 def _render_results(verdicts):
     import pandas as pd
 
@@ -276,7 +230,6 @@ def _render_results(verdicts):
             "Strategy": _fmt_score(v.layer_scores.get("strategy")),
             "ML": _fmt_score(v.layer_scores.get("ml_features")),
             "Robustness": _fmt_score(v.layer_scores.get("robustness")),
-            "RAG": _fmt_score(v.layer_scores.get("rag")),
         })
 
     df = pd.DataFrame(rows)
@@ -292,30 +245,6 @@ def _render_results(verdicts):
     styled = df.style.apply(_colour_verdict, axis=1)
     st.dataframe(styled, hide_index=True, width="stretch")
 
-    # ── Execute BUY/STRONG_BUY signals via Kite ──────────────
-    buy_verdicts = [
-        v for v in verdicts
-        if v.classification in ("BUY", "STRONG_BUY")
-    ]
-    if buy_verdicts:
-        st.markdown("---")
-        buy_syms = [v.ticker.replace(".NS", "").replace(".BO", "") for v in buy_verdicts]
-        st.success(
-            f"**{len(buy_verdicts)} BUY signals**: {', '.join(buy_syms)}"
-        )
-        exec_col, warn_col = st.columns([1, 2])
-        with exec_col:
-            if st.button(
-                f"Place Orders for {len(buy_verdicts)} BUY Signals",
-                type="primary",
-                key=f"{_PFX}execute_btn",
-            ):
-                _execute_buy_verdicts(verdicts)
-        with warn_col:
-            kite = st.session_state.get("kite")
-            if kite is None:
-                st.warning("Kite session not authenticated — orders will be dry-run only.", icon="\u26a0\ufe0f")
-
     # Per-ticker expandable breakdown
     for v in verdicts:
         colour = _COLOUR_MAP.get(v.classification, "#888")
@@ -330,7 +259,7 @@ def _render_results(verdicts):
                 st.image(radar_bytes, width=400)
 
             # Layer details
-            for layer_name in ("core", "strategy", "ml_features", "robustness", "rag"):
+            for layer_name in ("core", "strategy", "ml_features", "robustness"):
                 details = v.layer_details.get(layer_name, {})
                 score = v.layer_scores.get(layer_name)
                 header = f"**{layer_name.replace('_', ' ').title()}**"

@@ -99,6 +99,9 @@ class ScreenedStock:
     bb_lower: float = 0.0
     support: float = 0.0
     resistance: float = 0.0
+    adx: float = 0.0
+    volume_ratio: float = 1.0     # current vol / 20-day avg vol
+    relative_strength: float = 0.0  # stock return minus NIFTY return (1m)
 
     # Composite score  (0–100)
     score: float = 0.0
@@ -123,6 +126,9 @@ class ScreenedStock:
             "bb_lower": round(self.bb_lower, 2),
             "support": round(self.support, 2),
             "resistance": round(self.resistance, 2),
+            "adx": round(self.adx, 2),
+            "volume_ratio": round(self.volume_ratio, 2),
+            "rel_strength": round(self.relative_strength, 4),
             "score": round(self.score, 2),
             "strategies": ", ".join(self.strategies),
         }
@@ -197,6 +203,28 @@ def _beta(stock_returns: pd.Series, index_returns: pd.Series) -> float:
     if var == 0:
         return 1.0
     return float(cov / var)
+
+
+def _adx(df: pd.DataFrame, period: int = 14) -> float:
+    """Compute Average Directional Index (ADX) for trend strength."""
+    high = df["High"]
+    low = df["Low"]
+    close = df["Close"]
+    plus_dm = high.diff()
+    minus_dm = -low.diff()
+    plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0.0)
+    minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0.0)
+    tr1 = high - low
+    tr2 = (high - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr = true_range.ewm(alpha=1 / period, min_periods=period).mean()
+    plus_di = 100 * (plus_dm.ewm(alpha=1 / period, min_periods=period).mean() / atr)
+    minus_di = 100 * (minus_dm.ewm(alpha=1 / period, min_periods=period).mean() / atr)
+    dx = (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan) * 100
+    adx_val = dx.ewm(alpha=1 / period, min_periods=period).mean()
+    last = adx_val.iloc[-1]
+    return float(last) if np.isfinite(last) else 0.0
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -309,8 +337,17 @@ class NSEScreener:
 
         # ── 3.  Stage 3 — Technical Analysis ──────────────────
         _cb("Stage 3: Computing technical indicators …")
+        # Compute NIFTY 1-month return for relative strength comparison
+        nifty_1m_ret = 0.0
+        if nifty is not None and len(nifty) >= 20:
+            nifty_1m_ret = float(((1 + nifty.tail(20)).prod() - 1).iloc[0])
         for stock in stage1:
             self._stage3_technicals(stock, ohlcv.get(stock.symbol))
+            # Relative strength: stock 1-month return minus NIFTY return
+            sdf = ohlcv.get(stock.symbol)
+            if sdf is not None and len(sdf) >= 20:
+                stock_1m_ret = float(sdf["Close"].iloc[-1] / sdf["Close"].iloc[-20] - 1)
+                stock.relative_strength = stock_1m_ret - nifty_1m_ret
 
         # ── 4.  Score & rank ──────────────────────────────────
         _cb("Scoring and ranking …")
@@ -465,7 +502,7 @@ class NSEScreener:
     # ── Stage 3:  Technical Analysis ───────────────────────────
 
     def _stage3_technicals(self, stock: ScreenedStock, df: Optional[pd.DataFrame]):
-        """Compute RSI, Bollinger Bands, Support / Resistance."""
+        """Compute RSI, Bollinger Bands, Support / Resistance, ADX, volume ratio."""
         if df is None or df.empty:
             return
 
@@ -484,27 +521,38 @@ class NSEScreener:
         # Support / Resistance
         stock.support, stock.resistance = _support_resistance(close, self.cfg.sr_lookback)
 
+        # ADX (trend strength)
+        stock.adx = _adx(df) if len(df) > 28 else 0.0
+
+        # Volume ratio (today’s volume vs 20-day average)
+        if "Volume" in df.columns and len(df) >= 20:
+            avg_vol = float(df["Volume"].tail(20).mean())
+            if avg_vol > 0:
+                stock.volume_ratio = float(df["Volume"].iloc[-1]) / avg_vol
+
     # ── Scoring ────────────────────────────────────────────────
 
     def _compute_score(self, stock: ScreenedStock):
         """
         Composite score 0–100 based on:
-          - Trend strength   (20 pts)
-          - Volatility/beta  (15 pts)
-          - Methodology hits (30 pts: pullback 10, breakout 10, sector 10)
+          - Trend strength   (15 pts)
+          - Volatility/beta  (10 pts)
+          - Methodology hits (25 pts: pullback 10, breakout 10, sector 5)
           - RSI zone         (15 pts)
           - Bollinger zone   (10 pts)
           - S/R proximity    (10 pts)
+          - ADX trend filter (  8 pts) — NEW
+          - Volume surge     (  7 pts) — NEW
         """
         score = 0.0
 
-        # Trend strength — distance above 200-MA (capped at 20 pts)
+        # Trend strength — distance above 200-MA (capped at 15 pts)
         if stock.ma_200 > 0:
             trend_pct = (stock.close - stock.ma_200) / stock.ma_200
-            score += min(20, trend_pct * 100)
+            score += min(15, trend_pct * 100)
 
-        # Beta (higher = more swing potential, capped at 15)
-        score += min(15, stock.beta * 7.5)
+        # Beta (higher = more swing potential, capped at 10)
+        score += min(10, stock.beta * 5.0)
 
         # Methodology bonuses
         if stock.pullback:
@@ -512,7 +560,7 @@ class NSEScreener:
         if stock.breakout:
             score += 10
         if stock.sector_leader:
-            score += 10
+            score += 5
 
         # RSI — favour oversold-to-neutral zone (30–50 = best entry)
         if 30 <= stock.rsi <= 50:
@@ -535,5 +583,27 @@ class NSEScreener:
             if sr_range > 0:
                 sr_pos = (stock.close - stock.support) / sr_range
                 score += max(0, (1 - sr_pos) * 10)
+
+        # ADX trend strength — strong trend = higher conviction
+        if stock.adx >= 25:
+            score += 8    # strong trend
+        elif stock.adx >= 20:
+            score += 5    # moderate trend
+        elif stock.adx < 15:
+            score -= 3    # choppy market penalty
+
+        # Volume surge — above-average volume confirms move
+        if stock.volume_ratio >= 2.0:
+            score += 7    # strong volume confirmation
+        elif stock.volume_ratio >= 1.5:
+            score += 5
+        elif stock.volume_ratio >= 1.2:
+            score += 3
+
+        # Relative strength vs NIFTY (if computed)
+        if stock.relative_strength > 0.05:
+            score += 5    # outperforming index by > 5%
+        elif stock.relative_strength < -0.05:
+            score -= 3    # underperforming index
 
         stock.score = min(100, max(0, score))

@@ -37,7 +37,6 @@ DEFAULT_WEIGHTS = {
     "strategy": 0.25,
     "ml_features": 0.15,
     "robustness": 0.25,
-    "rag": 0.00,           # disabled — LLM calls add latency with minimal value
 }
 
 
@@ -179,52 +178,34 @@ def _run_layer_core(ticker: str, market: str) -> Dict[str, Any]:
         metrics = system.metrics_calculator.get_stock_metrics(ticker)
         engine = system.decision_engine
 
-        # Fetch the last generated signal for this ticker
-        sentiment_score = 0.0
         fundamental_score = 0.0
         technical_score = 0.0
         macro_score = 0.0
-        public_score = 0.0
 
         if metrics:
             fundamental_score = engine._calculate_fundamental_score(metrics)
             technical_score = engine._calculate_technical_score(metrics)
         macro_score = engine._calculate_macro_score() or 0.0
-        public_score = engine._calculate_public_sentiment_score(ticker) or 0.0
-
-        # Aggregate a sentiment across all news items for this ticker
-        news = [n for n in getattr(system, '_analyzed_news', []) if n.ticker == ticker]
-        if news:
-            sentiment_score = _safe_mean(
-                [engine._calculate_sentiment_score(n) for n in news]
-            )
 
         # Weighted core score (replicates DecisionEngine logic)
-        # Sentiment weight is 0 — sentiment is for display only
         w = {
-            "sent": Config.SENTIMENT_WEIGHT,
             "fund": Config.FUNDAMENTAL_WEIGHT,
             "tech": Config.TECHNICAL_WEIGHT,
             "macro": Config.MACRO_WEIGHT,
-            "pub": Config.PUBLIC_SENTIMENT_WEIGHT,
         }
         total_w = sum(w.values())
         core_score = (
-            sentiment_score * w["sent"]
-            + fundamental_score * w["fund"]
+            fundamental_score * w["fund"]
             + technical_score * w["tech"]
             + macro_score * w["macro"]
-            + public_score * w["pub"]
         ) / total_w
 
         return {
             "score": _clamp(core_score),
             "details": {
-                "sentiment": round(sentiment_score, 4),
                 "fundamental": round(fundamental_score, 4),
                 "technical": round(technical_score, 4),
                 "macro": round(macro_score, 4),
-                "public": round(public_score, 4),
                 "combined": round(core_score, 4),
             },
         }
@@ -255,7 +236,17 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
         drawdowns: List[float] = []
         strategy_results: Dict[str, Any] = {}
 
+        # Strategies that require ≥2 tickers (cointegration / pairs)
+        _MULTI_TICKER_STRATEGIES = {"pairs trading", "mean reversion (z-score)"}
+
         for name, strategy_cls in all_strategies.items():
+            # Skip crypto strategies when evaluating US/IND stocks
+            if "crypto" in name.lower():
+                continue
+            # Skip multi-ticker strategies in per-ticker evaluation
+            if name.lower() in _MULTI_TICKER_STRATEGIES:
+                strategy_results[name] = {"skipped": "requires multiple tickers"}
+                continue
             try:
                 strategy = strategy_cls()
                 result = strategy.run(
@@ -281,31 +272,55 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
                         pass  # degrade gracefully
 
                 # Extract signal direction from the last row of signals
+                strat_buy = 0
+                strat_sell = 0
                 if result.signals is not None and not result.signals.empty:
                     last_signal = result.signals.iloc[-1]
                     sig_col = next(
-                        (c for c in ("signal", "Signal", "position", "Position")
+                        (c for c in ("signal", "Signal", "position", "Position",
+                                     "signals")
                          if c in result.signals.columns),
                         None,
                     )
                     if sig_col is not None:
                         val = last_signal[sig_col]
                         if val > 0:
-                            buy_votes += 1
+                            strat_buy = 1
                         elif val < 0:
-                            sell_votes += 1
+                            strat_sell = 1
+                buy_votes += strat_buy
+                sell_votes += strat_sell
 
-                sr = result.metrics.get("sharpe_ratio") or result.metrics.get("sharpe")
-                md = result.metrics.get("max_drawdown")
+                # Extract metrics — strategies return a nested dict
+                # keyed by ticker; unwrap to get the flat metrics dict.
+                raw_metrics = result.metrics
+                if isinstance(raw_metrics, dict) and ticker in raw_metrics:
+                    flat_metrics = raw_metrics[ticker]
+                elif isinstance(raw_metrics, dict) and "aggregate" in raw_metrics:
+                    flat_metrics = raw_metrics["aggregate"]
+                else:
+                    flat_metrics = raw_metrics  # already flat
+
+                sr = (
+                    flat_metrics.get("sharpe_ratio")
+                    or flat_metrics.get("sharpe")
+                    or flat_metrics.get("avg_sharpe")
+                )
+                md = flat_metrics.get("max_drawdown")
                 if sr is not None and np.isfinite(sr):
                     sharpes.append(float(sr))
                 if md is not None and np.isfinite(md):
                     drawdowns.append(float(md))
 
+                strat_signal = (
+                    "BUY" if strat_buy > strat_sell
+                    else "SELL" if strat_sell > strat_buy
+                    else "NEUTRAL"
+                )
                 strategy_results[name] = {
                     "sharpe": sr,
                     "max_drawdown": md,
-                    "last_signal": "BUY" if buy_votes > sell_votes else "SELL",
+                    "last_signal": strat_signal,
                 }
             except Exception as e:
                 strategy_results[name] = {"error": str(e)}
@@ -319,12 +334,41 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
         median_sharpe = float(np.median(sharpes)) if sharpes else 0.0
         worst_dd = min(drawdowns) if drawdowns else 0.0
 
+        # ── S2: Correlation-weighted voting ──────────────────
+        # Weight each strategy's vote by its Sharpe ratio so that
+        # better-performing strategies have more influence on the
+        # final consensus.  Falls back to equal-weight if no
+        # Sharpe data is available.
+        weighted_consensus = consensus  # default to equal-weight
+        if sharpes and total_votes > 0:
+            # Build per-strategy weighted vote
+            # Only strategies above the minimum Sharpe floor get a vote,
+            # preventing low-quality strategies from diluting consensus.
+            weighted_buy = 0.0
+            weighted_sell = 0.0
+            total_weight = 0.0
+            for name, res in strategy_results.items():
+                if isinstance(res, dict) and "sharpe" in res and res["sharpe"] is not None:
+                    sr_val = float(res["sharpe"])
+                    if sr_val < Config.MIN_STRATEGY_SHARPE:
+                        continue  # below quality floor — excluded
+                    w = sr_val  # weight = Sharpe ratio
+                    sig = res.get("last_signal", "NEUTRAL")
+                    if sig == "BUY":
+                        weighted_buy += w
+                    elif sig == "SELL":
+                        weighted_sell += w
+                    total_weight += w
+            if total_weight > 0:
+                weighted_consensus = (weighted_buy - weighted_sell) / total_weight
+                weighted_consensus = max(-1.0, min(1.0, weighted_consensus))
+
         # Sharpe bonus/penalty (clamped to ±0.3)
         sharpe_adj = _clamp(median_sharpe / 5.0, -0.3, 0.3)
         # Drawdown penalty (worst drawdown, negative = bad)
         dd_adj = _clamp(worst_dd / 2.0, -0.3, 0.0) if worst_dd < -0.10 else 0.0
 
-        score = _clamp(consensus * 0.6 + sharpe_adj + dd_adj)
+        score = _clamp(weighted_consensus * 0.6 + sharpe_adj + dd_adj)
 
         return {
             "score": score,
@@ -472,7 +516,7 @@ def _run_layer_ml(ticker: str) -> Dict[str, Any]:
             events = getEvents(
                 close_series, tEvents=t_events, ptSl=[1, 1],
                 trgt=daily_vol, minRet=0.0,
-                numThreads=1, t1=pd.Series(
+                t1=pd.Series(
                     data=[t_events[-1]] * len(t_events),
                     index=t_events,
                 ),
@@ -503,8 +547,15 @@ def _run_layer_ml(ticker: str) -> Dict[str, Any]:
                 from sklearn.linear_model import SGDClassifier
 
                 # Binary classification: next-day up/down
-                X = returns.values[:-1].reshape(-1, 1)
+                # PurgedKFold.split() requires X with a DatetimeIndex
+                # matching t1.index — pass a DataFrame, not numpy array.
+                X_vals = returns.values[:-1].reshape(-1, 1)
                 y = (returns.values[1:] > 0).astype(int)
+                X = pd.DataFrame(
+                    X_vals,
+                    index=returns.index[:-1],
+                    columns=["ret"],
+                )
                 t1 = pd.Series(
                     data=returns.index[1:],
                     index=returns.index[:-1],
@@ -514,8 +565,8 @@ def _run_layer_ml(ticker: str) -> Dict[str, Any]:
                 cv_scores = []
                 for train_idx, test_idx in pkf.split(X):
                     clf = SGDClassifier(loss="log_loss", random_state=42, max_iter=200)
-                    clf.fit(X[train_idx], y[train_idx])
-                    cv_scores.append(float(clf.score(X[test_idx], y[test_idx])))
+                    clf.fit(X_vals[train_idx], y[train_idx])
+                    cv_scores.append(float(clf.score(X_vals[test_idx], y[test_idx])))
 
                 mean_cv = float(np.mean(cv_scores))
                 # CV accuracy > 0.55 = meaningful edge
@@ -542,17 +593,15 @@ def _run_layer_ml(ticker: str) -> Dict[str, Any]:
                 )
                 # Bound signal to reasonable range before passing to Kelly
                 bounded_signal = max(-3.0, min(3.0, signal_strength))
-                bet_size = discreteSignal(
-                    signal0=bounded_signal, stepSize=0.1,
-                    nClasses=10, prob=0.5 + abs(bounded_signal) / 10,
-                    pred=1 if bounded_signal > 0 else 0,
-                    numClasses=2,
+                # discreteSignal(signal0, stepSize) — rounds & clips
+                # signal to multiples of stepSize in [-1, 1].
+                raw_signal = pd.Series([bounded_signal / 3.0])  # normalise to ~[-1,1]
+                bet_size_s = discreteSignal(
+                    signal0=raw_signal, stepSize=0.1,
                 )
-                # bet_size in [0,1]: high = confident → positive score
-                if bounded_signal > 0:
-                    kelly_score = _clamp(float(bet_size) * 0.5)
-                else:
-                    kelly_score = _clamp(-float(bet_size) * 0.5)
+                bet_size = float(bet_size_s.iloc[0])
+                # bet_size in [-1,1]: positive = bullish, negative = bearish
+                kelly_score = _clamp(bet_size * 0.5)
                 details["kelly_bet_size"] = round(float(bet_size), 4)
                 details["kelly_signal_strength"] = round(signal_strength, 4)
                 sub_scores.append(kelly_score)
@@ -628,11 +677,19 @@ def _run_layer_robustness(ticker: str, date_range: tuple) -> Dict[str, Any]:
             # CSCV overfitting probability
             try:
                 n_configs = 5
-                ret_matrix = np.column_stack([
-                    returns[i::n_configs] for i in range(n_configs)
-                    if len(returns[i::n_configs]) > 10
-                ])
-                if ret_matrix.shape[1] >= 2:
+                # All slices must have identical length for column_stack;
+                # truncate to the shortest slice length.
+                slices = [returns[i::n_configs] for i in range(n_configs)]
+                min_len = min(len(s) for s in slices)
+                if min_len > 10:
+                    # Stack as rows (n_configs, min_len) — cscv expects
+                    # (n_systems, n_cases).
+                    ret_matrix = np.row_stack([
+                        s[:min_len] for s in slices
+                    ])
+                else:
+                    ret_matrix = np.empty((0, 0))
+                if ret_matrix.ndim == 2 and ret_matrix.shape[0] >= 2:
                     cscv = cscv_superiority(ret_matrix, n_blocks=4)
                     pbo = cscv.get("pbo", 0.5)
                     # Low PBO = good (not overfit)
@@ -804,8 +861,6 @@ class IntegratedScorer:
                     futures["robustness"] = pool.submit(
                         _run_layer_robustness, ticker, date_range
                     )
-                if "rag" not in skip:
-                    futures["rag"] = pool.submit(_run_layer_rag, ticker)
 
                 for layer_name, fut in futures.items():
                     try:

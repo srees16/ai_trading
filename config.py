@@ -59,25 +59,69 @@ class Config:
     MACD_SIGNAL: int = 9
     BOLLINGER_PERIOD: int = 20
     BOLLINGER_STD: int = 2
+    ADX_PERIOD: int = 14              # Average Directional Index
+    ADX_TREND_THRESHOLD: float = 20.0 # ADX >= 20 → trending market
+    OBV_SMA_PERIOD: int = 20          # On-Balance Volume smoothing
+    VOLUME_SMA_PERIOD: int = 20       # Volume moving average for confirmation
+    
+    # =================================================================
+    # Transaction Costs (round-trip, as fraction)
+    # =================================================================
+    TRANSACTION_COST_IND: float = 0.0015   # 15 bps NSE (STT + brokerage + GST + stamp)
+    TRANSACTION_COST_US: float = 0.001     # 10 bps US equities
+    
+    # =================================================================
+    # Signal Freshness (data staleness gate)
+    # =================================================================
+    SIGNAL_FRESHNESS_MAX_HOURS: int = 4    # Discard signals older than 4 hours
+    
+    # =================================================================
+    # Earnings Blackout Window
+    # =================================================================
+    EARNINGS_BLACKOUT_DAYS_BEFORE: int = 2  # Suppress BUY signals 2 days before
+    EARNINGS_BLACKOUT_DAYS_AFTER: int = 1   # Suppress BUY signals 1 day after
+    
+    # =================================================================
+    # NSE Circuit Breaker
+    # =================================================================
+    CIRCUIT_BREAKER_PCT: float = 0.20      # 20% daily move → circuit limit hit
+
+    # =================================================================
+    # VIX Regime Gate
+    # =================================================================
+    VIX_CAUTION_THRESHOLD: float = 20.0    # India VIX > 20 → reduce position sizes
+    VIX_PANIC_THRESHOLD: float = 25.0      # India VIX > 25 → suppress new BUY signals
+    VIX_POSITION_SCALE: float = 0.5        # Scale factor when VIX in caution zone
+    NIFTY_BENCHMARK_TICKER: str = "^NSEI"  # NIFTY 50 index ticker for benchmarking
+
+    # =================================================================
+    # Minimum Strategy Quality Floor
+    # =================================================================
+    MIN_STRATEGY_SHARPE: float = 0.3       # Exclude strategies with Sharpe < 0.3 from voting
+    
+    # =================================================================
+    # Sector Concentration Limit
+    # =================================================================
+    MAX_SECTOR_EXPOSURE_PCT: float = 0.40  # Max 40% capital in one sector
+    MAX_TRADES_PER_SECTOR: int = 3         # Max 3 open trades per sector
     
     # =================================================================
     # Decision Engine Weights (must sum to 1.0)
-    # Sentiment is computed and displayed in UI reasoning but excluded
-    # from the scoring formula (weight = 0).
+    # Fundamentals + Technicals + Macro only — no sentiment.
     # =================================================================
-    SENTIMENT_WEIGHT: float = 0.00
-    FUNDAMENTAL_WEIGHT: float = 0.35
-    TECHNICAL_WEIGHT: float = 0.35
-    MACRO_WEIGHT: float = 0.15
-    PUBLIC_SENTIMENT_WEIGHT: float = 0.15
+    FUNDAMENTAL_WEIGHT: float = 0.40
+    TECHNICAL_WEIGHT: float = 0.40
+    MACRO_WEIGHT: float = 0.20
     
     # =================================================================
     # Decision Thresholds
+    # Tightened from 0.4/0.7 to generate more actionable signals:
+    # most stocks cluster in 0.1–0.3 under the averaging mechanics.
     # =================================================================
-    STRONG_BUY_THRESHOLD: float = 0.7
-    BUY_THRESHOLD: float = 0.4
-    SELL_THRESHOLD: float = -0.4
-    STRONG_SELL_THRESHOLD: float = -0.7
+    STRONG_BUY_THRESHOLD: float = 0.55
+    BUY_THRESHOLD: float = 0.30
+    SELL_THRESHOLD: float = -0.30
+    STRONG_SELL_THRESHOLD: float = -0.55
     
     # =================================================================
     # Notification

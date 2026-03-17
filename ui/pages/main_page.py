@@ -17,8 +17,7 @@ from ui.components import (
     render_footer,
     render_metrics_cards,
     render_navigation_buttons,
-    render_vix_indicator,
-    render_stock_ticker_ribbon,
+    render_ribbon_and_vix,
     spinner_html,
 )
 from utils import parse_ticker_csv, validate_tickers, create_sample_csv
@@ -32,22 +31,13 @@ def render_main_page():
                 st.session_state.get('username', 'unknown'))
     render_header()
 
-    # Scrolling ribbon — top 10 US stocks by market cap
-    render_stock_ticker_ribbon(market="US")
-
-    # VIX indicator bar
-    render_vix_indicator(market="US")
+    # Scrolling ribbon + VIX indicator (merged into single DOM element)
+    render_ribbon_and_vix(market="US")
 
     # Navigation buttons
     render_navigation_buttons(
         current_page='main',
         back_key_suffix='from_main',
-    )
-
-    # Tighten the gap between nav buttons and control panel
-    st.markdown(
-        '<div style="margin-top: -1.5rem;"></div>',
-        unsafe_allow_html=True,
     )
 
     # Render control panel
@@ -317,7 +307,7 @@ def _run_and_render_analysis(tickers: List[str]):
 
 def _render_analysis_results(signals: List[Any]):
     """Render analysis results inline on the main page."""
-    from ui.charts import render_decision_chart, render_sentiment_chart, render_score_distribution
+    from ui.charts import render_decision_chart, render_score_distribution
     from ui.tables import render_simple_summary_table, render_signals_table, render_top_signals
 
     st.markdown("---")
@@ -326,11 +316,10 @@ def _render_analysis_results(signals: List[Any]):
     render_metrics_cards(signals)
     st.markdown("---")
 
-    tab1, tab2, tab3, tab4 = st.tabs([
+    tab1, tab2, tab3 = st.tabs([
         "Overview",
         "Detailed Table",
         "Top Signals",
-        "Sentiment Charts",
     ])
 
     with tab1:
@@ -345,6 +334,3 @@ def _render_analysis_results(signals: List[Any]):
 
     with tab3:
         render_top_signals(signals)
-
-    with tab4:
-        render_sentiment_chart(signals)

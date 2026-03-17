@@ -218,6 +218,106 @@ class MetricsCalculator:
         """Detect Indian tickers by .NS / .BO suffix."""
         return ticker.upper().endswith((".NS", ".BO"))
 
+    # Cache the G-Sec yield for the session (avoid repeated fetches)
+    _gsec_yield_cache: Optional[float] = None
+
+    def _fetch_india_gsec_yield(self) -> float:
+        """Fetch the live India 10-year G-Sec yield from multiple sources.
+
+        Waterfall:
+        1. RBI DBIE (Database on Indian Economy) — official source
+        2. FBIL (Financial Benchmarks India Ltd) reference rate page
+        3. RBI repo rate + term premium (~1.0%) as a computed proxy
+        4. Hardcoded fallback (last known value)
+
+        Returns the yield as a percentage (e.g. 7.05 for 7.05%).
+        """
+        if self._gsec_yield_cache is not None:
+            return self._gsec_yield_cache
+
+        import requests
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+        }
+
+        # ── Source 1: RBI DBIE JSON API (10Y G-Sec benchmark yield) ──
+        try:
+            # RBI publishes the 10Y benchmark yield via their DBIE API
+            dbie_url = (
+                "https://apigw.rbi.org.in/dbie-service/api/master"
+                "/get-series-data?seriesId=GSEC10Y"
+            )
+            resp = requests.get(dbie_url, headers=headers, timeout=8)
+            if resp.status_code == 200:
+                data = resp.json()
+                # Navigate the DBIE response structure
+                records = data.get("data", data.get("records", []))
+                if isinstance(records, list) and records:
+                    val = float(records[-1].get("value", records[-1].get("val", 0)))
+                    if 3.0 < val < 15.0:
+                        MetricsCalculator._gsec_yield_cache = val
+                        logger.info("India 10Y G-Sec yield (RBI DBIE): %.2f%%", val)
+                        return val
+        except Exception as exc:
+            logger.debug("RBI DBIE G-Sec fetch failed: %s", exc)
+
+        # ── Source 2: FBIL benchmark page scrape ─────────────────────
+        try:
+            import re
+            fbil_url = "https://www.fbil.org.in/"
+            resp = requests.get(fbil_url, headers=headers, timeout=8)
+            if resp.status_code == 200:
+                # FBIL shows "Government Securities" yield on the homepage
+                match = re.search(
+                    r"(?:10\s*(?:Yr?|Year)|G[\-\s]?Sec.*?10)"
+                    r".*?([\d]+\.[\d]+)\s*%?",
+                    resp.text, re.IGNORECASE | re.DOTALL,
+                )
+                if match:
+                    val = float(match.group(1))
+                    if 3.0 < val < 15.0:
+                        MetricsCalculator._gsec_yield_cache = val
+                        logger.info("India 10Y G-Sec yield (FBIL): %.2f%%", val)
+                        return val
+        except Exception as exc:
+            logger.debug("FBIL G-Sec scrape failed: %s", exc)
+
+        # ── Source 3: RBI repo rate + term premium as proxy ──────────
+        try:
+            from scrapers.macro.rbi_nsdl_scraper import _FALLBACK_REPO_RATE
+            # Term premium for India 10Y over repo rate is historically ~0.8-1.2%
+            _TERM_PREMIUM = 1.0
+            repo_rate = _FALLBACK_REPO_RATE  # 6.50 as of Jun 2025
+            # Try to get live repo rate from cached RBI scraper data
+            try:
+                from scrapers.macro.rbi_nsdl_scraper import RBIMacroScraper
+                cached = RBIMacroScraper._cached
+                if cached and cached.repo_rate:
+                    repo_rate = cached.repo_rate
+            except Exception:
+                pass
+            proxy_yield = repo_rate + _TERM_PREMIUM
+            if 3.0 < proxy_yield < 15.0:
+                MetricsCalculator._gsec_yield_cache = proxy_yield
+                logger.info(
+                    "India 10Y G-Sec yield (repo %.2f%% + %.1f%% premium): %.2f%%",
+                    repo_rate, _TERM_PREMIUM, proxy_yield,
+                )
+                return proxy_yield
+        except Exception as exc:
+            logger.debug("Repo-rate proxy failed: %s", exc)
+
+        # ── Source 4: Hardcoded fallback ─────────────────────────────
+        _FALLBACK_GSEC_10Y = 7.10  # Last known India 10Y G-Sec yield
+        logger.info("Using fallback India G-Sec 10Y yield: %.2f%%", _FALLBACK_GSEC_10Y)
+        MetricsCalculator._gsec_yield_cache = _FALLBACK_GSEC_10Y
+        return _FALLBACK_GSEC_10Y
+
     def _calculate_dcf(self, info: dict, ticker: str = "") -> Optional[float]:
         """
         Calculate simplified DCF (Discounted Cash Flow) value.
@@ -257,7 +357,7 @@ class MetricsCalculator:
         
         IV = EPS × (8.5 + 2g) × 4.4 / Y
         where g is growth rate and Y is the benchmark bond yield:
-        - India: Y = 7.1  (10-year G-Sec yield)
+        - India: Y = live 10-year G-Sec yield (fallback 7.1)
         - US:    Y = 4.5  (AAA corporate bond yield)
         """
         try:
@@ -270,7 +370,10 @@ class MetricsCalculator:
             # Default growth rate if not available
             g = (growth * 100) if growth else 10
             
-            bond_yield = 7.1 if self._is_indian_ticker(ticker) else 4.5
+            if self._is_indian_ticker(ticker):
+                bond_yield = self._fetch_india_gsec_yield()
+            else:
+                bond_yield = 4.5
             
             # Graham's formula
             intrinsic_value = eps * (8.5 + 2 * g) * 4.4 / bond_yield
@@ -320,6 +423,23 @@ class MetricsCalculator:
             # Maximum Drawdown
             max_dd = self._calculate_max_drawdown(hist)
             technicals['max_drawdown'] = max_dd
+
+            # ADX (Average Directional Index) — trend strength
+            adx = self._calculate_adx(hist, Config.ADX_PERIOD)
+            technicals['adx'] = adx
+
+            # OBV (On-Balance Volume) — volume confirmation
+            obv_val, obv_sma_val = self._calculate_obv(hist, Config.OBV_SMA_PERIOD)
+            technicals['obv'] = obv_val
+            technicals['obv_sma'] = obv_sma_val
+
+            # Volume SMA for confirmation
+            if 'Volume' in hist.columns and len(hist) >= Config.VOLUME_SMA_PERIOD:
+                technicals['volume_sma_20'] = float(
+                    hist['Volume'].rolling(Config.VOLUME_SMA_PERIOD).mean().iloc[-1]
+                )
+            else:
+                technicals['volume_sma_20'] = None
         
         except Exception as e:
             logger.error("Error calculating technicals: %s", e)
@@ -413,6 +533,68 @@ class MetricsCalculator:
             return calculate_max_drawdown(hist['Close'])
         except:
             return None
+
+    def _calculate_adx(self, hist: pd.DataFrame, period: int = 14) -> Optional[float]:
+        """Calculate Average Directional Index (ADX) for trend strength.
+
+        ADX >= 20 → trending market (signals more reliable).
+        ADX <  20 → choppy / range-bound (momentum signals degrade).
+        """
+        try:
+            high = hist['High']
+            low = hist['Low']
+            close = hist['Close']
+            if len(close) < period + 1:
+                return None
+
+            plus_dm = high.diff()
+            minus_dm = low.diff().abs()
+            # +DM: up moves that exceed down moves (and are positive)
+            plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0.0)
+            minus_dm = minus_dm.where((minus_dm > plus_dm.shift(0)) & (minus_dm > 0), 0.0)
+            # Recalculate minus_dm properly
+            minus_dm_raw = -low.diff()
+            plus_dm_raw = high.diff()
+            plus_dm = plus_dm_raw.where((plus_dm_raw > minus_dm_raw) & (plus_dm_raw > 0), 0.0)
+            minus_dm = minus_dm_raw.where((minus_dm_raw > plus_dm_raw) & (minus_dm_raw > 0), 0.0)
+
+            tr1 = high - low
+            tr2 = (high - close.shift()).abs()
+            tr3 = (low - close.shift()).abs()
+            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+            atr = tr.ewm(span=period, adjust=False).mean()
+            plus_di = 100 * (plus_dm.ewm(span=period, adjust=False).mean() / atr)
+            minus_di = 100 * (minus_dm.ewm(span=period, adjust=False).mean() / atr)
+
+            dx = (plus_di - minus_di).abs() / (plus_di + minus_di + 1e-10) * 100
+            adx = dx.ewm(span=period, adjust=False).mean()
+
+            return float(adx.iloc[-1]) if not adx.empty else None
+        except Exception:
+            return None
+
+    def _calculate_obv(self, hist: pd.DataFrame, sma_period: int = 20):
+        """Calculate On-Balance Volume and its SMA.
+
+        OBV rising + price rising → bullish confirmation.
+        OBV falling + price rising → bearish divergence (warning).
+        """
+        try:
+            close = hist['Close']
+            volume = hist['Volume']
+            if len(close) < 2:
+                return None, None
+
+            direction = close.diff().apply(
+                lambda x: 1 if x > 0 else (-1 if x < 0 else 0)
+            )
+            obv = (volume * direction).cumsum()
+            obv_latest = float(obv.iloc[-1])
+            obv_sma = float(obv.rolling(sma_period).mean().iloc[-1]) if len(obv) >= sma_period else None
+            return obv_latest, obv_sma
+        except Exception:
+            return None, None
 
     def _calculate_altman_z_score(self, stock: yf.Ticker, info: dict) -> Optional[float]:
         """

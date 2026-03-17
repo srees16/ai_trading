@@ -1,14 +1,17 @@
 prompts:
 ~~~~
-you are the senior technical architect at THE most reputed quant trading firm in the world and you are designing centurion_core for 1 or 2 retail traders, a trading platform that would automatically trigger buy/sell orders based on fundamental analysis, technical analysis, qualitative analysis, macro-economic head & tail winds, event-driven news updates and broader market sentiment analysis. Considering these requirements, perform the below tasks:
+you are the senior technical architect at THE most reputed quant trading firm in the world and you are designing centurion_core for 1 or 2 retail traders, a trading platform that would automatically trigger buy/sell orders based on fundamental analysis, technical analysis, qualitative analysis, macro-economic head & tail winds and event-driven news updates. Considering these requirements, perform the below tasks:
 
-investigate and analyze the characteristics of a trading terminal of a highly reputable quant firm. Compare & contrast that with the current implementation of centurion_core app with focus "ind stocks module". List out the high level system design & architecture, stock analysis methodology along with low level technical details. give readable and crisp details.
+audit, investigate and analyze the characteristics of a trading terminal of a highly reputable quant firm. Compare & contrast that with the current implementation of centurion_core app with focus "ind stocks module". Remember that centurion_core app is to be used by 1-2 users only. List out the implementation gaps in high level system design & architecture, stock analysis methodology along with low level technical details. Give readable and crisp details.
 
-audit the gaps in the current implementation of centurion_core with respect to the various layers & stages identified and give an action plan on the implementation of the solutions with the potential computational costs, possible risks, technical limitations, trade off between alternatives and finally the reliability & quality of buy, hold & sell signals being the most accurate for Ind stocks.
+audit the gaps in the current implementation of centurion_core with respect to the various layers & stages identified and give an action plan on implementation of the solutions with the potential computational costs, possible risks, technical limitations, trade off between alternatives and finally the reliability & quality of buy, hold & sell signals being the most accurate for Ind stocks.
 
-analyze if the current trading strategies, backtest strategies, sentiment analysis and techniques implemented from various pdf docs are of practical application to trigger orders for ind stocks.
+analyze if the current trading strategies, backtest strategies and techniques implemented from various pdf docs are practical to apply when triggering orders for ind stocks.
+
+finally, investigate by how much percentage will centurion_core outperform NIFTY index. suggest improvements
+
 ~~~~~~
-audit the current order workflow from user's input to placing order on kite
+audit the current order workflow beginning with user's ticker input until placing order on kite and identify any gaps if there are.
 
 feedback:
         include tab under stocks to view all stocks
