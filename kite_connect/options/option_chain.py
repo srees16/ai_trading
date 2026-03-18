@@ -6,6 +6,9 @@ Fetches live option chain data (NIFTY / BANKNIFTY) including:
   - Expiry date discovery
   - ATM strike detection
   - Black-Scholes Greeks (IV, Delta, Gamma, Theta, Vega)
+  - Max Pain strike calculation
+  - Intrinsic value / time value decomposition
+  - Best bid/offer extraction with liquidity warnings
 """
 
 import sys
@@ -31,6 +34,9 @@ if _kite_root not in sys.path:
     sys.path.append(_kite_root)
 
 log = logging.getLogger(__name__)
+
+# Default risk-free rate: India 10Y G-Sec yield ≈ 7.1%
+_DEFAULT_RISK_FREE = 0.071
 
 # ── Index metadata ─────────────────────────────────────────────
 INDEX_META = {
@@ -250,6 +256,20 @@ def fetch_option_chain(
         ce_oi_chg = oi_results.get(f"{i}_ce", 0)
         pe_oi_chg = oi_results.get(f"{i}_pe", 0)
 
+        # Best bid/offer from depth data
+        ce_bid, ce_ask = _extract_best_bid_ask(ce_q)
+        pe_bid, pe_ask = _extract_best_bid_ask(pe_q)
+
+        # Intrinsic value & time value decomposition
+        ce_intrinsic = max(spot - strike, 0)
+        pe_intrinsic = max(strike - spot, 0)
+        ce_time_val = max(ce_ltp - ce_intrinsic, 0) if ce_ltp > 0 else 0
+        pe_time_val = max(pe_ltp - pe_intrinsic, 0) if pe_ltp > 0 else 0
+
+        # Liquidity warnings
+        ce_liq = _assess_liquidity(ce_ltp, ce_bid, ce_ask, ce_volume)
+        pe_liq = _assess_liquidity(pe_ltp, pe_bid, pe_ask, pe_volume)
+
         rows.append({
             "strike": strike,
             "ce_ltp": ce_ltp,
@@ -257,11 +277,23 @@ def fetch_option_chain(
             "ce_oi": ce_oi,
             "ce_oi_chg": ce_oi_chg,
             "ce_volume": ce_volume,
+            "ce_bid": ce_bid,
+            "ce_ask": ce_ask,
+            "ce_intrinsic": round(ce_intrinsic, 2),
+            "ce_time_value": round(ce_time_val, 2),
+            "ce_is_liquid": ce_liq["is_liquid"],
+            "ce_liquidity_warnings": ce_liq["warnings"],
             "pe_ltp": pe_ltp,
             "pe_change": pe_change,
             "pe_oi": pe_oi,
             "pe_oi_chg": pe_oi_chg,
             "pe_volume": pe_volume,
+            "pe_bid": pe_bid,
+            "pe_ask": pe_ask,
+            "pe_intrinsic": round(pe_intrinsic, 2),
+            "pe_time_value": round(pe_time_val, 2),
+            "pe_is_liquid": pe_liq["is_liquid"],
+            "pe_liquidity_warnings": pe_liq["warnings"],
             "is_atm": strike == atm,
         })
 
@@ -270,6 +302,115 @@ def fetch_option_chain(
         "atm_strike": atm,
         "step": step,
         "strikes": rows,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# Bid/Ask & Liquidity Helpers
+# ═══════════════════════════════════════════════════════════════
+
+def _extract_best_bid_ask(quote: dict) -> tuple[float, float]:
+    """Extract best bid and ask prices from Kite quote depth data."""
+    depth = quote.get("depth", {})
+    buy_depth = depth.get("buy", [])
+    sell_depth = depth.get("sell", [])
+    best_bid = buy_depth[0].get("price", 0) if buy_depth else 0
+    best_ask = sell_depth[0].get("price", 0) if sell_depth else 0
+    return best_bid, best_ask
+
+
+def _assess_liquidity(
+    ltp: float, bid: float, ask: float, volume: int,
+) -> dict:
+    """
+    Assess option liquidity and return warnings (mirrors Sensibull flags).
+
+    Checks:
+    - High bid-offer spread (>5% of mid-price or > ₹5 for cheap options)
+    - Zero volume
+    - No bid or no ask
+    """
+    warnings = []
+    if bid <= 0 and ask <= 0:
+        warnings.append("no-market")
+        return {"is_liquid": False, "warnings": warnings}
+    if bid <= 0:
+        warnings.append("no-bid")
+    if ask <= 0:
+        warnings.append("no-offer")
+    if bid > 0 and ask > 0:
+        spread = ask - bid
+        mid = (ask + bid) / 2
+        if mid > 0 and (spread / mid) > 0.05:
+            warnings.append("high-bid-offer-spread")
+        elif spread > 5 and mid < 20:
+            warnings.append("high-bid-offer-spread")
+    if volume == 0:
+        warnings.append("zero-volume")
+    return {"is_liquid": len(warnings) == 0, "warnings": warnings}
+
+
+# ═══════════════════════════════════════════════════════════════
+# Max Pain Calculation
+# ═══════════════════════════════════════════════════════════════
+
+def compute_max_pain(chain: dict) -> dict:
+    """
+    Compute the Max Pain strike from an option chain.
+
+    Max Pain is the strike price at which option writers (sellers)
+    would suffer the **least** total loss — equivalently, the strike
+    where option buyers collectively lose the most.
+
+    Algorithm:
+      For each candidate strike K, compute the total loss to option
+      writers if the underlying expires at K:
+        - For every CE with strike S < K: writer pays (K - S) × CE_OI
+        - For every PE with strike S > K: writer pays (S - K) × PE_OI
+      The strike K that minimises this total payout is the max-pain strike.
+
+    Returns
+    -------
+    dict with::
+
+        {
+            "max_pain_strike": int,
+            "max_pain_value":  float,  # total payout at that strike
+            "pain_by_strike":  dict,   # {strike: payout} for all strikes
+        }
+    """
+    strikes = chain.get("strikes", [])
+    if not strikes:
+        return {"max_pain_strike": 0, "max_pain_value": 0, "pain_by_strike": {}}
+
+    pain_by_strike = {}
+
+    for candidate in strikes:
+        K = candidate["strike"]
+        total_pain = 0.0
+
+        for row in strikes:
+            S = row["strike"]
+            ce_oi = row.get("ce_oi", 0) or 0
+            pe_oi = row.get("pe_oi", 0) or 0
+
+            # Call writers pay if strike < expiry price
+            if S < K:
+                total_pain += (K - S) * ce_oi
+            # Put writers pay if strike > expiry price
+            if S > K:
+                total_pain += (S - K) * pe_oi
+
+        pain_by_strike[K] = round(total_pain, 2)
+
+    if not pain_by_strike:
+        return {"max_pain_strike": 0, "max_pain_value": 0, "pain_by_strike": {}}
+
+    max_pain_strike = min(pain_by_strike, key=pain_by_strike.get)
+    return {
+        "max_pain_strike": max_pain_strike,
+        "max_pain_value": pain_by_strike[max_pain_strike],
+        "pain_by_strike": pain_by_strike,
     }
 
 
@@ -319,11 +460,61 @@ def compute_pcr(chain: dict) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════
-# Black-Scholes Greeks Calculator
+# ATM IV & IV Change Tracking
 # ═══════════════════════════════════════════════════════════════
 
-# Default risk-free rate: India 10Y G-Sec yield ≈ 7.1%
-_DEFAULT_RISK_FREE = 0.071
+def compute_atm_iv(chain: dict, days_to_expiry: int, r: float = _DEFAULT_RISK_FREE) -> dict:
+    """
+    Compute ATM implied volatility from the enriched chain.
+
+    Uses the ATM CE and PE IVs (averaged) for a stable reading.
+    This mirrors Sensibull's ``atm_iv`` field streamed in the
+    option-chain WebSocket data.
+
+    Returns
+    -------
+    dict with::
+
+        {
+            "atm_strike":  int,
+            "atm_iv":      float,   # percentage (e.g. 15.2)
+            "atm_ce_iv":   float,
+            "atm_pe_iv":   float,
+        }
+    """
+    atm_strike = chain.get("atm_strike", 0)
+    spot = chain.get("spot", 0)
+    if spot <= 0 or days_to_expiry <= 0:
+        return {"atm_strike": atm_strike, "atm_iv": 0, "atm_ce_iv": 0, "atm_pe_iv": 0}
+
+    T = days_to_expiry / 365.0
+    atm_ce_iv = 0.0
+    atm_pe_iv = 0.0
+
+    for row in chain.get("strikes", []):
+        if row.get("is_atm"):
+            ce_ltp = row.get("ce_ltp", 0) or 0
+            pe_ltp = row.get("pe_ltp", 0) or 0
+            if ce_ltp > 0:
+                atm_ce_iv = compute_iv(ce_ltp, spot, atm_strike, T, r, "CE") * 100
+            if pe_ltp > 0:
+                atm_pe_iv = compute_iv(pe_ltp, spot, atm_strike, T, r, "PE") * 100
+            break
+
+    ivs = [v for v in (atm_ce_iv, atm_pe_iv) if v > 0]
+    atm_iv = sum(ivs) / len(ivs) if ivs else 0.0
+
+    return {
+        "atm_strike": atm_strike,
+        "atm_iv": round(atm_iv, 2),
+        "atm_ce_iv": round(atm_ce_iv, 2),
+        "atm_pe_iv": round(atm_pe_iv, 2),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# Black-Scholes Greeks Calculator
+# ═══════════════════════════════════════════════════════════════
 
 
 def _bs_d1(S: float, K: float, T: float, r: float, sigma: float) -> float:
