@@ -58,7 +58,7 @@ logger = logging.getLogger(__name__)
 # exceeds this wall-clock limit, cancel the in-flight futures and fall
 # back to a minimal top-k vector-only search.
 _RETRIEVAL_HARD_TIMEOUT: int = int(
-    os.getenv("CENTURION_RAG_RETRIEVAL_HARD_TIMEOUT", "10")
+    os.getenv("CENTURION_RAG_RETRIEVAL_HARD_TIMEOUT", "30")
 )
 _FALLBACK_TOP_K: int = 3   # vector-only results when timeout fires
 

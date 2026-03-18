@@ -245,7 +245,13 @@ class AwesomeOscillatorStrategy(BaseStrategy):
         ao_short: int,
         ao_long: int
     ) -> pd.DataFrame:
-        """Generate trading signals based on Awesome Oscillator logic."""
+        """Generate trading signals based on Awesome Oscillator logic.
+
+        IND calibration (swing / long-term):
+        - Zero-cross signal requires 1.5× avg volume confirmation
+        - Twin Peaks bullish divergence: two negative AO troughs where
+          the second is higher (shallower), confirming upward momentum
+        """
         signals = df.copy()
         
         # Calculate median price
@@ -257,13 +263,43 @@ class AwesomeOscillatorStrategy(BaseStrategy):
         signals['sma_long'] = signals['median_price'].rolling(window=ao_long, min_periods=1).mean()
         signals['awesome_oscillator'] = signals['sma_short'] - signals['sma_long']
         
-        # Generate positions (1 = long, 0 = no position)
+        # Volume confirmation: 1.5× 20-day average volume
+        signals['avg_volume'] = signals['Volume'].rolling(window=20, min_periods=1).mean()
+        signals['volume_confirm'] = signals['Volume'] >= 1.5 * signals['avg_volume']
+        
+        # Twin Peaks detection: bullish divergence in negative AO territory
+        signals['twin_peaks'] = False
+        ao_vals = signals['awesome_oscillator'].values
+        for i in range(ao_long + 10, len(ao_vals)):
+            # Look for two negative troughs where second is shallower
+            if ao_vals[i] > 0 and ao_vals[i - 1] <= 0:
+                # AO just crossed zero — look back for twin troughs
+                trough2 = min(ao_vals[max(0, i - 10):i])
+                trough1 = min(ao_vals[max(0, i - 25):max(0, i - 10)])
+                if trough1 < 0 and trough2 < 0 and trough2 > trough1:
+                    signals.iloc[i, signals.columns.get_loc('twin_peaks')] = True
+        
+        # Generate positions: AO > 0 AND (volume confirmed OR twin peaks)
         signals['positions'] = 0
-        signals.loc[signals.index[ao_long:], 'positions'] = np.where(
-            signals['awesome_oscillator'].iloc[ao_long:] > 0, 
-            1, 
-            0
-        )
+        ao_positive = signals['awesome_oscillator'] > 0
+        vol_or_twin = signals['volume_confirm'] | signals['twin_peaks']
+        
+        # For the initial cross, require confirmation; hold while AO > 0
+        raw_pos = np.where(ao_positive, 1, 0)
+        confirmed = np.zeros(len(signals), dtype=int)
+        in_position = False
+        for i in range(ao_long, len(signals)):
+            if raw_pos[i] == 1 and not in_position:
+                # Entry: require volume confirmation or twin peaks
+                if vol_or_twin.iloc[i]:
+                    in_position = True
+                    confirmed[i] = 1
+            elif raw_pos[i] == 1 and in_position:
+                confirmed[i] = 1  # Hold
+            else:
+                in_position = False
+        
+        signals['positions'] = confirmed
         
         # Generate trading signals (difference shows entry/exit points)
         signals['signals'] = signals['positions'].diff().fillna(0)

@@ -630,3 +630,63 @@ class DataFreshness(Base):
         Index('idx_freshness_ticker', 'ticker'),
         Index('idx_freshness_next_refresh', 'next_refresh_at'),
     )
+
+
+class OrderStatus(enum.Enum):
+    """Kite order lifecycle statuses."""
+    PLACED = "placed"
+    FILLED = "filled"
+    SL_TRIGGERED = "sl_triggered"
+    TP_FILLED = "tp_filled"
+    CANCELLED = "cancelled"
+    REJECTED = "rejected"
+    FAILED = "failed"
+
+
+class OrderRecord(Base, TimestampMixin):
+    """
+    Persisted record of every order placed via the auto-executor.
+
+    Survives session restarts so the trade lifecycle can be recovered.
+    """
+    __tablename__ = 'order_records'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # Instrument
+    symbol = Column(String(30), nullable=False, index=True)
+    exchange = Column(String(10), nullable=False, default='NSE')
+    side = Column(String(10), nullable=False)                      # BUY / SELL
+
+    # Sizing
+    quantity = Column(Integer, nullable=False)
+    entry_price = Column(Numeric(12, 4), nullable=False)
+    stop_loss = Column(Numeric(12, 4))
+    target_price = Column(Numeric(12, 4))
+
+    # Kite order IDs (nullable: may not succeed)
+    entry_order_id = Column(String(50))
+    sl_order_id = Column(String(50))
+    tp_order_id = Column(String(50))
+
+    # Lifecycle
+    status = Column(SQLEnum(OrderStatus), default=OrderStatus.PLACED, nullable=False)
+    fill_price = Column(Numeric(12, 4))
+    exit_price = Column(Numeric(12, 4))
+    error_message = Column(Text)
+
+    # Risk metrics at time of placement
+    risk_amount = Column(Numeric(12, 4))
+    reward_amount = Column(Numeric(12, 4))
+    rr_ratio = Column(Float)
+    score = Column(Float)
+
+    # Timing
+    placed_at = Column(DateTime(timezone=True), server_default=func.now())
+    filled_at = Column(DateTime(timezone=True))
+    closed_at = Column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index('idx_orders_symbol_date', 'symbol', 'placed_at'),
+        Index('idx_orders_status', 'status'),
+    )

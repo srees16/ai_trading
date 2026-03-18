@@ -30,6 +30,7 @@ LOGIN_URL = f"https://kite.zerodha.com/connect/login?api_key={API_KEY}"
 # ── Zerodha Login Credentials (for Selenium auto-fill) ────────
 ZERODHA_USER_ID = os.getenv("ZERODHA_USER_ID", "")
 ZERODHA_PASSWORD = os.getenv("ZERODHA_PASSWORD", "")
+ZERODHA_TOTP_SECRET = os.getenv("ZERODHA_TOTP_SECRET", "")  # base32 TOTP seed for auto-2FA
 
 # ── NSE ────────────────────────────────────────────────────────
 NSE_URL = "https://www.nseindia.com/market-data/live-equity-market"
@@ -52,7 +53,7 @@ INDEX_CONSTITUENTS = {
         "INDUSINDBK", "INFY", "ITC", "JIOFIN", "JSWSTEEL",
         "KOTAKBANK", "LT", "LTIM", "M&M", "MARUTI",
         "NESTLEIND", "NTPC", "ONGC", "POWERGRID", "RELIANCE",
-        "SBILIFE", "SBIN", "SHRIRAMFIN", "SUNPHARMA", "TATAMOTORS",
+        "SBILIFE", "SBIN", "SHRIRAMFIN", "SUNPHARMA", "TMPV",
         "TATASTEEL", "TCS", "TECHM", "TITAN", "TRENT",
         "ULTRACEMCO", "WIPRO",
     ],
@@ -69,6 +70,18 @@ INDEX_CONSTITUENTS = {
         "ADANIENSOL", "ADANIGREEN", "BPCL", "COALINDIA", "GAIL",
         "HINDPETRO", "IOC", "NTPC", "ONGC", "POWERGRID",
         "RELIANCE", "TATAPOWER",
+    ],
+    "NIFTY_NEXT50": [
+        "ABB", "ADANIENSOL", "ADANIGREEN", "ADANIPOWER", "AMBUJACEM",
+        "ATGL", "BANKBARODA", "BHEL", "BOSCHLTD", "BSE",
+        "CANBK", "CGPOWER", "CHOLAFIN", "COLPAL", "DLF",
+        "GAIL", "GODREJCP", "HAL", "HAVELLS", "HINDPETRO",
+        "ICICIPRULI", "INDHOTEL", "IOC", "IRCTC", "IRFC",
+        "JINDALSTEL", "JSWENERGY", "MAXHEALTH", "MOTHERSON", "NHPC",
+        "NMDC", "NYKAA", "OBEROIRLTY", "OFSS", "PAYTM",
+        "PFC", "PIDILITIND", "PNB", "POLYCAB", "RECLTD",
+        "SBICARD", "SIEMENS", "SJVN", "TATACOMM", "TATAELXSI",
+        "TATAPOWER", "TORNTPHARM", "UNITDSPR", "VBL", "ZOMATO",
     ],
 }
 

@@ -994,18 +994,12 @@ def _display_result(result: Dict[str, Any], ch_key: str):
 def _inject_compact_css():
     st.markdown(
         """<style>
-        [data-testid="stRadio"] { margin-top: -0.5rem; margin-bottom: -0.8rem; }
-        [data-testid="stExpander"] { margin-top: -0.6rem; margin-bottom: -0.6rem; }
-        [data-testid="stTextArea"] { margin-top: -0.2rem; }
-        [data-testid="stFileUploader"] { margin-top: -0.6rem; }
-        [data-testid="stSelectbox"] { margin-bottom: -0.8rem; }
-        [data-testid="stCheckbox"] { margin-top: -0.5rem; margin-bottom: -0.5rem; }
-        [data-testid="stHorizontalBlock"] + [data-testid="stElementContainer"],
-        [data-testid="stHorizontalBlock"] + div {
-            margin-top: -1.5rem !important;
-        }
-        [data-testid="stAlert"] { margin-top: -0.5rem !important;
-                                   margin-bottom: -0.5rem !important; }
+        [data-testid="stRadio"] { margin-top: -0.2rem; margin-bottom: -0.3rem; }
+        [data-testid="stExpander"] { margin-top: -0.3rem; margin-bottom: -0.3rem; }
+        [data-testid="stTextArea"] { margin-top: -0.1rem; }
+        [data-testid="stFileUploader"] { margin-top: -0.3rem; }
+        [data-testid="stSelectbox"] { margin-bottom: -0.3rem; }
+        [data-testid="stCheckbox"] { margin-top: -0.2rem; margin-bottom: -0.2rem; }
         </style>""",
         unsafe_allow_html=True,
     )
