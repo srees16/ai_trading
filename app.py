@@ -56,6 +56,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress noisy yfinance download-failure logs (transient Yahoo API errors);
+# all download call-sites already handle empty / missing data gracefully.
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+
 _LOG_INTERVAL = 5  # seconds
 _last_module_log_ts: float = 0.0
 
