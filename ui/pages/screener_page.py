@@ -59,22 +59,19 @@ def render_screener_page():
     # ── Sidebar-style config in expanders ──────────────────────
     screen_cfg, risk_cfg, auto_place = _render_config()
 
-    # ── Run buttons ─────────────────────────────────────────────
-    btn_col1, btn_col2 = st.columns(2)
-    run_clicked = btn_col1.button("Screen", type="primary", key="screener_run")
-    full_pipeline = btn_col2.button(
-        "Run Full Pipeline",
-        type="secondary",
-        key="screener_full_pipeline",
-        help="Screen → Verdict → Auto-place BUY orders (requires Kite auth)",
-    )
+    # ── Run button (adapts when live orders are enabled) ───────
+    if auto_place:
+        run_clicked = st.button("Screen, Verdict & Fire Orders", type="primary", key="screener_run")
+        st.caption("Screens → Verdicts → Auto-places orders end-to-end (Kite auth required).")
+    else:
+        run_clicked = st.button("Screen", type="primary", key="screener_run")
+        st.caption("Filters NSE stocks using selected strategy & technical signals.")
 
     # ── Execution ──────────────────────────────────────────────
-    if run_clicked:
-        _run_pipeline(screen_cfg, risk_cfg)
-
-    if full_pipeline:
+    if run_clicked and auto_place:
         _run_full_pipeline(screen_cfg, risk_cfg)
+    elif run_clicked:
+        _run_pipeline(screen_cfg, risk_cfg)
 
     # ── Show latest scheduled scan results (if scheduler has run) ─
     _show_scheduled_scan_banner()
