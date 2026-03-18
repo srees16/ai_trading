@@ -34,7 +34,7 @@ elif sys.path[0] != _PROJECT_ROOT:
 # ── Heavy imports are LAZY ──────────────────────────────────────────
 # kiteconnect pulls in twisted+autobahn (~30 s on Windows).  We defer
 # all heavy imports to first actual use so the login page isn't blocked.
-from ui.components import load_logo_base64_small, render_header_bar, render_footer, render_ind_navigation_buttons, render_stock_ticker_ribbon, render_vix_indicator, spinner_html as _spinner_html
+from ui.components import load_logo_base64_small, render_header_bar, render_footer, render_ind_navigation_buttons, render_ribbon_and_vix, spinner_html as _spinner_html
 
 # Lazy singletons — populated on first call via _ensure_imports()
 _kite_mod = None
@@ -58,6 +58,22 @@ scan_watchlist = None       # type: ignore[assignment]
 discover_expiries = None    # type: ignore[assignment]
 fetch_option_chain = None   # type: ignore[assignment]
 INDEX_META = None           # type: ignore[assignment]
+
+
+def _persist_order_to_db(symbol, exchange, side, quantity, order_type,
+                         product, price, order_id=None, success=True,
+                         error_msg=None):
+    """Best-effort persist for Cover/AMO orders that bypass order_service."""
+    try:
+        from database.service import DatabaseService
+        DatabaseService().save_single_order(
+            symbol=symbol, exchange=exchange, side=side,
+            quantity=quantity, order_type=order_type, product=product,
+            price=price or 0, order_id=str(order_id) if order_id else None,
+            success=success, error_msg=error_msg,
+        )
+    except Exception as exc:
+        logger.debug("Order DB persist failed (non-fatal): %s", exc)
 
 
 # ── Webhook service (lazy singleton) ────────────────────────
@@ -493,8 +509,7 @@ def _render_landing_page():
     """Show an intro landing page before the Kite session is started."""
     render_header_bar(subtitle=" Indian Equities · Zerodha Kite Connect")
 
-    render_stock_ticker_ribbon(market="IND")
-    render_vix_indicator(market="IND")
+    render_ribbon_and_vix(market="IND")
 
     # Navigation buttons for Ind Stocks module
     render_ind_navigation_buttons(current_page='ind_kite', back_key_suffix='from_kite_landing')
@@ -787,7 +802,7 @@ def _render_dashboard():
     _auth_slot = st.empty()
     try:
         _auth_slot.markdown(
-            _spinner_html("Connecting to Kite… (complete 2FA in the browser window)"),
+            _spinner_html("Connecting to Kite"),
             unsafe_allow_html=True,
         )
         kite = get_kite_session()
@@ -832,8 +847,7 @@ def _render_dashboard():
         right_html=_pills_html,
     )
 
-    render_stock_ticker_ribbon(market="IND")
-    render_vix_indicator(market="IND")
+    render_ribbon_and_vix(market="IND")
 
     # Navigation buttons for Ind Stocks module
     render_ind_navigation_buttons(current_page='ind_kite', back_key_suffix='from_kite_dash')
@@ -1201,37 +1215,208 @@ def _render_dashboard():
         # ── Quick Trade (not auto-refreshed) ─────────────────────
         def _portfolio_panels():
             """Quick Trade, Order Book, Positions, Holdings, RSI — not auto-refreshed."""
-            with st.expander(" Quick Trade", expanded=False):
-                qt_cols = st.columns([3, 2, 2, 1.5, 1.5])
-                qt_symbol = qt_cols[0].selectbox(
-                    "Symbol", sorted_stock_list,
-                    key="qt_sym_global",
-                    label_visibility="collapsed",
-                )
-                qt_qty = qt_cols[1].number_input(
-                    "Qty", min_value=1, value=1, step=1,
-                    key="qt_qty_global",
-                    label_visibility="collapsed",
-                )
-                qt_product = qt_cols[2].selectbox(
-                    "Product", ["CNC", "MIS", "NRML"],
-                    key="qt_prod_global",
-                    label_visibility="collapsed",
-                )
-                if qt_cols[3].button("BUY", key="qt_buy_global", width="stretch"):
-                    res = place_order(kite, qt_symbol, "NSE", "BUY", qt_qty,
-                                      order_type="MARKET", product=qt_product)
+            # ── Inject compact CSS for the trade panel ──
+            st.markdown("""<style>
+            .trade-panel-wrap{max-width:520px;}
+            .trade-panel-header{font-size:0.72rem;color:#64748b;font-weight:600;
+                text-transform:uppercase;letter-spacing:0.5px;margin:0 0 0.1rem 0;padding:0;}
+            /* Tight vertical gap inside trade panel */
+            .trade-panel-wrap div[data-testid="stVerticalBlock"]{gap:0.15rem !important;}
+            /* Compact tab labels */
+            .trade-panel-wrap button[data-baseweb="tab"]{font-size:0.76rem !important;padding:0.25rem 0.5rem !important;}
+            /* Smaller inputs */
+            .trade-panel-wrap input,
+            .trade-panel-wrap select{
+                font-size:0.78rem !important; padding:0.2rem 0.35rem !important;}
+            .trade-panel-wrap .stSelectbox div[data-baseweb="select"]{min-height:1.8rem !important;}
+            .trade-panel-wrap .stNumberInput input{height:1.8rem !important;}
+            /* Compact buttons */
+            .trade-panel-wrap button[kind="primary"],
+            .trade-panel-wrap button[kind="secondary"]{
+                font-size:0.76rem !important;padding:0.25rem 0.5rem !important;}
+            </style><div class="trade-panel-wrap">""", unsafe_allow_html=True)
+
+            # ── Mode tabs ──
+            mode_tab_quick, mode_tab_regular, mode_tab_co, mode_tab_amo = st.tabs(
+                ["Quick", "Regular", "Cover (CO)", "AMO"]
+            )
+
+
+            # ================================================
+            # QUICK — Market order, minimal inputs
+            # ================================================
+            with mode_tab_quick:
+                st.markdown('<p class="trade-panel-header">Market order — instant execution</p>',
+                            unsafe_allow_html=True)
+                qk1, qk2, qk3, qk4 = st.columns([3, 1.5, 2, 2])
+                qk_sym = qk1.selectbox("Symbol", sorted_stock_list,
+                                       key="qk_sym", label_visibility="collapsed")
+                qk_qty = qk2.number_input("Qty", min_value=1, value=1, step=1,
+                                          key="qk_qty", label_visibility="collapsed")
+                qk_prod = qk3.selectbox("Product", ["CNC", "MIS", "NRML"],
+                                        key="qk_prod", label_visibility="collapsed",
+                                        help="CNC = Delivery · MIS = Intraday · NRML = F&O")
+                qk_exch = qk4.selectbox("Exchange", ["NSE", "BSE"],
+                                        key="qk_exch", label_visibility="collapsed")
+                qk_b, qk_s, _, _ = st.columns(4)
+                if qk_b.button("BUY", key="qk_buy", use_container_width=True, type="primary"):
+                    res = place_order(kite, qk_sym, qk_exch, "BUY", qk_qty,
+                                      order_type="MARKET", product=qk_prod)
+                    st.success(f"BUY placed — {res['order_id']}") if res["success"] else st.error(res["error"])
+                if qk_s.button("SELL", key="qk_sell", use_container_width=True):
+                    res = place_order(kite, qk_sym, qk_exch, "SELL", qk_qty,
+                                      order_type="MARKET", product=qk_prod)
+                    st.success(f"SELL placed — {res['order_id']}") if res["success"] else st.error(res["error"])
+
+            # ================================================
+            # REGULAR — Full-featured order
+            # ================================================
+            with mode_tab_regular:
+                st.markdown('<p class="trade-panel-header">Limit / SL / SL-M with all parameters</p>',
+                            unsafe_allow_html=True)
+                r1a, r1b, r1c, r1d = st.columns(4)
+                rg_sym = r1a.selectbox("Symbol", sorted_stock_list,
+                                       key="rg_sym", label_visibility="collapsed")
+                rg_exch = r1b.selectbox("Exchange", ["NSE", "BSE"],
+                                        key="rg_exch", label_visibility="collapsed")
+                rg_type = r1c.selectbox("Order Type", ["LIMIT", "MARKET", "SL", "SL-M"],
+                                        key="rg_type", label_visibility="collapsed")
+                rg_prod = r1d.selectbox("Product", ["CNC", "MIS", "NRML"],
+                                        key="rg_prod", label_visibility="collapsed",
+                                        help="CNC = Delivery · MIS = Intraday · NRML = F&O")
+
+                r2a, r2b, r2c, r2d = st.columns(4)
+                rg_qty = r2a.number_input("Qty", min_value=1, value=1, step=1,
+                                          key="rg_qty")
+                rg_price = r2b.number_input("Price", min_value=0.0, value=0.0,
+                                            step=0.05, format="%.2f", key="rg_price",
+                                            disabled=rg_type == "MARKET")
+                rg_trigger = r2c.number_input("Trigger Price", min_value=0.0,
+                                              value=0.0, step=0.05, format="%.2f",
+                                              key="rg_trigger",
+                                              disabled=rg_type not in ("SL", "SL-M"))
+                rg_validity = r2d.selectbox("Validity", ["DAY", "IOC"],
+                                            key="rg_validity")
+
+                rg_txn = st.radio("Side", ["BUY", "SELL"], horizontal=True,
+                                  key="rg_txn", label_visibility="collapsed")
+                if st.button(f"Place {rg_txn} Order",
+                             key="rg_submit", use_container_width=True,
+                             type="primary" if rg_txn == "BUY" else "secondary"):
+                    _price = rg_price if rg_price > 0 else None
+                    _trigger = rg_trigger if rg_trigger > 0 else None
+                    res = place_order(kite, rg_sym, rg_exch, rg_txn, rg_qty,
+                                      order_type=rg_type, product=rg_prod,
+                                      price=_price, trigger_price=_trigger,
+                                      validity=rg_validity)
                     if res["success"]:
-                        st.success(f"BUY order placed — ID: {res['order_id']}")
+                        st.success(f"{rg_txn} order placed — ID: {res['order_id']}")
                     else:
                         st.error(res["error"])
-                if qt_cols[4].button("SELL", key="qt_sell_global", width="stretch"):
-                    res = place_order(kite, qt_symbol, "NSE", "SELL", qt_qty,
-                                      order_type="MARKET", product=qt_product)
-                    if res["success"]:
-                        st.success(f"SELL order placed — ID: {res['order_id']}")
-                    else:
-                        st.error(res["error"])
+
+            # ================================================
+            # COVER ORDER — Market/Limit + mandatory SL
+            # ================================================
+            with mode_tab_co:
+                st.markdown('<p class="trade-panel-header">Intraday with built-in stop-loss (MIS only)</p>',
+                            unsafe_allow_html=True)
+                c1a, c1b, c1c = st.columns(3)
+                co_sym = c1a.selectbox("Symbol", sorted_stock_list,
+                                       key="co_sym", label_visibility="collapsed")
+                co_exch = c1b.selectbox("Exchange", ["NSE", "BSE"],
+                                        key="co_exch", label_visibility="collapsed")
+                co_type = c1c.selectbox("Order Type", ["MARKET", "LIMIT"],
+                                        key="co_type", label_visibility="collapsed")
+
+                c2a, c2b, c2c = st.columns(3)
+                co_qty = c2a.number_input("Qty", min_value=1, value=1, step=1,
+                                          key="co_qty")
+                co_price = c2b.number_input("Price", min_value=0.0, value=0.0,
+                                            step=0.05, format="%.2f", key="co_price",
+                                            disabled=co_type == "MARKET")
+                co_trigger = c2c.number_input("SL Trigger ✱", min_value=0.05,
+                                              value=1.0, step=0.05, format="%.2f",
+                                              key="co_trigger",
+                                              help="Mandatory stop-loss trigger price")
+
+                co_txn = st.radio("Side", ["BUY", "SELL"], horizontal=True,
+                                  key="co_txn", label_visibility="collapsed")
+                if st.button(f"Place Cover {co_txn}",
+                             key="co_submit", use_container_width=True,
+                             type="primary" if co_txn == "BUY" else "secondary"):
+                    try:
+                        _params = dict(
+                            tradingsymbol=co_sym, exchange=co_exch,
+                            transaction_type=co_txn, quantity=int(co_qty),
+                            order_type=co_type, product="MIS",
+                            validity="DAY", variety="co",
+                            trigger_price=float(co_trigger),
+                        )
+                        if co_type == "LIMIT" and co_price > 0:
+                            _params["price"] = float(co_price)
+                        oid = kite.place_order(**_params)
+                        st.success(f"Cover {co_txn} placed — ID: {oid}")
+                        _persist_order_to_db(co_sym, co_exch, co_txn, int(co_qty),
+                                            co_type, "MIS", co_price, order_id=oid)
+                    except Exception as e:
+                        st.error(f"CO failed: {e}")
+                        _persist_order_to_db(co_sym, co_exch, co_txn, int(co_qty),
+                                            co_type, "MIS", co_price, success=False, error_msg=str(e))
+
+            # ================================================
+            # AMO — After Market Order
+            # ================================================
+            with mode_tab_amo:
+                st.markdown('<p class="trade-panel-header">After-market order — queued for next session</p>',
+                            unsafe_allow_html=True)
+                a1a, a1b, a1c, a1d = st.columns(4)
+                amo_sym = a1a.selectbox("Symbol", sorted_stock_list,
+                                        key="amo_sym", label_visibility="collapsed")
+                amo_exch = a1b.selectbox("Exchange", ["NSE", "BSE"],
+                                         key="amo_exch", label_visibility="collapsed")
+                amo_type = a1c.selectbox("Order Type", ["LIMIT", "MARKET", "SL", "SL-M"],
+                                         key="amo_type", label_visibility="collapsed")
+                amo_prod = a1d.selectbox("Product", ["CNC", "MIS", "NRML"],
+                                         key="amo_prod", label_visibility="collapsed")
+
+                a2a, a2b, a2c = st.columns(3)
+                amo_qty = a2a.number_input("Qty", min_value=1, value=1, step=1,
+                                           key="amo_qty")
+                amo_price = a2b.number_input("Price", min_value=0.0, value=0.0,
+                                              step=0.05, format="%.2f", key="amo_price",
+                                              disabled=amo_type == "MARKET")
+                amo_trigger = a2c.number_input("Trigger Price", min_value=0.0,
+                                                value=0.0, step=0.05, format="%.2f",
+                                                key="amo_trigger",
+                                                disabled=amo_type not in ("SL", "SL-M"))
+
+                amo_txn = st.radio("Side", ["BUY", "SELL"], horizontal=True,
+                                   key="amo_txn", label_visibility="collapsed")
+                if st.button(f"Place AMO {amo_txn}",
+                             key="amo_submit", use_container_width=True,
+                             type="primary" if amo_txn == "BUY" else "secondary"):
+                    try:
+                        _params = dict(
+                            tradingsymbol=amo_sym, exchange=amo_exch,
+                            transaction_type=amo_txn, quantity=int(amo_qty),
+                            order_type=amo_type, product=amo_prod,
+                            validity="DAY", variety="amo",
+                        )
+                        if amo_type in ("LIMIT", "SL") and amo_price > 0:
+                            _params["price"] = float(amo_price)
+                        if amo_type in ("SL", "SL-M") and amo_trigger > 0:
+                            _params["trigger_price"] = float(amo_trigger)
+                        oid = kite.place_order(**_params)
+                        st.success(f"AMO {amo_txn} placed — ID: {oid}")
+                        _persist_order_to_db(amo_sym, amo_exch, amo_txn, int(amo_qty),
+                                            amo_type, amo_prod, amo_price, order_id=oid)
+                    except Exception as e:
+                        st.error(f"AMO failed: {e}")
+                        _persist_order_to_db(amo_sym, amo_exch, amo_txn, int(amo_qty),
+                                            amo_type, amo_prod, amo_price, success=False, error_msg=str(e))
+
+            # Close the trade-panel-wrap div
+            st.markdown("</div>", unsafe_allow_html=True)
 
             # ── Order Book / Positions / Holdings / RSI Strategy ──────
             st.markdown("")

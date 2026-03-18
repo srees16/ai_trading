@@ -42,7 +42,7 @@ def render_analysis_page():
         # the CSS animation renders in the browser while heavy
         # Python imports and network calls happen server-side.
         spinner_slot = st.empty()
-        spinner_slot.markdown(spinner_html("Loading analysis engine…"), unsafe_allow_html=True)
+        spinner_slot.markdown(spinner_html("Loading analysis engine"), unsafe_allow_html=True)
 
         def _on_progress(pct: int, label: str):
             spinner_slot.markdown(
@@ -54,7 +54,11 @@ def render_analysis_page():
         spinner_slot.markdown(spinner_html("Starting analysis…"), unsafe_allow_html=True)
 
         st.session_state.signals = asyncio.run(
-            run_analysis_async(st.session_state.tickers, progress_callback=_on_progress)
+            run_analysis_async(
+                st.session_state.tickers,
+                progress_callback=_on_progress,
+                market=st.session_state.get("current_market", "US"),
+            )
         )
         st.session_state.analysis_complete = True
         logger.info("[user=%s] Analysis completed — %d signals generated",

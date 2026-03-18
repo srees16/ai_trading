@@ -5,9 +5,10 @@ Contains the Indian stocks dashboard and control panel with ticker selection.
 Mirrors the US Stocks main page but with NSE/BSE defaults.
 """
 
+import asyncio
 import logging
 from pathlib import Path
-from typing import List
+from typing import Any, List
 
 import streamlit as st
 
@@ -16,8 +17,9 @@ from ui.components import (
     render_header,
     render_footer,
     render_ind_navigation_buttons,
-    render_vix_indicator,
-    render_stock_ticker_ribbon,
+    render_metrics_cards,
+    render_ribbon_and_vix,
+    spinner_html,
 )
 from utils import parse_ticker_csv, validate_tickers, create_sample_csv
 
@@ -36,22 +38,13 @@ def render_ind_main_page():
                 st.session_state.get('username', 'unknown'))
     render_header()
 
-    # Scrolling ribbon — top 10 Indian stocks by market cap
-    render_stock_ticker_ribbon(market="IND")
-
-    # VIX indicator bar
-    render_vix_indicator(market="IND")
+    # Scrolling ribbon + VIX indicator (merged into single DOM element)
+    render_ribbon_and_vix(market="IND")
 
     # Navigation buttons
     render_ind_navigation_buttons(
         current_page='main',
         back_key_suffix='from_ind_main',
-    )
-
-    # Tighten the gap between nav buttons and control panel
-    st.markdown(
-        '<div style="margin-top: -1.5rem;"></div>',
-        unsafe_allow_html=True,
     )
 
     # Render control panel
@@ -65,17 +58,12 @@ def _render_control_panel():
     """Render the control panel with Indian stock selection and settings."""
     st.markdown(
         """<style>
-        [data-testid="stRadio"] { margin-top: -0.5rem; margin-bottom: -0.8rem; }
-        [data-testid="stExpander"] { margin-top: -0.6rem; margin-bottom: -0.6rem; }
-        [data-testid="stTextArea"] { margin-top: -0.2rem; }
-        [data-testid="stFileUploader"] { margin-top: -0.6rem; }
-        [data-testid="stSelectbox"] { margin-bottom: -0.8rem; }
-        [data-testid="stCheckbox"] { margin-top: -0.5rem; margin-bottom: -0.5rem; }
-        [data-testid="stHorizontalBlock"] + [data-testid="stElementContainer"],
-        [data-testid="stHorizontalBlock"] + div {
-            margin-top: -1.5rem !important;
-        }
-        [data-testid="stAlert"] { margin-top: -0.5rem !important; margin-bottom: -0.5rem !important; }
+        [data-testid="stRadio"] { margin-top: -0.2rem; margin-bottom: -0.3rem; }
+        [data-testid="stExpander"] { margin-top: -0.3rem; margin-bottom: -0.3rem; }
+        [data-testid="stTextArea"] { margin-top: -0.1rem; }
+        [data-testid="stFileUploader"] { margin-top: -0.3rem; }
+        [data-testid="stSelectbox"] { margin-bottom: -0.3rem; }
+        [data-testid="stCheckbox"] { margin-top: -0.2rem; margin-bottom: -0.2rem; }
         </style>""",
         unsafe_allow_html=True,
     )
@@ -92,7 +80,7 @@ def _render_control_panel():
     st.session_state.tickers = tickers
 
     # Run Analysis section — full width below the settings
-    st.markdown('<div style="margin-top: -3.5rem;"></div>', unsafe_allow_html=True)
+    st.markdown('<div style="margin-top: -1.5rem;"></div>', unsafe_allow_html=True)
     run_clicked = _render_run_controls(tickers)
 
     if run_clicked and len(tickers) > 0:
@@ -104,8 +92,18 @@ def _render_control_panel():
         st.session_state.progress_messages = []
         st.session_state.analysis_tickers = list(tickers)
         st.session_state.analysis_run_id = st.session_state.get('analysis_run_id', 0) + 1
-        st.session_state.current_page = 'analysis'
-        st.rerun()
+
+        # Run analysis inline
+        _run_and_render_analysis(tickers)
+
+    elif (not st.session_state.get('analysis_complete', True)
+          and st.session_state.get('analysis_tickers')):
+        # Pending analysis triggered from another page (e.g. Screener)
+        _run_and_render_analysis(st.session_state.analysis_tickers)
+
+    elif st.session_state.get('analysis_complete') and st.session_state.get('signals'):
+        # Re-render previous results on page re-visit
+        _render_analysis_results(st.session_state.signals)
 
 
 def _render_ticker_selection() -> List[str]:
@@ -136,7 +134,7 @@ def _render_ticker_selection() -> List[str]:
 
 def _handle_default_tickers() -> List[str]:
     """Handle default Indian tickers selection."""
-    with st.expander(" View default tickers (NSE)"):
+    with st.expander(" View default tickers"):
         display_names = [t.replace('.NS', '') for t in IND_DEFAULT_TICKERS]
         st.write(", ".join(display_names))
         st.caption("Tickers are automatically appended with .NS suffix for NSE data.")
@@ -283,3 +281,158 @@ def _render_run_controls(tickers: List[str]) -> bool:
         )
 
     return run_button
+
+
+def _run_and_render_analysis(tickers: List[str]):
+    """Run analysis inline and display results below the button."""
+    _user = st.session_state.get('username', 'unknown')
+    logger.info("[user=%s] IND Analysis started for %d tickers: %s",
+                _user, len(tickers), ', '.join(tickers))
+
+    spinner_slot = st.empty()
+    spinner_slot.markdown(spinner_html("Loading analysis engine"), unsafe_allow_html=True)
+
+    def _on_progress(pct: int, label: str):
+        spinner_slot.markdown(
+            spinner_html(f"{label} — {pct}%"),
+            unsafe_allow_html=True,
+        )
+
+    from services.analysis import run_analysis_async  # deferred (heavy)
+    spinner_slot.markdown(spinner_html("Starting analysis…"), unsafe_allow_html=True)
+
+    st.session_state.signals = asyncio.run(
+        run_analysis_async(
+            tickers,
+            progress_callback=_on_progress,
+            market=st.session_state.get("current_market", "IND"),
+        )
+    )
+    st.session_state.analysis_complete = True
+    logger.info("[user=%s] IND Analysis completed — %d signals generated",
+                _user, len(st.session_state.signals))
+    spinner_slot.empty()
+    st.rerun()
+
+
+def _render_analysis_results(signals: List[Any]):
+    """Render analysis results inline on the IND main page."""
+    from ui.charts import render_decision_chart, render_score_distribution
+    from ui.tables import render_simple_summary_table, render_signals_table, render_top_signals
+
+    st.markdown("---")
+    render_simple_summary_table(signals)
+    st.markdown("---")
+    render_metrics_cards(signals)
+    st.markdown("---")
+
+    tab1, tab2, tab3 = st.tabs([
+        "Overview",
+        "Detailed Table",
+        "Top Signals",
+    ])
+
+    with tab1:
+        col1, col2 = st.columns(2)
+        with col1:
+            render_decision_chart(signals)
+        with col2:
+            render_score_distribution(signals)
+
+    with tab2:
+        render_signals_table(signals)
+
+    with tab3:
+        render_top_signals(signals)
+
+    # ── Quick Verdict + Order section ─────────────────────────
+    _render_quick_verdict_section()
+
+
+def _render_quick_verdict_section():
+    """Run IntegratedScorer on analysed tickers and offer order placement."""
+    tickers = st.session_state.get("analysis_tickers", [])
+    if not tickers:
+        return
+
+    st.markdown("---")
+    st.subheader("Quick Verdict & Order")
+
+    if st.button("Run IntegratedScorer Verdict", key="ind_main_verdict_btn"):
+        from services.integrated_scorer import IntegratedScorer
+        from datetime import date, timedelta
+
+        end_dt = date.today()
+        start_dt = end_dt - timedelta(days=365)
+        # Ensure .NS suffix
+        ns_tickers = [t if t.endswith(".NS") else f"{t}.NS" for t in tickers]
+
+        with st.spinner(f"Scoring {len(ns_tickers)} stocks …"):
+            scorer = IntegratedScorer()
+            verdicts = scorer.evaluate(
+                tickers=ns_tickers, market="IND",
+                date_range=(str(start_dt), str(end_dt)),
+            )
+        st.session_state["ind_main_verdicts"] = verdicts
+
+    verdicts = st.session_state.get("ind_main_verdicts")
+    if not verdicts:
+        return
+
+    import pandas as pd
+    _COLOUR_MAP = {
+        "STRONG_BUY": "#00c853", "BUY": "#66bb6a",
+        "HOLD": "#ffa726", "SELL": "#ef5350", "STRONG_SELL": "#b71c1c",
+    }
+
+    rows = []
+    for v in verdicts:
+        rows.append({
+            "Ticker": v.ticker,
+            "Score": f"{v.final_score:+.2f}",
+            "Verdict": v.classification,
+            "Confidence": f"{v.confidence:.0%}",
+        })
+    df = pd.DataFrame(rows)
+
+    def _colour_verdict(row):
+        colour = _COLOUR_MAP.get(row["Verdict"], "#888")
+        return [
+            f"color: {colour}; font-weight: bold" if col == "Verdict" else ""
+            for col in row.index
+        ]
+
+    styled = df.style.apply(_colour_verdict, axis=1)
+    st.dataframe(styled, hide_index=True, use_container_width=True)
+
+    buy_verdicts = [v for v in verdicts if v.classification in ("BUY", "STRONG_BUY")]
+    if buy_verdicts:
+        buy_syms = [v.ticker.replace(".NS", "") for v in buy_verdicts]
+        st.success(f"**{len(buy_verdicts)} BUY signals**: {', '.join(buy_syms)}")
+
+        kite = st.session_state.get("kite")
+        if kite is None:
+            st.info("Authenticate Kite on the Screener page to place live orders.")
+        else:
+            if st.checkbox("Confirm: place BUY orders", key="ind_main_confirm_buy"):
+                if st.button("Place Orders", type="primary", key="ind_main_place_btn"):
+                    from kite_connect.trading.auto_executor import AutoExecutor
+                    from kite_connect.trading.risk_manager import RiskConfig
+
+                    signal_dict = {
+                        v.ticker.replace(".NS", ""): v.classification
+                        for v in verdicts
+                    }
+                    executor = AutoExecutor(kite=kite, auto_place=True, trade_monitor=st.session_state.get("trade_monitor"))
+                    with st.spinner("Placing orders …"):
+                        report = executor.run(
+                            symbols=buy_syms,
+                            signal_verdicts=signal_dict,
+                        )
+                    st.session_state["trade_monitor"] = executor._trade_monitor
+                    st.success(
+                        f"{report.orders_placed} placed, {report.orders_failed} failed"
+                    )
+                    if report.order_results:
+                        order_rows = [o.to_dict() for o in report.order_results]
+                        st.dataframe(pd.DataFrame(order_rows), hide_index=True)

@@ -1,14 +1,15 @@
 """
 Sentiment Analysis Module.
 
-Analyzes news sentiment using DistilBERT transformer models
-to classify text as positive, negative, or neutral.
+Analyzes news sentiment using FinBERT (ProsusAI/finbert) transformer
+model to classify financial text as positive, negative, or neutral.
 
 The heavy ``transformers`` import and model load are deferred to
 first use so that importing this module is near-instant.
 """
 
 import logging
+import threading
 from typing import List, Tuple
 
 from config import Config
@@ -18,14 +19,15 @@ logger = logging.getLogger(__name__)
 
 
 class SentimentAnalyzer:
-    """Analyzes sentiment of news items using DistilBERT.
+    """Analyzes sentiment of news items using FinBERT (ProsusAI/finbert).
 
     The transformer pipeline is loaded lazily on the first call to
     :meth:`analyze` so that constructing the object is fast and the
-    ~250 MB model download / load only happens when actually needed.
+    ~440 MB model download / load only happens when actually needed.
     """
 
     _shared_pipeline = None  # class-level cache across instances
+    _lock = threading.Lock()  # protects lazy import + model init
 
     def __init__(self):
         """Initialize the sentiment analyzer (model loaded on first use)."""
@@ -37,24 +39,24 @@ class SentimentAnalyzer:
         if self._pipeline is not None:
             return self._pipeline
 
-        # Re-use a class-level singleton so multiple AlgoTradingSystem
-        # instances within the same process don't reload the model.
-        if SentimentAnalyzer._shared_pipeline is not None:
+        with SentimentAnalyzer._lock:
+            # Double-check after acquiring lock
+            if SentimentAnalyzer._shared_pipeline is not None:
+                self._pipeline = SentimentAnalyzer._shared_pipeline
+                logger.info("Reusing cached sentiment model")
+                return self._pipeline
+
+            logger.info("Loading sentiment analysis model...")
+            from transformers import pipeline as _hf_pipeline
+
+            SentimentAnalyzer._shared_pipeline = _hf_pipeline(
+                "sentiment-analysis",
+                model=Config.SENTIMENT_MODEL,
+                device=-1,  # CPU; set to 0 for GPU
+            )
             self._pipeline = SentimentAnalyzer._shared_pipeline
-            logger.info("Reusing cached sentiment model")
+            logger.info("Sentiment model loaded successfully")
             return self._pipeline
-
-        logger.info("Loading sentiment analysis model...")
-        from transformers import pipeline as _hf_pipeline
-
-        SentimentAnalyzer._shared_pipeline = _hf_pipeline(
-            "sentiment-analysis",
-            model=Config.SENTIMENT_MODEL,
-            device=-1,  # CPU; set to 0 for GPU
-        )
-        self._pipeline = SentimentAnalyzer._shared_pipeline
-        logger.info("Sentiment model loaded successfully")
-        return self._pipeline
     
     def analyze(self, text: str) -> Tuple[float, SentimentLabel, float]:
         """
@@ -74,10 +76,14 @@ class SentimentAnalyzer:
             text = text[:512]
             
             result = self.pipeline(text)[0]
-            label = result['label']
+            label = result['label'].upper()
             confidence = result['score']
             
-            # Convert to our format
+            # Confidence gating: treat low-confidence predictions as neutral
+            if confidence < Config.SENTIMENT_CONFIDENCE_FLOOR:
+                return 0.0, SentimentLabel.NEUTRAL, confidence
+
+            # Convert to our format (FinBERT returns lowercase labels)
             if label == 'POSITIVE':
                 sentiment_score = confidence
                 sentiment_label = SentimentLabel.POSITIVE

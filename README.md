@@ -22,35 +22,159 @@ pip install -r requirements.txt
 
 ### Step 2 — Set environment variables
 
-> Replace `YOUR_ANTHROPIC_API_KEY` with your Anthropic API key for Claude-powered RAG (Ollama is the fallback).
+Create a `.env` file in the `centurion_core/` directory. The app reads it automatically via `python-dotenv`. Replace the `YOUR_*` placeholders with your own credentials.
 
-**Windows PowerShell:**
+| Variable | Where to find it |
+|---|---|
+| `ZERODHA_API_KEY` / `ZERODHA_API_SECRET` | [developers.kite.trade](https://developers.kite.trade) → Your App |
+| `ZERODHA_USER_ID` / `ZERODHA_PASSWORD` | Your Zerodha login credentials |
+| `ZERODHA_TOTP_SECRET` | Zerodha → My Profile → Settings → Security → Reset TOTP → copy the **base32 key** shown under "Can't scan? Use this key" (enables fully automated 2FA — no manual TOTP entry needed) |
+| `CENTURION_EMAIL_USER` / `CENTURION_EMAIL_PASS` | Gmail address + **app password** ([myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) — requires 2-Step Verification) |
+| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) → API Keys (Ollama is the local fallback) |
+
+> **Alternatively**, set the variables inline in your terminal instead of creating a `.env` file. Expand the section below.
+
+<details>
+<summary><strong>Windows PowerShell — set all env vars inline</strong></summary>
+
 ```powershell
-$env:ZERODHA_API_KEY='YOUR_KEY_HERE'; $env:ZERODHA_API_SECRET='YOUR_SECRET_HERE'; $env:ZERODHA_USER_ID='YOUR_USER_HERE'; $env:ZERODHA_PASSWORD='YOUR_PASSWORD_HERE'; $env:ANTHROPIC_API_KEY='YOUR_ANTHROPIC_API_KEY'; $env:CENTURION_RAG_LLM_PROVIDER='claude'; $env:CENTURION_RAG_CLAUDE_MODEL='claude-opus-4-20250514'; $env:CENTURION_RAG_CLAUDE_MAX_TOKENS='1024'; $env:CENTURION_RAG_CLAUDE_TEMPERATURE='0.2'; $env:CENTURION_DB_USER='postgres'; $env:CENTURION_DB_PASSWORD='superadmin1'; $env:KITE_DB_USER='postgres'; $env:KITE_DB_PASSWORD='superadmin1'; $env:MINIO_ACCESS_KEY='minioadmin'; $env:MINIO_SECRET_KEY='minioadmin123'; $env:CENTURION_DEFAULT_ADMIN_PASSWORD='admin123'; $env:CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'; $env:CENTURION_DB_HOST='localhost'; $env:CENTURION_DB_PORT='9003'; $env:CENTURION_DB_NAME='centurion_trading'; $env:CENTURION_DATABASE_URL='postgresql://postgres:superadmin1@localhost:9003/centurion_trading'; $env:KITE_DB_HOST='localhost'; $env:KITE_DB_PORT='9003'; $env:KITE_DB_NAME='livestocks_ind'; $env:KITE_POOL_MAXSIZE='40'; $env:MINIO_ENDPOINT='localhost:9004'; $env:MINIO_SECURE='false'; $env:MINIO_BUCKET='centurion-backtests'; $env:MINIO_ENABLED='true'; $env:STREAMLIT_SERVER_PORT='9000'; $env:API_PORT='9001'; $env:CENTURION_RAG_LLM_URL='http://localhost:11434'; $env:RAG_MODEL='qwen2.5:3b'; $env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300'; $env:CENTURION_RAG_LLM_CHUNK_TIMEOUT='30'; $env:CENTURION_RAG_LLM_NUM_CTX='4096'; $env:CENTURION_RAG_LLM_NUM_PREDICT='500'; $env:CENTURION_RAG_LLM_MAX_TOKENS='500'; $env:CENTURION_RAG_LLM_TEMPERATURE='0.2'; $env:CENTURION_RAG_CHROMA_DIR='./data/chroma_db'; $env:CENTURION_RAG_EMBEDDING_MODEL='BAAI/bge-base-en-v1.5'; $env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET='2000'; $env:CENTURION_RAG_MAX_CONTEXT_CHUNKS='8'; $env:CENTURION_RAG_TOP_K='15'; $env:CENTURION_RAG_SIMILARITY_THRESHOLD='0.70'; $env:CENTURION_RAG_QUERY_BUDGET='300'; $env:CENTURION_RAG_QUERY_REWRITE='false'; $env:CENTURION_RAG_STREAMING='true'; $env:CENTURION_RAG_CACHE_ENABLED='false'; $env:CENTURION_RAG_FAQ_ENABLED='false'; $env:RAG_FAST_MODE='false'
+$env:ZERODHA_API_KEY='YOUR_KEY_HERE'
+$env:ZERODHA_API_SECRET='YOUR_SECRET_HERE'
+$env:ZERODHA_USER_ID='YOUR_USER_HERE'
+$env:ZERODHA_PASSWORD='YOUR_PASSWORD_HERE'
+$env:ZERODHA_TOTP_SECRET='YOUR_BASE32_TOTP_SECRET'
+$env:ANTHROPIC_API_KEY='YOUR_ANTHROPIC_API_KEY'
+$env:CENTURION_EMAIL_USER='YOUR_GMAIL_HERE'
+$env:CENTURION_EMAIL_PASS='YOUR_GMAIL_APP_PASSWORD'
+$env:STREAMLIT_SERVER_PORT='9000'
+$env:API_PORT='9001'
+$env:CENTURION_DB_HOST='localhost'
+$env:CENTURION_DB_PORT='9003'
+$env:CENTURION_DB_NAME='centurion_rag'
+$env:CENTURION_DB_USER='postgres'
+$env:CENTURION_DB_PASSWORD='superadmin1'
+$env:KITE_DB_HOST='localhost'
+$env:KITE_DB_PORT='9003'
+$env:KITE_DB_NAME='livestocks_ind'
+$env:KITE_DB_USER='postgres'
+$env:KITE_DB_PASSWORD='superadmin1'
+$env:KITE_POOL_MAXSIZE='40'
+$env:MINIO_ENDPOINT='localhost:9004'
+$env:MINIO_ACCESS_KEY='minioadmin'
+$env:MINIO_SECRET_KEY='minioadmin123'
+$env:MINIO_SECURE='false'
+$env:MINIO_BUCKET='centurion-backtests'
+$env:MINIO_ENABLED='true'
+$env:CENTURION_DEFAULT_ADMIN_PASSWORD='admin123'
+$env:CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'
+$env:CENTURION_RAG_LLM_PROVIDER='claude'
+$env:CENTURION_RAG_CLAUDE_MODEL='claude-opus-4-20250514'
+$env:CENTURION_RAG_CLAUDE_MAX_TOKENS='1024'
+$env:CENTURION_RAG_CLAUDE_TEMPERATURE='0.2'
+$env:CENTURION_RAG_LLM_URL='http://localhost:11434'
+$env:RAG_MODEL='qwen2.5:3b'
+$env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300'
+$env:CENTURION_RAG_LLM_CHUNK_TIMEOUT='30'
+$env:CENTURION_RAG_LLM_NUM_CTX='4096'
+$env:CENTURION_RAG_LLM_NUM_PREDICT='500'
+$env:CENTURION_RAG_LLM_MAX_TOKENS='500'
+$env:CENTURION_RAG_LLM_TEMPERATURE='0.2'
+$env:CENTURION_RAG_CHROMA_DIR='./data/chroma_db'
+$env:CENTURION_RAG_EMBEDDING_MODEL='BAAI/bge-base-en-v1.5'
+$env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET='2000'
+$env:CENTURION_RAG_MAX_CONTEXT_CHUNKS='8'
+$env:CENTURION_RAG_TOP_K='15'
+$env:CENTURION_RAG_SIMILARITY_THRESHOLD='0.70'
+$env:CENTURION_RAG_QUERY_BUDGET='300'
+$env:CENTURION_RAG_QUERY_REWRITE='false'
+$env:CENTURION_RAG_STREAMING='true'
+$env:CENTURION_RAG_CACHE_ENABLED='false'
+$env:CENTURION_RAG_FAQ_ENABLED='false'
+$env:RAG_FAST_MODE='false'
+$env:CENTURION_EMAIL_HOST='smtp.gmail.com'
+$env:CENTURION_EMAIL_PORT='587'
 ```
 
-**macOS / Linux:**
+</details>
+
+<details>
+<summary><strong>macOS / Linux — set all env vars inline</strong></summary>
+
 ```bash
-export ZERODHA_API_KEY="YOUR_KEY_HERE" ZERODHA_API_SECRET="YOUR_SECRET_HERE" ZERODHA_USER_ID="YOUR_USER_HERE" ZERODHA_PASSWORD='YOUR_PASSWORD_HERE' ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY" CENTURION_RAG_LLM_PROVIDER="claude" CENTURION_RAG_CLAUDE_MODEL="claude-opus-4-20250514" CENTURION_RAG_CLAUDE_MAX_TOKENS="1024" CENTURION_RAG_CLAUDE_TEMPERATURE="0.2" CENTURION_DB_USER="postgres" CENTURION_DB_PASSWORD="superadmin1" KITE_DB_USER="postgres" KITE_DB_PASSWORD="superadmin1" MINIO_ACCESS_KEY="minioadmin" MINIO_SECRET_KEY="minioadmin123" CENTURION_DEFAULT_ADMIN_PASSWORD="admin123" CENTURION_DEFAULT_ANALYST_PASSWORD="analyst123" CENTURION_DB_HOST="localhost" CENTURION_DB_PORT="9003" CENTURION_DB_NAME="centurion_trading" CENTURION_DATABASE_URL="postgresql://postgres:superadmin1@localhost:9003/centurion_trading" KITE_DB_HOST="localhost" KITE_DB_PORT="9003" KITE_DB_NAME="livestocks_ind" KITE_POOL_MAXSIZE="40" MINIO_ENDPOINT="localhost:9004" MINIO_SECURE="false" MINIO_BUCKET="centurion-backtests" MINIO_ENABLED="true" STREAMLIT_SERVER_PORT="9000" API_PORT="9001" CENTURION_RAG_LLM_URL="http://localhost:11434" RAG_MODEL="qwen2.5:3b" CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT="300" CENTURION_RAG_LLM_CHUNK_TIMEOUT="30" CENTURION_RAG_LLM_NUM_CTX="4096" CENTURION_RAG_LLM_NUM_PREDICT="500" CENTURION_RAG_LLM_MAX_TOKENS="500" CENTURION_RAG_LLM_TEMPERATURE="0.2" CENTURION_RAG_CHROMA_DIR="./data/chroma_db" CENTURION_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5" CENTURION_RAG_CONTEXT_TOKEN_BUDGET="2000" CENTURION_RAG_MAX_CONTEXT_CHUNKS="8" CENTURION_RAG_TOP_K="15" CENTURION_RAG_SIMILARITY_THRESHOLD="0.70" CENTURION_RAG_QUERY_BUDGET="300" CENTURION_RAG_QUERY_REWRITE="false" CENTURION_RAG_STREAMING="true" CENTURION_RAG_CACHE_ENABLED="false" CENTURION_RAG_FAQ_ENABLED="false" RAG_FAST_MODE="false"
+export ZERODHA_API_KEY="YOUR_KEY_HERE"
+export ZERODHA_API_SECRET="YOUR_SECRET_HERE"
+export ZERODHA_USER_ID="YOUR_USER_HERE"
+export ZERODHA_PASSWORD="YOUR_PASSWORD_HERE"
+export ZERODHA_TOTP_SECRET="YOUR_BASE32_TOTP_SECRET"
+export ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY"
+export CENTURION_EMAIL_USER="YOUR_GMAIL_HERE"
+export CENTURION_EMAIL_PASS="YOUR_GMAIL_APP_PASSWORD"
+export STREAMLIT_SERVER_PORT="9000"
+export API_PORT="9001"
+export CENTURION_DB_HOST="localhost"
+export CENTURION_DB_PORT="9003"
+export CENTURION_DB_NAME="centurion_rag"
+export CENTURION_DB_USER="postgres"
+export CENTURION_DB_PASSWORD="superadmin1"
+export KITE_DB_HOST="localhost"
+export KITE_DB_PORT="9003"
+export KITE_DB_NAME="livestocks_ind"
+export KITE_DB_USER="postgres"
+export KITE_DB_PASSWORD="superadmin1"
+export KITE_POOL_MAXSIZE="40"
+export MINIO_ENDPOINT="localhost:9004"
+export MINIO_ACCESS_KEY="minioadmin"
+export MINIO_SECRET_KEY="minioadmin123"
+export MINIO_SECURE="false"
+export MINIO_BUCKET="centurion-backtests"
+export MINIO_ENABLED="true"
+export CENTURION_DEFAULT_ADMIN_PASSWORD="admin123"
+export CENTURION_DEFAULT_ANALYST_PASSWORD="analyst123"
+export CENTURION_RAG_LLM_PROVIDER="claude"
+export CENTURION_RAG_CLAUDE_MODEL="claude-opus-4-20250514"
+export CENTURION_RAG_CLAUDE_MAX_TOKENS="1024"
+export CENTURION_RAG_CLAUDE_TEMPERATURE="0.2"
+export CENTURION_RAG_LLM_URL="http://localhost:11434"
+export RAG_MODEL="qwen2.5:3b"
+export CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT="300"
+export CENTURION_RAG_LLM_CHUNK_TIMEOUT="30"
+export CENTURION_RAG_LLM_NUM_CTX="4096"
+export CENTURION_RAG_LLM_NUM_PREDICT="500"
+export CENTURION_RAG_LLM_MAX_TOKENS="500"
+export CENTURION_RAG_LLM_TEMPERATURE="0.2"
+export CENTURION_RAG_CHROMA_DIR="./data/chroma_db"
+export CENTURION_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5"
+export CENTURION_RAG_CONTEXT_TOKEN_BUDGET="2000"
+export CENTURION_RAG_MAX_CONTEXT_CHUNKS="8"
+export CENTURION_RAG_TOP_K="15"
+export CENTURION_RAG_SIMILARITY_THRESHOLD="0.70"
+export CENTURION_RAG_QUERY_BUDGET="300"
+export CENTURION_RAG_QUERY_REWRITE="false"
+export CENTURION_RAG_STREAMING="true"
+export CENTURION_RAG_CACHE_ENABLED="false"
+export CENTURION_RAG_FAQ_ENABLED="false"
+export RAG_FAST_MODE="false"
+export CENTURION_EMAIL_HOST="smtp.gmail.com"
+export CENTURION_EMAIL_PORT="587"
 ```
+
+</details>
 
 ---
 
 ### Step 3 — Start PostgreSQL + create databases (Docker)
 
-> try this on windows n check
-
 **Windows PowerShell:**
 ```powershell
-docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15; docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"; Start-Sleep -Seconds 9; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;"; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag timescale/timescaledb:latest-pg15; docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"; Start-Sleep -Seconds 9; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_trading;"; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"; python -c "from database.connection import DatabaseManager; dm = DatabaseManager(); dm.initialize_database()"
 ```
 
 **macOS / Linux:**
 ```bash
-docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15 && docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001" && sleep 9 && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;" && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag timescale/timescaledb:latest-pg15 && docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001" && sleep 9 && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_trading;" && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;" && python -c "from database.connection import DatabaseManager; dm = DatabaseManager(); dm.initialize_database()"
 ```
 
-This creates three databases: `centurion_trading` (main — stores backtest results, strategy metrics, Financial ML and Test & Tune chapter outputs), `centurion_rag` (RAG pipeline), `livestocks_ind` (Kite/Zerodha).
+This creates three databases: `centurion_rag` (analysis results, backtesting, RAG pipeline — default), `centurion_trading` (strategy metrics, Financial ML and Test & Tune chapter outputs), `livestocks_ind` (Kite/Zerodha live trading).
 
 ---
 
@@ -115,14 +239,7 @@ MinIO console at: **http://localhost:9002/login** — login with `minioadmin` / 
 
 ---
 
-### Verify Everything Works
-- [ ] Streamlit opens at http://localhost:9000
-- [ ] Login succeeds with `admin` / `admin123`
-- [ ] No database errors in console
-- [ ] Run a quick analysis with 2 tickers (AAPL, MSFT) — should complete in <2 min
-- [ ] Check **History** tab — results persist to PostgreSQL
-
-**Stuck?** Jump to **Section 14: Troubleshooting** or **Section 11: Installation** for detailed setup.
+Jump to **Section 14: Troubleshooting** or **Section 11: Installation** for detailed setup.
 
 ---
 
@@ -164,11 +281,46 @@ app.py (Streamlit Router)
 ```
 AlgoTradingSystem (main.py)
   ├── USNewsAggregator Yahoo Finance, Finviz, Investing.com, TradingView, r/WallStreetBets
+  ├── IndianNewsAggregator MoneyControl, Economic Times, LiveMint, Business Standard, NDTV Profit, Zerodha Pulse, Google News India
   ├── SentimentAnalyzer DistilBERT transformer model
   ├── MetricsCalculator Fundamentals (yfinance) + Technicals (RSI, MACD, Bollinger)
   ├── DecisionEngine Weighted scoring STRONG_BUY / BUY / HOLD / SELL / STRONG_SELL
   ├── NotificationManager Desktop popups (plyer) + HTML email via SMTP
   └── StorageManager Excel/CSV export + MinIO object storage
+```
+
+### IntegratedScorer — 5-Layer Evaluation Pipeline
+
+```
+IntegratedScorer (services/integrated_scorer.py)
+  Layer 1 — Core Analysis     sentiment, fundamentals, technicals, macro, public opinion
+  Layer 2 — Strategy Signals   all registered strategies run in parallel (ThreadPoolExecutor)
+  Layer 3 — ML Ensemble        AFML chapter models (feature importance, ensemble methods)
+  Layer 4 — Robustness Checks  CSCV, walk-forward, permutation tests (TTMTS chapters)
+  Layer 5 — RAG Context        document-augmented evidence from uploaded PDFs
+  ──────────────────────────────────────────────────────────────────────
+  Output → StockVerdict (classification, composite_score, layer_scores, reasoning)
+```
+
+### Auto-Execution Engine
+
+```
+AutoExecutor (kite_connect/trading/auto_executor.py)
+  1. NSE Universe Download   → nse_universe.py (NIFTY50 / BANKNIFTY / full NSE)
+  2. 3-Stage NSE Screening   → screener.py (liquidity → volatility → technical filters)
+  3. Signal Filtering         → only BUY / STRONG_BUY verdicts pass through
+  4. Risk Management          → risk_manager.py (position sizing, max drawdown, beta adjustment, SL/TP)
+  5. Order Placement          → order_service.py (Kite API) + DB persistence + email notification
+  6. Post-Trade Monitoring    → trade_monitor.py (SL/TP lifecycle, trailing stop)
+```
+
+### Background Scheduler
+
+```
+scheduler.py (APScheduler)
+  ├── Pre-market (09:20 IST)     Full pipeline: scrape → analyse → screen → auto-execute
+  ├── Intraday (10:30, 12:30, 14:30)  Score refresh + re-screen for new signals
+  └── Auto-auth                  Kite TOTP auto-fill via pyotp (zero-touch)
 ```
 
 ### Dual Strategy System
@@ -184,7 +336,9 @@ AlgoTradingSystem (main.py)
 
 ### News Scraping
 
-Five concurrent scrapers with 3-layer caching (session scraper cache DB freshness):
+Five concurrent US scrapers + eleven Indian scrapers with 3-layer caching (session → scraper cache → DB freshness):
+
+**US Market:**
 
 | Source | Method | Limit |
 |--------|--------|-------|
@@ -193,6 +347,22 @@ Five concurrent scrapers with 3-layer caching (session scraper cache DB freshnes
 | Investing.com | HTTP with custom headers | 10/ticker |
 | TradingView | JSON API (`news-headlines.tradingview.com`) | 10/ticker |
 | r/WallStreetBets | Reddit public JSON API (8 flairs) | 50/flair |
+
+**Indian Market:**
+
+| Source | Method | Limit |
+|--------|--------|-------|
+| MoneyControl | HTTP scraping | 10/ticker |
+| Economic Times | HTTP scraping | 10/ticker |
+| LiveMint | HTTP scraping | 10/ticker |
+| Business Standard | HTTP scraping | 10/ticker |
+| Hindu BusinessLine | HTTP scraping | 10/ticker |
+| Zerodha Pulse | HTTP scraping | 10/ticker |
+| NDTV Profit | HTTP scraping | 10/ticker |
+| Google News India | HTTP scraping | 10/ticker |
+| FII/DII Flows | NSE data API | Daily |
+| Circuit Detector | NSE bhavcopy | Daily |
+| Market Breadth | NSE advance/decline | Daily |
 
 - `asyncio.Semaphore(5)` for concurrency control
 - SHA-256 content deduplication
@@ -299,16 +469,19 @@ Streamlit dashboard for real-time Indian equity monitoring, order management, op
 
 | Module | Purpose |
 |--------|---------|
-| `zerodha_live.py` | Main dashboard (~1326 lines) — live quotes, order book, positions, holdings, RSI scanner |
-| `auth/kite_auth.py` | OAuth flow with local HTTP callback + Selenium auto-login |
+| `zerodha_live.py` | Main dashboard — live quotes, order book, positions, holdings, RSI scanner |
+| `auth/kite_auth.py` | OAuth flow with Selenium auto-login + **automated TOTP** via `pyotp` (zero-touch 2FA when `ZERODHA_TOTP_SECRET` is set; falls back to visible browser for manual entry) |
 | `auth/kite_session.py` | Reusable authenticated `KiteConnect` session |
 | `core/config.py` | API credentials, DB config, index groups (NIFTY50, BANKNIFTY, NIFTYIT, NIFTYENERGY) |
 | `core/database_service.py` | PostgreSQL connection pool for `livestocks_ind` database |
-| `core/selenium_service.py` | Chrome/Edge WebDriver lifecycle management |
-| `nse/nse_csv_downloader.py` | NSE bhavcopy CSV download via Selenium |
-| `nse/nse_data_loader.py` | CSV PostgreSQL bulk loader |
+| `core/selenium_service.py` | Chrome/Edge WebDriver lifecycle management (headless mode via `--headless=new`) |
+| `nse/screener.py` | **3-stage NSE screener** — liquidity filter → volatility filter → technical composite score (RSI + MACD + Bollinger + volume surge + price range) |
+| `nse/nse_universe.py` | NSE symbol list download (NIFTY50, BANKNIFTY, full NSE) |
 | `options/option_chain.py` | Concurrent option chain with OI, Greeks, and IV (ThreadPoolExecutor, 20 workers) |
-| `trading/order_service.py` | Market/Limit/SL/SL-M orders, CNC/MIS/NRML products, DAY/IOC validity |
+| `trading/order_service.py` | Market/Limit/SL/SL-M orders, CNC/MIS/NRML products, DAY/IOC validity — **auto-persists every order to DB** (`order_records` table) + **sends email confirmation** |
+| `trading/auto_executor.py` | End-to-end execution engine: screen → signal-filter → risk-check → order → monitor |
+| `trading/risk_manager.py` | Position sizing (max 5% per position, max 25% total), SL/TP calculation (ATR-based), beta adjustment, earnings blackout detection |
+| `trading/trade_monitor.py` | Post-trade SL/TP lifecycle — polls fill status, places SL-M/limit orders after entry fills, trailing stop support |
 | `trading/rsi_strategy.py` | Live RSI scanner — BUY (RSI<30 + reversal), SELL (RSI>70 + reversal), auto-order placement |
 
 ### Real-time Streaming Architecture
@@ -336,12 +509,17 @@ Push-based tick distribution via Kite WebSocket (KiteTicker) with an internal ev
 | `GET` | `/stream/status` | Full streaming pipeline status |
 
 ### Key Features
+- **Automated TOTP 2FA** — when `ZERODHA_TOTP_SECRET` is set, Kite login is fully automated via `pyotp`: headless Chrome auto-fills credentials + TOTP, captures redirect token. Falls back to visible browser for manual entry if auto-fill fails
+- **Order database persistence** — every order (BUY/SELL, MARKET/LIMIT/AMO, success/failure) is automatically saved to the `order_records` PostgreSQL table with fill_price, filled_at, and status
+- **Email order confirmations** — styled HTML email sent via SMTP for every placed order (requires `CENTURION_EMAIL_*` env vars)
 - Auto-refresh every 30 seconds via `@st.fragment(run_every=...)`
 - Market status pill indicators from NSE API (pre-open, live, post-market)
 - Batch quote fetching (200 symbols/batch)
 - Option chain: expiry discovery (45 days + monthly), Sensibull-style colouring, ATM highlighting, PCR metric
 - Price alerts: `price_above`, `price_below`, `change_pct_above`, `change_pct_below`, `volume_above` with desktop notifications
 - All-combinations pairs trading: C(n,2) pair analysis when >2 tickers provided
+- **Portfolio Analyzer** — sector weights, allocation drift analysis from live Kite holdings
+- **SELL Pipeline** — automated exit for SELL/STRONG_SELL verdicts on existing holdings
 
 ---
 
@@ -385,7 +563,7 @@ Retrieval-Augmented Generation pipeline for document Q&A with PDF ingestion, hyb
 
 ## 6. Database Layer
 
-### PostgreSQL Schema (12 tables)
+### PostgreSQL Schema (13 tables)
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
@@ -393,6 +571,7 @@ Retrieval-Augmented Generation pipeline for document Q&A with PDF ingestion, hyb
 | `news_items` | Scraped news with sentiment | ticker, source, sentiment_label, content_hash (SHA-256 dedup) |
 | `stock_signals` | Trading signals | decision, decision_score, reasoning, technical indicators |
 | `fundamental_metrics` | Per-ticker fundamental snapshots | PE, PEG, ROE, Z-Score, M-Score, F-Score |
+| `order_records` | Every Kite order (BUY/SELL, success/failure) | symbol, side, quantity, fill_price, filled_at, status, order_id, exchange |
 | `backtest_results` | Strategy backtest outcomes | total_return, sharpe_ratio, max_drawdown, equity_curve (JSONB) |
 | `backtest_trades` | Individual trade records | entry/exit price, PnL, holding period |
 | `backtest_equity_points` | Equity curve data points | portfolio_value, drawdown, benchmark |
@@ -410,6 +589,7 @@ Retrieval-Augmented Generation pipeline for document Q&A with PDF ingestion, hyb
 `DatabaseService` (singleton) provides a unified API:
 - Analysis lifecycle: `start_analysis_run()` `complete_analysis_run()` / `fail_analysis_run()`
 - Persistence: `save_signals()`, `save_news_items()` (SHA-256 dedup), `save_fundamental_metrics()` (upsert)
+- Order persistence: `save_single_order()` — auto-called by `order_service.place_order()` for every order (maps fill_price, filled_at, status)
 - Backtesting: `save_backtest_result()` with normalised detail tables + strategy summary refresh
 - Freshness: `check_freshness()`, `record_fetch()`, `record_error()`
 
@@ -462,7 +642,8 @@ details = minio.list_runs_detailed()         # metadata: size, chart count, stra
 | **RAG** | `rag` | PDF upload, query input with KB source selector, streaming response, code applicator |
 | **Financial ML** | `finance_ml` | 19 AFML chapter analyses — data structures, labeling, feature importance, HRP, CSCV, and more |
 | **Test & Tune** | `testune_ts` | 7 chapter analyses from *Testing and Tuning Market Trading Systems* (Timothy Masters) |
-| **Indian Main** | `ind_main` | Indian equities ticker selection and analysis dashboard |
+| **Indian Main** | `ind_main` | Indian equities analysis dashboard with auto-order execution for STRONG_BUY signals |
+| **NSE Screener** | `screener` | 3-stage NSE screener → IntegratedScorer verdicts → risk-managed order placement (auto or manual) |
 | **Indian Equities** | `ind_kite` | Live quotes, order book, positions, holdings, option chain, RSI scanner (Kite Connect) |
 | **Options** | `options` | Concurrent option chain with OI, Greeks, IV, Sensibull-style colouring |
 
@@ -533,6 +714,8 @@ centurion_core/
 ├── config.py                     # Configuration (~140 settings, CENTURION_* env vars)
 ├── models.py                     # Data models (NewsItem, StockMetrics, TradingSignal)
 ├── utils.py                      # CSV parsing and ticker validation
+├── scheduler.py                  # APScheduler — pre-market + intraday pipeline runs with auto-auth
+├── run_api.py                    # FastAPI server launcher (port 9001)
 ├── setup_database.py             # Database schema initialisation
 ├── requirements.txt              # Python dependencies
 ├── sample_tickers.csv            # Example ticker list
@@ -545,7 +728,7 @@ centurion_core/
 │   ├── styles.py                 # CSS styling and colour constants
 │   ├── assets/                   # Logo, background images
 │   └── pages/
-│       ├── main_page.py          # Dashboard & control panel
+│       ├── main_page.py          # Dashboard & control panel (US)
 │       ├── analysis_page.py      # Analysis results with CSS spinner
 │       ├── fundamental_page.py   # Fundamental analysis drill-down
 │       ├── backtesting_page.py   # Strategy backtesting + MinIO/DB integration
@@ -554,7 +737,9 @@ centurion_core/
 │       ├── us_holdings_page.py   # US portfolio holdings view
 │       ├── finance_ml_page.py    # Financial ML chapter analyses (AFML)
 │       ├── testune_page.py       # Test & Tune chapter analyses (TTMTS)
-│       ├── ind_main_page.py      # Indian equities main dashboard
+│       ├── ind_main_page.py      # Indian equities analysis + auto-order execution
+│       ├── screener_page.py      # NSE screener → IntegratedScorer → risk → order pipeline
+│       ├── verdict_page.py       # IntegratedScorer verdict detail view
 │       └── options_page.py       # Option chain analysis page
 │
 ├── auth/                         # Authentication
@@ -587,9 +772,12 @@ centurion_core/
 │   └── engine.py                 # Weighted scoring algorithm
 │
 ├── services/                     # Business logic
-│   ├── analysis.py               # Analysis orchestration (async)
-│   ├── session.py                # Session state initialisation
-│   └── cache.py                  # SessionCache (TTL-aware, thread-safe)
+│   ├── analysis.py               # Analysis orchestration (async, Streamlit-free)
+│   ├── integrated_scorer.py      # 5-layer evaluation pipeline (core + strategy + ML + robustness + RAG)
+│   ├── portfolio_analyzer.py     # Kite holdings analysis (sector weights, allocation drift)
+│   ├── session.py                # Streamlit session state initialisation
+│   ├── cache.py                  # SessionCache (TTL-aware, thread-safe)
+│   └── drivewealth.py            # DriveWealth API client for US brokerage
 │
 ├── strategies/                   # Strategy framework
 │   ├── base_strategy.py          # BaseStrategy ABC + dataclasses (620 lines)
@@ -625,12 +813,12 @@ centurion_core/
 │   └── _output/                  # Analysis outputs (git-ignored)
 │
 ├── kite_connect/                 # Zerodha live trading (Indian markets)
-│   ├── zerodha_live.py           # Main Streamlit dashboard (~1326 lines)
-│   ├── auth/                     # OAuth + Selenium 2FA login
-│   ├── core/                     # Config, PostgreSQL, Selenium service
-│   ├── nse/                      # NSE CSV download + DB loader
+│   ├── zerodha_live.py           # Main Streamlit dashboard
+│   ├── auth/                     # OAuth + Selenium auto-login + TOTP auto-fill (pyotp)
+│   ├── core/                     # Config, PostgreSQL, Selenium (headless)
+│   ├── nse/                      # NSE universe download + 3-stage screener
 │   ├── options/                  # Concurrent option chain + Greeks
-│   ├── trading/                  # Order service + RSI strategy
+│   ├── trading/                  # Order service, auto-executor, risk manager, trade monitor, RSI strategy
 │   └── webhooks/                 # Real-time streaming infrastructure
 │       ├── ticker.py             # KiteWebSocketService (KiteTicker wrapper)
 │       ├── dispatcher.py         # WebhookDispatcher (in-process event fan-out)
@@ -675,7 +863,7 @@ centurion_core/
 │       └── time_budget.py        # Query time budget management
 │
 ├── notifications/                # Desktop + email alerts
-│   └── manager.py                # plyer popups + SMTP HTML email
+│   └── manager.py                # plyer popups + SMTP HTML email (order confirmations, WSB reports)
 │
 ├── storage/                      # Object storage
 │   ├── manager.py                # Excel/CSV file export
@@ -779,7 +967,7 @@ Choose **Option A (Docker)** or **Option B (Local PostgreSQL)**.
 #### **Option A: PostgreSQL via Docker** (Recommended)
 
 ```powershell
-docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading timescale/timescaledb:latest-pg15; Start-Sleep -Seconds 9; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_rag;"; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"; docker ps | findstr centurion-postgres
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag timescale/timescaledb:latest-pg15; Start-Sleep -Seconds 9; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_trading;"; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"; docker ps | findstr centurion-postgres
 ```
 
 #### **Option B: Local PostgreSQL Installation**
@@ -868,13 +1056,12 @@ STREAMLIT_SERVER_PORT=9000
 # ─── FastAPI Backend ──────────────────────────────────────────────
 API_PORT=9001
 
-# ─── PostgreSQL (US Stocks Analysis & Backtesting) ──────────────────
+# ─── PostgreSQL (Analysis, Backtesting, RAG) ───────────────────────
 CENTURION_DB_HOST=localhost
 CENTURION_DB_PORT=9003
 CENTURION_DB_NAME=centurion_rag
 CENTURION_DB_USER=postgres
 CENTURION_DB_PASSWORD=superadmin1
-CENTURION_DB_ENABLED=true
 
 # ─── Separate PostgreSQL for Kite Connect (Live Trading) ────────────
 KITE_DB_HOST=localhost
@@ -897,6 +1084,14 @@ ZERODHA_API_KEY=YOUR_KEY_HERE
 ZERODHA_API_SECRET=YOUR_SECRET_HERE
 ZERODHA_USER_ID=YOUR_USER_HERE
 ZERODHA_PASSWORD=YOUR_PASSWORD_HERE
+ZERODHA_TOTP_SECRET=YOUR_BASE32_TOTP_SECRET
+
+# ─── Email Notifications (Order Confirmations) ─────────────────────
+# Gmail: enable 2-Step Verification → https://myaccount.google.com/apppasswords
+CENTURION_EMAIL_HOST=smtp.gmail.com
+CENTURION_EMAIL_PORT=587
+CENTURION_EMAIL_USER=YOUR_GMAIL_HERE
+CENTURION_EMAIL_PASS=YOUR_GMAIL_APP_PASSWORD
 
 # ─── KiteConnect Connection Pool ──────────────────────────────────
 KITE_POOL_MAXSIZE=40
@@ -1260,7 +1455,7 @@ docker compose down -v
 | **Data** | pandas, numpy, openpyxl |
 | **Financial Data** | yfinance |
 | **Crypto Data** | Binance public REST API (no key required) |
-| **Live Trading** | kiteconnect (Zerodha Kite Connect SDK) |
+| **Live Trading** | kiteconnect (Zerodha Kite Connect SDK), pyotp (TOTP auto-fill) |
 | **Scraping** | aiohttp, beautifulsoup4, lxml, requests, selenium, webdriver-manager |
 | **AI/ML** | transformers, torch, scikit-learn |
 | **LLM Providers** | anthropic, openai (Ollama via HTTP) |

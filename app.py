@@ -246,9 +246,6 @@ def _get_renderer(module_key: str):
     elif module_key == "testune_ts":
         from ui.pages.testune_page import render_testune_page
         return render_testune_page
-    elif module_key == "analysis":
-        from ui.pages.analysis_page import render_analysis_page
-        return render_analysis_page
     elif module_key == "fundamental":
         from ui.pages.fundamental_page import render_fundamental_page
         return render_fundamental_page
@@ -267,6 +264,12 @@ def _get_renderer(module_key: str):
     elif module_key == "options":
         from ui.pages.options_page import render_options_page
         return render_options_page
+    elif module_key == "verdict":
+        from ui.pages.verdict_page import render_verdict_page
+        return render_verdict_page
+    elif module_key == "screener":
+        from ui.pages.screener_page import render_screener_page
+        return render_screener_page
     elif module_key == "main":
         from ui.pages.main_page import render_main_page
         return render_main_page
@@ -282,7 +285,7 @@ def _route_trading_platform():
     st.session_state['current_market'] = 'US'
 
     renderer = _get_renderer(current_page if current_page in (
-        'analysis', 'fundamental', 'backtesting', 'history', 'us_holdings',
+        'fundamental', 'backtesting', 'history', 'us_holdings', 'verdict',
     ) else 'main')
     renderer()
 
@@ -300,7 +303,9 @@ def _route_ind_stocks():
         _get_renderer('live_stocks')()
     elif current_page == 'options':
         _get_renderer('options')()
-    elif current_page in ('analysis', 'fundamental', 'backtesting', 'history'):
+    elif current_page == 'screener':
+        _get_renderer('screener')()
+    elif current_page in ('fundamental', 'backtesting', 'history'):
         # Reuse the same pages as US Stocks — they read current_market
         _get_renderer(current_page)()
     else:

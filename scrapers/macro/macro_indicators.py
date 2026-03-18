@@ -60,6 +60,10 @@ class MacroSnapshot:
     crude_oil_price: Optional[float] = None
     dxy_index: Optional[float] = None
 
+    # FII/DII flows (IND only)
+    fii_net_crore: Optional[float] = None
+    fii_flow_sentiment: Optional[float] = None  # -1 … +1
+
     # Derived sentiment
     macro_sentiment_score: Optional[float] = None   # -1 (fear) … +1 (greed)
     macro_sentiment_label: Optional[str] = None      # fearful / neutral / greedy
@@ -80,6 +84,8 @@ class MacroSnapshot:
             "gold_price": self.gold_price,
             "crude_oil_price": self.crude_oil_price,
             "dxy_index": self.dxy_index,
+            "fii_net_crore": self.fii_net_crore,
+            "fii_flow_sentiment": self.fii_flow_sentiment,
             "macro_sentiment_score": self.macro_sentiment_score,
             "macro_sentiment_label": self.macro_sentiment_label,
         }
@@ -96,7 +102,7 @@ _TICKERS: Dict[str, str] = {
     "^NSEI":      "nifty50",
     "GC=F":       "gold_price",
     "CL=F":       "crude_oil_price",
-    "DX-Y.NYB":   "dxy_index",
+    "DX=F":       "dxy_index",
 }
 
 
@@ -113,9 +119,9 @@ class MacroIndicators:
         snap = mi.fetch(market="US")   # or "IND"
     """
 
-    # In-process cache (class-level singleton)
-    _cached_snapshot: Optional[MacroSnapshot] = None
-    _cache_ts: Optional[datetime] = None
+    # In-process cache (class-level, per-market)
+    _cached_snapshots: Dict[str, MacroSnapshot] = {}
+    _cache_timestamps: Dict[str, datetime] = {}
     _CACHE_TTL = timedelta(minutes=15)
 
     def fetch(self, market: str = "US") -> MacroSnapshot:
@@ -130,13 +136,15 @@ class MacroIndicators:
             A :class:`MacroSnapshot` with all available fields populated.
         """
         now = datetime.utcnow()
+        cached = MacroIndicators._cached_snapshots.get(market)
+        cached_ts = MacroIndicators._cache_timestamps.get(market)
         if (
-            MacroIndicators._cached_snapshot is not None
-            and MacroIndicators._cache_ts is not None
-            and (now - MacroIndicators._cache_ts) < self._CACHE_TTL
+            cached is not None
+            and cached_ts is not None
+            and (now - cached_ts) < self._CACHE_TTL
         ):
-            logger.debug("MacroIndicators: returning cached snapshot")
-            return MacroIndicators._cached_snapshot
+            logger.debug("MacroIndicators: returning cached snapshot for %s", market)
+            return cached
 
         snap = MacroSnapshot(timestamp=now)
 
@@ -147,7 +155,7 @@ class MacroIndicators:
                 symbols,
                 period="5d",
                 progress=False,
-                threads=True,
+                threads=False,
                 group_by="ticker",
             )
         except Exception as exc:
@@ -204,6 +212,21 @@ class MacroIndicators:
         if snap.us_10y_yield is not None and snap.us_13w_yield is not None:
             snap.yield_curve_spread = snap.us_10y_yield - snap.us_13w_yield
 
+        # ── FII/DII flows (IND market only) ──────────────────────────
+        if market == "IND":
+            try:
+                import asyncio
+                from scrapers.ind_news.fii_dii_flows import FIIDIIFlows
+                loop = asyncio.new_event_loop()
+                try:
+                    flow_snap = loop.run_until_complete(FIIDIIFlows().fetch())
+                finally:
+                    loop.close()
+                snap.fii_net_crore = flow_snap.fii_net
+                snap.fii_flow_sentiment = flow_snap.flow_sentiment
+            except Exception as exc:
+                logger.debug("MacroIndicators: FII/DII fetch failed — %s", exc)
+
         # ── Derive composite sentiment score ─────────────────────────
         snap.macro_sentiment_score = self._compute_sentiment(snap, market)
         if snap.macro_sentiment_score is not None:
@@ -214,9 +237,11 @@ class MacroIndicators:
             else:
                 snap.macro_sentiment_label = "neutral"
 
-        # Cache
-        MacroIndicators._cached_snapshot = snap
-        MacroIndicators._cache_ts = now
+        # Cache only if we got meaningful data
+        has_data = snap.vix is not None or snap.india_vix is not None or snap.sp500_price is not None
+        if has_data:
+            MacroIndicators._cached_snapshots[market] = snap
+            MacroIndicators._cache_timestamps[market] = now
 
         logger.info(
             "MacroIndicators: VIX=%.1f  10Y=%.2f  S&P=%.0f  Macro=%s (%.2f)",
@@ -273,6 +298,10 @@ class MacroIndicators:
         if change is not None:
             clamped = max(-3.0, min(3.0, change))  # cap at ±3%
             scores.append(clamped / 3.0)
+
+        # --- FII/DII flow sentiment (IND only) ---
+        if market == "IND" and snap.fii_flow_sentiment is not None:
+            scores.append(snap.fii_flow_sentiment)
 
         if not scores:
             return None

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from ui.components import render_header_bar, render_footer, render_navigation_buttons, render_stock_ticker_ribbon, render_vix_indicator
+from ui.components import render_header_bar, render_footer, render_navigation_buttons, render_ribbon_and_vix
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +68,7 @@ def render_us_holdings_page():
     logger.info("[user=%s] Viewing Holdings page", _user)
 
     render_header_bar(subtitle="Holdings · DriveWealth")
-    render_stock_ticker_ribbon(market="US")
-    render_vix_indicator(market="US")
+    render_ribbon_and_vix(market="US")
     render_navigation_buttons(current_page="us_holdings", back_key_suffix="from_us_holdings")
 
     saved = _load_saved_creds()

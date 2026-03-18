@@ -14,8 +14,7 @@ from ui.components import (
     render_footer,
     render_navigation_buttons,
     render_ind_navigation_buttons,
-    render_stock_ticker_ribbon,
-    render_vix_indicator,
+    render_ribbon_and_vix,
     render_no_data_warning,
     render_score_interpretations_table,
 )
@@ -55,18 +54,16 @@ def render_fundamental_page():
 
     # Navigation buttons
     if market == 'IND':
-        render_stock_ticker_ribbon(market="IND")
-        render_vix_indicator(market="IND")
+        render_ribbon_and_vix(market="IND")
         render_ind_navigation_buttons(current_page='fundamental', back_key_suffix='from_fundamental')
     else:
-        render_stock_ticker_ribbon(market="US")
-        render_vix_indicator(market="US")
+        render_ribbon_and_vix(market="US")
         render_navigation_buttons(
             current_page='fundamental',
             back_key_suffix='from_fundamental'
         )
     
-    st.markdown("---")
+    st.markdown('<hr class="nav-sep">', unsafe_allow_html=True)
     
     signals = st.session_state.get('signals', [])
     

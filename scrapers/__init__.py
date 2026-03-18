@@ -92,7 +92,7 @@ class BaseNewsScraper(ABC):
                         ssl=False
                     ) as response:
                         if response.status == 200:
-                            return await response.text()
+                            return await response.text(errors="replace")
                         if response.status in (429, 500, 502, 503, 504):
                             # Retryable server errors
                             logger.debug(
