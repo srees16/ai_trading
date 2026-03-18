@@ -322,6 +322,7 @@ def _run_pipeline(screen_cfg, risk_cfg):
         screener_cfg=screen_cfg,
         risk_cfg=risk_cfg,
         auto_place=False,  # Never place orders at screening stage
+        trade_monitor=st.session_state.get("trade_monitor"),
     )
 
     with st.spinner("Running NSE screener pipeline …"):
@@ -358,6 +359,7 @@ def _run_full_pipeline(screen_cfg, risk_cfg):
             screener_cfg=screen_cfg,
             risk_cfg=risk_cfg,
             auto_place=False,
+            trade_monitor=st.session_state.get("trade_monitor"),
         )
         report = executor.run()
 
@@ -422,12 +424,14 @@ def _run_full_pipeline(screen_cfg, risk_cfg):
             screener_cfg=screen_cfg,
             risk_cfg=risk_cfg,
             auto_place=auto_place,
+            trade_monitor=st.session_state.get("trade_monitor"),
         )
         order_report = order_executor.run(
             symbols=buy_syms,
             signal_verdicts=signal_dict,
             pre_screened_df=pre_screened,
         )
+        st.session_state["trade_monitor"] = order_executor._trade_monitor
 
     st.session_state["screener_orders"] = order_report.order_results
     st.session_state["screener_plans"] = order_report.trade_plans
@@ -802,6 +806,7 @@ def _execute_buy_verdicts(verdicts, risk_cfg):
             screener_cfg=screen_cfg,
             risk_cfg=risk_cfg,
             auto_place=auto_place,
+            trade_monitor=st.session_state.get("trade_monitor"),
         )
         with st.spinner(f"Executing orders for {len(buy_symbols)} symbols…"):
             report = executor.run(
@@ -809,6 +814,7 @@ def _execute_buy_verdicts(verdicts, risk_cfg):
                 signal_verdicts=signal_dict,
                 pre_screened_df=pre_screened,
             )
+        st.session_state["trade_monitor"] = executor._trade_monitor
         st.success(
             f"Execution complete — "
             f"{report.orders_placed} orders placed, "
@@ -873,9 +879,10 @@ def _render_sell_exit_section(sell_verdicts, kite):
     if confirm_sell:
         if st.button(f"Exit {len(matching)} Positions", type="primary", key="sell_exit_btn"):
             from kite_connect.trading.auto_executor import AutoExecutor
-            executor = AutoExecutor(kite=kite, auto_place=True)
+            executor = AutoExecutor(kite=kite, auto_place=True, trade_monitor=st.session_state.get("trade_monitor"))
             with st.spinner(f"Placing {len(matching)} SELL orders …"):
                 results = executor.run_sell_pipeline(sell_verdicts)
+            st.session_state["trade_monitor"] = executor._trade_monitor
             placed = sum(1 for r in results if r.success)
             failed = sum(1 for r in results if not r.success)
             if placed:

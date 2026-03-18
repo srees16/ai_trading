@@ -20,7 +20,6 @@ from models import TradingSignal
 from scrapers.us_aggregator import USNewsAggregator
 from scrapers.ind_aggregator import IndianNewsAggregator
 from scrapers.macro.macro_indicators import MacroIndicators
-from scrapers.broader_sentiment import GoogleSearchSentiment
 from sentiment import SentimentAnalyzer
 from metrics import MetricsCalculator
 from decision_engine import DecisionEngine
@@ -29,7 +28,6 @@ from storage import StorageManager
 
 # Infrastructure
 from infrastructure.event_bus import event_bus
-from infrastructure.execution_context import execution_ctx
 from infrastructure.latency_tracker import latency_tracker
 from infrastructure.replay_engine import replay_engine
 
@@ -77,7 +75,6 @@ class AlgoTradingSystem:
         self.notification_manager = NotificationManager()
         self.storage_manager = StorageManager()
         self.macro_indicators = MacroIndicators()
-        self.broader_sentiment = GoogleSearchSentiment()
         
         logger.info("System initialized successfully!")
 

@@ -50,8 +50,9 @@ class ExecutionEngine:
     Routes orders through the appropriate broker based on execution mode.
     """
 
-    def __init__(self, market: str = "IND"):
+    def __init__(self, market: str = "IND", kite=None):
         self.market = market
+        self._kite = kite
 
     def execute(self, intent: OrderIntent) -> OrderResult:
         """Place an order (live or paper, based on execution context)."""
@@ -97,9 +98,8 @@ class ExecutionEngine:
         """Place order via Kite Connect."""
         try:
             from kite_connect.trading.order_service import OrderService
-            import streamlit as st
 
-            kite = st.session_state.get("kite")
+            kite = self._kite
             if not kite:
                 return OrderResult(
                     order_id="", ticker=intent.ticker,

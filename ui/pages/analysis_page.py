@@ -54,7 +54,11 @@ def render_analysis_page():
         spinner_slot.markdown(spinner_html("Starting analysis…"), unsafe_allow_html=True)
 
         st.session_state.signals = asyncio.run(
-            run_analysis_async(st.session_state.tickers, progress_callback=_on_progress)
+            run_analysis_async(
+                st.session_state.tickers,
+                progress_callback=_on_progress,
+                market=st.session_state.get("current_market", "US"),
+            )
         )
         st.session_state.analysis_complete = True
         logger.info("[user=%s] Analysis completed — %d signals generated",
