@@ -114,11 +114,13 @@ class AutoExecutor:
         screener_cfg: ScreenerConfig | None = None,
         risk_cfg: RiskConfig | None = None,
         auto_place: bool = False,
+        trade_monitor=None,
     ):
         self.kite = kite
         self.screener = NSEScreener(screener_cfg)
         self.risk_mgr = RiskManager(risk_cfg, kite=kite)
         self.auto_place = auto_place
+        self._trade_monitor = trade_monitor
 
     # ── Public API ─────────────────────────────────────────────
 
@@ -487,14 +489,9 @@ class AutoExecutor:
 
         # ── Monitor for post-trade SL/TP lifecycle (reuse existing) ─
         monitor = None
-        try:
-            import streamlit as st
-            existing = st.session_state.get("trade_monitor")
-            if existing is not None:
-                existing.kite = self.kite
-                monitor = existing
-        except Exception:
-            pass
+        if self._trade_monitor is not None:
+            self._trade_monitor.kite = self.kite
+            monitor = self._trade_monitor
         if monitor is None:
             monitor = TradeMonitor(self.kite)
 
@@ -594,12 +591,8 @@ class AutoExecutor:
 
             results.append(result)
 
-        # Store monitor in session state for lifecycle management
-        try:
-            import streamlit as st
-            st.session_state["trade_monitor"] = monitor
-        except Exception:
-            pass  # non-Streamlit context (e.g. scheduled job)
+        # Store monitor reference for lifecycle management
+        self._trade_monitor = monitor
 
         return results
 

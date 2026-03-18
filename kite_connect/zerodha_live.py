@@ -60,6 +60,22 @@ fetch_option_chain = None   # type: ignore[assignment]
 INDEX_META = None           # type: ignore[assignment]
 
 
+def _persist_order_to_db(symbol, exchange, side, quantity, order_type,
+                         product, price, order_id=None, success=True,
+                         error_msg=None):
+    """Best-effort persist for Cover/AMO orders that bypass order_service."""
+    try:
+        from database.service import DatabaseService
+        DatabaseService().save_single_order(
+            symbol=symbol, exchange=exchange, side=side,
+            quantity=quantity, order_type=order_type, product=product,
+            price=price or 0, order_id=str(order_id) if order_id else None,
+            success=success, error_msg=error_msg,
+        )
+    except Exception as exc:
+        logger.debug("Order DB persist failed (non-fatal): %s", exc)
+
+
 # ── Webhook service (lazy singleton) ────────────────────────
 _webhook_service = None  # type: ignore[assignment]
 
@@ -1340,8 +1356,12 @@ def _render_dashboard():
                             _params["price"] = float(co_price)
                         oid = kite.place_order(**_params)
                         st.success(f"Cover {co_txn} placed — ID: {oid}")
+                        _persist_order_to_db(co_sym, co_exch, co_txn, int(co_qty),
+                                            co_type, "MIS", co_price, order_id=oid)
                     except Exception as e:
                         st.error(f"CO failed: {e}")
+                        _persist_order_to_db(co_sym, co_exch, co_txn, int(co_qty),
+                                            co_type, "MIS", co_price, success=False, error_msg=str(e))
 
             # ================================================
             # AMO — After Market Order
@@ -1388,8 +1408,12 @@ def _render_dashboard():
                             _params["trigger_price"] = float(amo_trigger)
                         oid = kite.place_order(**_params)
                         st.success(f"AMO {amo_txn} placed — ID: {oid}")
+                        _persist_order_to_db(amo_sym, amo_exch, amo_txn, int(amo_qty),
+                                            amo_type, amo_prod, amo_price, order_id=oid)
                     except Exception as e:
                         st.error(f"AMO failed: {e}")
+                        _persist_order_to_db(amo_sym, amo_exch, amo_txn, int(amo_qty),
+                                            amo_type, amo_prod, amo_price, success=False, error_msg=str(e))
 
             # Close the trade-panel-wrap div
             st.markdown("</div>", unsafe_allow_html=True)

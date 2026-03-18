@@ -415,7 +415,7 @@ class DatabaseService:
                 plan_map[p.symbol] = p
 
         try:
-            with self.get_session() as session:
+            with self.session_scope() as session:
                 saved = 0
                 for o in order_results:
                     sym = o.symbol if hasattr(o, 'symbol') else o.get('symbol', '')
@@ -443,6 +443,45 @@ class DatabaseService:
         except Exception as e:
             logger.error("Failed to persist orders: %s", e)
             return 0
+
+    def save_single_order(self, symbol: str, exchange: str, side: str,
+                          quantity: int, order_type: str, product: str,
+                          price: float = 0, order_id: str = None,
+                          success: bool = True, error_msg: str = None,
+                          fill_price: float = None, filled_qty: int = None,
+                          status_text: str = None) -> bool:
+        """Persist a single order record from any placement path."""
+        from database.models import OrderRecord, OrderStatus
+        try:
+            if success:
+                db_status = OrderStatus.FILLED if status_text == 'COMPLETE' else OrderStatus.PLACED
+            else:
+                db_status = OrderStatus.REJECTED if 'reject' in (error_msg or '').lower() else OrderStatus.FAILED
+
+            with self.session_scope() as session:
+                filled_at = None
+                if db_status == OrderStatus.FILLED:
+                    from datetime import datetime, timezone
+                    filled_at = datetime.now(timezone.utc)
+                record = OrderRecord(
+                    symbol=symbol,
+                    exchange=exchange,
+                    side=side,
+                    quantity=quantity,
+                    entry_price=price or 0,
+                    entry_order_id=order_id,
+                    status=db_status,
+                    fill_price=fill_price,
+                    filled_at=filled_at,
+                    error_message=error_msg,
+                )
+                session.add(record)
+                session.commit()
+            logger.info("Persisted order record: %s %s %s x%d", side, symbol, db_status.value, quantity)
+            return True
+        except Exception as e:
+            logger.error("Failed to persist single order: %s", e)
+            return False
 
     # =================================================================
     # Backtest Operations

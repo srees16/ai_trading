@@ -302,7 +302,11 @@ def _run_and_render_analysis(tickers: List[str]):
     spinner_slot.markdown(spinner_html("Starting analysis…"), unsafe_allow_html=True)
 
     st.session_state.signals = asyncio.run(
-        run_analysis_async(tickers, progress_callback=_on_progress)
+        run_analysis_async(
+            tickers,
+            progress_callback=_on_progress,
+            market=st.session_state.get("current_market", "IND"),
+        )
     )
     st.session_state.analysis_complete = True
     logger.info("[user=%s] IND Analysis completed — %d signals generated",
@@ -419,12 +423,13 @@ def _render_quick_verdict_section():
                         v.ticker.replace(".NS", ""): v.classification
                         for v in verdicts
                     }
-                    executor = AutoExecutor(kite=kite, auto_place=True)
+                    executor = AutoExecutor(kite=kite, auto_place=True, trade_monitor=st.session_state.get("trade_monitor"))
                     with st.spinner("Placing orders …"):
                         report = executor.run(
                             symbols=buy_syms,
                             signal_verdicts=signal_dict,
                         )
+                    st.session_state["trade_monitor"] = executor._trade_monitor
                     st.success(
                         f"{report.orders_placed} placed, {report.orders_failed} failed"
                     )

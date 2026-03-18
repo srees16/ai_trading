@@ -18,8 +18,6 @@ from collections import defaultdict
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
-import streamlit as st
-
 from config import Config
 from database.service import get_database_service
 from main import AlgoTradingSystem
@@ -34,6 +32,7 @@ DB_AVAILABLE = Config.is_database_configured()
 async def run_analysis_async(
     tickers: List[str],
     progress_callback=None,
+    market: str = "US",
 ) -> List[Any]:
     """
     Run the stock analysis asynchronously, reusing cached data
@@ -41,20 +40,17 @@ async def run_analysis_async(
     
     Args:
         tickers: List of stock ticker symbols to analyze
+        progress_callback: Optional callable(pct, label) for progress updates
+        market: Market identifier ("US" or "IND")
     
     Returns:
         List of TradingSignal objects
     """
-    market = st.session_state.get("current_market", "US")
     system = AlgoTradingSystem(tickers=tickers, market=market)
     cache = get_session_cache()
     
-    # Status tracking
-    status_placeholder = st.empty()
-    
     signals = await _execute_analysis(
         system, tickers, cache,
-        status_placeholder,
         progress_callback=progress_callback,
     )
 
@@ -63,30 +59,26 @@ async def run_analysis_async(
 
     # Persist results
     save_path = _save_results(system, signals, tickers)
-    db_saved = _save_to_database(signals, tickers)
+    db_saved = _save_to_database(signals, tickers, market=market)
 
-    # Show cache diagnostics
+    # Log cache diagnostics
     stats = cache.stats
     scraper_stats = get_scraper_cache().stats
     logger.info("Session cache stats: %s", stats)
     logger.info("Scraper cache stats: %s", scraper_stats)
 
-    # Clear status indicator
-    status_placeholder.empty()
-
     if save_path:
-        st.caption(f" Results saved to: {save_path}")
+        logger.info("Results saved to: %s", save_path)
 
-    # Show how many API calls were saved
     cached_news_count = len(cache.get_cached_tickers("news"))
     scraper_cached = scraper_stats.get('cached_tickers', 0)
     dedup_hashes = scraper_stats.get('content_hashes', 0)
     if cached_news_count > 0 or scraper_cached > 0:
-        st.caption(
-            f" Cache: {stats['hits']} hits / {stats['misses']} misses "
-            f"({stats['hit_rate']} hit rate) — "
-            f"{cached_news_count} ticker(s) cached, "
-            f"{dedup_hashes} dedup hashes tracked"
+        logger.info(
+            "Cache: %d hits / %d misses (%s hit rate) — "
+            "%d ticker(s) cached, %d dedup hashes tracked",
+            stats['hits'], stats['misses'], stats['hit_rate'],
+            cached_news_count, dedup_hashes,
         )
 
     return signals
@@ -96,7 +88,6 @@ async def _execute_analysis(
     system: AlgoTradingSystem,
     tickers: List[str],
     cache,
-    status_placeholder,
     progress_callback=None,
 ) -> List[Any]:
     """
@@ -133,7 +124,7 @@ async def _execute_analysis(
         tickers, cached_news=cached_news
     )
     if not all_news:
-        status_placeholder.warning("\u26a0\ufe0f No news found")
+        logger.warning("No news found for tickers: %s", tickers)
         return []
     
     if progress_callback:
@@ -320,13 +311,14 @@ def _save_results(system: AlgoTradingSystem, signals: List[Any], tickers: List[s
         return None
 
 
-def _save_to_database(signals: List[Any], tickers: List[str]) -> bool:
+def _save_to_database(signals: List[Any], tickers: List[str], market: str = "US") -> bool:
     """
     Save analysis results to database if available.
     
     Args:
         signals: List of TradingSignal objects
         tickers: List of tickers analyzed
+        market: Market identifier ("US" or "IND")
     
     Returns:
         True if saved successfully, False otherwise
@@ -336,9 +328,6 @@ def _save_to_database(signals: List[Any], tickers: List[str]) -> bool:
     
     try:
         db_service = get_database_service()
-        
-        # Determine market from session state
-        market = st.session_state.get('current_market', 'US')
         
         # Prepare data for database
         signal_data, news_data, fundamental_data = _prepare_database_data(signals)
