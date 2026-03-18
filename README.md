@@ -38,12 +38,12 @@ export ZERODHA_API_KEY="YOUR_KEY_HERE" && export ZERODHA_API_SECRET="YOUR_SECRET
 
 **Windows PowerShell:**
 ```powershell
-docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag timescale/timescaledb:latest-pg15; docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"; Start-Sleep -Seconds 9; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_trading;"; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"; python -c "from database.connection import DatabaseManager; dm = DatabaseManager(); dm.initialize_database()"
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag timescale/timescaledb:latest-pg15; Start-Sleep -Seconds 9; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_trading;"; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
 ```
 
 **macOS / Linux:**
 ```bash
-docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag timescale/timescaledb:latest-pg15 && docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001" && sleep 9 && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_trading;" && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;" && python -c "from database.connection import DatabaseManager; dm = DatabaseManager(); dm.initialize_database()"
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag timescale/timescaledb:latest-pg15 && sleep 9 && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_trading;" && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
 ```
 
 This creates three databases: `centurion_rag` (analysis results, backtesting, RAG pipeline — default), `centurion_trading` (strategy metrics, Financial ML and Test & Tune chapter outputs), `livestocks_ind` (Kite/Zerodha live trading).
@@ -58,7 +58,7 @@ python setup_database.py
 ```
 Expected output: `✓ Database tables created successfully`
 
-This creates the `backtest_results`, `backtest_trades`, `backtest_equity_points`, `backtest_daily_returns`, and `strategy_performance_summary` tables used by the Backtest Strategy, Financial ML (`fml_ch02` … `fml_ch21`), and Test & Tune (`tts_ch01` … `tts_ch07`) modules.
+This creates all 14 tables in the `centurion_rag` database: `analysis_runs`, `news_items`, `stock_signals`, `fundamental_metrics`, `backtest_results`, `backtest_trades`, `backtest_equity_points`, `backtest_daily_returns`, `strategy_performance_summary`, `user_watchlists`, `alert_configurations`, `raw_scraped_news`, `data_freshness`, and `order_records`. The `livestocks_ind` tables (`stocks`, `index_groups`, `index_stocks`, `tick_data`) are auto-created at runtime when the Kite dashboard or webhook service starts.
 
 ---
 
