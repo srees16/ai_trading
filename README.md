@@ -58,7 +58,7 @@ python setup_database.py
 ```
 Expected output: `✓ Database tables created successfully`
 
-This creates all 14 tables in the `centurion_rag` database: `analysis_runs`, `news_items`, `stock_signals`, `fundamental_metrics`, `backtest_results`, `backtest_trades`, `backtest_equity_points`, `backtest_daily_returns`, `strategy_performance_summary`, `user_watchlists`, `alert_configurations`, `raw_scraped_news`, `data_freshness`, and `order_records`. The `livestocks_ind` tables (`stocks`, `index_groups`, `index_stocks`, `tick_data`) are auto-created at runtime when the Kite dashboard or webhook service starts.
+This creates all 14 tables in the `centurion_rag` database: `analysis_runs`, `news_items`, `stock_signals`, `fundamental_metrics`, `backtest_results`, `backtest_trades`, `backtest_equity_points`, `backtest_daily_returns`, `strategy_performance_summary`, `user_watchlists`, `alert_configurations`, `raw_scraped_news`, `data_freshness`, and `order_records`. > The `livestocks_ind` tables (`stocks`, `index_groups`, `index_stocks`, `tick_data`) are auto-created at runtime when the Kite dashboard or webhook service starts.
 
 ---
 
@@ -68,7 +68,7 @@ This creates all 14 tables in the `centurion_rag` database: `analysis_runs`, `ne
 docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"
 ```
 
-The `centurion-backtests` bucket is auto-created on first use. It stores backtest strategy charts, Financial ML chapter figures (PNG) under `fml_<run_id>/fml_<ch_key>/` paths, and Test & Tune figures under `tts_<run_id>/tts_<ch_key>/` paths.
+The `centurion-backtests` bucket is auto-created on first use. It stores backtest strategy charts, Financial ML figures (PNG).
 
 ---
 
