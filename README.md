@@ -22,21 +22,6 @@ pip install -r requirements.txt
 
 ### Step 2 — Set environment variables
 
-Create a `.env` file in the `centurion_core/` directory. The app reads it automatically via `python-dotenv`. Replace the `YOUR_*` placeholders with your own credentials.
-
-| Variable | Where to find it |
-|---|---|
-| `ZERODHA_API_KEY` / `ZERODHA_API_SECRET` | [developers.kite.trade](https://developers.kite.trade) → Your App |
-| `ZERODHA_USER_ID` / `ZERODHA_PASSWORD` | Your Zerodha login credentials |
-| `ZERODHA_TOTP_SECRET` | Zerodha → My Profile → Settings → Security → Reset TOTP → copy the **base32 key** shown under "Can't scan? Use this key" (enables fully automated 2FA — no manual TOTP entry needed) |
-| `CENTURION_EMAIL_USER` / `CENTURION_EMAIL_PASS` | Gmail address + **app password** ([myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) — requires 2-Step Verification) |
-| `ANTHROPIC_API_KEY` | [console.anthropic.com](https://console.anthropic.com) → API Keys (Ollama is the local fallback) |
-
-> **Alternatively**, set the variables inline in your terminal instead of creating a `.env` file. Expand the section below.
-
-<details>
-<summary><strong>Windows PowerShell — set all env vars inline</strong></summary>
-
 ```powershell
 $env:ZERODHA_API_KEY='YOUR_KEY_HERE'
 $env:ZERODHA_API_SECRET='YOUR_SECRET_HERE'
@@ -95,11 +80,6 @@ $env:CENTURION_EMAIL_HOST='smtp.gmail.com'
 $env:CENTURION_EMAIL_PORT='587'
 ```
 
-</details>
-
-<details>
-<summary><strong>macOS / Linux — set all env vars inline</strong></summary>
-
 ```bash
 export ZERODHA_API_KEY="YOUR_KEY_HERE"
 export ZERODHA_API_SECRET="YOUR_SECRET_HERE"
@@ -157,8 +137,6 @@ export RAG_FAST_MODE="false"
 export CENTURION_EMAIL_HOST="smtp.gmail.com"
 export CENTURION_EMAIL_PORT="587"
 ```
-
-</details>
 
 ---
 
