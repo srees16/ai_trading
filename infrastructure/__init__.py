@@ -8,7 +8,7 @@ Provides cross-cutting concerns used by all market modules
 * **Time-Series Store** — Abstraction over TimescaleDB / in-memory
 * **Model Registry** — Versioned ML model catalogue
 * **Logging** — Structured JSON logging with correlation IDs
-* **Auth** — Shared session tokens (Streamlit ↔ FastAPI)
+* **Auth** — Session token management
 * **Config** — Centralised configuration
 * **Replay** — Deterministic event replay for backtest / audit
 """

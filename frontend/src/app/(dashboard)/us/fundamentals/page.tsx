@@ -1,14 +1,38 @@
 "use client";
 
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import { usStocksApi, type StockMetrics } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { MetricCard } from "@/components/shared/metric-card";
 import { formatNumber } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
-import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, ReferenceLine, Cell,
-} from "recharts";
+
+// Lazy-load recharts — only downloaded when charts render (saves ~370 KB)
+const FundamentalsChart = lazy(() => import("recharts").then(mod => ({
+  default: function FundamentalsChartInner({ data, referenceLines, yDomain }: {
+    data: { ticker: string; value: number; color: string }[];
+    referenceLines?: { y: number; stroke: string; label: string }[];
+    yDomain?: [number, number];
+  }) {
+    const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, Cell, ResponsiveContainer } = mod;
+    return (
+      <ResponsiveContainer width="100%" height={300}>
+        <BarChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" stroke="hsl(217, 33%, 12%)" />
+          <XAxis dataKey="ticker" tick={{ fontSize: 10 }} stroke="hsl(215, 20%, 55%)" />
+          <YAxis stroke="hsl(215, 20%, 55%)" domain={yDomain} />
+          <Tooltip contentStyle={{ backgroundColor: "hsl(222, 47%, 9%)", border: "1px solid hsl(217, 33%, 17%)", borderRadius: 8 }} />
+          {referenceLines?.map((rl, i) => (
+            <ReferenceLine key={i} y={rl.y} stroke={rl.stroke} strokeDasharray="3 3" label={rl.label} />
+          ))}
+          <Bar dataKey="value" radius={[4, 4, 0, 0]}>
+            {data.map((e, i) => <Cell key={i} fill={e.color} />)}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  }
+})));
 
 function getZScoreHealth(z: number | null): { label: string; color: string } {
   if (z == null) return { label: "N/A", color: "#666" };
@@ -126,19 +150,15 @@ export default function USFundamentalsPage() {
               <CardTitle className="text-base">Altman Z-Score</CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={zData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(217, 33%, 12%)" />
-                  <XAxis dataKey="ticker" tick={{ fontSize: 10 }} stroke="hsl(215, 20%, 55%)" />
-                  <YAxis stroke="hsl(215, 20%, 55%)" />
-                  <Tooltip contentStyle={{ backgroundColor: "hsl(222, 47%, 9%)", border: "1px solid hsl(217, 33%, 17%)", borderRadius: 8 }} />
-                  <ReferenceLine y={2.99} stroke="#00cc44" strokeDasharray="3 3" label="Safe" />
-                  <ReferenceLine y={1.81} stroke="#ff3333" strokeDasharray="3 3" label="Distress" />
-                  <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                    {zData.map((e, i) => <Cell key={i} fill={e.color} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              <Suspense fallback={<div className="h-[300px] animate-pulse rounded bg-muted" />}>
+                <FundamentalsChart
+                  data={zData}
+                  referenceLines={[
+                    { y: 2.99, stroke: "#00cc44", label: "Safe" },
+                    { y: 1.81, stroke: "#ff3333", label: "Distress" },
+                  ]}
+                />
+              </Suspense>
             </CardContent>
           </Card>
 
@@ -148,18 +168,14 @@ export default function USFundamentalsPage() {
               <CardTitle className="text-base">Beneish M-Score</CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={mData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(217, 33%, 12%)" />
-                  <XAxis dataKey="ticker" tick={{ fontSize: 10 }} stroke="hsl(215, 20%, 55%)" />
-                  <YAxis stroke="hsl(215, 20%, 55%)" />
-                  <Tooltip contentStyle={{ backgroundColor: "hsl(222, 47%, 9%)", border: "1px solid hsl(217, 33%, 17%)", borderRadius: 8 }} />
-                  <ReferenceLine y={-2.22} stroke="#ff3333" strokeDasharray="3 3" label="-2.22" />
-                  <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                    {mData.map((e, i) => <Cell key={i} fill={e.color} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              <Suspense fallback={<div className="h-[300px] animate-pulse rounded bg-muted" />}>
+                <FundamentalsChart
+                  data={mData}
+                  referenceLines={[
+                    { y: -2.22, stroke: "#ff3333", label: "-2.22" },
+                  ]}
+                />
+              </Suspense>
             </CardContent>
           </Card>
 
@@ -169,17 +185,9 @@ export default function USFundamentalsPage() {
               <CardTitle className="text-base">Piotroski F-Score</CardTitle>
             </CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={fData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(217, 33%, 12%)" />
-                  <XAxis dataKey="ticker" tick={{ fontSize: 10 }} stroke="hsl(215, 20%, 55%)" />
-                  <YAxis stroke="hsl(215, 20%, 55%)" domain={[0, 9]} />
-                  <Tooltip contentStyle={{ backgroundColor: "hsl(222, 47%, 9%)", border: "1px solid hsl(217, 33%, 17%)", borderRadius: 8 }} />
-                  <Bar dataKey="value" radius={[4, 4, 0, 0]}>
-                    {fData.map((e, i) => <Cell key={i} fill={e.color} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+              <Suspense fallback={<div className="h-[300px] animate-pulse rounded bg-muted" />}>
+                <FundamentalsChart data={fData} yDomain={[0, 9]} />
+              </Suspense>
             </CardContent>
           </Card>
         </div>

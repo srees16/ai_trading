@@ -87,6 +87,10 @@
 .ticker-ribbon-inner:hover {
   animation-play-state: paused;
 }
+@keyframes ticker-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
 
 /* Decision badge colors */
 .badge-strong-buy { @apply bg-green-600/20 text-green-400 border-green-600/30; }

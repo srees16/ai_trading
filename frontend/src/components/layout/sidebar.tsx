@@ -14,7 +14,6 @@ import {
   Settings,
   Bot,
   Bitcoin,
-  Activity,
   Target,
   LayoutGrid,
   IndianRupee,
@@ -22,6 +21,7 @@ import {
   Layers,
   FlaskConical,
   SlidersHorizontal,
+  Zap,
 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -49,8 +49,8 @@ const usNav: NavItem[] = [
 const indNav: NavItem[] = [
   { title: "Analysis", href: "/ind/analysis", icon: BarChart3 },
   { title: "Screener", href: "/ind/screener", icon: Target },
+  { title: "Fly Kite", href: "/ind/fly-kite", icon: Zap },
   { title: "Options", href: "/ind/options", icon: Layers },
-  { title: "Trading", href: "/ind/trading", icon: Activity },
   { title: "Backtesting", href: "/ind/backtesting", icon: LineChart },
   { title: "History", href: "/ind/history", icon: History },
 ];

@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { pipelineApi, type PipelineResponse, type VerdictItem, type PlanItem, type OrderItem } from "@/lib/api";
+import Link from "next/link";
+import { pipelineApi, indStocksApi, type PipelineResponse, type VerdictItem, type PlanItem, type OrderItem } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,8 +16,24 @@ import { MetricCard } from "@/components/shared/metric-card";
 import { Separator } from "@/components/ui/separator";
 import { formatNumber, getDecisionBadgeClass } from "@/lib/utils";
 import { ColumnDef } from "@tanstack/react-table";
-import { Loader2, Play, ScanSearch, Zap, ArrowUpDown, Download, ShieldCheck, AlertTriangle } from "lucide-react";
+import { Loader2, Play, ScanSearch, Zap, ArrowUpDown, Download, ShieldCheck, AlertTriangle, Send, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
+
+const exportScreenerCsv = (result: PipelineResponse) => {
+  const rows = [
+    ["Ticker", "Score", "Verdict", "Confidence"].join(","),
+    ...(result.verdicts || []).map((v) =>
+      [v.ticker, v.score, v.classification, v.confidence].join(",")
+    ),
+  ].join("\n");
+  const blob = new Blob([rows], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "screener_results.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+};
 
 export default function IndScreenerPage() {
   // Screener config
@@ -41,13 +58,54 @@ export default function IndScreenerPage() {
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<PipelineResponse | null>(null);
   const [autoPlace, setAutoPlace] = useState(false);
+  const [placingOrder, setPlacingOrder] = useState<string | null>(null);
+
+  const handlePlacePlanOrder = async (plan: PlanItem) => {
+    setPlacingOrder(plan.symbol);
+    try {
+      const res = await indStocksApi.placeOrder({
+        symbol: plan.symbol,
+        exchange: "NSE",
+        transaction_type: plan.side,
+        quantity: plan.quantity,
+        order_type: "LIMIT",
+        product: "CNC",
+        price: plan.entry_price,
+      });
+      if (res.success) {
+        toast.success(`Order placed for ${plan.symbol}: ${res.order_id}`);
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Order placement failed";
+      toast.error(`${plan.symbol}: ${message}`);
+    } finally {
+      setPlacingOrder(null);
+    }
+  };
+
+  const buildPipelineRequest = (autoPlace: boolean): import("@/lib/api").PipelineRequest => ({
+    index_mode: indexMode,
+    auto_place: autoPlace,
+    min_price: minPrice,
+    min_avg_volume: minVolume,
+    min_beta: minBeta,
+    max_workers: workers,
+    pullback_pct: pbTolerance / 100,
+    breakout_vol_mult: bvMult,
+    breakout_lookback: bvLookback,
+    total_capital: capital,
+    risk_per_trade_pct: riskPct / 100,
+    max_open_trades: maxTrades,
+    min_rr_ratio: minRR,
+    sl_method: slMethod,
+  });
 
   const handleScreen = async () => {
     setLoading(true);
     setProgress(20);
     try {
       setProgress(50);
-      const res = await pipelineApi.screen({ index_mode: indexMode, auto_place: false });
+      const res = await pipelineApi.screen(buildPipelineRequest(false));
       setResult(res);
       setProgress(100);
       toast.success(`Screened ${res.screened_count} stocks from ${res.universe_size} universe`);
@@ -61,7 +119,7 @@ export default function IndScreenerPage() {
     setProgress(10);
     try {
       setProgress(30);
-      const res = await pipelineApi.full({ index_mode: indexMode, auto_place: autoPlace });
+      const res = await pipelineApi.full(buildPipelineRequest(autoPlace));
       setResult(res);
       setProgress(100);
       toast.success(`Pipeline complete — ${res.orders_placed} orders placed`);
@@ -85,6 +143,21 @@ export default function IndScreenerPage() {
     { accessorKey: "target_price", header: "Target", cell: ({ row }) => `₹${formatNumber(row.getValue("target_price") as number)}` },
     { accessorKey: "quantity", header: "Qty" },
     { accessorKey: "rr_ratio", header: "R:R", cell: ({ row }) => formatNumber(row.getValue("rr_ratio") as number, 1) },
+    { id: "actions", header: "Action", cell: ({ row }) => {
+      const plan = row.original;
+      const isPlacing = placingOrder === plan.symbol;
+      return (
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={isPlacing || !!placingOrder}
+          onClick={() => handlePlacePlanOrder(plan)}
+        >
+          {isPlacing ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Send className="mr-1 h-3 w-3" />}
+          {plan.side}
+        </Button>
+      );
+    }},
   ];
 
   const orderColumns: ColumnDef<OrderItem>[] = [
@@ -98,9 +171,16 @@ export default function IndScreenerPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">NSE Stock Screener</h1>
-        <p className="text-sm text-muted-foreground">Screen NSE stocks with breakout detection, risk management, and auto-order placement</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold">NSE Stock Screener</h1>
+          <p className="text-sm text-muted-foreground">Screen NSE stocks with breakout detection, risk management, and auto-order placement</p>
+        </div>
+        <Link href="/ind/fly-kite">
+          <Button variant="outline" size="sm">
+            <ExternalLink className="mr-1 h-3 w-3" /> Fly Kite
+          </Button>
+        </Link>
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -156,14 +236,20 @@ export default function IndScreenerPage() {
 
       {/* Action Buttons */}
       <div className="flex gap-4">
-        <Button onClick={handleScreen} disabled={loading || fullLoading} size="lg" className="flex-1">
-          {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ScanSearch className="mr-2 h-4 w-4" />}
-          {loading ? "Screening..." : "Screen Stocks"}
-        </Button>
-        <Button onClick={handleFullPipeline} disabled={loading || fullLoading} size="lg" variant="outline" className="flex-1">
-          {fullLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
-          {fullLoading ? "Running Pipeline..." : "Full Pipeline"}
-        </Button>
+        <div className="flex-1 space-y-1">
+          <Button onClick={handleScreen} disabled={loading || fullLoading} size="lg" className="w-full">
+            {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ScanSearch className="mr-2 h-4 w-4" />}
+            {loading ? "Screening..." : "Screen Stocks"}
+          </Button>
+          <p className="text-xs text-muted-foreground text-center">Quick screen — returns trade plans only</p>
+        </div>
+        <div className="flex-1 space-y-1">
+          <Button onClick={handleFullPipeline} disabled={loading || fullLoading} size="lg" variant="outline" className="w-full">
+            {fullLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Zap className="mr-2 h-4 w-4" />}
+            {fullLoading ? "Running Pipeline..." : "Full Pipeline"}
+          </Button>
+          <p className="text-xs text-muted-foreground text-center">Screen + 5-layer verdicts{autoPlace ? " + live orders" : ""}</p>
+        </div>
       </div>
 
       {(loading || fullLoading) && <Progress value={progress} />}
@@ -186,12 +272,17 @@ export default function IndScreenerPage() {
             </TabsList>
             <TabsContent value="verdicts">
               <Card><CardContent className="pt-6">
-                {result.verdicts?.length ? <DataTable columns={verdictColumns} data={result.verdicts} searchKey="ticker" /> : <p className="text-sm text-muted-foreground">No verdicts generated</p>}
+                {result.verdicts?.length ? <DataTable columns={verdictColumns} data={result.verdicts} searchKey="ticker" onExport={() => exportScreenerCsv(result)} /> : <p className="text-sm text-muted-foreground">No verdicts generated. Use <strong>Full Pipeline</strong> to run the 5-layer IntegratedScorer and get BUY/SELL verdicts.</p>}
               </CardContent></Card>
             </TabsContent>
             <TabsContent value="plans">
               <Card><CardContent className="pt-6">
-                {result.plans?.length ? <DataTable columns={planColumns} data={result.plans} searchKey="symbol" /> : <p className="text-sm text-muted-foreground">No trade plans generated</p>}
+                {result.plans?.length ? (
+                  <>
+                    <p className="mb-3 text-xs text-muted-foreground">Click the action button on any row to place that order via Kite Connect.</p>
+                    <DataTable columns={planColumns} data={result.plans} searchKey="symbol" />
+                  </>
+                ) : <p className="text-sm text-muted-foreground">No trade plans generated</p>}
               </CardContent></Card>
             </TabsContent>
             <TabsContent value="orders">

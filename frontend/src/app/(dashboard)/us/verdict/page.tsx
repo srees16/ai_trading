@@ -1,25 +1,25 @@
 "use client";
 
 import { useState } from "react";
+import { usStocksApi, type TradingSignal } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Play, Shield } from "lucide-react";
+import { MetricCard } from "@/components/shared/metric-card";
+import { formatNumber, getDecisionBadgeClass } from "@/lib/utils";
+import { Loader2, Play, TrendingUp, TrendingDown, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
-
-// Verdict page calls the backend IntegratedScorer via API
-// The IntegratedScorer runs 4 layers: core, strategy, ml_features, robustness
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:9001";
 
 interface VerdictResult {
   ticker: string;
   score: number;
   classification: string;
   confidence: number;
-  layers?: Record<string, number>;
+  rsi: number | null;
+  current_price: number | null;
+  reasoning: string;
 }
 
 export default function USVerdictPage() {
@@ -33,26 +33,23 @@ export default function USVerdictPage() {
 
     setLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/us-stocks/analysis`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tickers: tickerList }),
-      });
-      const data = await res.json();
+      const data = await usStocksApi.analyze(tickerList);
       if (data.success && data.signals) {
-        const mapped = data.signals.map((s: any) => ({
-          ticker: s.ticker,
-          score: s.decision_score,
-          classification: s.decision,
-          confidence: s.sentiment_confidence || 0,
-        }));
         // Deduplicate by ticker — take highest abs score
         const byTicker = new Map<string, VerdictResult>();
-        for (const r of mapped) {
-          const existing = byTicker.get(r.ticker);
-          if (!existing || Math.abs(r.score) > Math.abs(existing.score)) {
-            byTicker.set(r.ticker, r);
+        for (const s of data.signals) {
+          const mapped: VerdictResult = {
+            ticker: s.ticker,
+            score: s.decision_score,
+            classification: s.decision,
+            confidence: s.sentiment_confidence || 0,
+            rsi: s.rsi,
+            current_price: s.current_price,
+            reasoning: s.reasoning,
+          };
+          const existing = byTicker.get(mapped.ticker);
+          if (!existing || Math.abs(mapped.score) > Math.abs(existing.score)) {
+            byTicker.set(mapped.ticker, mapped);
           }
         }
         setResults(Array.from(byTicker.values()));
@@ -65,15 +62,8 @@ export default function USVerdictPage() {
     }
   };
 
-  const getClassColor = (cls: string) => {
-    const c = cls?.toUpperCase() || "";
-    if (c.includes("STRONG_BUY") || c.includes("STRONG BUY")) return "badge-strong-buy";
-    if (c.includes("BUY")) return "badge-buy";
-    if (c.includes("HOLD")) return "badge-hold";
-    if (c.includes("STRONG_SELL") || c.includes("STRONG SELL")) return "badge-strong-sell";
-    if (c.includes("SELL")) return "badge-sell";
-    return "";
-  };
+  const buyCount = results.filter((r) => r.classification?.toUpperCase().includes("BUY")).length;
+  const sellCount = results.filter((r) => r.classification?.toUpperCase().includes("SELL")).length;
 
   return (
     <div className="space-y-6">
@@ -98,37 +88,61 @@ export default function USVerdictPage() {
       </Card>
 
       {results.length > 0 && (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {results.map((r) => (
-            <Card key={r.ticker}>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="font-mono text-lg">{r.ticker}</CardTitle>
-                  <Badge className={getClassColor(r.classification)}>{r.classification}</Badge>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Score</span>
-                    <span className="font-mono font-bold">{r.score.toFixed(3)}</span>
+        <>
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+            <MetricCard title="Total" value={String(results.length)} icon={<BarChart3 className="h-4 w-4" />} />
+            <MetricCard title="Buy" value={String(buyCount)} changeType="positive" icon={<TrendingUp className="h-4 w-4" />} />
+            <MetricCard title="Sell" value={String(sellCount)} changeType="negative" icon={<TrendingDown className="h-4 w-4" />} />
+            <MetricCard title="Hold" value={String(results.length - buyCount - sellCount)} />
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {results.map((r) => (
+              <Card key={r.ticker}>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="font-mono text-lg">{r.ticker}</CardTitle>
+                    <Badge className={getDecisionBadgeClass(r.classification)}>{r.classification}</Badge>
                   </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-muted-foreground">Confidence</span>
-                    <span className="font-mono">{(r.confidence * 100).toFixed(1)}%</span>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Score</span>
+                      <span className="font-mono font-bold">{r.score.toFixed(3)}</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted-foreground">Confidence</span>
+                      <span className="font-mono">{(r.confidence * 100).toFixed(1)}%</span>
+                    </div>
+                    {r.current_price != null && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">Price</span>
+                        <span className="font-mono">${formatNumber(r.current_price)}</span>
+                      </div>
+                    )}
+                    {r.rsi != null && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-muted-foreground">RSI</span>
+                        <span className="font-mono">{formatNumber(r.rsi, 1)}</span>
+                      </div>
+                    )}
+                    {/* Score bar */}
+                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full rounded-full bg-primary transition-all"
+                        style={{ width: `${Math.min(Math.abs(r.score) * 100, 100)}%` }}
+                      />
+                    </div>
+                    {r.reasoning && (
+                      <p className="mt-2 text-xs text-muted-foreground line-clamp-2">{r.reasoning}</p>
+                    )}
                   </div>
-                  {/* Score bar */}
-                  <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
-                    <div
-                      className="h-full rounded-full bg-primary transition-all"
-                      style={{ width: `${Math.min(Math.abs(r.score) * 100, 100)}%` }}
-                    />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

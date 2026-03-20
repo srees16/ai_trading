@@ -1,13 +1,15 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // 'standalone' only for production Docker builds — omit in dev for fast startup
-  ...(process.env.NODE_ENV === "production" ? { output: "standalone" } : {}),
+  // 'standalone' for Docker; Vercel ignores this and uses its own build system
+  ...(process.env.NODE_ENV === "production" && !process.env.VERCEL ? { output: "standalone" } : {}),
   reactStrictMode: false,
   experimental: {
     optimizePackageImports: [
       "lucide-react",
       "recharts",
       "date-fns",
+      "@tanstack/react-table",
+      "sonner",
       "@radix-ui/react-accordion",
       "@radix-ui/react-avatar",
       "@radix-ui/react-checkbox",

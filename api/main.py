@@ -10,6 +10,7 @@ Creates and configures the root FastAPI app with:
 """
 
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -110,12 +111,19 @@ def create_app() -> FastAPI:
     )
 
     # --- CORS ---
+    # Allow local dev + cloud deployment origins
+    cors_origins = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
+    # Add cloud frontend URL(s) from env var (comma-separated)
+    extra_origins = os.getenv("CENTURION_CORS_ORIGINS", "")
+    if extra_origins:
+        cors_origins.extend([o.strip() for o in extra_origins.split(",") if o.strip()])
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-        ],
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -129,6 +137,7 @@ def create_app() -> FastAPI:
     from api.routers.crypto import router as crypto_router
     from api.routers.streaming import router as streaming_router
     from api.routers.pipeline import router as pipeline_router
+    from api.routers.market_data import router as market_data_router
 
     app.include_router(health_router)
     app.include_router(us_stocks_router)
@@ -137,6 +146,7 @@ def create_app() -> FastAPI:
     app.include_router(crypto_router)
     app.include_router(streaming_router)
     app.include_router(pipeline_router)
+    app.include_router(market_data_router)
 
     # ------------------------------------------------------------------
     # Authentication endpoints

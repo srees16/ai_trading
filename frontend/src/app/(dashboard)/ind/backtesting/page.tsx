@@ -16,6 +16,7 @@ import { useEffect } from "react";
 
 export default function IndBacktestingPage() {
   const [strategies, setStrategies] = useState<StrategyInfo[]>([]);
+  const [strategiesLoading, setStrategiesLoading] = useState(true);
   const [selectedStrategy, setSelectedStrategy] = useState("");
   const [tickers, setTickers] = useState("RELIANCE.NS, TCS.NS, INFY.NS");
   const [period, setPeriod] = useState("2y");
@@ -29,7 +30,7 @@ export default function IndBacktestingPage() {
         setStrategies(res.strategies);
         if (res.strategies.length > 0) setSelectedStrategy(res.strategies[0].id);
       }
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => setStrategiesLoading(false));
   }, []);
 
   const handleRun = async () => {
@@ -68,8 +69,8 @@ export default function IndBacktestingPage() {
           <CardContent className="space-y-3">
             <div>
               <Label className="text-xs">Strategy</Label>
-              <Select value={selectedStrategy} onValueChange={setSelectedStrategy}>
-                <SelectTrigger><SelectValue placeholder="Select strategy" /></SelectTrigger>
+              <Select value={selectedStrategy} onValueChange={setSelectedStrategy} disabled={strategiesLoading}>
+                <SelectTrigger><SelectValue placeholder={strategiesLoading ? "Loading strategies…" : "Select strategy"} /></SelectTrigger>
                 <SelectContent>{strategies.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>

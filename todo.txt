@@ -13,6 +13,14 @@ finally, investigate by how much percentage will centurion_core outperform NIFTY
 ~~~~~~
 audit the current order workflow beginning with user's ticker input until placing order on kite and identify any gaps if there are.
 
+~~~~~~
+
+Implement frontend using Next.js (App Router) + Shadcn/ui + TanStack Table + TradingView Lightweight Charts, which is more relevant to centurion_core app. Ensure that business logic, functionality, data persistence, ui button actions etc., does not change.
+
+organize project structure into ui and backend with their respective components & functionalities in them. ensure the look & feel of app is professional level and enterprise-grade
+
+~~~~~~
+
 feedback:
         include tab under stocks to view all stocks
         enable placing order from ticker on holdings page

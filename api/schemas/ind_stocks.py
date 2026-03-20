@@ -87,6 +87,7 @@ class PlaceOrderRequest(BaseModel):
     price: Optional[float] = Field(None, description="Required for LIMIT orders")
     trigger_price: Optional[float] = Field(None, description="Required for SL/SL-M orders")
     validity: str = Field("DAY", examples=["DAY", "IOC"])
+    variety: str = Field("regular", examples=["regular", "co", "amo"])
     tag: Optional[str] = Field(None, max_length=20, description="Optional order tag")
 
 

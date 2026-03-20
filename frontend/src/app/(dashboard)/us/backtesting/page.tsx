@@ -10,8 +10,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { MetricCard } from "@/components/shared/metric-card";
 import { LoadingSpinner } from "@/components/shared/metric-card";
-import { TradingChart } from "@/components/shared/trading-chart";
+import dynamic from "next/dynamic";
 import { formatNumber, formatPercent } from "@/lib/utils";
+
+const TradingChart = dynamic(() => import("@/components/shared/trading-chart").then((m) => ({ default: m.TradingChart })), { ssr: false });
 import { Loader2, Play, TrendingUp, BarChart3, Activity, Shield } from "lucide-react";
 import { toast } from "sonner";
 
