@@ -171,7 +171,7 @@ async def scrape_news(request: ScrapeNewsRequest):
     response_model=SentimentResponse,
     summary="Analyse sentiment of text snippets",
 )
-async def analyse_sentiment(request: SentimentRequest):
+def analyse_sentiment(request: SentimentRequest):
     """Run sentiment analysis on arbitrary text snippets."""
     try:
         from sentiment import SentimentAnalyzer
@@ -204,7 +204,7 @@ async def analyse_sentiment(request: SentimentRequest):
     response_model=MetricsResponse,
     summary="Calculate stock metrics",
 )
-async def calculate_metrics(request: MetricsRequest):
+def calculate_metrics(request: MetricsRequest):
     """Calculate fundamental and technical metrics for the given tickers."""
     try:
         from metrics import MetricsCalculator
@@ -256,7 +256,7 @@ async def calculate_metrics(request: MetricsRequest):
     response_model=DecisionResponse,
     summary="Generate a trading decision",
 )
-async def generate_decision(request: DecisionRequest):
+def generate_decision(request: DecisionRequest):
     """Generate a BUY/SELL/HOLD decision from news + metrics."""
     try:
         from decision_engine import DecisionEngine
@@ -310,7 +310,7 @@ async def generate_decision(request: DecisionRequest):
     response_model=StrategyListResponse,
     summary="List available trading strategies",
 )
-async def list_strategies():
+def list_strategies():
     """Return metadata for all registered backtesting strategies."""
     try:
         from trading_strategies import list_strategies as _list_strategies
@@ -340,7 +340,7 @@ async def list_strategies():
     response_model=StrategyInfo,
     summary="Get strategy details",
 )
-async def get_strategy_info(strategy_id: str):
+def get_strategy_info(strategy_id: str):
     """Return metadata for a single strategy by ID."""
     from trading_strategies import list_strategies as _list_strategies
 
@@ -366,7 +366,7 @@ async def get_strategy_info(strategy_id: str):
     response_model=BacktestResponse,
     summary="Run a strategy backtest",
 )
-async def run_backtest(request: BacktestRequest):
+def run_backtest(request: BacktestRequest):
     """Execute a backtest for the given strategy and tickers."""
     try:
         from trading_strategies import get_strategy
@@ -424,7 +424,7 @@ async def run_backtest(request: BacktestRequest):
     response_model=AnalysisHistoryResponse,
     summary="Get past analysis runs",
 )
-async def get_analysis_history(
+def get_analysis_history(
     limit: int = 20,
     offset: int = 0,
 ):

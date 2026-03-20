@@ -24,12 +24,12 @@ pip install -r requirements.txt
 
 **Windows PowerShell:**
 ```powershell
-$env:ZERODHA_API_KEY='YOUR_API_KEY'; $env:ZERODHA_API_SECRET='YOUR_API_SECRET'; $env:ZERODHA_USER_ID='YOUR_ZERODHA_ID'; $env:ZERODHA_PASSWORD='YOUR_ZERODHA_PASSWORD'; $env:ZERODHA_TOTP_SECRET='YOUR_BASE32_TOTP_SECRET'; $env:ANTHROPIC_API_KEY='YOUR_ANTHROPIC_API_KEY'; $env:CENTURION_RAG_LLM_PROVIDER='YOUR_LLM_PROVIDER'; $env:CENTURION_RAG_CLAUDE_MODEL='YOUR_LLM_MODEL'; $env:CENTURION_EMAIL_USER='YOUR_GMAIL_ID'; $env:CENTURION_EMAIL_PASS='YOUR_GMAIL_APP_PASSWORD'; $env:STREAMLIT_SERVER_PORT='9000'; $env:API_PORT='9001'; $env:CENTURION_DB_HOST='localhost'; $env:CENTURION_DB_PORT='9003'; $env:CENTURION_DB_NAME='centurion_rag'; $env:CENTURION_DB_USER='postgres'; $env:CENTURION_DB_PASSWORD='superadmin1'; $env:KITE_DB_HOST='localhost'; $env:KITE_DB_PORT='9003'; $env:KITE_DB_NAME='livestocks_ind'; $env:KITE_DB_USER='postgres'; $env:KITE_DB_PASSWORD='superadmin1'; $env:KITE_POOL_MAXSIZE='40'; $env:MINIO_ENDPOINT='localhost:9004'; $env:MINIO_ACCESS_KEY='minioadmin'; $env:MINIO_SECRET_KEY='minioadmin123'; $env:MINIO_SECURE='false'; $env:MINIO_BUCKET='centurion-backtests'; $env:MINIO_ENABLED='true'; $env:CENTURION_DEFAULT_ADMIN_PASSWORD='admin123'; $env:CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'; $env:CENTURION_RAG_LLM_URL='http://localhost:11434'; $env:RAG_MODEL='qwen2.5:3b'; $env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300'; $env:CENTURION_RAG_LLM_CHUNK_TIMEOUT='30'; $env:CENTURION_RAG_LLM_NUM_CTX='4096'; $env:CENTURION_RAG_LLM_NUM_PREDICT='500'; $env:CENTURION_RAG_LLM_MAX_TOKENS='500'; $env:CENTURION_RAG_LLM_TEMPERATURE='0.2'; $env:CENTURION_RAG_CLAUDE_MAX_TOKENS='1024'; $env:CENTURION_RAG_CLAUDE_TEMPERATURE='0.2'; $env:CENTURION_RAG_CHROMA_DIR='./data/chroma_db'; $env:CENTURION_RAG_EMBEDDING_MODEL='BAAI/bge-base-en-v1.5'; $env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET='2000'; $env:CENTURION_RAG_MAX_CONTEXT_CHUNKS='8'; $env:CENTURION_RAG_TOP_K='15'; $env:CENTURION_RAG_SIMILARITY_THRESHOLD='0.70'; $env:CENTURION_RAG_QUERY_BUDGET='300'; $env:CENTURION_RAG_QUERY_REWRITE='false'; $env:CENTURION_RAG_STREAMING='true'; $env:CENTURION_RAG_CACHE_ENABLED='false'; $env:CENTURION_RAG_FAQ_ENABLED='false'; $env:RAG_FAST_MODE='false'; $env:CENTURION_EMAIL_HOST='smtp.gmail.com'; $env:CENTURION_EMAIL_PORT='587'
+$env:ZERODHA_API_KEY='YOUR_API_KEY'; $env:ZERODHA_API_SECRET='YOUR_API_SECRET'; $env:ZERODHA_USER_ID='YOUR_ZERODHA_ID'; $env:ZERODHA_PASSWORD='YOUR_ZERODHA_PASSWORD'; $env:ZERODHA_TOTP_SECRET='YOUR_BASE32_TOTP_SECRET'; $env:ANTHROPIC_API_KEY='YOUR_ANTHROPIC_API_KEY'; $env:CENTURION_RAG_LLM_PROVIDER='YOUR_LLM_PROVIDER'; $env:CENTURION_RAG_CLAUDE_MODEL='YOUR_LLM_MODEL'; $env:CENTURION_EMAIL_USER='YOUR_GMAIL_ID'; $env:CENTURION_EMAIL_PASS='YOUR_GMAIL_APP_PASSWORD'; $env:STREAMLIT_SERVER_PORT='9000'; $env:CENTURION_DB_HOST='localhost'; $env:CENTURION_DB_PORT='9003'; $env:CENTURION_DB_NAME='centurion_rag'; $env:CENTURION_DB_USER='postgres'; $env:CENTURION_DB_PASSWORD='superadmin1'; $env:KITE_DB_HOST='localhost'; $env:KITE_DB_PORT='9003'; $env:KITE_DB_NAME='livestocks_ind'; $env:KITE_DB_USER='postgres'; $env:KITE_DB_PASSWORD='superadmin1'; $env:KITE_POOL_MAXSIZE='40'; $env:MINIO_ENDPOINT='localhost:9004'; $env:MINIO_ACCESS_KEY='minioadmin'; $env:MINIO_SECRET_KEY='minioadmin123'; $env:MINIO_SECURE='false'; $env:MINIO_BUCKET='centurion-backtests'; $env:MINIO_ENABLED='true'; $env:CENTURION_DEFAULT_ADMIN_PASSWORD='admin123'; $env:CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'; $env:CENTURION_RAG_LLM_URL='http://localhost:11434'; $env:RAG_MODEL='qwen2.5:3b'; $env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300'; $env:CENTURION_RAG_LLM_CHUNK_TIMEOUT='30'; $env:CENTURION_RAG_LLM_NUM_CTX='4096'; $env:CENTURION_RAG_LLM_NUM_PREDICT='500'; $env:CENTURION_RAG_LLM_MAX_TOKENS='500'; $env:CENTURION_RAG_LLM_TEMPERATURE='0.2'; $env:CENTURION_RAG_CLAUDE_MAX_TOKENS='1024'; $env:CENTURION_RAG_CLAUDE_TEMPERATURE='0.2'; $env:CENTURION_RAG_CHROMA_DIR='./data/chroma_db'; $env:CENTURION_RAG_EMBEDDING_MODEL='BAAI/bge-base-en-v1.5'; $env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET='2000'; $env:CENTURION_RAG_MAX_CONTEXT_CHUNKS='8'; $env:CENTURION_RAG_TOP_K='15'; $env:CENTURION_RAG_SIMILARITY_THRESHOLD='0.70'; $env:CENTURION_RAG_QUERY_BUDGET='300'; $env:CENTURION_RAG_QUERY_REWRITE='false'; $env:CENTURION_RAG_STREAMING='true'; $env:CENTURION_RAG_CACHE_ENABLED='false'; $env:CENTURION_RAG_FAQ_ENABLED='false'; $env:RAG_FAST_MODE='false'; $env:CENTURION_EMAIL_HOST='smtp.gmail.com'; $env:CENTURION_EMAIL_PORT='587'
 ```
 
 **macOS / Linux:**
 ```bash
-export ZERODHA_API_KEY="YOUR_API_KEY" && export ZERODHA_API_SECRET="YOUR_API_SECRET" && export ZERODHA_USER_ID="YOUR_ZERODHA_ID" && export ZERODHA_PASSWORD='YOUR_ZERODHA_PASSWORD' && export ZERODHA_TOTP_SECRET="YOUR_BASE32_TOTP_SECRET" && export ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY" && export CENTURION_RAG_LLM_PROVIDER="YOUR_LLM_PROVIDER" && export CENTURION_RAG_CLAUDE_MODEL="YOUR_LLM_MODEL" && export CENTURION_EMAIL_USER="YOUR_GMAIL_ID" && export CENTURION_EMAIL_PASS="YOUR_GMAIL_APP_PASSWORD" && export STREAMLIT_SERVER_PORT="9000" && export API_PORT="9001" && export CENTURION_DB_HOST="localhost" && export CENTURION_DB_PORT="9003" && export CENTURION_DB_NAME="centurion_rag" && export CENTURION_DB_USER="postgres" && export CENTURION_DB_PASSWORD="superadmin1" && export KITE_DB_HOST="localhost" && export KITE_DB_PORT="9003" && export KITE_DB_NAME="livestocks_ind" && export KITE_DB_USER="postgres" && export KITE_DB_PASSWORD="superadmin1" && export KITE_POOL_MAXSIZE="40" && export MINIO_ENDPOINT="localhost:9004" && export MINIO_ACCESS_KEY="minioadmin" && export MINIO_SECRET_KEY="minioadmin123" && export MINIO_SECURE="false" && export MINIO_BUCKET="centurion-backtests" && export MINIO_ENABLED="true" && export CENTURION_DEFAULT_ADMIN_PASSWORD="admin123" && export CENTURION_DEFAULT_ANALYST_PASSWORD="analyst123" && export CENTURION_RAG_LLM_URL="http://localhost:11434" && export RAG_MODEL="qwen2.5:3b" && export CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT="300" && export CENTURION_RAG_LLM_CHUNK_TIMEOUT="30" && export CENTURION_RAG_LLM_NUM_CTX="4096" && export CENTURION_RAG_LLM_NUM_PREDICT="500" && export CENTURION_RAG_LLM_MAX_TOKENS="500" && export CENTURION_RAG_CLAUDE_MAX_TOKENS="1024" && export CENTURION_RAG_CLAUDE_TEMPERATURE="0.2" && export CENTURION_RAG_LLM_TEMPERATURE="0.2" && export CENTURION_RAG_CHROMA_DIR="./data/chroma_db" && export CENTURION_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5" && export CENTURION_RAG_CONTEXT_TOKEN_BUDGET="2000" && export CENTURION_RAG_MAX_CONTEXT_CHUNKS="8" && export CENTURION_RAG_TOP_K="15" && export CENTURION_RAG_SIMILARITY_THRESHOLD="0.70" && export CENTURION_RAG_QUERY_BUDGET="300" && export CENTURION_RAG_QUERY_REWRITE="false" && export CENTURION_RAG_STREAMING="true" && export CENTURION_RAG_CACHE_ENABLED="false" && export CENTURION_RAG_FAQ_ENABLED="false" && export RAG_FAST_MODE="false" && export CENTURION_EMAIL_HOST="smtp.gmail.com" && export CENTURION_EMAIL_PORT="587"
+export ZERODHA_API_KEY="YOUR_API_KEY" && export ZERODHA_API_SECRET="YOUR_API_SECRET" && export ZERODHA_USER_ID="YOUR_ZERODHA_ID" && export ZERODHA_PASSWORD='YOUR_ZERODHA_PASSWORD' && export ZERODHA_TOTP_SECRET="YOUR_BASE32_TOTP_SECRET" && export ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY" && export CENTURION_RAG_LLM_PROVIDER="YOUR_LLM_PROVIDER" && export CENTURION_RAG_CLAUDE_MODEL="YOUR_LLM_MODEL" && export CENTURION_EMAIL_USER="YOUR_GMAIL_ID" && export CENTURION_EMAIL_PASS="YOUR_GMAIL_APP_PASSWORD" && export STREAMLIT_SERVER_PORT="9000" && export CENTURION_DB_HOST="localhost" && export CENTURION_DB_PORT="9003" && export CENTURION_DB_NAME="centurion_rag" && export CENTURION_DB_USER="postgres" && export CENTURION_DB_PASSWORD="superadmin1" && export KITE_DB_HOST="localhost" && export KITE_DB_PORT="9003" && export KITE_DB_NAME="livestocks_ind" && export KITE_DB_USER="postgres" && export KITE_DB_PASSWORD="superadmin1" && export KITE_POOL_MAXSIZE="40" && export MINIO_ENDPOINT="localhost:9004" && export MINIO_ACCESS_KEY="minioadmin" && export MINIO_SECRET_KEY="minioadmin123" && export MINIO_SECURE="false" && export MINIO_BUCKET="centurion-backtests" && export MINIO_ENABLED="true" && export CENTURION_DEFAULT_ADMIN_PASSWORD="admin123" && export CENTURION_DEFAULT_ANALYST_PASSWORD="analyst123" && export CENTURION_RAG_LLM_URL="http://localhost:11434" && export RAG_MODEL="qwen2.5:3b" && export CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT="300" && export CENTURION_RAG_LLM_CHUNK_TIMEOUT="30" && export CENTURION_RAG_LLM_NUM_CTX="4096" && export CENTURION_RAG_LLM_NUM_PREDICT="500" && export CENTURION_RAG_LLM_MAX_TOKENS="500" && export CENTURION_RAG_CLAUDE_MAX_TOKENS="1024" && export CENTURION_RAG_CLAUDE_TEMPERATURE="0.2" && export CENTURION_RAG_LLM_TEMPERATURE="0.2" && export CENTURION_RAG_CHROMA_DIR="./data/chroma_db" && export CENTURION_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5" && export CENTURION_RAG_CONTEXT_TOKEN_BUDGET="2000" && export CENTURION_RAG_MAX_CONTEXT_CHUNKS="8" && export CENTURION_RAG_TOP_K="15" && export CENTURION_RAG_SIMILARITY_THRESHOLD="0.70" && export CENTURION_RAG_QUERY_BUDGET="300" && export CENTURION_RAG_QUERY_REWRITE="false" && export CENTURION_RAG_STREAMING="true" && export CENTURION_RAG_CACHE_ENABLED="false" && export CENTURION_RAG_FAQ_ENABLED="false" && export RAG_FAST_MODE="false" && export CENTURION_EMAIL_HOST="smtp.gmail.com" && export CENTURION_EMAIL_PORT="587"
 ```
 
 ---
@@ -96,19 +96,6 @@ Run in the **same terminal** (env vars from Step 2 must still be active):
 streamlit run app.py
 ```
 Opens at: **http://localhost:9000** — login with `admin` / `admin123`
-
-> **SSO:** Logging into either the Streamlit app or the FastAPI docs automatically logs you into the other. Both URLs must use `localhost` (not `127.0.0.1`) for this to work.
-
----
-
-### Step 8 (Optional) — Terminal 2: Launch FastAPI
-> Set env variables from Step 2 in this new terminal too, then run:
-```
-python3 run_api.py
-```
-API docs at: **http://localhost:9001/docs** (auth required) — if already logged into Streamlit, no credentials needed
-
-MinIO console at: **http://localhost:9002/login** — login with `minioadmin` / `minioadmin123`
 
 ---
 
@@ -370,17 +357,6 @@ Push-based tick distribution via Kite WebSocket (KiteTicker) with an internal ev
 | `webhooks/timescale_handler.py` | `TimescaleTickHandler` — writes raw ticks to a hypertable; continuous aggregates for 1m/5m/15m/1h OHLC |
 | `webhooks/service.py` | `WebhookService` — orchestrator that wires all components at startup |
 
-**Streaming endpoints** (FastAPI):
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET` | `/stream/sse` | Server-Sent Events tick stream (optional `?symbols=` filter) |
-| `WS` | `/stream/ws` | WebSocket proxy — subscribe/unsubscribe/ping protocol |
-| `POST` | `/stream/postback` | Kite order postback receiver (SHA-256 checksum verification) |
-| `GET` | `/stream/ohlc/{symbol}` | OHLC bars from TimescaleDB continuous aggregates |
-| `CRUD` | `/stream/alerts` | Price alert management (create, list, delete) |
-| `GET` | `/stream/status` | Full streaming pipeline status |
-
 ### Key Features
 - **Automated TOTP 2FA** — when `ZERODHA_TOTP_SECRET` is set, Kite login is fully automated via `pyotp`: headless Chrome auto-fills credentials + TOTP, captures redirect token. Falls back to visible browser for manual entry if auto-fill fails
 - **Order database persistence** — every order (BUY/SELL, MARKET/LIMIT/AMO, success/failure) is automatically saved to the `order_records` PostgreSQL table with fill_price, filled_at, and status
@@ -588,7 +564,6 @@ centurion_core/
 ├── models.py                     # Data models (NewsItem, StockMetrics, TradingSignal)
 ├── utils.py                      # CSV parsing and ticker validation
 ├── scheduler.py                  # APScheduler — pre-market + intraday pipeline runs with auto-auth
-├── run_api.py                    # FastAPI server launcher (port 9001)
 ├── setup_database.py             # Database schema initialisation
 ├── requirements.txt              # Python dependencies
 ├── sample_tickers.csv            # Example ticker list
@@ -741,25 +716,6 @@ centurion_core/
 ├── storage/                      # Object storage
 │   ├── manager.py                # Excel/CSV file export
 │   └── minio_service.py          # MinIO S3 client (singleton)
-│
-├── api/                          # FastAPI REST API layer
-│   ├── main.py                   # App factory, auth-gated /docs
-│   ├── auth.py                   # Token signing, login/logout
-│   ├── dependencies.py           # Dependency injection (DB, Kite, RAG)
-│   ├── schemas/                  # Pydantic v2 request/response models
-│   │   ├── common.py             # Shared: SuccessResponse, Pagination
-│   │   ├── us_stocks.py          # Analysis, news, signals, backtest
-│   │   ├── ind_stocks.py         # Kite auth, quotes, orders, options
-│   │   ├── rag.py                # Ingest, query, evaluation
-│   │   ├── crypto.py             # Prices, backtest, strategies
-│   │   └── streaming.py          # SSE, WebSocket, Postback, OHLC, Alerts
-│   └── routers/                  # Route modules (50 endpoints)
-│       ├── health.py             # GET /health
-│       ├── us_stocks.py          # 9 endpoints
-│       ├── ind_stocks.py         # 11 endpoints
-│       ├── rag.py                # 10 endpoints
-│       ├── crypto.py             # 4 endpoints
-│       └── streaming.py          # 9 endpoints (SSE, WS, postback, OHLC, alerts, status)
 │
 └── deployment/                   # Deployment configs
     ├── docker-compose.yml        # App + MinIO containers
@@ -926,9 +882,6 @@ If you already set environment variables in Step 2 of the Quick Start, you can s
 # ─── Streamlit App ─────────────────────────────────────────────────
 STREAMLIT_SERVER_PORT=9000
 
-# ─── FastAPI Backend ──────────────────────────────────────────────
-API_PORT=9001
-
 # ─── PostgreSQL (Analysis, Backtesting, RAG) ───────────────────────
 CENTURION_DB_HOST=localhost
 CENTURION_DB_PORT=9003
@@ -1064,16 +1017,6 @@ streamlit run app.py
 
 Opens at: **http://localhost:9000**
 
-**Terminal 2 — FastAPI REST API (optional):**
-
-```powershell
-cd centurion_core
-.\myenv\Scripts\Activate.ps1
-python run_api.py --port 9001
-```
-
-API docs at: **http://localhost:9001/docs** (login required)
-
 ---
 
 ### Step 9: Login & Verify Application
@@ -1201,29 +1144,6 @@ All pages share consistent navigation buttons:
 
 ## 13. API Reference
 
-### REST API (FastAPI)
-
-A full REST API runs alongside the Streamlit UI on a separate port (default `9001`).
-
-**Interactive docs** — **http://localhost:9001/docs** (Swagger UI) and **http://localhost:9001/redoc** (ReDoc) are available after authenticating. On first visit you are redirected to a login page; use the same credentials as the Streamlit app (e.g. `admin` / `admin123`). A signed session cookie (8-hour TTL) keeps you logged in.
-
-| Module | Prefix | Endpoints | Examples |
-|--------|--------|-----------|----------|
-| Health | `/api/health` | 1 | DB, RAG, Kite status check |
-| US Stocks | `/api/us-stocks` | 9 | `/analysis`, `/news`, `/sentiment`, `/backtest`, `/strategies` |
-| Indian Stocks | `/api/ind-stocks` | 11 | `/auth`, `/quotes`, `/orders`, `/positions`, `/option-chain` |
-| RAG Pipeline | `/api/rag` | 10 | `/ingest`, `/query`, `/collection/stats`, `/evaluate` |
-| Crypto | `/api/crypto` | 4 | `/prices`, `/backtest`, `/strategies` |
-| Streaming | `/stream` | 9 | `/sse`, `/ws`, `/postback`, `/ohlc/{symbol}`, `/alerts`, `/status` |
-
-```powershell
-# Launch the API server
-python run_api.py --port 9001
-
-# Or via uvicorn directly
-uvicorn api.main:create_app --factory --host 0.0.0.0 --port 9001
-```
-
 ### Database Service
 
 ```python
@@ -1336,9 +1256,8 @@ docker compose down -v
 | **Analysis** | matplotlib, statsmodels, backtesting (0.6+), arch, scipy, seaborn |
 | **Database** | sqlalchemy ≥ 2.0, psycopg2-binary ≥ 2.9, python-dotenv ≥ 1.0 |
 | **Object Storage** | minio ≥ 7.2 |
-| **Auth** | pyyaml ≥ 6.0, itsdangerous |
+| **Auth** | pyyaml ≥ 6.0 |
 | **Notifications** | plyer |
-| **API** | fastapi, uvicorn[standard], python-multipart |
 ---
 
 ## 16. Changelog
@@ -1354,7 +1273,6 @@ docker compose down -v
 
 ### 2026-02-28
 
-- **FastAPI REST API** — 50 JSON endpoints across 6 modules with Pydantic v2 schemas, auth-gated `/docs` (signed session cookie, 8-hour TTL)
 - **Real-time Streaming** — SSE tick stream, WebSocket proxy, Kite Postback receiver, TimescaleDB OHLC aggregates (1m/5m/15m/1h), price alert engine with CRUD endpoints
 - **MinIO Auto-Bucket** — `centurion-backtests` bucket created automatically on first use; `MinIOService.ensure_bucket_ready()`
 - **Pairs Trading All-Combinations** — C(n,2) pair analysis when >2 tickers provided

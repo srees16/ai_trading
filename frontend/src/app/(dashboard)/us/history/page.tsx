@@ -10,7 +10,6 @@ import { LoadingSpinner } from "@/components/shared/metric-card";
 import { Badge } from "@/components/ui/badge";
 import { formatNumber, getDecisionBadgeClass } from "@/lib/utils";
 import { ColumnDef } from "@tanstack/react-table";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Cell } from "recharts";
 import { History, Calendar } from "lucide-react";
 
 const PERIODS = [

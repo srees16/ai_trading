@@ -15,7 +15,7 @@ Usage::
 Requires: ``pip install apscheduler``
 
 Results are written to a lightweight SQLite cache so the Streamlit UI
-(and the REST API) can read the latest signals without re-running.
+can read the latest signals without re-running.
 """
 
 from __future__ import annotations
@@ -98,7 +98,7 @@ def _save_run(run_type: str, summary: dict):
 def get_latest_run(run_type: Optional[str] = None) -> Optional[dict]:
     """Read the most recent pipeline run from cache.
 
-    This is called by the Streamlit UI and REST API to display
+    This is called by the Streamlit UI to display
     the latest scheduled scan results without re-running.
     """
     if not _DB_PATH.exists():
@@ -118,6 +118,20 @@ def get_latest_run(run_type: Optional[str] = None) -> Optional[dict]:
     if row is None:
         return None
     return dict(row)
+
+
+def get_run_history(limit: int = 50, offset: int = 0) -> list[dict]:
+    """Return recent pipeline runs from the cache DB."""
+    if not _DB_PATH.exists():
+        return []
+    conn = sqlite3.connect(str(_DB_PATH))
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT * FROM pipeline_runs ORDER BY id DESC LIMIT ? OFFSET ?",
+        (limit, offset),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -112,16 +112,3 @@ financial_ML/_output/
 testune_trade_sys/_cache/
 testune_trade_sys/_output/
 
-# ============ Next.js / Node.js Frontend ============
-node_modules/
-.next/
-out/
-frontend/node_modules/
-frontend/.next/
-frontend/out/
-frontend/.env.local
-frontend/.env*.local
-*.tsbuildinfo
-next-env.d.ts
-.vercel/
-.turbo/

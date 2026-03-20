@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, lazy, Suspense } from "react";
 import { usStocksApi, type TradingSignal } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,14 +12,63 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { DataTable, SortableHeader } from "@/components/shared/data-table";
 import { MetricCard } from "@/components/shared/metric-card";
-import { formatNumber, formatPercent, getDecisionBadgeClass, getDecisionColor } from "@/lib/utils";
+import { formatNumber, formatPercent, getDecisionBadgeClass, getDecisionColor, downloadCsv } from "@/lib/utils";
 import { ColumnDef } from "@tanstack/react-table";
-import {
-  PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
-  ScatterChart, Scatter, Legend,
-} from "recharts";
 import { Loader2, Play, Upload, BarChart3, TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { toast } from "sonner";
+
+// Lazy-load recharts — only downloaded when charts are rendered (saves ~370 KB)
+const DecisionPieChart = lazy(() => import("recharts").then(mod => ({
+  default: function DecisionPieChartInner({ data }: { data: { name: string; value: number; color: string }[] }) {
+    const { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } = mod;
+    return (
+      <ResponsiveContainer width="100%" height={300}>
+        <PieChart>
+          <Pie data={data} cx="50%" cy="50%" outerRadius={100} innerRadius={50} dataKey="value" label={({ name, value }: { name: string; value: number }) => `${name} (${value})`}>
+            {data.map((e, i) => <Cell key={i} fill={e.color} />)}
+          </Pie>
+          <Tooltip /><Legend />
+        </PieChart>
+      </ResponsiveContainer>
+    );
+  }
+})));
+
+const ScoreScatterChart = lazy(() => import("recharts").then(mod => ({
+  default: function ScoreScatterChartInner({ data }: { data: { ticker: string; score: number; sentiment: number; decision: string }[] }) {
+    const { ScatterChart, Scatter, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer } = mod;
+    return (
+      <ResponsiveContainer width="100%" height={300}>
+        <ScatterChart>
+          <CartesianGrid strokeDasharray="3 3" stroke="hsl(217, 33%, 12%)" />
+          <XAxis dataKey="ticker" type="category" tick={{ fontSize: 10 }} stroke="hsl(215, 20%, 55%)" />
+          <YAxis dataKey="score" stroke="hsl(215, 20%, 55%)" />
+          <Tooltip contentStyle={{ backgroundColor: "hsl(222, 47%, 9%)", border: "1px solid hsl(217, 33%, 17%)", borderRadius: 8 }} />
+          <Scatter data={data} fill="#00cc44" />
+        </ScatterChart>
+      </ResponsiveContainer>
+    );
+  }
+})));
+
+const SentimentBarChart = lazy(() => import("recharts").then(mod => ({
+  default: function SentimentBarChartInner({ data }: { data: { ticker: string; confidence: number; label: string; fill: string }[] }) {
+    const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Cell, ResponsiveContainer } = mod;
+    return (
+      <ResponsiveContainer width="100%" height={400}>
+        <BarChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" stroke="hsl(217, 33%, 12%)" />
+          <XAxis dataKey="ticker" tick={{ fontSize: 10 }} stroke="hsl(215, 20%, 55%)" />
+          <YAxis stroke="hsl(215, 20%, 55%)" />
+          <Tooltip contentStyle={{ backgroundColor: "hsl(222, 47%, 9%)", border: "1px solid hsl(217, 33%, 17%)", borderRadius: 8 }} />
+          <Bar dataKey="confidence" name="Confidence %" radius={[4, 4, 0, 0]}>
+            {data.map((entry, i) => <Cell key={i} fill={entry.fill} />)}
+          </Bar>
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  }
+})));
 
 const DECISION_COLORS: Record<string, string> = {
   STRONG_BUY: "#00cc44",
@@ -313,25 +362,9 @@ export default function USAnalysisPage() {
                     <CardTitle className="text-base">Decision Distribution</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <ResponsiveContainer width="100%" height={300}>
-                      <PieChart>
-                        <Pie
-                          data={pieData}
-                          cx="50%"
-                          cy="50%"
-                          outerRadius={100}
-                          innerRadius={50}
-                          dataKey="value"
-                          label={({ name, value }) => `${name} (${value})`}
-                        >
-                          {pieData.map((entry, i) => (
-                            <Cell key={i} fill={entry.color} />
-                          ))}
-                        </Pie>
-                        <Tooltip />
-                        <Legend />
-                      </PieChart>
-                    </ResponsiveContainer>
+                    <Suspense fallback={<div className="h-[300px] animate-pulse rounded bg-muted" />}>
+                      <DecisionPieChart data={pieData} />
+                    </Suspense>
                   </CardContent>
                 </Card>
 
@@ -341,21 +374,9 @@ export default function USAnalysisPage() {
                     <CardTitle className="text-base">Score Distribution</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <ResponsiveContainer width="100%" height={300}>
-                      <ScatterChart>
-                        <CartesianGrid strokeDasharray="3 3" stroke="hsl(217, 33%, 12%)" />
-                        <XAxis dataKey="ticker" type="category" tick={{ fontSize: 10 }} stroke="hsl(215, 20%, 55%)" />
-                        <YAxis dataKey="score" stroke="hsl(215, 20%, 55%)" />
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: "hsl(222, 47%, 9%)",
-                            border: "1px solid hsl(217, 33%, 17%)",
-                            borderRadius: 8,
-                          }}
-                        />
-                        <Scatter data={scatterData} fill="#00cc44" />
-                      </ScatterChart>
-                    </ResponsiveContainer>
+                    <Suspense fallback={<div className="h-[300px] animate-pulse rounded bg-muted" />}>
+                      <ScoreScatterChart data={scatterData} />
+                    </Suspense>
                   </CardContent>
                 </Card>
               </div>
@@ -370,19 +391,11 @@ export default function USAnalysisPage() {
                     searchKey="ticker"
                     searchPlaceholder="Filter by ticker..."
                     onExport={() => {
-                      const csv = [
-                        ["Ticker", "Decision", "Score", "Price", "RSI", "Sentiment", "Source"].join(","),
-                        ...signals.map((s) =>
-                          [s.ticker, s.decision, s.decision_score, s.current_price, s.rsi, s.sentiment_label, s.source].join(",")
-                        ),
-                      ].join("\n");
-                      const blob = new Blob([csv], { type: "text/csv" });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement("a");
-                      a.href = url;
-                      a.download = "us_stock_analysis.csv";
-                      a.click();
-                      URL.revokeObjectURL(url);
+                      downloadCsv(
+                        ["Ticker", "Decision", "Score", "Price", "RSI", "Sentiment", "Source"],
+                        signals.map((s) => [s.ticker, s.decision, s.decision_score, s.current_price, s.rsi, s.sentiment_label, s.source]),
+                        "us_stock_analysis.csv"
+                      );
                     }}
                   />
                 </CardContent>
@@ -443,25 +456,9 @@ export default function USAnalysisPage() {
                   <CardTitle className="text-base">Sentiment Confidence by Ticker</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <ResponsiveContainer width="100%" height={400}>
-                    <BarChart data={sentimentData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(217, 33%, 12%)" />
-                      <XAxis dataKey="ticker" tick={{ fontSize: 10 }} stroke="hsl(215, 20%, 55%)" />
-                      <YAxis stroke="hsl(215, 20%, 55%)" />
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: "hsl(222, 47%, 9%)",
-                          border: "1px solid hsl(217, 33%, 17%)",
-                          borderRadius: 8,
-                        }}
-                      />
-                      <Bar dataKey="confidence" name="Confidence %" radius={[4, 4, 0, 0]}>
-                        {sentimentData.map((entry, i) => (
-                          <Cell key={i} fill={entry.fill} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
+                  <Suspense fallback={<div className="h-[400px] animate-pulse rounded bg-muted" />}>
+                    <SentimentBarChart data={sentimentData} />
+                  </Suspense>
                 </CardContent>
               </Card>
             </TabsContent>

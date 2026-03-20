@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { healthApi, usStocksApi, indStocksApi } from "@/lib/api";
+import { healthApi } from "@/lib/api";
 import { useAppStore } from "@/lib/store";
-import { MetricCard, LoadingSpinner } from "@/components/shared/metric-card";
+import { MetricCard } from "@/components/shared/metric-card";
+import { FearGreedGauge } from "@/components/shared/fear-greed-gauge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import Link from "next/link";
 import { Activity, Database, Server, Wifi, TrendingUp, Shield, BarChart3, Zap } from "lucide-react";
 
 interface SystemHealth {
@@ -18,23 +20,13 @@ interface SystemHealth {
 export default function DashboardPage() {
   const market = useAppStore((s) => s.market);
   const [health, setHealth] = useState<SystemHealth | null>(null);
-  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     healthApi
       .check()
       .then(setHealth)
-      .catch(() => {})
-      .finally(() => setLoading(false));
+      .catch(() => {});
   }, []);
-
-  if (loading) {
-    return (
-      <div className="flex h-[60vh] items-center justify-center">
-        <LoadingSpinner size="lg" />
-      </div>
-    );
-  }
 
   const components = health?.components || {};
 
@@ -52,15 +44,15 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
         <MetricCard
           title="System Status"
-          value={health?.status === "healthy" ? "Operational" : "Degraded"}
+          value={health ? (health.status === "healthy" ? "Operational" : "Degraded") : "—"}
           change={`v${health?.version || "—"}`}
-          changeType={health?.status === "healthy" ? "positive" : "negative"}
+          changeType={health?.status === "healthy" ? "positive" : "neutral"}
           icon={<Server className="h-4 w-4" />}
         />
         <MetricCard
           title="Database"
-          value={health?.database ? "Connected" : "Offline"}
-          changeType={health?.database ? "positive" : "negative"}
+          value={health ? (health.database ? "Connected" : "Offline") : "—"}
+          changeType={health?.database ? "positive" : "neutral"}
           icon={<Database className="h-4 w-4" />}
         />
         <MetricCard
@@ -78,7 +70,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Components Grid */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -124,12 +116,14 @@ export default function DashboardPage() {
                   <ActionCard title="Analysis" description="NSE stock signals" href="/ind/analysis" icon={<BarChart3 className="h-5 w-5" />} />
                   <ActionCard title="Screener" description="NSE screener" href="/ind/screener" icon={<Wifi className="h-5 w-5" />} />
                   <ActionCard title="Options" description="Option chain" href="/ind/options" icon={<TrendingUp className="h-5 w-5" />} />
-                  <ActionCard title="Trading" description="Kite orders" href="/ind/trading" icon={<Activity className="h-5 w-5" />} />
+                  <ActionCard title="Trading" description="Kite orders" href="/ind/fly-kite" icon={<Activity className="h-5 w-5" />} />
                 </>
               )}
             </div>
           </CardContent>
         </Card>
+
+        {market === "IND" && <FearGreedGauge />}
       </div>
     </div>
   );
@@ -147,7 +141,7 @@ function ActionCard({
   icon: React.ReactNode;
 }) {
   return (
-    <a
+    <Link
       href={href}
       className="flex items-center gap-3 rounded-lg border border-border/50 p-3 transition-colors hover:bg-accent"
     >
@@ -156,6 +150,6 @@ function ActionCard({
         <p className="text-sm font-medium">{title}</p>
         <p className="text-xs text-muted-foreground">{description}</p>
       </div>
-    </a>
+    </Link>
   );
 }

@@ -47,6 +47,20 @@ class PipelineRequest(BaseModel):
         True,
         description="Use relaxed screener filters for blue-chip universe.",
     )
+    # Screener config overrides
+    min_price: Optional[float] = None
+    min_avg_volume: Optional[int] = None
+    min_beta: Optional[float] = None
+    max_workers: Optional[int] = None
+    pullback_pct: Optional[float] = None
+    breakout_vol_mult: Optional[float] = None
+    breakout_lookback: Optional[int] = None
+    # Risk config overrides
+    total_capital: Optional[float] = None
+    risk_per_trade_pct: Optional[float] = None
+    max_open_trades: Optional[int] = None
+    min_rr_ratio: Optional[float] = None
+    sl_method: Optional[str] = None
 
 
 class VerdictItem(BaseModel):
@@ -102,7 +116,7 @@ class LatestRunResponse(BaseModel):
 # ═══════════════════════════════════════════════════════════════
 
 @router.post("/screen", response_model=PipelineResponse)
-async def run_screen(req: PipelineRequest):
+def run_screen(req: PipelineRequest):
     """Run the 3-stage NSE screener (no verdicts, no orders)."""
     try:
         from kite_connect.nse.nse_universe import get_nse_universe
@@ -110,14 +124,27 @@ async def run_screen(req: PipelineRequest):
         from kite_connect.trading.risk_manager import RiskManager, RiskConfig
 
         symbols = req.symbols or get_nse_universe()
-        cfg = ScreenerConfig(index_mode=req.index_mode)
+
+        scr_overrides: Dict[str, Any] = {"index_mode": req.index_mode}
+        for k in ("min_price", "min_avg_volume", "min_beta", "max_workers",
+                   "pullback_pct", "breakout_vol_mult", "breakout_lookback"):
+            v = getattr(req, k, None)
+            if v is not None:
+                scr_overrides[k] = v
+        cfg = ScreenerConfig(**scr_overrides)
         screener = NSEScreener(config=cfg)
         screened_df = screener.screen(symbols)
 
         plans = []
         if not screened_df.empty:
             kite = get_kite_session()
-            rm = RiskManager(kite=kite)
+            risk_overrides: Dict[str, Any] = {}
+            for k in ("total_capital", "risk_per_trade_pct", "max_open_trades",
+                       "min_rr_ratio", "sl_method"):
+                v = getattr(req, k, None)
+                if v is not None:
+                    risk_overrides[k] = v
+            rm = RiskManager(kite=kite, config=RiskConfig(**risk_overrides) if risk_overrides else RiskConfig())
             plans = rm.plan_trades(screened_df)
 
         return PipelineResponse(
@@ -136,7 +163,7 @@ async def run_screen(req: PipelineRequest):
 
 
 @router.post("/full", response_model=PipelineResponse)
-async def run_full_pipeline(req: PipelineRequest):
+def run_full_pipeline(req: PipelineRequest):
     """Screen → IntegratedScorer → (optionally) place orders."""
     try:
         from kite_connect.nse.nse_universe import get_nse_universe
@@ -148,8 +175,24 @@ async def run_full_pipeline(req: PipelineRequest):
         kite = get_kite_session() if req.auto_place else None
         symbols = req.symbols or get_nse_universe()
 
-        # Step 1: Screen
-        scfg = ScreenerConfig(index_mode=req.index_mode)
+        # Build screener config with UI overrides
+        scr_overrides: Dict[str, Any] = {"index_mode": req.index_mode}
+        for k in ("min_price", "min_avg_volume", "min_beta", "max_workers",
+                   "pullback_pct", "breakout_vol_mult", "breakout_lookback"):
+            v = getattr(req, k, None)
+            if v is not None:
+                scr_overrides[k] = v
+        scfg = ScreenerConfig(**scr_overrides)
+
+        # Build risk config with UI overrides
+        risk_overrides: Dict[str, Any] = {}
+        for k in ("total_capital", "risk_per_trade_pct", "max_open_trades",
+                   "min_rr_ratio", "sl_method"):
+            v = getattr(req, k, None)
+            if v is not None:
+                risk_overrides[k] = v
+        rcfg = RiskConfig(**risk_overrides) if risk_overrides else RiskConfig()
+
         executor = AutoExecutor(kite=kite, screener_cfg=scfg, auto_place=False)
         report = executor.run(symbols=symbols)
 
@@ -233,7 +276,7 @@ async def run_full_pipeline(req: PipelineRequest):
 
 
 @router.get("/latest", response_model=LatestRunResponse)
-async def get_latest_run(run_type: Optional[str] = None):
+def get_latest_run(run_type: Optional[str] = None):
     """Return the most recent scheduled pipeline run from the cache DB."""
     try:
         from scheduler import get_latest_run
@@ -252,3 +295,15 @@ async def get_latest_run(run_type: Optional[str] = None):
     except Exception as exc:
         logger.debug("Latest run fetch failed: %s", exc)
         return LatestRunResponse()
+
+
+@router.get("/history")
+def get_pipeline_history(limit: int = 50, offset: int = 0):
+    """Return a paginated list of pipeline runs."""
+    try:
+        from scheduler import get_run_history
+        runs = get_run_history(limit=limit, offset=offset)
+        return {"success": True, "runs": runs, "total": len(runs)}
+    except Exception as exc:
+        logger.debug("Pipeline history fetch failed: %s", exc)
+        return {"success": True, "runs": [], "total": 0}

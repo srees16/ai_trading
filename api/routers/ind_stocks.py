@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from api.dependencies import get_kite_session, set_kite_session
+from pydantic import BaseModel, Field
+
 from api.schemas.common import ErrorResponse, SuccessResponse
 from api.schemas.ind_stocks import (
     CancelOrderRequest,
@@ -37,6 +39,10 @@ from api.schemas.ind_stocks import (
     QuoteResponse,
     WebhookConfigRequest,
     WebhookStatusResponse,
+)
+from api.schemas.us_stocks import (
+    AnalysisResponse,
+    TradingSignalResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -68,7 +74,7 @@ def _require_kite():
     response_model=KiteLoginResponse,
     summary="Authenticate with Kite Connect",
 )
-async def kite_login(request: KiteLoginRequest):
+def kite_login(request: KiteLoginRequest):
     """
     Exchange a request_token for an access_token and store the session.
     """
@@ -103,7 +109,7 @@ async def kite_login(request: KiteLoginRequest):
     response_model=KiteSessionStatus,
     summary="Check Kite session status",
 )
-async def kite_status():
+def kite_status():
     """Return current Kite session authentication status."""
     kite = get_kite_session()
     authenticated = kite is not None
@@ -133,6 +139,96 @@ async def kite_status():
 
 
 # -----------------------------------------------------------------------
+# Analysis (IND-specific news + sentiment + decision pipeline)
+# -----------------------------------------------------------------------
+
+class IndAnalysisRequest(BaseModel):
+    """Request body for Indian stock analysis."""
+    tickers: List[str] = Field(
+        ...,
+        min_length=1,
+        max_length=50,
+        examples=[["RELIANCE.NS", "TCS.NS", "INFY.NS"]],
+        description="List of Indian stock tickers (with or without .NS suffix)",
+    )
+
+
+@router.post(
+    "/analysis",
+    response_model=AnalysisResponse,
+    summary="Run full analysis pipeline for Indian stocks",
+    description=(
+        "Scrapes Indian news (Moneycontrol, ET, Mint, etc.), runs FinBERT sentiment, "
+        "calculates technical/fundamental metrics, and generates trading signals."
+    ),
+)
+async def run_ind_analysis(request: IndAnalysisRequest):
+    """Execute the analysis pipeline using Indian news sources."""
+    try:
+        from scrapers.ind_aggregator import IndianNewsAggregator
+        from sentiment import SentimentAnalyzer
+        from metrics import MetricsCalculator
+        from decision_engine import DecisionEngine
+        from models import TradingSignal
+
+        # Ensure tickers have .NS suffix
+        tickers = [
+            t if t.endswith((".NS", ".BO")) else f"{t}.NS"
+            for t in request.tickers
+        ]
+
+        aggregator = IndianNewsAggregator()
+        all_news = await aggregator.fetch_news_for_tickers(tickers)
+
+        if not all_news:
+            return AnalysisResponse(
+                success=True,
+                ticker_count=len(tickers),
+                signal_count=0,
+                signals=[],
+            )
+
+        analyzer = SentimentAnalyzer()
+        analyzed_news = analyzer.analyze_news_items(all_news)
+
+        calc = MetricsCalculator()
+        calc.prefetch_metrics(list({n.ticker for n in analyzed_news}))
+
+        engine = DecisionEngine()
+        signals: list[TradingSignal] = []
+        for news_item in analyzed_news:
+            metrics = calc.get_stock_metrics(news_item.ticker)
+            signal = engine.generate_signal(news_item, metrics)
+            signals.append(signal)
+
+        # Best-effort DB persist
+        try:
+            from database.service import get_database_service
+            db = get_database_service()
+            if db and db.is_available:
+                db.save_complete_analysis(
+                    tickers=tickers,
+                    signals=[s.to_dict() for s in signals],
+                    news_items=[],
+                    fundamental_metrics=[],
+                    parameters={"analysis_type": "api_ind_analysis"},
+                    run_type="api_ind_analysis",
+                )
+        except Exception as exc:
+            logger.warning("DB save failed: %s", exc)
+
+        return AnalysisResponse(
+            success=True,
+            ticker_count=len(tickers),
+            signal_count=len(signals),
+            signals=[TradingSignalResponse(**s.to_dict()) for s in signals],
+        )
+    except Exception as exc:
+        logger.exception("IND analysis failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# -----------------------------------------------------------------------
 # Quotes & Market Data
 # -----------------------------------------------------------------------
 
@@ -141,7 +237,7 @@ async def kite_status():
     response_model=QuoteResponse,
     summary="Get live quotes for instruments",
 )
-async def get_quotes(request: QuoteRequest):
+def get_quotes(request: QuoteRequest):
     """Fetch live quotes (LTP, OHLC, volume) for the given instruments."""
     kite = _require_kite()
     try:
@@ -174,7 +270,7 @@ async def get_quotes(request: QuoteRequest):
     response_model=QuoteResponse,
     summary="Get quote for a single instrument",
 )
-async def get_single_quote(exchange: str, symbol: str):
+def get_single_quote(exchange: str, symbol: str):
     """Get live quote for EXCHANGE:SYMBOL (e.g. NSE/RELIANCE)."""
     kite = _require_kite()
     inst_key = f"{exchange.upper()}:{symbol.upper()}"
@@ -211,7 +307,7 @@ async def get_single_quote(exchange: str, symbol: str):
     response_model=OrderResponse,
     summary="Place a new order",
 )
-async def place_order(request: PlaceOrderRequest):
+def place_order(request: PlaceOrderRequest):
     """Place an order through Zerodha Kite Connect."""
     kite = _require_kite()
     try:
@@ -228,6 +324,7 @@ async def place_order(request: PlaceOrderRequest):
             price=request.price,
             trigger_price=request.trigger_price,
             validity=request.validity,
+            variety=request.variety,
         )
         if result.get("success"):
             return OrderResponse(
@@ -251,7 +348,7 @@ async def place_order(request: PlaceOrderRequest):
     response_model=OrderBookResponse,
     summary="Get order book",
 )
-async def get_order_book():
+def get_order_book():
     """Retrieve all orders for the current trading day."""
     kite = _require_kite()
     try:
@@ -287,7 +384,7 @@ async def get_order_book():
     response_model=OrderResponse,
     summary="Cancel an order",
 )
-async def cancel_order(order_id: str, variety: str = "regular"):
+def cancel_order(order_id: str, variety: str = "regular"):
     """Cancel a pending order by order_id."""
     kite = _require_kite()
     try:
@@ -312,7 +409,7 @@ async def cancel_order(order_id: str, variety: str = "regular"):
     response_model=PositionsResponse,
     summary="Get current positions",
 )
-async def get_positions():
+def get_positions():
     """Get net and day positions."""
     kite = _require_kite()
     try:
@@ -356,7 +453,7 @@ async def get_positions():
     response_model=HoldingsResponse,
     summary="Get portfolio holdings",
 )
-async def get_holdings():
+def get_holdings():
     """Get current portfolio holdings."""
     kite = _require_kite()
     try:
@@ -420,7 +517,7 @@ async def get_holdings():
     response_model=OptionChainResponse,
     summary="Fetch live option chain",
 )
-async def get_option_chain(request: OptionChainRequest):
+def get_option_chain(request: OptionChainRequest):
     """Fetch option chain for NIFTY or BANKNIFTY centred on ATM."""
     kite = _require_kite()
     try:
@@ -483,7 +580,7 @@ async def get_option_chain(request: OptionChainRequest):
     response_model=NSEMarketResponse,
     summary="Get NSE equity data from database",
 )
-async def get_nse_stocks(
+def get_nse_stocks(
     index_group: Optional[str] = Query(
         None,
         description="Filter by index group (NIFTY50, NIFTYBANK, NIFTYIT, NIFTYENERGY)",
@@ -552,7 +649,7 @@ async def get_nse_stocks(
     response_model=WebhookStatusResponse,
     summary="Get WebSocket/webhook connection status",
 )
-async def webhook_status():
+def webhook_status():
     """Return the status of the Kite WebSocket ticker."""
     try:
         from kite_connect.webhooks.service import WebhookService

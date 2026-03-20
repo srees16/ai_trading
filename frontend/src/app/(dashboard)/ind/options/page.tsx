@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import { indStocksApi, type OptionStrikeData } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,10 +11,30 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { DataTable, SortableHeader } from "@/components/shared/data-table";
 import { MetricCard } from "@/components/shared/metric-card";
-import { formatNumber, formatLargeNumber } from "@/lib/utils";
+import { formatNumber, formatLargeNumber, downloadCsv } from "@/lib/utils";
 import { ColumnDef } from "@tanstack/react-table";
 import { Loader2, RefreshCw, Link, Activity, BarChart3 } from "lucide-react";
 import { toast } from "sonner";
+
+// Lazy-load recharts — only needed when chart data is rendered
+const OIChart = lazy(() => import("recharts").then(mod => ({
+  default: function OIChartInner({ data }: { data: { strike: number; CE_OI: number; PE_OI: number }[] }) {
+    const { BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer, Legend } = mod;
+    return (
+      <ResponsiveContainer width="100%" height={300}>
+        <BarChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" stroke="hsl(217, 33%, 12%)" />
+          <XAxis dataKey="strike" tick={{ fontSize: 10 }} stroke="hsl(215, 20%, 55%)" />
+          <YAxis tick={{ fontSize: 10 }} stroke="hsl(215, 20%, 55%)" />
+          <Tooltip contentStyle={{ backgroundColor: "hsl(222, 47%, 9%)", border: "1px solid hsl(217, 33%, 17%)", borderRadius: 8 }} />
+          <Legend />
+          <Bar dataKey="CE_OI" fill="#22c55e" radius={[2, 2, 0, 0]} />
+          <Bar dataKey="PE_OI" fill="#ef4444" radius={[2, 2, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    );
+  }
+})));
 
 const DEFAULT_INDICES: Record<string, number> = {
   NIFTY: 260105, BANKNIFTY: 260361, FINNIFTY: 257801, MIDCPNIFTY: 288009, SENSEX: 265,
@@ -137,12 +157,49 @@ export default function IndOptionsPage() {
 
           {spotPrice !== null && (
             <>
-              <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-                <MetricCard title="Spot Price" value={`₹${formatNumber(spotPrice)}`} />
-                <MetricCard title="ATM Strike" value={atmStrike ? `₹${formatNumber(atmStrike)}` : "—"} />
-                <MetricCard title="ATM IV" value={atmIV ? `${formatNumber(atmIV, 1)}%` : "—"} />
-                <MetricCard title="Expiry" value={selectedExpiry || "—"} />
-              </div>
+              {(() => {
+                // Compute PCR, Max Pain, Total OI from chain data
+                const totalCeOi = chain.reduce((s, r) => s + (r.ce_oi || 0), 0);
+                const totalPeOi = chain.reduce((s, r) => s + (r.pe_oi || 0), 0);
+                const pcr = totalCeOi > 0 ? totalPeOi / totalCeOi : 0;
+                // Max pain: strike where total (CE+PE) writer losses are minimized
+                let maxPainStrike: number | null = null;
+                if (chain.length > 0) {
+                  let minPain = Infinity;
+                  for (const strike of chain) {
+                    let pain = 0;
+                    for (const row of chain) {
+                      if (row.ce_oi && strike.strike > row.strike)
+                        pain += (strike.strike - row.strike) * row.ce_oi;
+                      if (row.pe_oi && strike.strike < row.strike)
+                        pain += (row.strike - strike.strike) * row.pe_oi;
+                    }
+                    if (pain < minPain) { minPain = pain; maxPainStrike = strike.strike; }
+                  }
+                }
+                return (
+                  <div className="grid grid-cols-2 gap-4 md:grid-cols-6">
+                    <MetricCard title="Spot Price" value={`₹${formatNumber(spotPrice)}`} />
+                    <MetricCard title="ATM Strike" value={atmStrike ? `₹${formatNumber(atmStrike)}` : "—"} />
+                    <MetricCard title="ATM IV" value={atmIV ? `${formatNumber(atmIV, 1)}%` : "—"} />
+                    <MetricCard title="PCR (OI)" value={formatNumber(pcr, 2)} changeType={pcr > 1 ? "positive" : pcr < 0.7 ? "negative" : "neutral"} />
+                    <MetricCard title="Max Pain" value={maxPainStrike ? `₹${formatNumber(maxPainStrike)}` : "—"} />
+                    <MetricCard title="Expiry" value={selectedExpiry || "—"} />
+                  </div>
+                );
+              })()}
+
+              {/* OI Bar Chart */}
+              {chain.length > 0 && (
+                <Card>
+                  <CardHeader><CardTitle className="text-base">Open Interest Distribution</CardTitle></CardHeader>
+                  <CardContent>
+                    <Suspense fallback={<div className="h-[300px] rounded bg-muted animate-pulse" />}>
+                      <OIChart data={chain.map((r) => ({ strike: r.strike, CE_OI: r.ce_oi || 0, PE_OI: r.pe_oi || 0 }))} />
+                    </Suspense>
+                  </CardContent>
+                </Card>
+              )}
               <Card>
                 <CardHeader>
                   <CardTitle className="text-base">
@@ -151,7 +208,11 @@ export default function IndOptionsPage() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <DataTable columns={chainColumns} data={chain} searchKey="strike" pageSize={chain.length > 0 ? chain.length : 20} />
+                  <DataTable columns={chainColumns} data={chain} searchKey="strike" pageSize={chain.length > 0 ? chain.length : 20} onExport={() => downloadCsv(
+                    ["CE IV%", "CE Vol", "CE OI", "CE LTP", "Strike", "PE LTP", "PE OI", "PE Vol", "PE IV%"],
+                    chain.map((r) => [r.ce_iv, r.ce_volume, r.ce_oi, r.ce_ltp, r.strike, r.pe_ltp, r.pe_oi, r.pe_volume, r.pe_iv]),
+                    `${chainIndex}_option_chain.csv`
+                  )} />
                 </CardContent>
               </Card>
             </>

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 def place_order(kite, symbol, exchange, transaction_type, quantity,
                 order_type="MARKET", product="CNC", price=None,
-                trigger_price=None, validity="DAY"):
+                trigger_price=None, validity="DAY", variety="regular"):
     """
     Place an order on Zerodha via Kite Connect.
 
@@ -58,7 +58,7 @@ def place_order(kite, symbol, exchange, transaction_type, quantity,
             order_type=order_type,
             product=product,
             validity=validity,
-            variety="regular",
+            variety=variety,
         )
         if order_type in ("LIMIT", "SL") and price is not None:
             params["price"] = float(price)
