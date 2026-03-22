@@ -4,7 +4,6 @@ import { useState } from "react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/common/spinner";
 import { useTtsChapters, useTtsRun } from "@/hooks/use-tts";
 import { TTS_CATEGORIES } from "@/lib/constants";
@@ -28,8 +27,6 @@ export default function TestTunePage() {
   const handleRun = () => {
     if (selected.length > 0) run(selected);
   };
-
-  const pct = progress ? Math.round((progress.completed / progress.total) * 100) : 0;
 
   return (
     <div className="space-y-6">
@@ -72,9 +69,8 @@ export default function TestTunePage() {
 
         <div className="md:col-span-3 space-y-4">
           {isRunning && progress && (
-            <div className="content-panel p-4 space-y-2">
-              <p className="text-sm">Progress: {progress.completed}/{progress.total}</p>
-              <Progress value={pct} />
+            <div className="content-panel p-4">
+              <Spinner label={`Running ${progress.completed}/${progress.total} chapters…`} />
             </div>
           )}
 

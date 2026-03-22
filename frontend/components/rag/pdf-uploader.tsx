@@ -2,8 +2,7 @@
 
 import { useCallback, useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
-import { Upload, X, FileText, CheckCircle, AlertCircle } from "lucide-react";
+import { Upload, X, FileText, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
 
 interface PdfUploaderProps {
   onUpload: (files: File[]) => Promise<unknown>;
@@ -112,9 +111,7 @@ export function PdfUploader({
                 </span>
               )}
               {fs.status === "uploading" && (
-                <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
-                  <div className="h-full w-1/2 bg-primary rounded-full animate-[indeterminate_1.5s_ease-in-out_infinite]" />
-                </div>
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
               )}
               {(fs.status === "pending" || fs.status === "error") && (
                 <button className="text-muted-foreground hover:text-foreground" onClick={() => removeFile(i)}>
