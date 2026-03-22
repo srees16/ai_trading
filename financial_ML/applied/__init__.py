@@ -6,6 +6,7 @@ import asyncio
 import io
 import logging
 import runpy
+import sys
 import threading
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -136,6 +137,13 @@ def _execute_chapter(ch_key: str) -> Dict[str, Any]:
     figs_before = set(plt.get_fignums())
     stdout_capture = io.StringIO()
 
+    # Ensure `from sample_data import ...` resolves to financial_ML/sample_data.py
+    # rather than testune_trade_sys/sample_data.py which lacks some functions.
+    fml_dir = str(_APPLIED_DIR.parent)
+    path_inserted = fml_dir not in sys.path
+    if path_inserted:
+        sys.path.insert(0, fml_dir)
+
     try:
         with redirect_stdout(stdout_capture):
             runpy.run_path(str(script_path), run_name="__main__")
@@ -143,6 +151,9 @@ def _execute_chapter(ch_key: str) -> Dict[str, Any]:
         result["status"] = "error"
         result["error_message"] = str(exc)
         logger.exception("FML chapter %s failed", ch_key)
+    finally:
+        if path_inserted and fml_dir in sys.path:
+            sys.path.remove(fml_dir)
 
     result["text_output"] = stdout_capture.getvalue()
 
