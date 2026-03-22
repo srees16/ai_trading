@@ -501,14 +501,14 @@ async def kite_session_status():
 
 @router.post("/kite/session/start")
 async def kite_session_start():
-    """Start a new Kite Connect session using the Selenium-based auth flow.
+    """Start a new Kite Connect session.
 
-    This triggers the same login automation used by the Streamlit UI:
-    1. Selenium opens the Kite login page
-    2. Auto-fills credentials and TOTP from env vars
-    3. Captures the request_token via local HTTP redirect
-    4. Generates an access_token and stores the authenticated session
+    First tries the stored request_token.  If expired, attempts auto-login
+    via Selenium + TOTP (with a timeout).  If that also fails, returns a
+    structured ``needs_login`` response so the frontend can prompt the user
+    to complete the OAuth flow manually.
     """
+    import concurrent.futures
     from api.dependencies import set_kite_session
 
     # If already active, return immediately
@@ -520,15 +520,81 @@ async def kite_session_start():
         except Exception:
             pass  # session expired, proceed with re-login
 
+    # Step 1: Try stored request_token (fast, no browser)
+    try:
+        from kite_connect.auth.kite_session import try_stored_token
+        kite = await asyncio.to_thread(try_stored_token)
+        if kite:
+            set_kite_session(kite)
+            profile = await asyncio.to_thread(kite.profile)
+            return {"success": True, "profile": profile}
+    except Exception:
+        pass  # token invalid/expired, continue
+
+    # Step 2: Try auto-login with Selenium + TOTP (with timeout)
     try:
         from kite_connect.auth.kite_session import create_kite_session
-        kite = await asyncio.to_thread(create_kite_session)
+        loop = asyncio.get_event_loop()
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            kite = await asyncio.wait_for(
+                loop.run_in_executor(pool, create_kite_session),
+                timeout=90,
+            )
         set_kite_session(kite)
         profile = await asyncio.to_thread(kite.profile)
         return {"success": True, "profile": profile}
+    except asyncio.TimeoutError:
+        logger.warning("Kite auto-login timed out after 90s")
     except Exception as e:
-        logger.error("Kite session start failed: %s", e, exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.warning("Kite auto-login failed: %s", e)
+
+    # Step 3: Return structured response so frontend can prompt manual login
+    from kite_connect.core.config import LOGIN_URL
+    return {
+        "success": False,
+        "needs_login": True,
+        "login_url": LOGIN_URL,
+        "message": "Token expired. Please complete the Kite login and paste the request_token.",
+    }
+
+
+class KiteTokenRequest(BaseModel):
+    request_token: str
+
+
+@router.post("/kite/session/complete")
+async def kite_session_complete(body: KiteTokenRequest):
+    """Complete a Kite session using a manually-provided request_token.
+
+    Called after the user completes OAuth login and obtains a request_token
+    from the Kite redirect URL.
+    """
+    import os
+    from api.dependencies import set_kite_session
+    from kiteconnect import KiteConnect
+
+    try:
+        from kite_connect.core.config import API_KEY, API_SECRET
+        pool_cfg = {"pool_maxsize": int(os.getenv("KITE_POOL_MAXSIZE", "20"))}
+        kite = KiteConnect(api_key=API_KEY, pool=pool_cfg)
+        data = await asyncio.to_thread(
+            kite.generate_session, body.request_token, API_SECRET,
+        )
+        kite.set_access_token(data["access_token"])
+        set_kite_session(kite)
+
+        # Persist the new token so next restart can reuse it
+        try:
+            from kite_connect.auth.kite_auth import update_kite_app
+            update_kite_app(body.request_token)
+        except Exception:
+            pass
+
+        profile = await asyncio.to_thread(kite.profile)
+        return {"success": True, "profile": profile}
+    except Exception as e:
+        logger.error("Kite session complete failed: %s", e, exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.post("/kite/session/stop")
@@ -1098,8 +1164,12 @@ async def market_ticker_prices(symbols: str, market: str = "US"):
         if cache_key in _ticker_price_cache and (now - _ticker_cache_ts.get(cache_key, 0)) < ttl:
             return _ticker_price_cache[cache_key]
 
-        # For IND market, append .NS suffix for NSE
-        yf_syms = [f"{s}.NS" if market == "IND" else s for s in syms]
+        # For IND market, append .NS suffix for NSE (with override map)
+        if market == "IND":
+            from utils import yf_nse_symbol
+            yf_syms = [yf_nse_symbol(s) for s in syms]
+        else:
+            yf_syms = list(syms)
 
         def _fetch():
             # yf.download is ~4x faster than yf.Tickers for batch fetches

@@ -83,8 +83,9 @@ class DataService:
         except Exception:
             pass
 
-        # Try with .NS suffix (NSE India)
-        ns_ticker = f"{ticker}.NS"
+        # Try with .NS suffix (NSE India), applying override map
+        from utils import yf_nse_symbol
+        ns_ticker = yf_nse_symbol(ticker)
         try:
             info = yf.Ticker(ns_ticker).fast_info
             if info and getattr(info, 'timezone', None):

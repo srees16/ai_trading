@@ -70,8 +70,9 @@ def _render_controls(market: str):
                 from kite_connect.nse.nse_universe import get_nse_default_tickers
                 symbols = get_nse_default_tickers()
                 # Store with .NS suffix for yfinance compatibility
+                from utils import yf_nse_symbol
                 st.session_state[cached_key] = [
-                    f"{s}.NS" for s in symbols
+                    yf_nse_symbol(s) for s in symbols
                 ]
         default_tickers = st.session_state[cached_key]
     else:
