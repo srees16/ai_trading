@@ -22,6 +22,8 @@
     --input: 220 13% 91%;
     --ring: 222 80% 45%;
     --radius: 0.5rem;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 20% 14%;
   }
 
   .dark {
@@ -42,6 +44,8 @@
     --border: 216 34% 17%;
     --input: 216 34% 17%;
     --ring: 213 30% 45%;
+    --popover: 224 71% 8%;
+    --popover-foreground: 213 31% 91%;
   }
 }
 
@@ -64,11 +68,18 @@
   background-attachment: fixed;
   min-height: 100vh;
 }
+.dark .app-background {
+  background-color: #0d1117;
+}
 
 /* ── Content Panel ──────────────────────────────────────── */
 .content-panel {
   background: rgba(255, 255, 255, 0.95);
   border-radius: 10px;
+}
+.dark .content-panel {
+  background: rgba(22, 27, 34, 0.95);
+  border: 1px solid rgba(48, 54, 61, 0.6);
 }
 
 /* ── Sidebar content offset ────────────────────────────── */
@@ -176,9 +187,18 @@
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
 }
+
+@keyframes indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(200%); }
+}
 .skeleton {
   background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
   background-size: 200% 100%;
   animation: shimmer 1.5s infinite;
   border-radius: 4px;
+}
+.dark .skeleton {
+  background: linear-gradient(90deg, #1e2028 25%, #2a2d38 50%, #1e2028 75%);
+  background-size: 200% 100%;
 }

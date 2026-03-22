@@ -1,5 +1,7 @@
 "use client";
 
+import { UserMenu } from "./user-menu";
+
 interface HeaderBarProps {
   subtitle?: string;
   rightContent?: React.ReactNode;
@@ -18,7 +20,10 @@ export function HeaderBar({ subtitle, rightContent }: HeaderBarProps) {
           </p>
         )}
       </div>
-      {rightContent && <div className="text-right shrink-0 ml-4">{rightContent}</div>}
+      <div className="flex items-center gap-3 shrink-0 ml-4">
+        {rightContent}
+        <UserMenu />
+      </div>
     </div>
   );
 }

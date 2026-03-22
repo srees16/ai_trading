@@ -19,8 +19,8 @@ export function RagToggle({ enabled, onToggle }: RagToggleProps) {
         </Label>
         <p className="text-xs text-muted-foreground">
           {enabled
-            ? "Answers use your uploaded documents as context"
-            : "Direct LLM answers without document context"}
+            ? "Enable to use uploaded document(s) as context"
+            : "Disable to use LLM without document(s) context"}
         </p>
       </div>
       <Switch id="rag-toggle" checked={enabled} onCheckedChange={onToggle} />

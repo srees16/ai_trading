@@ -1,10 +1,33 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 import type { RAGResponse, RAGSource, RAGChunk } from "@/lib/types";
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
+
+interface IngestTask {
+  task_id: string;
+  file_name: string;
+  status: string;
+  stage: string;
+  stage_pct: number;
+  error: string | null;
+}
+
+const BACKEND_URL = typeof window !== "undefined"
+  ? (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000")
+  : "http://localhost:8000";
+
+function backendHeaders(): HeadersInit {
+  const headers: HeadersInit = {};
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("access_token");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
+  return headers;
+}
 
 export function useRagSources() {
   const qc = useQueryClient();
+  const [ingesting, setIngesting] = useState(false);
 
   const sourcesQuery = useQuery({
     queryKey: ["rag-sources"],
@@ -17,13 +40,45 @@ export function useRagSources() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["rag-sources"] }),
   });
 
+  // Poll ingest status while ingesting
+  const statusQuery = useQuery<IngestTask[]>({
+    queryKey: ["rag-ingest-status"],
+    queryFn: async () => {
+      const res = await fetch(`${BACKEND_URL}/api/v1/rag/ingest-status`, { headers: backendHeaders() });
+      return res.json();
+    },
+    enabled: ingesting,
+    refetchInterval: 2000,
+  });
+
+  // Auto-stop polling when all tasks are done, and refresh sources
+  useEffect(() => {
+    if (!ingesting || !statusQuery.data) return;
+    const active = statusQuery.data.filter((t) => t.status === "pending" || t.status === "running");
+    if (active.length === 0 && statusQuery.data.length > 0) {
+      setIngesting(false);
+      qc.invalidateQueries({ queryKey: ["rag-sources"] });
+    }
+  }, [statusQuery.data, ingesting, qc]);
+
   const uploadMutation = useMutation({
-    mutationFn: (files: File[]) => {
+    mutationFn: async (files: File[]) => {
       const fd = new FormData();
       files.forEach((f) => fd.append("files", f));
-      return api.postForm<{ ingested: number }>("/api/v1/rag/upload", fd);
+      const res = await fetch(`${BACKEND_URL}/api/v1/rag/upload`, {
+        method: "POST",
+        headers: backendHeaders(),
+        body: fd,
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(body || `Upload failed (HTTP ${res.status})`);
+      }
+      return res.json() as Promise<{ submitted: number; tasks: { task_id: string; file_name: string; status: string }[] }>;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["rag-sources"] }),
+    onSuccess: () => {
+      setIngesting(true);
+    },
   });
 
   return {
@@ -34,6 +89,8 @@ export function useRagSources() {
     upload: uploadMutation.mutateAsync,
     isUploading: uploadMutation.isPending,
     uploadError: uploadMutation.error?.message ?? null,
+    ingestTasks: statusQuery.data ?? [],
+    isIngesting: ingesting,
   };
 }
 
@@ -67,7 +124,11 @@ export function useRagQuery() {
       });
 
       es.addEventListener("token", (e) => {
-        buffer += e.data;
+        try {
+          buffer += JSON.parse(e.data);
+        } catch {
+          buffer += e.data;
+        }
         setAnswer(buffer);
       });
 
