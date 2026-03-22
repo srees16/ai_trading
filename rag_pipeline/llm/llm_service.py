@@ -708,14 +708,12 @@ class ClaudeLLMBackend:
                 if "authentication" in err_str or "api_key" in err_str:
                     return (
                         "\u26a0\ufe0f **Claude authentication failed.**\n\n"
-                        "Please check your `ANTHROPIC_API_KEY` in the `.env` file."
                     )
                 if "rate" in err_str:
                     return "\u26a0\ufe0f **Rate limited.** Please wait a moment and try again."
                 if "credit" in err_str or "balance" in err_str or "billing" in err_str:
                     return (
-                        "\u26a0\ufe0f **Claude credit balance too low.**\n\n"
-                        "Please top up at Plans & Billing on the Anthropic dashboard."
+                        "\u26a0\ufe0f **Claude credit balance too low.**"
                     )
 
                 # Retryable (connection errors, timeouts, 5xx)
@@ -748,24 +746,74 @@ class ClaudeLLMBackend:
         Stream tokens from the Anthropic Messages API.
 
         Uses ``client.messages.stream()`` context manager.
+        Retries once on transient errors; yields user-friendly messages
+        for auth / billing / rate-limit failures.
         """
         system_prompt = _pick_system_prompt(context, compact=False)
         user_message = _build_user_message(query, context)
 
-        try:
-            with self.client.messages.stream(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                temperature=self.temperature,
-                system=system_prompt,
-                messages=[{"role": "user", "content": user_message}],
-            ) as stream:
-                for text in stream.text_stream:
-                    yield text
+        max_attempts = 2
+        for attempt in range(1, max_attempts + 1):
+            try:
+                with self.client.messages.stream(
+                    model=self.model,
+                    max_tokens=self.max_tokens,
+                    temperature=self.temperature,
+                    system=system_prompt,
+                    messages=[{"role": "user", "content": user_message}],
+                ) as stream:
+                    for text in stream.text_stream:
+                        yield text
+                return  # success — exit generator
 
-        except Exception as e:
-            logger.error("Claude streaming error: %s", e, exc_info=True)
-            yield f"\u26a0\ufe0f Claude streaming error: {e}"
+            except Exception as e:
+                err_str = str(e).lower()
+                error_type = type(e).__name__
+
+                # ── Non-retryable: auth ────────────────────────
+                if "authentication" in err_str or "api_key" in err_str:
+                    yield (
+                        "\u26a0\ufe0f **Claude authentication failed.**"
+                    )
+                    return
+
+                # ── Non-retryable: billing / credits ───────────
+                if "credit" in err_str or "balance" in err_str or "billing" in err_str:
+                    yield (
+                        "\u26a0\ufe0f **Claude credit balance too low.**"
+                    )
+                    return
+
+                # ── Non-retryable: rate limit ──────────────────
+                if "rate" in err_str:
+                    yield "\u26a0\ufe0f **Rate limited.** Please wait a moment and try again."
+                    return
+
+                # ── Non-retryable: model not found / invalid ───
+                if "not_found" in err_str or "invalid" in err_str and "model" in err_str:
+                    yield f"\u26a0\ufe0f **Model error:** {e}"
+                    return
+
+                # ── Retryable (connection, timeout, 5xx) ───────
+                is_connection = "connection" in error_type.lower() or "connect" in err_str
+                is_timeout = "timeout" in err_str
+                is_server = "500" in err_str or "502" in err_str or "503" in err_str or "overloaded" in err_str
+                retryable = is_connection or is_timeout or is_server
+
+                if retryable and attempt < max_attempts:
+                    wait = 2 ** attempt
+                    logger.warning(
+                        "Claude stream transient error (attempt %d/%d, retrying in %ds): %s",
+                        attempt, max_attempts, wait, e,
+                    )
+                    time.sleep(wait)
+                    self._client = None
+                    continue
+
+                # ── Unrecoverable ──────────────────────────────
+                logger.error("Claude streaming error (%s): %s", error_type, e, exc_info=True)
+                yield f"\u26a0\ufe0f Claude streaming error: {e}"
+                return
 
     def is_available(self) -> bool:
         """Check if the Claude API key is set and client can be created."""
