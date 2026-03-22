@@ -17,12 +17,14 @@ python -m venv myenv
 myenv\Scripts\activate (macOS/Linux: source myenv/bin/activate)
 cd centurion_core
 pip install -r requirements.txt
+```
 
 # Install Next.js frontend dependencies
 cd frontend
-npm install
-cd ..
 ```
+npm install
+```
+cd ..
 ---
 
 ### Step 2 — Set environment variables
@@ -74,7 +76,7 @@ This creates all 14 tables in the `centurion_rag` database: `analysis_runs`, `ne
 docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"
 ```
 
-The `centurion-backtests` bucket is auto-created on first use. It stores backtest strategy charts, Financial ML figures (PNG).
+The `centurion-backtests` bucket is auto-created on first use. It stores backtest strategy charts, Financial ML figures.
 
 ---
 
