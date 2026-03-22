@@ -1,6 +1,6 @@
 # Centurion Capital LLC — Enterprise AI Trading Platform
 
-A Python-based enterprise trading platform combining multi-source news scraping, AI-powered sentiment analysis, fundamental & technical analysis, strategy backtesting, persistent data storage, live Indian market trading via Zerodha Kite Connect, and a RAG-powered document intelligence pipeline. Built on Streamlit with PostgreSQL persistence, MinIO object storage, ChromaDB vector search, and multi-provider LLM integration.
+A Python-based enterprise trading platform combining multi-source news scraping, AI-powered sentiment analysis, fundamental & technical analysis, strategy backtesting, persistent data storage, live Indian market trading via Zerodha Kite Connect, and a RAG-powered document intelligence pipeline. Built with a **Next.js 14 frontend** (React, TanStack Query, Tailwind CSS) and a **FastAPI backend**, plus a Streamlit UI for legacy workflows. Backed by PostgreSQL persistence, MinIO object storage, ChromaDB vector search, and multi-provider LLM integration (Claude / OpenAI / Ollama).
 
 ---
 
@@ -17,6 +17,11 @@ python -m venv myenv
 myenv\Scripts\activate (macOS/Linux: source myenv/bin/activate)
 cd centurion_core
 pip install -r requirements.txt
+
+# Install Next.js frontend dependencies
+cd frontend
+npm install
+cd ..
 ```
 ---
 
@@ -89,24 +94,38 @@ ollama pull qwen2.5:3b
 ```
 ---
 
-### Step 7 — Terminal 1: Launch Streamlit
+### Step 7 — Terminal 1: Launch FastAPI backend
 
 Run in the **same terminal** (env vars from Step 2 must still be active):
+```
+python run_api.py
+```
+Backend API at: **http://localhost:8000** — API docs at **http://localhost:8000/docs**
+
+---
+
+### Step 8 — Terminal 2: Launch Next.js frontend
+
+Open a new terminal:
+```
+cd centurion_core/frontend
+npm run dev
+```
+Opens at: **http://localhost:3000** — login with `admin` / `admin123`
+
+The Next.js frontend proxies API requests to the FastAPI backend via rewrites configured in `next.config.js`.
+
+---
+
+### Step 9 (Optional) — Terminal 3: Launch Streamlit
+
+> Set env variables from Step 2 in this new terminal too, then run:
 ```
 streamlit run app.py
 ```
 Opens at: **http://localhost:9000** — login with `admin` / `admin123`
 
-> **SSO:** Logging into either the Streamlit app or the FastAPI docs automatically logs you into the other. Both URLs must use `localhost` (not `127.0.0.1`) for this to work.
-
----
-
-### Step 8 (Optional) — Terminal 2: Launch FastAPI
-> Set env variables from Step 2 in this new terminal too, then run:
-```
-python3 run_api.py
-```
-API docs at: **http://localhost:9001/docs** (auth required) — if already logged into Streamlit, no credentials needed
+> **SSO:** Logging into the Streamlit app or the FastAPI docs shares session cookies. Both URLs must use `localhost` (not `127.0.0.1`) for this to work.
 
 MinIO console at: **http://localhost:9002/login** — login with `minioadmin` / `minioadmin123`
 
@@ -133,19 +152,28 @@ Jump to **Section 14: Troubleshooting** or **Section 11: Installation** for deta
 13. [API Reference](#13-api-reference)
 14. [Troubleshooting](#14-troubleshooting)
 15. [Dependencies](#15-dependencies)
-16. [Changelog](#16-changelog)
 
 ---
 
 ## 1. Architecture Overview
 
-The application follows a modular, deferred-import architecture for fast startup:
+The application follows a modular, deferred-import architecture with dual frontends:
 
 ```
-app.py (Streamlit Router)
+Next.js 14 Frontend (primary — port 3000)
+  ├── React 18, TypeScript, Tailwind CSS, TanStack Query v5
+  ├── JWT auth (Zustand store) + next-themes dark/light mode
+  ├── API proxy rewrites → FastAPI backend (port 8000)
+  └── Pages: US/IND Stocks, Financial ML, Test & Tune, RAG Engine, Settings
+
+FastAPI Backend (port 8000)
+  ├── /api/v1/* — 50+ REST + SSE endpoints
+  ├── Auth: itsdangerous signed tokens (8h TTL)
+  └── Delegates to: scrapers, sentiment, metrics, decision_engine, rag_pipeline
+
+app.py (Streamlit Router — legacy, port 9000)
   ├── apply_custom_styles() initialize_session_state() check_authentication()
-  ├── Page routing via st.session_state.current_page:
-  │ main analysis fundamental backtesting crypto history
+  ├── Page routing via st.session_state.current_page
   └── All page imports deferred to route branches
 ```
 
@@ -520,15 +548,34 @@ details = minio.list_runs_detailed()         # metadata: size, chart count, stra
 | **Indian Equities** | `ind_kite` | Live quotes, order book, positions, holdings, option chain, RSI scanner (Kite Connect) |
 | **Options** | `options` | Concurrent option chain with OI, Greeks, IV, Sensibull-style colouring |
 
+### Next.js Frontend (Primary UI)
+
+A modern React-based frontend built with Next.js 14, Tailwind CSS, and TanStack Query (React Query v5). Connects to the FastAPI backend at `http://localhost:8000`.
+
+| Feature | Description |
+|---------|-------------|
+| **Authentication** | JWT token-based login with signed session cookies (8-hour TTL, 30-min inactivity timeout) |
+| **User Menu** | Header dropdown showing username, avatar initials, dark/light mode toggle, Settings link, and logout |
+| **Dark / Light Mode** | `next-themes` provider with system detection; toggle available in header menu and Settings page |
+| **Settings Page** | `/settings` — profile info, appearance theme picker (Light / Dark / System), change password form |
+| **RAG Engine** | PDF upload (drag-and-drop, direct to backend), async background ingestion with polling status, SSE streaming query with token-by-token LLM response, knowledge base with document metadata |
+| **Sidebar** | Collapsible sidebar with US/IND stock tabs, module navigation (Financial ML, Test & Tune, Crypto, RAG Engine) |
+| **Ticker Ribbon** | Scrolling LTP ribbon with TTL-cached backend prices |
+| **Lazy Loading** | `loading.tsx` skeleton + `dynamic()` imports with `ssr: false` for heavy components |
+
+**Tech stack:** Next.js 14, React 18, TypeScript, Tailwind CSS, Radix UI primitives, TanStack Query v5, Zustand (auth state), `next-themes`, Lucide icons.
+
 ### Authentication
 - YAML-based credentials (`auth/credentials.yaml`)
-- SHA-256 password hashing with `hmac.compare_digest`
-- Session timeout: 60 min absolute, 30 min inactivity
-- Max 3 login attempts
+- Bcrypt password hashing (with legacy SHA-256 support via `hmac.compare_digest`)
+- JWT tokens via `itsdangerous` signed serializer (8-hour TTL)
+- Session timeout: 30 min inactivity, 8 hours absolute
+- Password change via Settings page (`POST /api/v1/auth/change-password`)
 - Default users: `admin`/`admin123`, `analyst`/`analyst123`
 
 ### Styling
-- Enterprise CSS: dark gradient theme with Centurion branding
+- Enterprise CSS: dark gradient theme with Centurion branding (dark mode default)
+- Light mode support via Tailwind CSS `dark:` variants and CSS custom properties
 - Decision colours: STRONG_BUY `#00ff88`, BUY `#00cc44`, HOLD `#ffd700`, SELL `#ff6b6b`, STRONG_SELL `#ff0000`
 - Background image overlay, custom buttons, consistent footer
 
@@ -588,13 +635,41 @@ centurion_core/
 ├── models.py                     # Data models (NewsItem, StockMetrics, TradingSignal)
 ├── utils.py                      # CSV parsing and ticker validation
 ├── scheduler.py                  # APScheduler — pre-market + intraday pipeline runs with auto-auth
-├── run_api.py                    # FastAPI server launcher (port 9001)
+├── run_api.py                    # FastAPI server launcher (port 8000)
 ├── setup_database.py             # Database schema initialisation
 ├── requirements.txt              # Python dependencies
 ├── sample_tickers.csv            # Example ticker list
-├── run_streamlit.bat             # Windows quick-launch script
 │
-├── ui/                           # Modular UI layer
+├── frontend/                     # Next.js 14 frontend (primary UI)
+│   ├── package.json              # Node.js dependencies
+│   ├── next.config.js            # API proxy rewrites, standalone output
+│   ├── tailwind.config.js        # Tailwind CSS + Radix UI theme tokens
+│   ├── middleware.ts             # Auth redirect middleware
+│   ├── app/
+│   │   ├── layout.tsx            # Root layout (ThemeProvider, QueryClient)
+│   │   ├── providers.tsx         # next-themes + TanStack QueryClientProvider
+│   │   ├── login/page.tsx        # Login page
+│   │   └── (dashboard)/
+│   │       ├── layout.tsx        # Auth guard, sidebar, header, footer
+│   │       ├── settings/page.tsx # Settings (profile, appearance, change password)
+│   │       ├── us-stocks/        # US stock pages (main, fundamentals, backtest, verdict, holdings, history)
+│   │       ├── ind-stocks/       # Indian stock pages
+│   │       ├── financial-ml/     # Financial ML chapter runner
+│   │       ├── test-tune/        # Test & Tune chapter runner
+│   │       ├── crypto/           # Crypto strategies
+│   │       └── rag-engine/       # RAG document Q&A
+│   ├── components/
+│   │   ├── layout/               # Sidebar, HeaderBar, UserMenu, Footer
+│   │   ├── rag/                  # PDF uploader, streaming answer, knowledge base, source selector
+│   │   ├── ui/                   # Radix primitives (button, input, dropdown-menu, tabs, etc.)
+│   │   ├── charts/               # Chart components
+│   │   ├── tables/               # Data tables
+│   │   └── common/               # Spinner, shared components
+│   ├── hooks/                    # React hooks (use-auth, use-rag, use-analysis, use-backtest, etc.)
+│   ├── lib/                      # API client, types, constants, utilities
+│   └── styles/globals.css        # CSS custom properties (light/dark), component styles
+│
+├── ui/                           # Streamlit UI layer (legacy)
 │   ├── components.py             # Header, footer, navigation, metrics cards
 │   ├── charts.py                 # Plotly charts (decision, sentiment, scores)
 │   ├── tables.py                 # Data tables with CSV download
@@ -824,6 +899,11 @@ python --version  # should be 3.10+
 # Install Python dependencies (installs DistilBERT ~250MB on first run)
 pip install --upgrade pip
 pip install -r requirements.txt
+
+# Install Next.js frontend dependencies
+cd frontend
+npm install
+cd ..
 ```
 
 **Expected output:**
@@ -1054,7 +1134,26 @@ except Exception as e:
 
 ### Step 8: Launch the Application
 
-**Terminal 1 — Streamlit UI:**
+**Terminal 1 — FastAPI Backend:**
+
+```powershell
+cd centurion_core
+.\myenv\Scripts\Activate.ps1
+python run_api.py
+```
+
+Backend API at: **http://localhost:8000** — API docs at **http://localhost:8000/docs**
+
+**Terminal 2 — Next.js Frontend (primary UI):**
+
+```powershell
+cd centurion_core/frontend
+npm run dev
+```
+
+Opens at: **http://localhost:3000** — login with `admin` / `admin123`
+
+**Terminal 3 — Streamlit UI (optional, legacy):**
 
 ```powershell
 cd centurion_core
@@ -1064,21 +1163,11 @@ streamlit run app.py
 
 Opens at: **http://localhost:9000**
 
-**Terminal 2 — FastAPI REST API (optional):**
-
-```powershell
-cd centurion_core
-.\myenv\Scripts\Activate.ps1
-python run_api.py --port 9001
-```
-
-API docs at: **http://localhost:9001/docs** (login required)
-
 ---
 
 ### Step 9: Login & Verify Application
 
-1. Open http://localhost:9000 in your browser
+1. Open http://localhost:3000 (Next.js) or http://localhost:9000 (Streamlit) in your browser
 2. Login with default credentials:
    - **Username**: `admin`
    - **Password**: `admin123`
@@ -1324,7 +1413,7 @@ docker compose down -v
 
 | Category | Packages |
 |---|---|
-| **Web Framework** | streamlit, plotly |
+| **Web Framework** | streamlit, plotly, **Next.js 14** (React 18, Tailwind CSS, TanStack Query v5) |
 | **Data** | pandas, numpy, openpyxl |
 | **Financial Data** | yfinance |
 | **Crypto Data** | Binance public REST API (no key required) |
@@ -1336,29 +1425,9 @@ docker compose down -v
 | **Analysis** | matplotlib, statsmodels, backtesting (0.6+), arch, scipy, seaborn |
 | **Database** | sqlalchemy ≥ 2.0, psycopg2-binary ≥ 2.9, python-dotenv ≥ 1.0 |
 | **Object Storage** | minio ≥ 7.2 |
-| **Auth** | pyyaml ≥ 6.0, itsdangerous |
+| **Auth** | pyyaml ≥ 6.0, itsdangerous, bcrypt |
 | **Notifications** | plyer |
 | **API** | fastapi, uvicorn[standard], python-multipart |
----
-
-## 16. Changelog
-
-### 2025-07-15
-
-- **Codebase Cleanup** — Removed unused imports across 12 files, deleted 20+ dead functions/methods from `strategies/utils.py`, `strategies/loader.py`, `strategies/data_service.py`, `services/session.py`, `ui/components.py`, `strategies/registry.py`
-- **RAG Pipeline Restructure** — Deleted 7 stale top-level duplicate files (`query_engine.py`, `llm_service.py`, `pdf_ingestion.py`, `vector_store.py`, `reranker.py`, `chunking.py`, `ui_components.py`); all imports now route through the subpackage layout (`core/`, `storage/`, `ingestion/`, `llm/`, `ui/`, `utils/`)
-- **Reranker code_mode** — Backported `code_mode` parameter from stale `reranker.py` to `rag_pipeline/core/reranker.py` for code-aware threshold adjustment
-- **Removed Dead Modules** — Deleted `scrapers/aggregator.py` (fully replaced by `us_aggregator.py` + `ind_aggregator.py`)
-- **New UI Pages** — Added `us_holdings_page.py`, `ind_main_page.py`, `options_page.py` to README documentation
-- **README Quick Start** — Separated Windows PowerShell and macOS/Linux commands; fixed broken `export` in PowerShell blocks, replaced `sleep` with `Start-Sleep`, fixed unclosed Ollama code block
-
-### 2026-02-28
-
-- **FastAPI REST API** — 50 JSON endpoints across 6 modules with Pydantic v2 schemas, auth-gated `/docs` (signed session cookie, 8-hour TTL)
-- **Real-time Streaming** — SSE tick stream, WebSocket proxy, Kite Postback receiver, TimescaleDB OHLC aggregates (1m/5m/15m/1h), price alert engine with CRUD endpoints
-- **MinIO Auto-Bucket** — `centurion-backtests` bucket created automatically on first use; `MinIOService.ensure_bucket_ready()`
-- **Pairs Trading All-Combinations** — C(n,2) pair analysis when >2 tickers provided
-- **Lazy Sentiment Loading** — DistilBERT model deferred to first `analyze()` call (class-level singleton)
 
 ---
 
@@ -1368,4 +1437,14 @@ This software is provided for **educational and informational purposes only**. I
 
 ---
 
-**Ready to get started? Run `streamlit run app.py` and begin analysing! **
+**Ready to get started?**
+
+```bash
+# Terminal 1: Backend
+python run_api.py
+
+# Terminal 2: Frontend
+cd frontend && npm run dev
+```
+
+Open **http://localhost:3000** and start analysing!

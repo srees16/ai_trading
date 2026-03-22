@@ -70,8 +70,10 @@ def get_rag_engine():
         try:
             from rag_pipeline.config import RAGConfig
             from rag_pipeline.core.query_engine import RAGQueryEngine
+            from rag_pipeline.storage.vector_store import VectorStoreManager
             config = RAGConfig()
-            _rag_engine = RAGQueryEngine(config)
+            vs = VectorStoreManager(config)
+            _rag_engine = RAGQueryEngine(vector_store=vs, config=config)
             logger.info("RAG QueryEngine initialised")
         except Exception as exc:
             logger.error("Failed to initialise RAG engine: %s", exc)

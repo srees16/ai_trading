@@ -418,7 +418,7 @@ class RAGQueryEngine:
             with ThreadPoolExecutor(max_workers=min(len(queries), 4)) as pool:
                 futures = {
                     pool.submit(
-                        self._embed_and_search, q, top_k, effective_where
+                        self._embed_and_search, q, effective_top_k, effective_where
                     ): q
                     for q in queries
                 }
