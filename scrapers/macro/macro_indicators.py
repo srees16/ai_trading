@@ -102,7 +102,7 @@ _TICKERS: Dict[str, str] = {
     "^NSEI":      "nifty50",
     "GC=F":       "gold_price",
     "CL=F":       "crude_oil_price",
-    "DX=F":       "dxy_index",
+    "DX-Y.NYB":   "dxy_index",
 }
 
 

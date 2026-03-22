@@ -126,6 +126,7 @@ def create_app() -> FastAPI:
     from api.routers.crypto import router as crypto_router
     from api.routers.streaming import router as streaming_router
     from api.routers.pipeline import router as pipeline_router
+    from api.routers.v1_gateway import router as v1_gateway_router
 
     app.include_router(health_router)
     app.include_router(us_stocks_router)
@@ -134,6 +135,7 @@ def create_app() -> FastAPI:
     app.include_router(crypto_router)
     app.include_router(streaming_router)
     app.include_router(pipeline_router)
+    app.include_router(v1_gateway_router)
 
     # ------------------------------------------------------------------
     # Authentication endpoints
