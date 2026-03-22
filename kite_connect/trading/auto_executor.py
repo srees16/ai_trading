@@ -400,7 +400,8 @@ class AutoExecutor:
 
             for sym in symbols:
                 try:
-                    ticker = yf.Ticker(f"{sym}.NS")
+                    from utils import yf_nse_symbol
+                    ticker = yf.Ticker(yf_nse_symbol(sym))
                     cal = ticker.calendar
                     if cal is None or (hasattr(cal, 'empty') and cal.empty):
                         continue

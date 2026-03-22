@@ -27,6 +27,28 @@ def _read_request_token():
     return None
 
 
+def try_stored_token():
+    """
+    Try to create a session using just the stored request_token.
+
+    Returns an authenticated KiteConnect instance if the token is still
+    valid, or ``None`` if it has expired / is invalid.
+    """
+    request_token = _read_request_token()
+    if not request_token:
+        return None
+    pool_cfg = {"pool_maxsize": int(os.getenv("KITE_POOL_MAXSIZE", "20"))}
+    kite = KiteConnect(api_key=API_KEY, pool=pool_cfg)
+    try:
+        data = kite.generate_session(
+            request_token=request_token, api_secret=API_SECRET,
+        )
+        kite.set_access_token(data["access_token"])
+        return kite
+    except (kite_exceptions.TokenException, kite_exceptions.InputException):
+        return None
+
+
 def create_kite_session():
     """
     Create and return an authenticated ``KiteConnect`` instance.

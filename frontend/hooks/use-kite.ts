@@ -24,8 +24,32 @@ export function useKiteSessionStart() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () =>
-      api.post<{ success: boolean; profile: Record<string, unknown>; message?: string }>(
-        "/api/v1/kite/session/start"
+      api.post<{
+        success: boolean;
+        profile?: Record<string, unknown>;
+        message?: string;
+        needs_login?: boolean;
+        login_url?: string;
+      }>("/api/v1/kite/session/start"),
+    onSuccess: (data) => {
+      if (data.success) {
+        qc.invalidateQueries({ queryKey: ["kite-session-status"] });
+        qc.invalidateQueries({ queryKey: ["kite-quotes"] });
+        qc.invalidateQueries({ queryKey: ["kite-holdings"] });
+        qc.invalidateQueries({ queryKey: ["kite-positions"] });
+        qc.invalidateQueries({ queryKey: ["kite-orders"] });
+      }
+    },
+  });
+}
+
+export function useKiteSessionComplete() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (requestToken: string) =>
+      api.post<{ success: boolean; profile: Record<string, unknown> }>(
+        "/api/v1/kite/session/complete",
+        { request_token: requestToken },
       ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["kite-session-status"] });

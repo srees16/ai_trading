@@ -98,22 +98,20 @@ ollama pull qwen2.5:3b
 
 Run in the **same terminal** (env vars from Step 2 must still be active):
 ```
-python run_api.py
+python run_api.py --reload
 ```
-Backend API at: **http://localhost:8000** — API docs at **http://localhost:8000/docs**
+Backend API at: **http://localhost:9001** — API docs at **http://localhost:9001/docs**
 
 ---
 
 ### Step 8 — Terminal 2: Launch Next.js frontend
 
 Open a new terminal:
+> cd centurion_core/frontend
 ```
-cd centurion_core/frontend
 npm run dev
 ```
 Opens at: **http://localhost:3000** — login with `admin` / `admin123`
-
-The Next.js frontend proxies API requests to the FastAPI backend via rewrites configured in `next.config.js`.
 
 ---
 

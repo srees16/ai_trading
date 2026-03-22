@@ -11,6 +11,28 @@ from io import StringIO
 
 logger = logging.getLogger(__name__)
 
+# ── yfinance NSE symbol overrides ──────────────────────────────
+# Yahoo Finance occasionally changes or delists Indian tickers.
+# Map the NSE trading symbol to the correct yfinance symbol (without .NS).
+# Add entries here when yfinance stops recognizing an NSE symbol.
+YF_NSE_SYMBOL_MAP = {
+    "TATAMOTORS": "TMCV",
+}
+
+
+def yf_nse_symbol(nse_symbol: str) -> str:
+    """Convert an NSE trading symbol to its yfinance ticker (with .NS).
+
+    Applies ``YF_NSE_SYMBOL_MAP`` overrides before appending ``.NS``.
+
+    >>> yf_nse_symbol("TATAMOTORS")
+    'TMCV.NS'
+    >>> yf_nse_symbol("RELIANCE")
+    'RELIANCE.NS'
+    """
+    mapped = YF_NSE_SYMBOL_MAP.get(nse_symbol.upper(), nse_symbol)
+    return f"{mapped}.NS"
+
 
 def parse_ticker_csv(file_content: str) -> List[str]:
     """

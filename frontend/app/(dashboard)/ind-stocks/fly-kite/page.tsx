@@ -9,6 +9,7 @@ import {
   useKiteSessionStatus,
   useKiteSessionStart,
   useKiteSessionStop,
+  useKiteSessionComplete,
   useKiteQuotes,
   useKiteHoldings,
   useKitePositions,
@@ -22,18 +23,26 @@ import { Badge } from "@/components/ui/badge";
 import { useState } from "react";
 import {
   Play, Square, RefreshCw, TrendingUp, Briefcase, BarChart3, ClipboardList,
-  AlertCircle, Zap, Shield, LineChart,
+  AlertCircle, Zap, Shield, LineChart, ExternalLink, KeyRound,
 } from "lucide-react";
 
 function KiteLanding({
   onStart,
   isStarting,
   error,
+  loginUrl,
+  onSubmitToken,
+  isSubmittingToken,
 }: {
   onStart: () => void;
   isStarting: boolean;
   error: string | null;
+  loginUrl: string | null;
+  onSubmitToken: (token: string) => void;
+  isSubmittingToken: boolean;
 }) {
+  const [requestToken, setRequestToken] = useState("");
+
   return (
     <div className="space-y-6">
       <RibbonVixBar symbols={NIFTY_50_TICKERS} market="IND" />
@@ -79,26 +88,74 @@ function KiteLanding({
           </div>
         )}
 
-        <div className="flex justify-center">
-          <Button size="lg" onClick={onStart} disabled={isStarting} className="min-w-[200px]">
-            {isStarting ? (
-              <>
-                <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                Connecting to Kite…
-              </>
-            ) : (
-              <>
-                <Play className="mr-2 h-4 w-4" />
-                Start Kite Session
-              </>
-            )}
-          </Button>
-        </div>
+        {/* Manual login flow — shown when auto-login fails */}
+        {loginUrl ? (
+          <div className="space-y-4 border rounded-lg p-4 bg-secondary/30">
+            <div className="flex items-center gap-2 text-sm font-medium text-amber-600 dark:text-amber-400">
+              <KeyRound className="h-4 w-4" />
+              Token expired — complete Kite login manually
+            </div>
 
-        {isStarting && (
-          <p className="text-xs text-center text-muted-foreground">
-            Selenium is automating the Zerodha login. If a browser window opens, complete the TOTP/2FA step.
-          </p>
+            <div className="space-y-2 text-sm text-muted-foreground">
+              <p>1. Click below to open the Kite login page</p>
+              <p>2. Enter your Zerodha credentials and TOTP</p>
+              <p>3. Copy the <code className="text-xs bg-secondary px-1 py-0.5 rounded">request_token</code> from the redirect URL and paste it below</p>
+            </div>
+
+            <a
+              href={loginUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+            >
+              <ExternalLink className="h-4 w-4" />
+              Open Kite Login
+            </a>
+
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={requestToken}
+                onChange={(e) => setRequestToken(e.target.value)}
+                placeholder="Paste request_token here…"
+                className="flex-1 px-3 py-2 text-sm rounded-md border bg-background focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <Button
+                onClick={() => onSubmitToken(requestToken.trim())}
+                disabled={!requestToken.trim() || isSubmittingToken}
+              >
+                {isSubmittingToken ? (
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                ) : (
+                  "Connect"
+                )}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="flex justify-center">
+              <Button size="lg" onClick={onStart} disabled={isStarting} className="min-w-[200px]">
+                {isStarting ? (
+                  <>
+                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                    Connecting to Kite…
+                  </>
+                ) : (
+                  <>
+                    <Play className="mr-2 h-4 w-4" />
+                    Start Kite Session
+                  </>
+                )}
+              </Button>
+            </div>
+
+            {isStarting && (
+              <p className="text-xs text-center text-muted-foreground">
+                Selenium is automating the Zerodha login. If a browser window opens, complete the TOTP/2FA step.
+              </p>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -309,14 +366,34 @@ function KiteDashboard({ onDisconnect }: { onDisconnect: () => void }) {
 export default function FlyKitePage() {
   const sessionQ = useKiteSessionStatus();
   const startSession = useKiteSessionStart();
+  const completeSession = useKiteSessionComplete();
   const [startError, setStartError] = useState<string | null>(null);
+  const [loginUrl, setLoginUrl] = useState<string | null>(null);
 
   const isActive = sessionQ.data?.active === true;
   const isChecking = sessionQ.isLoading;
 
   const handleStart = () => {
     setStartError(null);
+    setLoginUrl(null);
     startSession.mutate(undefined, {
+      onSuccess: (data) => {
+        if (!data.success && data.needs_login && data.login_url) {
+          setLoginUrl(data.login_url);
+          setStartError(data.message ?? "Token expired. Please log in manually.");
+        }
+      },
+      onError: (err) => setStartError(err.message),
+    });
+  };
+
+  const handleSubmitToken = (token: string) => {
+    setStartError(null);
+    completeSession.mutate(token, {
+      onSuccess: () => {
+        setLoginUrl(null);
+        sessionQ.refetch();
+      },
       onError: (err) => setStartError(err.message),
     });
   };
@@ -335,6 +412,9 @@ export default function FlyKitePage() {
         onStart={handleStart}
         isStarting={startSession.isPending}
         error={startError}
+        loginUrl={loginUrl}
+        onSubmitToken={handleSubmitToken}
+        isSubmittingToken={completeSession.isPending}
       />
     );
   }
