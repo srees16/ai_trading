@@ -37,13 +37,21 @@ def main():
 
     import uvicorn
 
+    # Suppress noisy uvicorn/reloader chatter; keep only app-level logs
+    logging.getLogger("watchfiles").setLevel(logging.WARNING)
+
+    log_config = uvicorn.config.LOGGING_CONFIG.copy()
+    log_config["loggers"]["uvicorn"]["level"] = "WARNING"
+    log_config["loggers"]["uvicorn.access"]["level"] = "WARNING"
+
     uvicorn.run(
         "api.main:app",
         host=args.host,
         port=args.port,
         reload=args.reload,
+        reload_excludes=["kite_connect/auth/*", "data/*", "*.json", "*.csv", "*.log"] if args.reload else None,
         workers=args.workers,
-        log_level="info",
+        log_config=log_config,
     )
 
 

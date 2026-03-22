@@ -1,12 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import { TickerInput } from "@/components/forms/ticker-input";
-import { SignalsTable } from "@/components/tables/signals-table";
-import { TopSignals } from "@/components/tables/top-signals";
-import { DecisionPieChart } from "@/components/charts/decision-pie-chart";
-import { ScoreScatterChart } from "@/components/charts/score-scatter-chart";
-import { SentimentBarChart } from "@/components/charts/sentiment-bar-chart";
 import { MetricsGrid, MetricCard } from "@/components/common/metrics-cards";
 import { RibbonVixBar } from "@/components/common/ribbon-vix-bar";
 import { Spinner } from "@/components/common/spinner";
@@ -15,6 +11,12 @@ import { useAnalysis } from "@/hooks/use-analysis";
 import { DEFAULT_IND_TICKERS, NIFTY_50_TICKERS } from "@/lib/constants";
 import { decisionSummary } from "@/lib/utils";
 import { Play } from "lucide-react";
+
+const SignalsTable = dynamic(() => import("@/components/tables/signals-table").then(m => ({ default: m.SignalsTable })), { ssr: false });
+const TopSignals = dynamic(() => import("@/components/tables/top-signals").then(m => ({ default: m.TopSignals })), { ssr: false });
+const DecisionPieChart = dynamic(() => import("@/components/charts/decision-pie-chart").then(m => ({ default: m.DecisionPieChart })), { ssr: false });
+const ScoreScatterChart = dynamic(() => import("@/components/charts/score-scatter-chart").then(m => ({ default: m.ScoreScatterChart })), { ssr: false });
+const SentimentBarChart = dynamic(() => import("@/components/charts/sentiment-bar-chart").then(m => ({ default: m.SentimentBarChart })), { ssr: false });
 
 export default function INDStocksPage() {
   const [tickers, setTickers] = useState<string[]>(DEFAULT_IND_TICKERS);

@@ -38,6 +38,10 @@ module.exports = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        popover: {
+          DEFAULT: "hsl(var(--popover))",
+          foreground: "hsl(var(--popover-foreground))",
+        },
         // Trading-specific colors
         "trade-green": "#00cc44",
         "trade-green-light": "#66ff99",

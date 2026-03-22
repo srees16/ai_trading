@@ -111,7 +111,11 @@ export function PdfUploader({
                   <AlertCircle className="h-3 w-3" /> {fs.error}
                 </span>
               )}
-              {fs.status === "uploading" && <Progress className="w-16 h-1.5" value={50} />}
+              {fs.status === "uploading" && (
+                <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
+                  <div className="h-full w-1/2 bg-primary rounded-full animate-[indeterminate_1.5s_ease-in-out_infinite]" />
+                </div>
+              )}
               {(fs.status === "pending" || fs.status === "error") && (
                 <button className="text-muted-foreground hover:text-foreground" onClick={() => removeFile(i)}>
                   <X className="h-3.5 w-3.5" />

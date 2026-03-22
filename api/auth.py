@@ -26,7 +26,7 @@ _SECRET_KEY = os.getenv("CENTURION_API_SECRET_KEY", "")
 if not _SECRET_KEY:
     import secrets as _secrets
     _SECRET_KEY = _secrets.token_hex(32)
-    logger.info("Generated ephemeral API secret key (set CENTURION_API_SECRET_KEY for persistence)")
+    logger.debug("Generated ephemeral API secret key (set CENTURION_API_SECRET_KEY for persistence)")
 
 _SERIALIZER = URLSafeTimedSerializer(_SECRET_KEY, salt="centurion-api-docs")
 

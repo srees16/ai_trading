@@ -41,6 +41,17 @@ export default function FinancialMLPage() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="content-panel p-4 space-y-4">
           <h3 className="text-sm font-semibold">Select Chapters</h3>
+
+          <Button className="w-full" onClick={handleRun} disabled={isRunning || selected.length === 0}>
+            {isRunning ? "Running…" : <><Play className="mr-1 h-4 w-4" /> Run ({selected.length})</>}
+          </Button>
+          {error && <p className="text-sm text-destructive">{error}</p>}
+
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => setSelected(chapters.map((c) => c.key))}>All</Button>
+            <Button size="sm" variant="outline" onClick={() => setSelected([])}>None</Button>
+          </div>
+
           {chaptersQ.isLoading ? (
             <Spinner />
           ) : (
@@ -58,16 +69,6 @@ export default function FinancialMLPage() {
               ))}
             </div>
           )}
-
-          <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => setSelected(chapters.map((c) => c.key))}>All</Button>
-            <Button size="sm" variant="outline" onClick={() => setSelected([])}>None</Button>
-          </div>
-
-          <Button className="w-full" onClick={handleRun} disabled={isRunning || selected.length === 0}>
-            {isRunning ? "Running…" : <><Play className="mr-1 h-4 w-4" /> Run ({selected.length})</>}
-          </Button>
-          {error && <p className="text-sm text-destructive">{error}</p>}
         </div>
 
         <div className="md:col-span-3 space-y-4">
@@ -93,7 +94,7 @@ export default function FinancialMLPage() {
                   </span>
                 </div>
 
-                {ch.text_output && <pre className="text-xs bg-muted/50 rounded p-2 overflow-auto max-h-48">{ch.text_output}</pre>}
+                {ch.text_output && <pre className="text-xs bg-muted/50 rounded p-3 overflow-auto max-h-[80vh] whitespace-pre-wrap">{ch.text_output}</pre>}
                 {ch.error_message && <p className="text-sm text-destructive">{ch.error_message}</p>}
 
                 {ch.figures.length > 0 && (

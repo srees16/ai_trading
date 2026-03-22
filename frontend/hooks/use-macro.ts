@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { api } from "@/lib/api-client";
 
 interface MacroSnapshot {
@@ -62,6 +62,7 @@ export function useTickerPrices(symbols: string[], market: string) {
       return isOpen ? 5_000 : 60_000; // 5s live, 60s after hours
     },
     staleTime: 4_000,
+    placeholderData: keepPreviousData,
     retry: 1,
   });
 

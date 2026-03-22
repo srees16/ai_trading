@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ThumbsUp, ThumbsDown, Copy, Check } from "lucide-react";
+import { ThumbsUp, ThumbsDown, Copy, Check, Loader2, Search } from "lucide-react";
 import type { RAGChunk } from "@/lib/types";
 
 interface StreamingAnswerProps {
@@ -70,12 +72,22 @@ export function StreamingAnswer({ answer, chunks, isStreaming }: StreamingAnswer
         className="rounded-lg border bg-card p-4 max-h-[420px] overflow-y-auto prose prose-sm dark:prose-invert"
       >
         {answer ? (
-          <div className="whitespace-pre-wrap">{answer}</div>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
         ) : (
-          <div className="space-y-2">
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-4 w-3/4" />
-            <Skeleton className="h-4 w-1/2" />
+          <div className="flex flex-col items-center justify-center py-8 gap-3">
+            <Loader2 className="h-6 w-6 animate-spin text-primary" />
+            <div className="text-center space-y-1">
+              {chunks.length > 0 ? (
+                <p className="text-sm text-muted-foreground animate-pulse">Generating answer…</p>
+              ) : (
+                <>
+                  <p className="text-sm font-medium flex items-center gap-1.5 justify-center">
+                    <Search className="h-3.5 w-3.5" /> Retrieving context…
+                  </p>
+                  <p className="text-xs text-muted-foreground">Searching knowledge base for relevant chunks</p>
+                </>
+              )}
+            </div>
           </div>
         )}
         {isStreaming && <span className="inline-block w-2 h-4 bg-primary animate-pulse ml-0.5" />}

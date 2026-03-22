@@ -24,9 +24,11 @@ export function RibbonVixBar({ tickers = [], symbols = [], vix, market }: Ribbon
 
   const effectiveVix = vix ?? macro?.vix ?? undefined;
 
+  const isLoadingPrices = tickers.length === 0 && symbols.length > 0 && pricesQ.prices.length === 0 && pricesQ.isLoading;
+
   const displayTickers = tickers.length > 0
     ? tickers
-    : pricesQ.prices.length > 0 ? pricesQ.prices : symbols.map((s) => ({ symbol: s, price: 0, change_pct: 0 }));
+    : pricesQ.prices.length > 0 ? pricesQ.prices : [];
 
   const vixColor = effectiveVix === undefined ? "bg-gray-200" :
     effectiveVix > VIX_PANIC_THRESHOLD ? "bg-trade-red" :
@@ -43,7 +45,19 @@ export function RibbonVixBar({ tickers = [], symbols = [], vix, market }: Ribbon
   return (
     <div className="space-y-1 mb-2">
       {/* Row 1: Ticker Ribbon */}
-      {displayTickers.length > 0 && (
+      {isLoadingPrices ? (
+        <div className="ticker-ribbon rounded bg-secondary/50 py-1 px-2">
+          <div className="ticker-ribbon-inner gap-6 text-xs">
+            {Array.from({ length: 12 }).map((_, i) => (
+              <span key={i} className="inline-flex items-center gap-1 mr-6">
+                <span className="h-3 w-12 bg-muted-foreground/20 rounded animate-pulse" />
+                <span className="h-3 w-14 bg-muted-foreground/20 rounded animate-pulse" />
+                <span className="h-3 w-10 bg-muted-foreground/20 rounded animate-pulse" />
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : displayTickers.length > 0 && (
         <div className="ticker-ribbon rounded bg-secondary/50 py-1 px-2">
           <div className="ticker-ribbon-inner gap-6 text-xs">
             {[...displayTickers, ...displayTickers].map((t, i) => (

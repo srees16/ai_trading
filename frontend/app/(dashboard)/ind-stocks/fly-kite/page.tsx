@@ -210,8 +210,8 @@ function KiteDashboard({ onDisconnect }: { onDisconnect: () => void }) {
                         <td className={`py-2 pr-3 ${h.pnl >= 0 ? "pnl-positive" : "pnl-negative"}`}>
                           {formatCurrency(h.pnl)}
                         </td>
-                        <td className={`py-2 ${h.day_change_pct >= 0 ? "pnl-positive" : "pnl-negative"}`}>
-                          {h.day_change_pct.toFixed(2)}%
+                        <td className={`py-2 ${(h.day_change_pct ?? 0) >= 0 ? "pnl-positive" : "pnl-negative"}`}>
+                          {(h.day_change_pct ?? 0).toFixed(2)}%
                         </td>
                       </tr>
                     ))}

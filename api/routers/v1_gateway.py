@@ -64,6 +64,11 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
 class DWLoginRequest(BaseModel):
     client_id: str
     client_secret: str
@@ -115,6 +120,51 @@ async def api_auth_me(request: Request):
 @router.post("/auth/logout")
 async def api_logout():
     """Logout — client clears tokens; server acknowledges."""
+    return {"ok": True}
+
+
+@router.post("/auth/change-password")
+async def api_change_password(req: ChangePasswordRequest, request: Request):
+    """Change the authenticated user's password."""
+    from api.auth import verify_session_token, _verify_password, CREDENTIALS_YAML
+
+    # Verify current session
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing token")
+    payload = verify_session_token(auth_header[7:])
+    if payload is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    username = payload["u"]
+
+    # Load credentials
+    import yaml
+    if not CREDENTIALS_YAML.exists():
+        raise HTTPException(status_code=500, detail="Credentials file not found")
+    with open(CREDENTIALS_YAML, "r") as fh:
+        creds = yaml.safe_load(fh) or {}
+    users = creds.get("users", {})
+    user = users.get(username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Verify current password
+    if not _verify_password(req.current_password, user.get("password", "")):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+    # Validate new password
+    if len(req.new_password) < 6:
+        raise HTTPException(status_code=400, detail="New password must be at least 6 characters")
+
+    # Hash and save
+    import bcrypt
+    hashed = bcrypt.hashpw(req.new_password.encode(), bcrypt.gensalt()).decode()
+    users[username]["password"] = hashed
+    creds["users"] = users
+    with open(CREDENTIALS_YAML, "w") as fh:
+        yaml.dump(creds, fh, default_flow_style=False)
+
     return {"ok": True}
 
 
@@ -764,7 +814,7 @@ async def fml_history(page: int = 1, limit: int = 50):
 async def tts_chapters():
     """List available Test & Tune chapters."""
     try:
-        from testune_trade_sys import get_chapters
+        from testune_trade_sys.applied import get_chapters
         return get_chapters()
     except ImportError:
         try:
@@ -791,7 +841,7 @@ async def tts_run(req: ChapterRunRequest):
     batch_id = str(uuid.uuid4())
 
     try:
-        from testune_trade_sys import run_chapters_async
+        from testune_trade_sys.applied import run_chapters_async
         asyncio.create_task(run_chapters_async(batch_id, req.chapters))
     except ImportError:
         logger.warning("TTS module not found — run will be a no-op")
@@ -804,7 +854,7 @@ async def tts_progress(batch_id: str):
     """SSE stream for TTS batch progress."""
     async def event_stream():
         try:
-            from testune_trade_sys import get_batch_progress
+            from testune_trade_sys.applied import get_batch_progress
             import json
             while True:
                 progress = get_batch_progress(batch_id)
@@ -843,32 +893,59 @@ async def rag_sources():
     if not engine:
         return []
     try:
-        sources = await asyncio.to_thread(engine.list_sources)
-        return sources
+        names = await asyncio.to_thread(engine._vs.list_sources)
+        results = []
+        for name in names:
+            details = await asyncio.to_thread(engine._vs.get_source_details, name)
+            results.append({
+                "id": name,
+                "name": name,
+                "type": name.rsplit(".", 1)[-1] if "." in name else "pdf",
+                "doc_count": 1,
+                "chunk_count": details.get("chunks", 0),
+                "page_count": details.get("page_count"),
+                "ingested_at": details.get("ingested_at"),
+                "file_size_bytes": details.get("file_size_bytes"),
+            })
+        return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/rag/upload")
 async def rag_upload(files: List[UploadFile] = File(...)):
-    """Upload and ingest documents."""
-    engine = get_rag_engine()
-    if not engine:
-        raise HTTPException(status_code=503, detail="RAG engine unavailable")
-    try:
-        ingested = 0
-        for file in files:
-            content = await file.read()
-            await asyncio.to_thread(
-                engine.ingest_bytes,
-                content,
-                filename=file.filename or "unknown",
-                content_type=file.content_type or "application/octet-stream",
-            )
-            ingested += 1
-        return {"ingested": ingested}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    """Upload and ingest documents asynchronously in background threads."""
+    from rag_pipeline.ingestion.background_ingest import get_ingestion_manager
+
+    mgr = get_ingestion_manager()
+    tasks = []
+    for file in files:
+        content = await file.read()
+        task = mgr.submit(file.filename or "unknown", content)
+        tasks.append({"task_id": task.task_id, "file_name": task.file_name, "status": task.status.value})
+    return {"submitted": len(tasks), "tasks": tasks}
+
+
+@router.get("/rag/ingest-status")
+async def rag_ingest_status():
+    """Poll ingestion task status for all active and recently completed tasks."""
+    from rag_pipeline.ingestion.background_ingest import get_ingestion_manager
+
+    mgr = get_ingestion_manager()
+    active = mgr.get_active_tasks()
+    recent = mgr.get_recently_completed(max_age_s=300)
+    all_tasks = active + recent
+    return [
+        {
+            "task_id": t.task_id,
+            "file_name": t.file_name,
+            "status": t.status.value,
+            "stage": t.stage,
+            "stage_pct": t.stage_pct,
+            "error": t.error,
+        }
+        for t in all_tasks
+    ]
 
 
 @router.delete("/rag/sources/{source_id}")
@@ -878,8 +955,16 @@ async def rag_delete_source(source_id: str):
     if not engine:
         raise HTTPException(status_code=503, detail="RAG engine unavailable")
     try:
-        await asyncio.to_thread(engine.delete_source, source_id)
-        return {"deleted": True}
+        from rag_pipeline.ingestion.pdf_ingestion import PDFIngestionService
+
+        svc = PDFIngestionService(
+            vector_store=engine._vs,
+            config=engine._config,
+            embedding_service=engine._embedder,
+            on_change_callback=engine.invalidate_cache,
+        )
+        deleted = await asyncio.to_thread(svc.delete_source, source_id)
+        return {"deleted": True, "chunks_removed": deleted}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -891,7 +976,12 @@ async def rag_query(
     sources: str = "",
     token: str = "",
 ):
-    """SSE streaming RAG query."""
+    """SSE streaming RAG query with real token-by-token LLM output.
+
+    Uses ``query_stream()`` — the same streaming pipeline as the
+    Streamlit UI — so retrieval, context-building, and LLM generation
+    are identical.
+    """
     engine = get_rag_engine()
     rag_enabled = rag.lower() == "true"
     source_ids = [s for s in sources.split(",") if s] if sources else None
@@ -900,35 +990,73 @@ async def rag_query(
         import json
 
         if not engine or not rag_enabled:
-            # Direct LLM response (no RAG context)
             try:
                 from rag_pipeline.llm import get_llm_response
                 response = await asyncio.to_thread(get_llm_response, q)
-                yield f"event: token\ndata: {response}\n\n"
+                yield f"event: token\ndata: {json.dumps(response)}\n\n"
                 yield f"event: done\ndata: done\n\n"
             except Exception as e:
-                yield f"event: token\ndata: Error: {str(e)}\n\n"
+                yield f"event: token\ndata: {json.dumps(f'Error: {e}')}\n\n"
                 yield f"event: done\ndata: done\n\n"
             return
 
         try:
-            # Get relevant chunks
-            chunks = await asyncio.to_thread(engine.retrieve, q, source_ids=source_ids)
-            for chunk in chunks:
-                yield f"event: chunk\ndata: {json.dumps(chunk)}\n\n"
+            source_filter = source_ids[0] if source_ids and len(source_ids) == 1 else None
 
-            # Generate answer
-            answer = await asyncio.to_thread(engine.generate, q, chunks)
-            yield f"event: token\ndata: {answer}\n\n"
+            # Use query_stream() — real token-by-token streaming,
+            # identical pipeline to Streamlit UI.
+            stream_gen = engine.query_stream(q, source_filter=source_filter)
+
+            # query_stream() is a blocking generator; iterate in a
+            # thread so we don't block the asyncio event loop.
+            import queue, threading
+
+            token_queue: queue.Queue = queue.Queue()
+            _SENTINEL = object()
+
+            def _run_stream():
+                try:
+                    for tok in stream_gen:
+                        token_queue.put(tok)
+                except Exception as exc:
+                    token_queue.put(exc)
+                finally:
+                    token_queue.put(_SENTINEL)
+
+            thread = threading.Thread(target=_run_stream, daemon=True)
+            thread.start()
+
+            while True:
+                # Wait for the next token (with a generous timeout
+                # to cover model-loading / prompt-eval pauses).
+                try:
+                    item = await asyncio.to_thread(token_queue.get, True, 300)
+                except Exception:
+                    break
+
+                if item is _SENTINEL:
+                    break
+                if isinstance(item, Exception):
+                    yield f"event: token\ndata: {json.dumps(f'Error: {item}')}\n\n"
+                    break
+
+                yield f"event: token\ndata: {json.dumps(item)}\n\n"
+
             yield f"event: done\ndata: done\n\n"
         except Exception as e:
-            yield f"event: token\ndata: Error: {str(e)}\n\n"
+            logger.exception("RAG query SSE error")
+            yield f"event: token\ndata: {json.dumps(f'Error: {e}')}\n\n"
             yield f"event: done\ndata: done\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 # ─── Market Ticker Prices ────────────────────────────────────────────────
+
+_ticker_price_cache: Dict[str, Any] = {}   # cache_key -> response dict
+_ticker_cache_ts: Dict[str, float] = {}    # cache_key -> epoch timestamp
+_TICKER_CACHE_TTL_OPEN = 10    # seconds – during market hours
+_TICKER_CACHE_TTL_CLOSED = 120 # seconds – after market close
 
 def _is_market_open(market: str) -> bool:
     """Check if the stock market is currently open."""
@@ -954,11 +1082,21 @@ def _is_market_open(market: str) -> bool:
 @router.get("/market/ticker-prices")
 async def market_ticker_prices(symbols: str, market: str = "US"):
     """Get current/last-traded prices for comma-separated ticker symbols."""
+    import time
     try:
         import yfinance as yf
         syms = [s.strip() for s in symbols.split(",") if s.strip()]
         if not syms:
             return {"is_market_open": _is_market_open(market), "prices": []}
+
+        # ── cache lookup ──
+        cache_key = f"{market}:{',' .join(sorted(syms))}"
+        now = time.monotonic()
+        is_open = _is_market_open(market)
+        ttl = _TICKER_CACHE_TTL_OPEN if is_open else _TICKER_CACHE_TTL_CLOSED
+
+        if cache_key in _ticker_price_cache and (now - _ticker_cache_ts.get(cache_key, 0)) < ttl:
+            return _ticker_price_cache[cache_key]
 
         # For IND market, append .NS suffix for NSE
         yf_syms = [f"{s}.NS" if market == "IND" else s for s in syms]
@@ -991,7 +1129,16 @@ async def market_ticker_prices(symbols: str, market: str = "US"):
             return results
 
         prices = await asyncio.to_thread(_fetch)
-        return {"is_market_open": _is_market_open(market), "prices": prices}
+        result = {"is_market_open": is_open, "prices": prices}
+
+        # ── populate cache ──
+        _ticker_price_cache[cache_key] = result
+        _ticker_cache_ts[cache_key] = now
+
+        return result
     except Exception as e:
         logger.error(f"ticker-prices error: {e}")
+        # Return stale cache on error if available
+        if cache_key in _ticker_price_cache:
+            return _ticker_price_cache[cache_key]
         raise HTTPException(status_code=500, detail=str(e))
