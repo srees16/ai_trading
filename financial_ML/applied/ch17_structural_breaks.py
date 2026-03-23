@@ -349,7 +349,7 @@ def main():
     print("=" * 60)
 
     # --- 1) Download data ------------------------------------------------
-    symbol = "NVDA"
+    symbol = SYMBOLS[0]
     print(f"\n[1] Fetching close prices for {symbol} ...")
     close = get_close_series(symbol, start="2020-01-01", end="2024-12-31")
     logP = np.log(close)

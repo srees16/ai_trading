@@ -26,7 +26,7 @@ import pandas as pd
 # Allow imports from the parent directory (financial_ML/)
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from sample_data import get_close_series, generate_ohlcv_bars
+from sample_data import get_close_series, generate_ohlcv_bars, SYMBOLS
 
 # ============================================================================
 # Snippet 3.1 – Daily Volatility Estimates
@@ -298,8 +298,8 @@ if __name__ == "__main__":
     # ------------------------------------------------------------------
     # 0) Load data
     # ------------------------------------------------------------------
-    print("\n[0] Loading close prices (MSFT) …")
-    close = get_close_series("MSFT")
+    print(f"\n[0] Loading close prices ({SYMBOLS[0]}) …")
+    close = get_close_series(SYMBOLS[0])
     print(f"    {len(close)} daily bars, {close.index[0].date()} → {close.index[-1].date()}")
 
     # ------------------------------------------------------------------

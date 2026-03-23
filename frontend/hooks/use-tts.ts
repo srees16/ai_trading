@@ -48,12 +48,23 @@ export function useTtsRun() {
     return () => eventSourceRef.current?.close();
   }, [runMutation.data?.batch_id, startSSE]);
 
+  const abort = useCallback(async () => {
+    const batchId = runMutation.data?.batch_id;
+    if (!batchId) return;
+    await api.post(`/api/v1/tts/abort/${batchId}`);
+    eventSourceRef.current?.close();
+  }, [runMutation.data?.batch_id]);
+
+  const isAborted = progress?.status === "aborted";
+
   return {
     run: runMutation.mutate,
-    isRunning: runMutation.isPending || (progress !== null && progress.completed < progress.total),
+    isRunning: !isAborted && (runMutation.isPending || (progress !== null && progress.completed < progress.total)),
     batchId: runMutation.data?.batch_id ?? null,
     progress,
     error: runMutation.error?.message ?? null,
+    abort,
+    isAborted,
   };
 }
 

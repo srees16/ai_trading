@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 # Allow imports from the parent directory (financial_ML/)
 # ---------------------------------------------------------------------------
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from sample_data import get_close_series
+from sample_data import get_close_series, SYMBOLS
 
 
 # ============================================================================
@@ -255,8 +255,8 @@ if __name__ == '__main__':
     # ------------------------------------------------------------------
     # 1. Download MSFT close prices
     # ------------------------------------------------------------------
-    print("\n[1] Downloading MSFT close prices via sample_data ...")
-    close = get_close_series("MSFT")
+    print(f"\n[1] Downloading {SYMBOLS[0]} close prices via sample_data ...")
+    close = get_close_series(SYMBOLS[0])
     print(f"    Obtained {len(close)} daily observations "
           f"from {close.index[0].date()} to {close.index[-1].date()}")
 

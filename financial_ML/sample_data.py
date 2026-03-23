@@ -6,16 +6,18 @@ for cases where real data is not appropriate (e.g., tick-level bars, futures).
 """
 
 import numpy as np
+import os
 import pandas as pd
 import yfinance as yf
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Configuration — env vars override defaults when set by the runner
 # ---------------------------------------------------------------------------
-SYMBOLS = ["MSFT", "GOOG", "NVDA", "AMD"]
-DEFAULT_START = "2020-01-01"
-DEFAULT_END = "2024-12-31"
+_env_tickers = os.environ.get("FML_TICKERS")
+SYMBOLS = [t.strip() for t in _env_tickers.split(",") if t.strip()] if _env_tickers else ["MSFT", "GOOG", "NVDA", "AMD"]
+DEFAULT_START = os.environ.get("FML_DATE_START", "2020-01-01")
+DEFAULT_END = os.environ.get("FML_DATE_END", "2024-12-31")
 CACHE_DIR = Path(__file__).parent / "_cache"
 
 # ---------------------------------------------------------------------------
@@ -52,8 +54,9 @@ def get_prices(symbols=None, start=None, end=None, interval="1d"):
     return result
 
 
-def get_close_series(symbol="MSFT", start=None, end=None):
+def get_close_series(symbol=None, start=None, end=None):
     """Return a single close-price Series with DatetimeIndex."""
+    symbol = symbol or SYMBOLS[0]
     data = get_prices([symbol], start=start, end=end)
     if symbol not in data:
         raise ValueError(f"No data downloaded for {symbol}")

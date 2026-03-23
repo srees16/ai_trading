@@ -27,6 +27,7 @@ from sample_data import (
     get_close_series,
     generate_ohlcv_bars,
     generate_indicator_series,
+    SYMBOLS,
 )
 
 # ======================================================================
@@ -325,7 +326,7 @@ def main():
 
     # --- 2. Stationarity Test (STATN) ---
     print("\n--- Stationarity Test (STATN) ---")
-    close = get_close_series("SPY")
+    close = get_close_series(SYMBOLS[0])
     close_arr = close.values
 
     for ver in [0, 1]:
@@ -347,7 +348,7 @@ def main():
               linewidth=0.8, color="darkorange")
     ax2b.set_title("Volatility Indicator")
     ax2b.legend()
-    fig2.suptitle("STATN: Stationarity Diagnostics for SPY", fontsize=12)
+    fig2.suptitle(f"STATN: Stationarity Diagnostics for {SYMBOLS[0]}", fontsize=12)
     fig2.tight_layout()
 
     # --- 3. Gap Analysis Visualisation ---

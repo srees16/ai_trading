@@ -100,11 +100,21 @@ def get_chapters() -> List[Dict[str, str]]:
 
 _batch_lock = threading.Lock()
 _batch_progress: Dict[str, Dict[str, Any]] = {}
+_abort_flags: set = set()
 
 
 def get_batch_progress(batch_id: str) -> Optional[Dict[str, Any]]:
     with _batch_lock:
         return _batch_progress.get(batch_id)
+
+
+def abort_batch(batch_id: str) -> bool:
+    """Signal a running batch to stop after the current chapter."""
+    with _batch_lock:
+        if batch_id not in _batch_progress:
+            return False
+        _abort_flags.add(batch_id)
+        return True
 
 
 def _execute_chapter(
@@ -230,7 +240,14 @@ async def run_chapters_async(
         }
 
     for ch_key in chapter_keys:
+        # Check for abort before starting the next chapter
         with _batch_lock:
+            if batch_id in _abort_flags:
+                for remaining in chapter_keys[chapter_keys.index(ch_key):]:
+                    _batch_progress[batch_id]["chapters"][remaining]["status"] = "cancelled"
+                _batch_progress[batch_id]["status"] = "aborted"
+                _abort_flags.discard(batch_id)
+                return
             _batch_progress[batch_id]["chapters"][ch_key]["status"] = "running"
 
         result = await asyncio.to_thread(_execute_chapter, ch_key, tickers, date_start, date_end)

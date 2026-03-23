@@ -29,6 +29,7 @@ from sample_data import (
     get_prices,
     generate_ohlcv_bars,
     generate_returns,
+    SYMBOLS,
 )
 
 
@@ -436,7 +437,7 @@ def main():
     print("  (Testing and Tuning Market Trading Systems)")
     print("=" * 70)
 
-    prices = get_close_series("SPY")
+    prices = get_close_series(SYMBOLS[0])
     returns = prices.pct_change().dropna().values
 
     # --- 1. Permutation Test ---
@@ -484,7 +485,7 @@ def main():
 
     # --- 4. Multiple Market Permutation ---
     print("\n--- Multiple Market Permutation ---")
-    price_data = get_prices(["SPY", "QQQ"], start="2022-01-01", end="2024-01-01")
+    price_data = get_prices(SYMBOLS[:2], start="2022-01-01", end="2024-01-01")
     price_dict = {}
     min_len = min(len(df) for df in price_data.values())
     for sym, df in price_data.items():

@@ -11,14 +11,14 @@ import { Spinner } from "@/components/common/spinner";
 import { useFmlChapters, useFmlRun } from "@/hooks/use-fml";
 import { FML_CATEGORIES, DEFAULT_FML_TICKERS } from "@/lib/constants";
 import { format, parse } from "date-fns";
-import { Play, FlaskConical, CalendarDays, Tag, Upload, ChevronDown, ChevronRight } from "lucide-react";
+import { Play, FlaskConical, CalendarDays, Tag, Upload, ChevronDown, ChevronRight, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type TickerMode = "default" | "manual" | "csv";
 
 export default function FinancialMLPage() {
   const chaptersQ = useFmlChapters();
-  const { run, isRunning, progress, error } = useFmlRun();
+  const { run, isRunning, progress, error, abort, isAborted } = useFmlRun();
   const [selected, setSelected] = useState<string[]>([]);
 
   // Ticker state
@@ -178,7 +178,7 @@ export default function FinancialMLPage() {
                       selected={dateStart}
                       onSelect={(d) => { if (d) { setDateStart(d); setStartOpen(false); } }}
                       defaultMonth={dateStart}
-                      startMonth={new Date(2005, 0)}
+                      startMonth={new Date(2020, 0)}
                       endMonth={new Date(2030, 11)}
                     />
                   </PopoverContent>
@@ -203,7 +203,7 @@ export default function FinancialMLPage() {
                       selected={dateEnd}
                       onSelect={(d) => { if (d) { setDateEnd(d); setEndOpen(false); } }}
                       defaultMonth={dateEnd}
-                      startMonth={new Date(2005, 0)}
+                      startMonth={new Date(2020, 0)}
                       endMonth={new Date(2030, 11)}
                     />
                   </PopoverContent>
@@ -219,9 +219,16 @@ export default function FinancialMLPage() {
           <div className="space-y-2">
             <h3 className="text-sm font-semibold">Select Chapters</h3>
 
-            <Button className="w-full" onClick={handleRun} disabled={isRunning || selected.length === 0}>
-              {isRunning ? "Running…" : <><Play className="mr-1 h-4 w-4" /> Run Analyses ({selected.length})</>}
-            </Button>
+            <div className="flex gap-2">
+              <Button className="flex-1" onClick={handleRun} disabled={isRunning || selected.length === 0}>
+                {isRunning ? "Running…" : <><Play className="mr-1 h-4 w-4" /> Run Analyses ({selected.length})</>}
+              </Button>
+              {isRunning && (
+                <Button variant="destructive" onClick={abort}>
+                  <X className="mr-1 h-4 w-4" /> Cancel
+                </Button>
+              )}
+            </div>
             {error && <p className="text-sm text-destructive">{error}</p>}
 
             <div className="flex gap-2">
@@ -269,6 +276,14 @@ export default function FinancialMLPage() {
                   <p className="text-xs text-muted-foreground">{pct}% complete</p>
                 </div>
               </div>
+            </div>
+          )}
+
+          {isAborted && progress && (
+            <div className="content-panel p-4 border-destructive">
+              <p className="text-sm font-medium text-destructive">
+                Aborted — {progress.completed}/{progress.total} chapters completed
+              </p>
             </div>
           )}
 
