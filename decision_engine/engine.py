@@ -21,15 +21,29 @@ class DecisionEngine:
         fundamentals     40 %
         technicals       40 %
         macro-economic   20 %
+
+    Regime-adaptive: Thresholds and position scaling adjust
+    automatically based on the current market regime.
     """
     
     def __init__(self):
         """Initialize the decision engine."""
         self._macro_snapshot = None
+        self._regime_snapshot = None
 
     def set_macro_snapshot(self, snapshot) -> None:
         """Inject a ``MacroSnapshot`` for the current analysis cycle."""
         self._macro_snapshot = snapshot
+
+    def _get_regime(self):
+        \"\"\"Lazily fetch the current market regime.\"\"\"
+        if self._regime_snapshot is None:
+            try:
+                from services.regime_detector import regime_detector
+                self._regime_snapshot = regime_detector.detect()
+            except Exception:
+                pass
+        return self._regime_snapshot
 
     def generate_signal(
         self, 
@@ -106,28 +120,49 @@ class DecisionEngine:
         if earnings_blackout and combined_score > 0:
             combined_score = min(combined_score, Config.BUY_THRESHOLD - 0.01)
 
-        # ── VIX regime gate ────────────────────────────────
-        # High VIX = high fear. Suppress BUY signals in panic;
-        # dampen buy signals in caution zone.
+        # ── VIX regime gate (regime-adaptive thresholds) ────────
+        regime = self._get_regime()
+        vix_panic = regime.vix_panic if regime else Config.VIX_PANIC_THRESHOLD
+        vix_caution = regime.vix_caution if regime else Config.VIX_CAUTION_THRESHOLD
+        vix_scale = regime.position_scale if regime else Config.VIX_POSITION_SCALE
+        buy_thresh = regime.buy_threshold if regime else Config.BUY_THRESHOLD
+
         if self._macro_snapshot is not None:
             vix_val = getattr(self._macro_snapshot, 'india_vix', None)
             if vix_val is None:
                 vix_val = getattr(self._macro_snapshot, 'vix', None)
             if vix_val is not None:
-                if vix_val >= Config.VIX_PANIC_THRESHOLD and combined_score > 0:
-                    # Panic zone: clamp to HOLD
-                    combined_score = min(combined_score, Config.BUY_THRESHOLD - 0.01)
+                if vix_val >= vix_panic and combined_score > 0:
+                    combined_score = min(combined_score, buy_thresh - 0.01)
                     logger.info(
-                        "%s: VIX=%.1f (panic) — suppressing BUY signal",
-                        news_item.ticker, vix_val,
+                        "%s: VIX=%.1f (panic, threshold=%.1f) — suppressing BUY signal",
+                        news_item.ticker, vix_val, vix_panic,
                     )
-                elif vix_val >= Config.VIX_CAUTION_THRESHOLD and combined_score > 0:
-                    # Caution zone: scale down
-                    combined_score *= Config.VIX_POSITION_SCALE
+                elif vix_val >= vix_caution and combined_score > 0:
+                    combined_score *= vix_scale
                     logger.info(
-                        "%s: VIX=%.1f (caution) — scaling BUY signal by %.0f%%",
-                        news_item.ticker, vix_val, Config.VIX_POSITION_SCALE * 100,
+                        "%s: VIX=%.1f (caution, threshold=%.1f) — scaling BUY signal by %.0f%%",
+                        news_item.ticker, vix_val, vix_caution, vix_scale * 100,
                     )
+
+        # ── FII/DII gating (#10) ──────────────────────────────
+        try:
+            from scrapers.macro.fii_dii_tracker import compute_fii_dii_signal
+            fii_signal = compute_fii_dii_signal()
+            if fii_signal.is_heavy_fii_selling and combined_score > 0:
+                combined_score = min(combined_score, buy_thresh - 0.01)
+                logger.info(
+                    "%s: Heavy FII selling (%d consecutive days) — suppressing BUY",
+                    news_item.ticker, fii_signal.consecutive_fii_selling_days,
+                )
+            elif fii_signal.is_fii_selling_pressure and combined_score > 0:
+                combined_score *= 0.7
+                logger.info(
+                    "%s: FII selling pressure — scaling BUY by 70%%",
+                    news_item.ticker,
+                )
+        except Exception:
+            pass  # FII data unavailable — degrade gracefully
         
         # Determine decision
         decision = self._score_to_decision(combined_score)
@@ -373,14 +408,29 @@ class DecisionEngine:
         return max(-1.0, min(1.0, score))
     
     def _score_to_decision(self, score: float) -> DecisionTag:
-        """Convert combined score to decision tag."""
-        if score >= Config.STRONG_BUY_THRESHOLD:
+        """Convert combined score to decision tag.
+
+        Uses regime-adaptive thresholds when available.
+        """
+        regime = self._get_regime()
+        if regime:
+            sb = regime.strong_buy_threshold
+            b = regime.buy_threshold
+            s = regime.sell_threshold
+            ss = regime.strong_sell_threshold
+        else:
+            sb = Config.STRONG_BUY_THRESHOLD
+            b = Config.BUY_THRESHOLD
+            s = Config.SELL_THRESHOLD
+            ss = Config.STRONG_SELL_THRESHOLD
+
+        if score >= sb:
             return DecisionTag.STRONG_BUY
-        elif score >= Config.BUY_THRESHOLD:
+        elif score >= b:
             return DecisionTag.BUY
-        elif score <= Config.STRONG_SELL_THRESHOLD:
+        elif score <= ss:
             return DecisionTag.STRONG_SELL
-        elif score <= Config.SELL_THRESHOLD:
+        elif score <= s:
             return DecisionTag.SELL
         else:
             return DecisionTag.HOLD

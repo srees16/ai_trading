@@ -152,7 +152,7 @@ function KiteLanding({
 
             {isStarting && (
               <p className="text-xs text-center text-muted-foreground">
-                Selenium is automating the Zerodha login. If a browser window opens, complete the TOTP/2FA step.
+                Initiating Zerodha login. If a browser window opens, complete the TOTP/2FA step.
               </p>
             )}
           </>

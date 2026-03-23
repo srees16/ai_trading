@@ -12,12 +12,21 @@ Designed for swing / long-term trades (CNC product).
 
 from __future__ import annotations
 
+import json
 import logging
-from dataclasses import dataclass, field
+import sqlite3
+import os
+from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# Persistence path for trade monitor state
+_MONITOR_DB = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "data", "trade_monitor_state.sqlite3",
+)
 
 
 @dataclass
@@ -58,10 +67,72 @@ class TradeMonitor:
     def __init__(self, kite=None):
         self.kite = kite
         self._trades: Dict[str, MonitoredTrade] = {}  # keyed by entry_order_id
+        self._init_state_db()
+        self._restore_state()
+
+    # ------------------------------------------------------------------
+    # State persistence (crash recovery)
+    # ------------------------------------------------------------------
+
+    def _init_state_db(self):
+        """Create the SQLite state table if it doesn't exist."""
+        try:
+            os.makedirs(os.path.dirname(_MONITOR_DB), exist_ok=True)
+            with sqlite3.connect(_MONITOR_DB) as conn:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS monitored_trades (
+                        entry_order_id TEXT PRIMARY KEY,
+                        state_json TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                """)
+        except Exception as e:
+            logger.warning("TradeMonitor: state DB init failed (non-fatal): %s", e)
+
+    def _persist_state(self):
+        """Persist all trades to SQLite for crash recovery."""
+        try:
+            with sqlite3.connect(_MONITOR_DB) as conn:
+                # Clear and re-insert (simple, atomic via WAL)
+                conn.execute("DELETE FROM monitored_trades")
+                now = datetime.now().isoformat()
+                for oid, trade in self._trades.items():
+                    d = asdict(trade)
+                    d["opened_at"] = trade.opened_at.isoformat()
+                    conn.execute(
+                        "INSERT INTO monitored_trades (entry_order_id, state_json, updated_at) VALUES (?, ?, ?)",
+                        (oid, json.dumps(d), now),
+                    )
+        except Exception as e:
+            logger.warning("TradeMonitor: persist failed (non-fatal): %s", e)
+
+    def _restore_state(self):
+        """Restore active trades from SQLite on startup."""
+        try:
+            with sqlite3.connect(_MONITOR_DB) as conn:
+                rows = conn.execute("SELECT entry_order_id, state_json FROM monitored_trades").fetchall()
+            restored = 0
+            for oid, state_json in rows:
+                d = json.loads(state_json)
+                d["opened_at"] = datetime.fromisoformat(d["opened_at"])
+                trade = MonitoredTrade(**d)
+                if not trade.closed:
+                    self._trades[oid] = trade
+                    restored += 1
+            if restored:
+                logger.info("TradeMonitor: restored %d active trades from crash-recovery DB", restored)
+        except Exception as e:
+            logger.warning("TradeMonitor: restore failed (non-fatal): %s", e)
+
+    # ------------------------------------------------------------------
+    # Trade registration & queries
+    # ------------------------------------------------------------------
 
     def register_trade(self, trade: MonitoredTrade) -> None:
         """Register a new trade for monitoring."""
         self._trades[trade.entry_order_id] = trade
+        self._persist_state()
         logger.info(
             "TradeMonitor: registered %s %s qty=%d entry=%.2f SL=%.2f TP=%.2f",
             trade.side, trade.symbol, trade.quantity,
@@ -206,8 +277,18 @@ class TradeMonitor:
                 if trail_event:
                     events.append(trail_event)
 
+        # ── Corporate action adjustment (#2) ──────────────────
+        # Check for pending SPLIT/BONUS on active trades and adjust
+        # position sizes, SL, and TP accordingly.
+        ca_events = self._check_corporate_actions()
+        events.extend(ca_events)
+
         # ── Desktop notifications for SL/TP events ────────────
         self._dispatch_notifications(events)
+
+        # ── Persist state after all mutations ─────────────────
+        if events:
+            self._persist_state()
 
         return events
 
@@ -380,6 +461,74 @@ class TradeMonitor:
         except Exception as exc:
             logger.error("TP re-place exception for %s: %s", trade.symbol, exc)
         return None
+
+    def _check_corporate_actions(self) -> List[Dict]:
+        """Check for pending SPLIT/BONUS corporate actions on active trades.
+
+        When a split or bonus is detected for a monitored position,
+        the local trade record's quantity, entry_price, SL, and TP are
+        adjusted and existing SL/TP Kite orders are cancelled and
+        re-placed at the adjusted prices.
+        """
+        events: List[Dict] = []
+        active = [t for t in self._trades.values() if t.is_active]
+        if not active:
+            return events
+
+        try:
+            from services.corporate_actions import get_actions_for_symbols, adjust_position
+            symbols = [t.symbol for t in active]
+            pending = get_actions_for_symbols(symbols)
+            if not pending:
+                return events
+
+            for trade in active:
+                action = pending.get(trade.symbol)
+                if action is None:
+                    continue
+
+                adj = adjust_position(
+                    qty=trade.quantity,
+                    entry_price=trade.entry_price,
+                    stop_loss=trade.stop_loss,
+                    target_price=trade.target_price,
+                    action=action,
+                )
+
+                old_qty = trade.quantity
+                trade.quantity = adj["quantity"]
+                trade.entry_price = adj["entry_price"]
+                trade.stop_loss = adj["stop_loss"]
+                trade.target_price = adj["target_price"]
+
+                logger.info(
+                    "Corporate action %s on %s: qty %d→%d, entry %.2f→%.2f",
+                    action.action_type, trade.symbol,
+                    old_qty, trade.quantity,
+                    trade.entry_price, adj["entry_price"],
+                )
+
+                # Cancel and re-place SL/TP at adjusted prices
+                self._cancel_order(trade.sl_order_id, trade.symbol, "SL")
+                self._cancel_order(trade.tp_order_id, trade.symbol, "TP")
+                trade.sl_order_id = None
+                trade.tp_order_id = None
+                self._place_sl_for_trade(trade)
+                self._place_tp_for_trade(trade)
+
+                events.append({
+                    "type": "CORPORATE_ACTION_ADJUSTED",
+                    "symbol": trade.symbol,
+                    "action_type": action.action_type,
+                    "old_qty": old_qty,
+                    "new_qty": trade.quantity,
+                    "description": action.description[:80],
+                })
+
+        except Exception as exc:
+            logger.debug("Corporate action check failed (non-fatal): %s", exc)
+
+        return events
 
     def summary(self) -> Dict:
         """Return a summary of monitored trades."""

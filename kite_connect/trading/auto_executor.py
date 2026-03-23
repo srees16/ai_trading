@@ -212,6 +212,11 @@ class AutoExecutor:
             screened_df = self._enrich_with_ltp(screened_df, _cb)
             report.screened_df = screened_df
 
+        # ── 3b. Order book depth: filter illiquid stocks ───────
+        if self.kite is not None and not screened_df.empty:
+            screened_df = self._filter_by_spread(screened_df, _cb)
+            report.screened_df = screened_df
+
         # ── 4.  Risk management / trade plans ──────────────────
         _cb("Generating trade plans with risk management …")
         plans = self.risk_mgr.plan_trades(screened_df)
@@ -221,6 +226,11 @@ class AutoExecutor:
         if not plans:
             _cb("No trade plans met the R:R threshold")
             return report
+
+        # ── 4b. Portfolio correlation check ────────────────────
+        plans = self._filter_correlated(plans, _cb)
+        report.trade_plans = plans
+        report.plans_count = len(plans)
 
         # ── 5.  Order placement ────────────────────────────────
         if self.auto_place and self.kite is not None:
@@ -253,7 +263,115 @@ class AutoExecutor:
             db.save_orders(order_results, trade_plans)
         except Exception as exc:
             logger.warning("Order persistence failed (non-fatal): %s", exc)
+    # ── Order book depth: illiquidity filter (#11) ─────────────
 
+    def _filter_by_spread(self, screened_df: pd.DataFrame, _cb) -> pd.DataFrame:
+        \"\"\"Remove stocks with bid-ask spread > 0.5%. Reduce position for > 0.3%.\"\"\"
+        try:
+            symbols = screened_df["symbol"].tolist()
+            instrument_keys = [f"NSE:{s}" for s in symbols]
+            quote_data = self.kite.quote(instrument_keys)
+
+            remove_syms = set()
+            for idx, row in screened_df.iterrows():
+                key = f"NSE:{row['symbol']}"
+                depth = quote_data.get(key, {}).get("depth", {})
+                buy_depth = depth.get("buy", [])
+                sell_depth = depth.get("sell", [])
+
+                if buy_depth and sell_depth:
+                    best_bid = buy_depth[0].get("price", 0)
+                    best_ask = sell_depth[0].get("price", 0)
+                    if best_bid > 0 and best_ask > 0:
+                        spread_pct = (best_ask - best_bid) / best_bid
+                        if spread_pct > 0.01:  # > 1% spread — too illiquid
+                            remove_syms.add(row["symbol"])
+                            _cb(f"  Removed {row['symbol']} — spread {spread_pct:.1%} > 1%")
+                        elif spread_pct > 0.005:  # > 0.5% — flag as illiquid
+                            _cb(f"  Warning: {row['symbol']} spread {spread_pct:.2%}")
+
+            if remove_syms:
+                screened_df = screened_df[~screened_df["symbol"].isin(remove_syms)]
+                _cb(f"Depth filter removed {len(remove_syms)} illiquid stocks")
+
+        except Exception as exc:
+            logger.warning("Depth filter failed (non-fatal): %s", exc)
+
+        return screened_df
+
+    # ── Portfolio correlation check (#6) ───────────────────────
+
+    def _filter_correlated(self, plans: List[TradePlan], _cb) -> List[TradePlan]:
+        \"\"\"Block trades if avg pairwise correlation with existing positions > 0.7.\"\"\"
+        if not plans or self.kite is None:
+            return plans
+
+        try:
+            import yfinance as yf
+            import numpy as np
+
+            # Get existing held symbols
+            from kite_connect.trading.order_service import get_holdings
+            holdings = get_holdings(self.kite)
+            held_syms = [h.get("tradingsymbol", "") for h in holdings
+                         if int(h.get("quantity", 0)) > 0]
+
+            if not held_syms:
+                return plans  # No positions to correlate against
+
+            # Combine held + proposed symbols
+            proposed_syms = [p.symbol for p in plans]
+            all_syms = list(set(held_syms + proposed_syms))
+
+            # Download 60-day close prices
+            ns_tickers = [f"{s}.NS" for s in all_syms]
+            data = yf.download(ns_tickers, period="60d", progress=False)
+            if data.empty:
+                return plans
+
+            # Build returns matrix
+            if len(ns_tickers) == 1:
+                returns = data["Close"].pct_change().dropna().to_frame(ns_tickers[0])
+            else:
+                returns = data["Close"].pct_change().dropna()
+
+            if returns.shape[1] < 2:
+                return plans
+
+            corr_matrix = returns.corr()
+
+            approved: List[TradePlan] = []
+            for plan in plans:
+                ns_key = f"{plan.symbol}.NS"
+                if ns_key not in corr_matrix.columns:
+                    approved.append(plan)
+                    continue
+
+                # Check avg correlation with held positions
+                held_keys = [f"{s}.NS" for s in held_syms if f"{s}.NS" in corr_matrix.columns]
+                if not held_keys:
+                    approved.append(plan)
+                    continue
+
+                corrs = [abs(corr_matrix.loc[ns_key, hk])
+                         for hk in held_keys if hk != ns_key and hk in corr_matrix.index]
+
+                if corrs:
+                    avg_corr = float(np.mean(corrs))
+                    if avg_corr > 0.7:
+                        _cb(f"  Blocked {plan.symbol} — avg correlation {avg_corr:.2f} > 0.7 with portfolio")
+                        continue
+
+                approved.append(plan)
+
+            blocked = len(plans) - len(approved)
+            if blocked > 0:
+                _cb(f"Correlation filter blocked {blocked} highly-correlated trades")
+            return approved
+
+        except Exception as exc:
+            logger.warning("Correlation filter failed (non-fatal): %s", exc)
+            return plans
     # ── Live price enrichment ──────────────────────────────────
 
     def _enrich_with_ltp(
@@ -583,6 +701,13 @@ class AutoExecutor:
                         entry_order_id=result.order_id,
                     ))
                 existing_symbols.add(plan.symbol)
+
+                # ── Persist to trade journal ──────────────────
+                try:
+                    self._journal_entry(plan, result)
+                except Exception as jexc:
+                    logger.debug("Trade journal write failed: %s", jexc)
+
                 # Desktop notification on successful order
                 self._notify_order(plan.symbol, plan.side, plan.quantity,
                                    plan.entry_price, result.order_id)
@@ -596,6 +721,51 @@ class AutoExecutor:
         self._trade_monitor = monitor
 
         return results
+
+    # ── Trade journal persistence ────────────────────────────
+
+    def _journal_entry(self, plan, result):
+        """Write a trade journal row for a successfully placed order."""
+        from datetime import datetime
+        try:
+            from database.service import get_database_service
+            db = get_database_service()
+            if not db:
+                return
+            from database.models import TradeJournal
+            regime = None
+            try:
+                from services.regime_detector import detect_regime
+                regime = detect_regime().name
+            except Exception:
+                pass
+
+            entry = TradeJournal(
+                symbol=plan.symbol,
+                exchange="NSE",
+                side=plan.side,
+                trade_type="CNC",
+                entry_price=plan.entry_price,
+                entry_date=datetime.now(),
+                quantity=plan.quantity,
+                strategy_name=getattr(plan, "strategy_name", None),
+                decision_score=getattr(plan, "score", None),
+                screener_score=getattr(plan, "screener_score", None),
+                regime_at_entry=regime,
+                planned_sl=plan.stop_loss,
+                planned_tp=plan.target_price,
+                entry_order_id=result.order_id,
+                mode="live",
+                is_open=True,
+            )
+            session = db.Session()
+            try:
+                session.add(entry)
+                session.commit()
+            finally:
+                session.close()
+        except Exception as exc:
+            logger.debug("Journal persistence skipped: %s", exc)
 
     # ── Notification helpers ───────────────────────────────────
 

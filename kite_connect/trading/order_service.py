@@ -3,13 +3,37 @@ Order placement service for Zerodha Kite Connect.
 
 Provides functions to place, modify, and cancel orders, as well as
 retrieve order book and position data.  Used by the Streamlit UI.
+
+Features:
+  - Idempotent retry with exponential backoff (max 3 attempts)
+  - Circuit breaker: halts orders after consecutive failures
+  - Slippage tracking: logs expected vs actual fill price
+  - Uses Kite's ``tag`` field for order idempotency
 """
 
+import hashlib
 import logging
+import time
 
 from kiteconnect import exceptions as kite_exceptions
 
 logger = logging.getLogger(__name__)
+
+# Retry configuration
+_MAX_RETRIES = 3
+_BACKOFF_SECONDS = [1, 2, 4]  # 1s, 2s, 4s
+
+# ── Circuit breaker (3 consecutive failures → halt for 2 min) ──
+try:
+    from infrastructure.fault_isolation import CircuitBreaker, CircuitOpenError
+    _order_circuit = CircuitBreaker(
+        "kite_orders",
+        failure_threshold=3,
+        reset_timeout=120.0,  # 2 minutes before half-open test
+    )
+except ImportError:
+    _order_circuit = None
+    CircuitOpenError = RuntimeError
 
 
 # ── Order Placement ────────────────────────────────────────────
@@ -49,79 +73,136 @@ def place_order(kite, symbol, exchange, transaction_type, quantity,
         ``{"success": True, "order_id": "..."}`` on success, or
         ``{"success": False, "error": "..."}`` on failure.
     """
-    try:
-        params = dict(
-            tradingsymbol=symbol,
-            exchange=exchange,
-            transaction_type=transaction_type,
-            quantity=int(quantity),
-            order_type=order_type,
-            product=product,
-            validity=validity,
-            variety="regular",
-        )
-        if order_type in ("LIMIT", "SL") and price is not None:
-            params["price"] = float(price)
-        if order_type in ("SL", "SL-M") and trigger_price is not None:
-            params["trigger_price"] = float(trigger_price)
+    # ── Circuit breaker check ──
+    if _order_circuit:
+        state = _order_circuit.state
+        if state == "OPEN":
+            logger.error("Circuit breaker OPEN — rejecting order for %s", symbol)
+            return {"success": False, "error": "Circuit breaker OPEN: Kite API consecutive failures detected. Halting orders for safety."}
 
-        order_id = kite.place_order(**params)
-        result = {"success": True, "order_id": order_id}
+    # Generate idempotency tag from order parameters
+    tag_seed = f"{symbol}:{exchange}:{transaction_type}:{quantity}:{order_type}:{price}:{int(time.time()//60)}"
+    idempotency_tag = hashlib.sha256(tag_seed.encode()).hexdigest()[:20]
 
-        # For MARKET orders, try to get fill price from order history
-        fill_price = price
-        status_text = None
-        filled_qty = None
-        if order_type == "MARKET":
-            try:
-                import time
-                time.sleep(0.5)
-                history = kite.order_history(order_id)
-                if history:
-                    last = history[-1]
-                    fill_price = last.get("average_price") or price
-                    status_text = last.get("status")
-                    filled_qty = last.get("filled_quantity")
-            except Exception:
-                pass
+    expected_price = price  # Track for slippage measurement
 
-        _persist_to_db(symbol, exchange, transaction_type, int(quantity),
-                       order_type, product, fill_price, order_id=order_id,
-                       success=True, fill_price=fill_price, filled_qty=filled_qty,
-                       status_text=status_text)
-        _send_order_email(symbol, exchange, transaction_type, int(quantity),
-                          fill_price or price or 0, str(order_id),
-                          status_text or "PLACED")
-        return result
+    for attempt in range(_MAX_RETRIES):
+        try:
+            # Before retry, check if previous attempt silently succeeded
+            if attempt > 0:
+                try:
+                    orders = kite.orders() or []
+                    for o in orders:
+                        if o.get("tag") == idempotency_tag and o.get("status") in ("OPEN", "COMPLETE", "TRIGGER PENDING"):
+                            logger.info("Idempotent duplicate detected for %s (tag=%s) — skipping retry", symbol, idempotency_tag)
+                            return {"success": True, "order_id": o.get("order_id")}
+                except Exception:
+                    pass
 
-    except kite_exceptions.InputException as e:
-        result = {"success": False, "error": f"Invalid input: {e}"}
-        _persist_to_db(symbol, exchange, transaction_type, int(quantity),
-                       order_type, product, price, success=False, error_msg=str(e))
-        _send_order_email(symbol, exchange, transaction_type, int(quantity),
-                          price or 0, "-", "FAILED", error=str(e))
-        return result
-    except kite_exceptions.TokenException as e:
-        return {"success": False, "error": f"Session expired: {e}"}
-    except kite_exceptions.OrderException as e:
-        result = {"success": False, "error": f"Order rejected: {e}"}
-        _persist_to_db(symbol, exchange, transaction_type, int(quantity),
-                       order_type, product, price, success=False, error_msg=str(e))
-        _send_order_email(symbol, exchange, transaction_type, int(quantity),
-                          price or 0, "-", "REJECTED", error=str(e))
-        return result
-    except Exception as e:
-        result = {"success": False, "error": str(e)}
-        _persist_to_db(symbol, exchange, transaction_type, int(quantity),
-                       order_type, product, price, success=False, error_msg=str(e))
-        _send_order_email(symbol, exchange, transaction_type, int(quantity),
-                          price or 0, "-", "FAILED", error=str(e))
-        return result
+            params = dict(
+                tradingsymbol=symbol,
+                exchange=exchange,
+                transaction_type=transaction_type,
+                quantity=int(quantity),
+                order_type=order_type,
+                product=product,
+                validity=validity,
+                variety="regular",
+                tag=idempotency_tag,
+            )
+            if order_type in ("LIMIT", "SL") and price is not None:
+                params["price"] = float(price)
+            if order_type in ("SL", "SL-M") and trigger_price is not None:
+                params["trigger_price"] = float(trigger_price)
+
+            order_id = kite.place_order(**params)
+            result = {"success": True, "order_id": order_id}
+
+            # For MARKET orders, try to get fill price from order history
+            fill_price = price
+            status_text = None
+            filled_qty = None
+            if order_type == "MARKET":
+                try:
+                    time.sleep(0.5)
+                    history = kite.order_history(order_id)
+                    if history:
+                        last = history[-1]
+                        fill_price = last.get("average_price") or price
+                        status_text = last.get("status")
+                        filled_qty = last.get("filled_quantity")
+                except Exception:
+                    pass
+
+            # ── Slippage tracking ──
+            slippage_bps = 0.0
+            if expected_price and fill_price and expected_price > 0:
+                slippage_bps = abs(fill_price - expected_price) / expected_price * 10000
+                if slippage_bps > 5:  # > 5 bps slippage
+                    logger.info(
+                        "SLIPPAGE: %s %s expected=%.2f filled=%.2f slip=%.1f bps",
+                        transaction_type, symbol, expected_price, fill_price, slippage_bps,
+                    )
+            result["slippage_bps"] = round(slippage_bps, 2)
+            result["expected_price"] = expected_price
+            result["fill_price"] = fill_price
+
+            _persist_to_db(symbol, exchange, transaction_type, int(quantity),
+                           order_type, product, fill_price, order_id=order_id,
+                           success=True, fill_price=fill_price, filled_qty=filled_qty,
+                           status_text=status_text, slippage_bps=slippage_bps)
+            _send_order_email(symbol, exchange, transaction_type, int(quantity),
+                              fill_price or price or 0, str(order_id),
+                              status_text or "PLACED")
+            if _order_circuit:
+                _order_circuit._on_success()
+            return result
+
+        except kite_exceptions.InputException as e:
+            # Non-retryable: bad input
+            result = {"success": False, "error": f"Invalid input: {e}"}
+            _persist_to_db(symbol, exchange, transaction_type, int(quantity),
+                           order_type, product, price, success=False, error_msg=str(e))
+            _send_order_email(symbol, exchange, transaction_type, int(quantity),
+                              price or 0, "-", "FAILED", error=str(e))
+            return result
+        except kite_exceptions.TokenException as e:
+            # Non-retryable: session expired
+            return {"success": False, "error": f"Session expired: {e}"}
+        except kite_exceptions.OrderException as e:
+            # Non-retryable: exchange rejection
+            result = {"success": False, "error": f"Order rejected: {e}"}
+            _persist_to_db(symbol, exchange, transaction_type, int(quantity),
+                           order_type, product, price, success=False, error_msg=str(e))
+            _send_order_email(symbol, exchange, transaction_type, int(quantity),
+                              price or 0, "-", "REJECTED", error=str(e))
+            return result
+        except Exception as e:
+            # Retryable: network/transient errors
+            if _order_circuit:
+                _order_circuit._on_failure()
+            if attempt < _MAX_RETRIES - 1:
+                wait = _BACKOFF_SECONDS[attempt]
+                logger.warning(
+                    "Order attempt %d/%d failed for %s: %s — retrying in %ds",
+                    attempt + 1, _MAX_RETRIES, symbol, e, wait,
+                )
+                time.sleep(wait)
+                continue
+            result = {"success": False, "error": str(e)}
+            _persist_to_db(symbol, exchange, transaction_type, int(quantity),
+                           order_type, product, price, success=False, error_msg=str(e))
+            _send_order_email(symbol, exchange, transaction_type, int(quantity),
+                              price or 0, "-", "FAILED", error=str(e))
+            return result
+
+    return {"success": False, "error": "Max retries exhausted"}
 
 
 def _persist_to_db(symbol, exchange, side, quantity, order_type, product,
                    price, order_id=None, success=True, error_msg=None,
-                   fill_price=None, filled_qty=None, status_text=None):
+                   fill_price=None, filled_qty=None, status_text=None,
+                   slippage_bps=0.0):
     """Best-effort persist of every order to the database."""
     try:
         import sys, os
@@ -194,3 +275,37 @@ def cancel_order(kite, order_id, variety="regular"):
         return {"success": True}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+def modify_order(kite, order_id, trigger_price=None, price=None, variety="regular"):
+    """Modify an existing order (SL price update, etc.)."""
+    try:
+        params = {"variety": variety, "order_id": order_id}
+        if trigger_price is not None:
+            params["trigger_price"] = float(trigger_price)
+        if price is not None:
+            params["price"] = float(price)
+        kite.modify_order(**params)
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def get_circuit_breaker_status() -> dict:
+    """Return current state of the Kite API circuit breaker."""
+    if not _order_circuit:
+        return {"enabled": False}
+    return {
+        "enabled": True,
+        "state": _order_circuit.state,
+        "failures": _order_circuit._failures,
+        "threshold": _order_circuit.failure_threshold,
+        "reset_timeout_s": _order_circuit.reset_timeout,
+    }
+
+
+def reset_circuit_breaker():
+    """Manually reset the circuit breaker to CLOSED state."""
+    if _order_circuit:
+        _order_circuit.reset()
+        logger.info("Kite order circuit breaker manually reset")

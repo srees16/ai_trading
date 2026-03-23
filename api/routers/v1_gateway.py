@@ -460,14 +460,54 @@ async def screener_run(req: ScreenerRunRequest):
 
 @router.post("/screener/execute")
 async def screener_execute(req: Dict[str, Any]):
-    """Execute trade plans via Kite."""
+    """Execute trade plans via Kite.
+
+    SAFETY: Requires IntegratedScorer verdicts before order placement.
+    Only BUY/STRONG_BUY symbols are forwarded to the order manager.
+    """
     kite = get_kite_session()
     if not kite:
         raise HTTPException(status_code=503, detail="Kite session not active")
     try:
+        plans = req.get("plans", [])
+        if not plans:
+            return {"orders": [], "message": "No plans provided"}
+
+        # ── Verdict enforcement: score all symbols first ──
+        from services.integrated_scorer import IntegratedScorer
+        from datetime import date, timedelta
+
+        symbols = list({p.get("symbol", "") for p in plans if p.get("symbol")})
+        ns_tickers = [f"{s}.NS" for s in symbols]
+
+        scorer = IntegratedScorer()
+        end_dt = date.today()
+        start_dt = end_dt - timedelta(days=365)
+        verdicts = scorer.evaluate(
+            tickers=ns_tickers, market="IND",
+            date_range=(str(start_dt), str(end_dt)),
+            skip_layers=["rag"],
+        )
+
+        buy_tags = {"BUY", "STRONG_BUY"}
+        approved = {
+            v.ticker.replace(".NS", "").replace(".BO", "")
+            for v in verdicts if v.classification in buy_tags
+        }
+
+        # Filter plans to only approved symbols
+        filtered_plans = [p for p in plans if p.get("symbol") in approved]
+        blocked = len(plans) - len(filtered_plans)
+        if blocked > 0:
+            logger.info("Verdict filter blocked %d/%d plans (non-BUY)", blocked, len(plans))
+
+        if not filtered_plans:
+            return {"orders": [], "message": f"No plans passed verdict filter ({blocked} blocked)"}
+
         from kite_connect.trading.order_manager import OrderManager
         om = OrderManager(kite)
-        results = await asyncio.to_thread(om.execute_plans, req.get("plans", []))
+        results = await asyncio.to_thread(om.execute_plans, filtered_plans)
+        results["verdict_blocked"] = blocked
         return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -649,6 +689,96 @@ async def kite_positions():
     try:
         positions = await asyncio.to_thread(kite.positions)
         return positions.get("net", [])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/kite/portfolio/pnl")
+async def kite_portfolio_pnl():
+    """Real-time portfolio P&L summary.
+
+    Aggregates net positions and holdings into a single P&L view
+    with total invested, current value, unrealised P&L, and
+    day change.
+    """
+    kite = get_kite_session()
+    if not kite:
+        raise HTTPException(status_code=503, detail="Kite session not active")
+    try:
+        positions_data = await asyncio.to_thread(kite.positions)
+        holdings_data = await asyncio.to_thread(kite.holdings)
+
+        net_positions = positions_data.get("net", [])
+        total_pnl = 0.0
+        total_invested = 0.0
+        total_current = 0.0
+        day_pnl = 0.0
+        position_details = []
+
+        for p in net_positions:
+            qty = p.get("quantity", 0)
+            if qty == 0:
+                continue
+            avg = p.get("average_price", 0)
+            ltp = p.get("last_price", 0)
+            pnl = p.get("pnl", 0)
+            day_m2m = p.get("day_m2m", 0)
+            invested = abs(qty) * avg
+            current = abs(qty) * ltp
+
+            total_pnl += pnl
+            total_invested += invested
+            total_current += current
+            day_pnl += day_m2m
+
+            position_details.append({
+                "symbol": p.get("tradingsymbol", ""),
+                "quantity": qty,
+                "avg_price": round(avg, 2),
+                "ltp": round(ltp, 2),
+                "pnl": round(pnl, 2),
+                "pnl_pct": round((pnl / invested * 100) if invested else 0, 2),
+                "day_change": round(day_m2m, 2),
+            })
+
+        # Add holdings (CNC delivery positions)
+        for h in (holdings_data or []):
+            qty = h.get("quantity", 0)
+            if qty == 0:
+                continue
+            avg = h.get("average_price", 0)
+            ltp = h.get("last_price", 0)
+            pnl = h.get("pnl", 0)
+            day_change = h.get("day_change", 0)
+            invested = qty * avg
+            current = qty * ltp
+
+            total_pnl += pnl
+            total_invested += invested
+            total_current += current
+            day_pnl += day_change * qty
+
+            position_details.append({
+                "symbol": h.get("tradingsymbol", ""),
+                "quantity": qty,
+                "avg_price": round(avg, 2),
+                "ltp": round(ltp, 2),
+                "pnl": round(pnl, 2),
+                "pnl_pct": round((pnl / invested * 100) if invested else 0, 2),
+                "day_change": round(day_change * qty, 2),
+                "holding": True,
+            })
+
+        return {
+            "total_invested": round(total_invested, 2),
+            "total_current": round(total_current, 2),
+            "total_pnl": round(total_pnl, 2),
+            "total_pnl_pct": round(
+                (total_pnl / total_invested * 100) if total_invested else 0, 2
+            ),
+            "day_pnl": round(day_pnl, 2),
+            "positions": position_details,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

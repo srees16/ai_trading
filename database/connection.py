@@ -19,31 +19,70 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseConfig:
-    """Database configuration from environment variables."""
+    """Database configuration from environment variables.
+    
+    Supports two modes:
+    1. Direct URL: Set CENTURION_DATABASE_URL (e.g. Neon pooled connection string)
+    2. Component-based: Set individual DB_HOST, DB_PORT, etc.
+    """
     
     def __init__(self):
+        # Direct connection URL takes priority (Neon, Railway, etc.)
+        self.database_url = os.getenv('CENTURION_DATABASE_URL', os.getenv('DATABASE_URL', ''))
+        
+        # Component-based config (fallback)
         self.host = os.getenv('CENTURION_DB_HOST', os.getenv('DB_HOST', 'localhost'))
         self.port = int(os.getenv('CENTURION_DB_PORT', os.getenv('DB_PORT', '9003')))
         self.database = os.getenv('CENTURION_DB_NAME', os.getenv('DB_NAME', 'centurion_trading'))
         self.username = os.getenv('CENTURION_DB_USER', os.getenv('DB_USER', ''))
         self.password = os.getenv('CENTURION_DB_PASSWORD', os.getenv('DB_PASSWORD', ''))
-        self.pool_size = int(os.getenv('CENTURION_DB_POOL_SIZE', os.getenv('DB_POOL_SIZE', '10')))
-        self.max_overflow = int(os.getenv('CENTURION_DB_MAX_OVERFLOW', os.getenv('DB_MAX_OVERFLOW', '20')))
+        
+        # Pool settings (smaller defaults for serverless like Neon free tier)
+        self.pool_size = int(os.getenv('CENTURION_DB_POOL_SIZE', os.getenv('DB_POOL_SIZE', '5')))
+        self.max_overflow = int(os.getenv('CENTURION_DB_MAX_OVERFLOW', os.getenv('DB_MAX_OVERFLOW', '5')))
         self.pool_timeout = int(os.getenv('CENTURION_DB_POOL_TIMEOUT', os.getenv('DB_POOL_TIMEOUT', '30')))
-        self.pool_recycle = int(os.getenv('CENTURION_DB_POOL_RECYCLE', os.getenv('DB_POOL_RECYCLE', '1800')))
+        self.pool_recycle = int(os.getenv('CENTURION_DB_POOL_RECYCLE', os.getenv('DB_POOL_RECYCLE', '300')))
         self.echo_sql = os.getenv('DB_ECHO_SQL', 'false').lower() == 'true'
         self.ssl_mode = os.getenv('DB_SSL_MODE', 'prefer')
         
-        # TimescaleDB specific
-        self.enable_timescaledb = os.getenv('DB_ENABLE_TIMESCALEDB', 'true').lower() == 'true'
+        # TimescaleDB specific (disable for Neon which doesn't support it)
+        self.enable_timescaledb = os.getenv('DB_ENABLE_TIMESCALEDB', 'false').lower() == 'true'
         self.chunk_interval = os.getenv('DB_CHUNK_INTERVAL', '7 days')
+    
+    @property
+    def is_neon(self) -> bool:
+        """Check if using Neon serverless PostgreSQL."""
+        return 'neon' in self.database_url.lower() or 'neon' in self.host.lower()
     
     @property
     def connection_string(self) -> str:
         """Build PostgreSQL connection string."""
+        if self.database_url:
+            url = self.database_url
+            # Ensure SQLAlchemy driver prefix
+            if url.startswith('postgres://'):
+                url = url.replace('postgres://', 'postgresql+psycopg2://', 1)
+            elif url.startswith('postgresql://') and '+' not in url.split('://')[0]:
+                url = url.replace('postgresql://', 'postgresql+psycopg2://', 1)
+            # Append sslmode for Neon if not already present
+            if self.is_neon and 'sslmode' not in url:
+                separator = '&' if '?' in url else '?'
+                url += f'{separator}sslmode=require'
+            return url
         password = quote_plus(self.password) if self.password else ''
         auth = f"{self.username}:{password}@" if self.username else ""
         return f"postgresql+psycopg2://{auth}{self.host}:{self.port}/{self.database}"
+    
+    @property
+    def connect_args(self) -> dict:
+        """Build connect_args dict with SSL for cloud providers."""
+        args = {
+            'connect_timeout': 10,
+            'application_name': 'CenturionCapital',
+        }
+        if self.ssl_mode == 'require' or self.is_neon:
+            args['sslmode'] = 'require'
+        return args
 
 
 class DatabaseManager:
@@ -83,6 +122,9 @@ class DatabaseManager:
     def engine(self):
         """Get or create SQLAlchemy engine with connection pooling."""
         if self._engine is None:
+            if self.config.is_neon:
+                logger.info("Neon serverless PostgreSQL detected — using SSL, smaller pool")
+            
             self._engine = create_engine(
                 self.config.connection_string,
                 poolclass=QueuePool,
@@ -92,10 +134,7 @@ class DatabaseManager:
                 pool_recycle=self.config.pool_recycle,
                 pool_pre_ping=True,  # Enable connection health check
                 echo=self.config.echo_sql,
-                connect_args={
-                    'connect_timeout': 10,
-                    'application_name': 'CenturionCapital',
-                }
+                connect_args=self.config.connect_args,
             )
             
             # Add event listeners for connection management
@@ -107,9 +146,22 @@ class DatabaseManager:
             def on_checkout(dbapi_conn, connection_record, connection_proxy):
                 logger.debug("Connection checked out from pool")
             
-            logger.info(f"Database engine created: {self.config.host}:{self.config.port}/{self.config.database}")
+            logger.info(f"Database engine created: {self.config.host}:{self.config.port}/{self.config.database}"
+                        + (" (Neon)" if self.config.is_neon else ""))
         
         return self._engine
+    
+    def pre_warm(self):
+        """Pre-warm connection pool by executing a lightweight query.
+        
+        Useful for Neon auto-suspend: wakes compute before heavy queries.
+        """
+        try:
+            with self.get_session() as session:
+                session.execute(text("SELECT 1"))
+            logger.info("Database connection pre-warmed")
+        except Exception as e:
+            logger.warning(f"Database pre-warm failed: {e}")
     
     @property
     def session_factory(self) -> sessionmaker:

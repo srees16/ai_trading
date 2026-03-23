@@ -1,0 +1,475 @@
+"""
+Paper Trading Engine — Virtual Order Simulation for Zerodha Kite.
+
+Zerodha does not provide a native paper-trading API.  This module
+implements a local virtual broker that:
+
+1. Accepts trade plans from the AutoExecutor (same interface)
+2. Simulates fills using live Kite LTP (or last yfinance close)
+3. Applies realistic slippage (Config.SLIPPAGE_MODEL_IND_BPS)
+4. Manages a virtual portfolio with SL/TP handling
+5. Persists all trades + P&L to a SQLite journal
+6. Produces a performance dashboard (daily P&L, drawdown, win rate)
+
+Usage::
+
+    from kite_connect.trading.paper_trader import PaperTrader
+
+    pt = PaperTrader(kite=kite, initial_capital=100_000)
+    pt.execute_plans(trade_plans)       # simulate order fills
+    pt.poll()                           # check SL/TP (call periodically)
+    print(pt.dashboard())               # P&L summary
+
+The scheduler can invoke paper-trading instead of live orders by
+setting ``PAPER_TRADE_MODE=true`` in the environment or config.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import sqlite3
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone, timedelta
+from pathlib import Path
+from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+_IST = timezone(timedelta(hours=5, minutes=30))
+_DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "paper_trades.sqlite3"
+
+
+# ═══════════════════════════════════════════════════════════════
+# Data classes
+# ═══════════════════════════════════════════════════════════════
+
+@dataclass
+class PaperPosition:
+    """A single virtual position."""
+    symbol: str
+    side: str               # BUY
+    quantity: int
+    entry_price: float      # fill price after slippage
+    stop_loss: float
+    target_price: float
+    opened_at: str = ""
+    closed_at: str = ""
+    exit_price: float = 0.0
+    exit_reason: str = ""   # SL / TP / MANUAL / TRAILING_SL
+    pnl: float = 0.0
+    pnl_pct: float = 0.0
+    is_open: bool = True
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+@dataclass
+class PaperDashboard:
+    """Paper-trading performance summary."""
+    initial_capital: float
+    current_capital: float
+    open_positions: int
+    closed_trades: int
+    total_pnl: float
+    total_pnl_pct: float
+    win_rate: float
+    avg_win_pct: float
+    avg_loss_pct: float
+    max_drawdown_pct: float
+    sharpe_ratio: float
+    positions: List[dict] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Paper Trader
+# ═══════════════════════════════════════════════════════════════
+
+class PaperTrader:
+    """Virtual broker for simulated order execution.
+
+    Parameters
+    ----------
+    kite : KiteConnect | None
+        Authenticated Kite session for live LTP.  If ``None``,
+        falls back to yfinance last close.
+    initial_capital : float
+        Starting virtual capital (default: ₹1,00,000).
+    slippage_bps : float | None
+        Override slippage in basis points.  Defaults to
+        ``Config.SLIPPAGE_MODEL_IND_BPS``.
+    """
+
+    def __init__(
+        self,
+        kite=None,
+        initial_capital: float = 100_000.0,
+        slippage_bps: Optional[float] = None,
+    ):
+        self.kite = kite
+        self.initial_capital = initial_capital
+        self.cash = initial_capital
+        self._positions: List[PaperPosition] = []
+
+        if slippage_bps is not None:
+            self._slippage_bps = slippage_bps
+        else:
+            try:
+                from config import Config
+                self._slippage_bps = getattr(Config, "SLIPPAGE_MODEL_IND_BPS", 20.0)
+            except Exception:
+                self._slippage_bps = 20.0
+
+        self._init_db()
+        self._load_state()
+
+    # ── DB schema ──────────────────────────────────────────────
+
+    def _init_db(self):
+        _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(_DB_PATH))
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS paper_positions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol      TEXT NOT NULL,
+                side        TEXT NOT NULL,
+                quantity    INTEGER NOT NULL,
+                entry_price REAL NOT NULL,
+                stop_loss   REAL NOT NULL,
+                target_price REAL NOT NULL,
+                opened_at   TEXT NOT NULL,
+                closed_at   TEXT DEFAULT '',
+                exit_price  REAL DEFAULT 0,
+                exit_reason TEXT DEFAULT '',
+                pnl         REAL DEFAULT 0,
+                pnl_pct     REAL DEFAULT 0,
+                is_open     INTEGER DEFAULT 1
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS paper_state (
+                key   TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        conn.commit()
+        conn.close()
+
+    def _load_state(self):
+        """Restore positions and cash from DB."""
+        conn = sqlite3.connect(str(_DB_PATH))
+        conn.row_factory = sqlite3.Row
+
+        # Cash
+        row = conn.execute(
+            "SELECT value FROM paper_state WHERE key='cash'"
+        ).fetchone()
+        if row:
+            self.cash = float(row["value"])
+
+        # Open positions
+        rows = conn.execute(
+            "SELECT * FROM paper_positions WHERE is_open=1"
+        ).fetchall()
+        for r in rows:
+            self._positions.append(PaperPosition(
+                symbol=r["symbol"], side=r["side"],
+                quantity=r["quantity"], entry_price=r["entry_price"],
+                stop_loss=r["stop_loss"], target_price=r["target_price"],
+                opened_at=r["opened_at"], is_open=True,
+            ))
+
+        conn.close()
+        logger.info(
+            "Paper trader loaded: cash=%.2f, %d open positions",
+            self.cash, len(self._positions),
+        )
+
+    def _save_cash(self):
+        conn = sqlite3.connect(str(_DB_PATH))
+        conn.execute(
+            "INSERT OR REPLACE INTO paper_state (key, value) VALUES ('cash', ?)",
+            (str(self.cash),),
+        )
+        conn.commit()
+        conn.close()
+
+    def _save_position(self, pos: PaperPosition):
+        conn = sqlite3.connect(str(_DB_PATH))
+        conn.execute("""
+            INSERT INTO paper_positions
+            (symbol, side, quantity, entry_price, stop_loss, target_price,
+             opened_at, closed_at, exit_price, exit_reason, pnl, pnl_pct, is_open)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            pos.symbol, pos.side, pos.quantity, pos.entry_price,
+            pos.stop_loss, pos.target_price, pos.opened_at,
+            pos.closed_at, pos.exit_price, pos.exit_reason,
+            pos.pnl, pos.pnl_pct, 1 if pos.is_open else 0,
+        ))
+        conn.commit()
+        conn.close()
+
+    def _close_position_db(self, pos: PaperPosition):
+        conn = sqlite3.connect(str(_DB_PATH))
+        conn.execute("""
+            UPDATE paper_positions SET
+                closed_at=?, exit_price=?, exit_reason=?,
+                pnl=?, pnl_pct=?, is_open=0
+            WHERE symbol=? AND is_open=1 AND opened_at=?
+        """, (
+            pos.closed_at, pos.exit_price, pos.exit_reason,
+            pos.pnl, pos.pnl_pct, pos.symbol, pos.opened_at,
+        ))
+        conn.commit()
+        conn.close()
+
+    # ── Price helpers ──────────────────────────────────────────
+
+    def _get_ltp(self, symbol: str) -> Optional[float]:
+        """Get last traded price from Kite or yfinance."""
+        if self.kite:
+            try:
+                key = f"NSE:{symbol}"
+                data = self.kite.ltp([key])
+                ltp = data.get(key, {}).get("last_price")
+                if ltp and ltp > 0:
+                    return float(ltp)
+            except Exception:
+                pass
+
+        # Fallback: yfinance
+        try:
+            import yfinance as yf
+            df = yf.download(f"{symbol}.NS", period="5d", progress=False)
+            if not df.empty:
+                close = df["Close"].iloc[-1]
+                if hasattr(close, "item"):
+                    return float(close.item())
+                return float(close)
+        except Exception:
+            pass
+
+        return None
+
+    def _apply_slippage(self, price: float, side: str) -> float:
+        """Apply slippage to simulate realistic fills."""
+        slip = price * (self._slippage_bps / 10_000.0)
+        if side == "BUY":
+            return round(price + slip, 2)   # buy slightly higher
+        return round(price - slip, 2)       # sell slightly lower
+
+    # ── Execution ──────────────────────────────────────────────
+
+    def execute_plans(self, plans: list) -> List[dict]:
+        """Simulate order fills for a list of TradePlan objects.
+
+        Returns a list of result dicts compatible with OrderResult.
+        """
+        results = []
+        for plan in plans:
+            symbol = plan.symbol
+            ltp = self._get_ltp(symbol)
+            if ltp is None:
+                results.append({
+                    "symbol": symbol, "success": False,
+                    "error": "No price available",
+                })
+                continue
+
+            fill_price = self._apply_slippage(ltp, plan.side)
+            cost = fill_price * plan.quantity
+
+            if plan.side == "BUY":
+                if cost > self.cash:
+                    results.append({
+                        "symbol": symbol, "success": False,
+                        "error": f"Insufficient capital: need {cost:.0f}, have {self.cash:.0f}",
+                    })
+                    continue
+                self.cash -= cost
+
+            pos = PaperPosition(
+                symbol=symbol,
+                side=plan.side,
+                quantity=plan.quantity,
+                entry_price=fill_price,
+                stop_loss=plan.stop_loss,
+                target_price=plan.target_price,
+                opened_at=datetime.now(_IST).isoformat(),
+            )
+            self._positions.append(pos)
+            self._save_position(pos)
+            self._save_cash()
+
+            logger.info(
+                "PAPER %s: %s × %d @ %.2f (slip=%.1fbps, cost=%.0f)",
+                plan.side, symbol, plan.quantity, fill_price,
+                self._slippage_bps, cost,
+            )
+            results.append({
+                "symbol": symbol,
+                "success": True,
+                "fill_price": fill_price,
+                "quantity": plan.quantity,
+                "side": plan.side,
+            })
+
+        return results
+
+    # ── SL/TP check (call periodically) ────────────────────────
+
+    def poll(self) -> List[dict]:
+        """Check open positions against SL/TP using live prices.
+
+        Returns list of close events.
+        """
+        events = []
+        for pos in self._positions:
+            if not pos.is_open:
+                continue
+
+            ltp = self._get_ltp(pos.symbol)
+            if ltp is None:
+                continue
+
+            closed = False
+            reason = ""
+
+            if ltp <= pos.stop_loss:
+                closed = True
+                reason = "SL"
+                exit_price = self._apply_slippage(pos.stop_loss, "SELL")
+            elif ltp >= pos.target_price:
+                closed = True
+                reason = "TP"
+                exit_price = self._apply_slippage(pos.target_price, "SELL")
+
+            if closed:
+                pos.is_open = False
+                pos.exit_price = exit_price
+                pos.exit_reason = reason
+                pos.closed_at = datetime.now(_IST).isoformat()
+                pos.pnl = (exit_price - pos.entry_price) * pos.quantity
+                pos.pnl_pct = (exit_price / pos.entry_price - 1) * 100
+                self.cash += exit_price * pos.quantity
+                self._close_position_db(pos)
+                self._save_cash()
+
+                logger.info(
+                    "PAPER CLOSE [%s]: %s @ %.2f → %.2f | P&L=%.2f (%.1f%%)",
+                    reason, pos.symbol, pos.entry_price, exit_price,
+                    pos.pnl, pos.pnl_pct,
+                )
+                events.append({
+                    "type": f"PAPER_{reason}",
+                    "symbol": pos.symbol,
+                    "entry": pos.entry_price,
+                    "exit": exit_price,
+                    "pnl": round(pos.pnl, 2),
+                    "pnl_pct": round(pos.pnl_pct, 2),
+                })
+
+        return events
+
+    # ── Dashboard ──────────────────────────────────────────────
+
+    def dashboard(self) -> PaperDashboard:
+        """Compute performance dashboard from all paper trades."""
+        conn = sqlite3.connect(str(_DB_PATH))
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM paper_positions").fetchall()
+        conn.close()
+
+        open_positions = []
+        closed_trades = []
+
+        for r in rows:
+            if r["is_open"]:
+                open_positions.append(dict(r))
+            else:
+                closed_trades.append(dict(r))
+
+        total_pnl = sum(t["pnl"] for t in closed_trades)
+        wins = [t for t in closed_trades if t["pnl"] > 0]
+        losses = [t for t in closed_trades if t["pnl"] <= 0]
+
+        win_rate = len(wins) / len(closed_trades) if closed_trades else 0.0
+        avg_win = (
+            sum(t["pnl_pct"] for t in wins) / len(wins)
+            if wins else 0.0
+        )
+        avg_loss = (
+            sum(t["pnl_pct"] for t in losses) / len(losses)
+            if losses else 0.0
+        )
+
+        current_capital = self.cash
+        # Mark-to-market open positions
+        for pos_dict in open_positions:
+            ltp = self._get_ltp(pos_dict["symbol"])
+            if ltp:
+                current_capital += ltp * pos_dict["quantity"]
+            else:
+                current_capital += pos_dict["entry_price"] * pos_dict["quantity"]
+
+        total_pnl_pct = (
+            (current_capital / self.initial_capital - 1) * 100
+            if self.initial_capital > 0 else 0.0
+        )
+
+        # Approximate max drawdown from closed trade sequence
+        equity_curve = [self.initial_capital]
+        for t in sorted(closed_trades, key=lambda x: x.get("closed_at", "")):
+            equity_curve.append(equity_curve[-1] + t["pnl"])
+        peak = equity_curve[0]
+        max_dd = 0.0
+        for val in equity_curve:
+            if val > peak:
+                peak = val
+            dd = (peak - val) / peak if peak > 0 else 0
+            if dd > max_dd:
+                max_dd = dd
+
+        # Sharpe from closed trade returns
+        import numpy as np
+        trade_returns = [t["pnl_pct"] / 100 for t in closed_trades]
+        if len(trade_returns) >= 2:
+            sr = float(
+                np.mean(trade_returns) / (np.std(trade_returns) + 1e-10)
+                * np.sqrt(min(len(trade_returns), 252))
+            )
+        else:
+            sr = 0.0
+
+        return PaperDashboard(
+            initial_capital=self.initial_capital,
+            current_capital=round(current_capital, 2),
+            open_positions=len(open_positions),
+            closed_trades=len(closed_trades),
+            total_pnl=round(total_pnl, 2),
+            total_pnl_pct=round(total_pnl_pct, 2),
+            win_rate=round(win_rate, 4),
+            avg_win_pct=round(avg_win, 2),
+            avg_loss_pct=round(avg_loss, 2),
+            max_drawdown_pct=round(max_dd * 100, 2),
+            sharpe_ratio=round(sr, 3),
+            positions=[p.to_dict() for p in self._positions if p.is_open],
+        )
+
+    def reset(self):
+        """Reset the paper trading journal (start fresh)."""
+        conn = sqlite3.connect(str(_DB_PATH))
+        conn.execute("DELETE FROM paper_positions")
+        conn.execute("DELETE FROM paper_state")
+        conn.commit()
+        conn.close()
+        self.cash = self.initial_capital
+        self._positions.clear()
+        logger.info("Paper trader reset: capital=%.2f", self.initial_capital)
