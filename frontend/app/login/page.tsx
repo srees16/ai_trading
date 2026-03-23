@@ -20,7 +20,7 @@ export default function LoginPage() {
   useEffect(() => {
     checkAuth().then(() => {
       if (useAuthStore.getState().isAuthenticated) {
-        router.replace("/us-stocks");
+        router.replace("/ind-stocks/fly-kite");
       }
     });
   }, [checkAuth, router]);
@@ -31,7 +31,7 @@ export default function LoginPage() {
     setIsSubmitting(true);
     try {
       await login(username, password);
-      router.replace("/us-stocks");
+      router.replace("/ind-stocks/fly-kite");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
