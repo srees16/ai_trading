@@ -6,13 +6,29 @@ Based on: "Testing and Tuning Market Trading Systems" by Timothy Masters.
 Uses yfinance to download real market data and provides synthetic generators
 for cases where real data is not appropriate (e.g., Ornstein-Uhlenbeck
 processes, random trading systems).
+
+Delegates to ``shared.sample_data_base`` for implementation — this thin
+wrapper only defines the TTS-specific configuration (env var prefix,
+default symbols, cache directory).
 """
 
-import numpy as np
 import os
-import pandas as pd
-import yfinance as yf
+import sys
 from pathlib import Path
+
+# Ensure project root is importable
+_ROOT = str(Path(__file__).resolve().parent.parent)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from shared.sample_data_base import (  # noqa: E402
+    get_prices as _get_prices,
+    get_close_series as _get_close_series,
+    get_multi_close as _get_multi_close,
+    generate_ohlcv_bars as _generate_ohlcv_bars,
+    generate_returns as _generate_returns,
+    generate_ou_process as _generate_ou_process,
+)
 
 # ---------------------------------------------------------------------------
 # Configuration — env vars override defaults when set by the runner
@@ -24,110 +40,35 @@ DEFAULT_END = os.environ.get("TTS_DATE_END", "2024-12-31")
 CACHE_DIR = Path(__file__).parent / "_cache"
 
 # ---------------------------------------------------------------------------
-# Real market data helpers
+# Thin wrappers that bind TTS configuration
 # ---------------------------------------------------------------------------
 
 def get_prices(symbols=None, start=None, end=None, interval="1d"):
-    """Download daily OHLCV data via yfinance and cache locally.
-
-    Returns a dict  {symbol: DataFrame} with columns
-    ['Open','High','Low','Close','Volume'].
-    """
-    symbols = symbols or SYMBOLS
-    start = start or DEFAULT_START
-    end = end or DEFAULT_END
-    CACHE_DIR.mkdir(exist_ok=True)
-
-    result = {}
-    for sym in symbols:
-        cache_file = CACHE_DIR / f"{sym}_{start}_{end}_{interval}.parquet"
-        if cache_file.exists():
-            df = pd.read_parquet(cache_file)
-        else:
-            df = yf.download(sym, start=start, end=end, interval=interval,
-                             auto_adjust=True, progress=False)
-            if df.empty:
-                print(f"[sample_data] WARNING: no data for {sym}")
-                continue
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-            df.to_parquet(cache_file)
-        result[sym] = df
-    return result
-
+    return _get_prices(symbols or SYMBOLS, DEFAULT_START, DEFAULT_END, CACHE_DIR,
+                       start=start, end=end, interval=interval)
 
 def get_close_series(symbol=None, start=None, end=None):
-    """Return a single close-price Series with DatetimeIndex."""
-    symbol = symbol or SYMBOLS[0]
-    data = get_prices([symbol], start=start, end=end)
-    if symbol not in data:
-        raise ValueError(f"No data downloaded for {symbol}")
-    return data[symbol]["Close"].squeeze()
-
+    return _get_close_series(SYMBOLS, DEFAULT_START, DEFAULT_END, CACHE_DIR,
+                             symbol=symbol, start=start, end=end)
 
 def get_multi_close(symbols=None, start=None, end=None):
-    """Return a DataFrame of close prices: columns = symbols, rows = dates."""
-    data = get_prices(symbols, start=start, end=end)
-    closes = pd.DataFrame({sym: df["Close"].squeeze() for sym, df in data.items()})
-    return closes.dropna()
-
-
-# ---------------------------------------------------------------------------
-# Synthetic data generators
-# ---------------------------------------------------------------------------
+    return _get_multi_close(SYMBOLS, DEFAULT_START, DEFAULT_END, CACHE_DIR,
+                            target_symbols=symbols, start=start, end=end)
 
 def generate_ohlcv_bars(n_bars=2000, seed=42):
-    """Simulate daily OHLCV bars for testing."""
-    rng = np.random.default_rng(seed)
-    dates = pd.bdate_range("2020-01-02", periods=n_bars)
-    log_ret = rng.normal(0.0003, 0.015, n_bars)
-    close = 100 * np.exp(np.cumsum(log_ret))
-    high = close * (1 + np.abs(rng.normal(0, 0.005, n_bars)))
-    low = close * (1 - np.abs(rng.normal(0, 0.005, n_bars)))
-    opn = low + (high - low) * rng.random(n_bars)
-    vol = rng.integers(1_000_000, 20_000_000, n_bars).astype(float)
-    return pd.DataFrame({
-        "Open": opn, "High": high, "Low": low, "Close": close, "Volume": vol,
-    }, index=dates)
-
+    return _generate_ohlcv_bars(DEFAULT_START, n_bars=n_bars, seed=seed)
 
 def generate_returns(n=2000, n_assets=1, seed=42):
-    """Generate a DataFrame of synthetic daily returns."""
-    rng = np.random.default_rng(seed)
-    dates = pd.bdate_range("2020-01-02", periods=n)
+    """Generate synthetic daily returns. Returns Series for n_assets=1."""
+    import pandas as pd
+    df = _generate_returns(DEFAULT_START, n=n, n_assets=max(n_assets, 2), seed=seed)
     if n_assets == 1:
-        data = rng.normal(0.0003, 0.015, n)
-        return pd.Series(data, index=dates, name="returns")
-    cols = [f"Asset_{i}" for i in range(n_assets)]
-    data = rng.normal(0.0003, 0.015, (n, n_assets))
-    return pd.DataFrame(data, index=dates, columns=cols)
-
+        return pd.Series(df.iloc[:, 0].values, index=df.index[:n], name="returns")
+    return df
 
 def generate_ou_process(n=2000, theta=0.1, mu=100.0, sigma=2.0, seed=42):
-    """Simulate an Ornstein-Uhlenbeck mean-reverting price process.
-
-    Parameters
-    ----------
-    n     : int   – number of time steps
-    theta : float – speed of mean reversion
-    mu    : float – long-run mean
-    sigma : float – volatility
-    seed  : int   – random seed
-
-    Returns
-    -------
-    prices : pd.Series with DatetimeIndex
-    """
-    rng = np.random.default_rng(seed)
-    dt = 1.0
-    prices = np.zeros(n)
-    prices[0] = mu
-    for t in range(1, n):
-        prices[t] = (prices[t - 1]
-                     + theta * (mu - prices[t - 1]) * dt
-                     + sigma * np.sqrt(dt) * rng.standard_normal())
-    dates = pd.bdate_range("2020-01-02", periods=n)
-    return pd.Series(prices, index=dates, name="price")
+    return _generate_ou_process(DEFAULT_START, n=n, theta=theta, mu=mu,
+                                sigma=sigma, seed=seed)
 
 
 def generate_random_trading_system(n_trades=500, win_rate=0.55,

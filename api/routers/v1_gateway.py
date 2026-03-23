@@ -517,13 +517,20 @@ async def verdict_run(req: VerdictRunRequest):
 
         scorer = IntegratedScorer(weights=req.weights)
         date_range = tuple(req.date_range) if req.date_range and req.date_range[0] else None
-        verdicts = await asyncio.to_thread(
-            scorer.evaluate,
-            tickers=req.tickers,
-            market=req.market,
-            date_range=date_range,
-            skip_layers=req.skip_layers,
-        )
+
+        try:
+            verdicts = await asyncio.wait_for(
+                asyncio.to_thread(
+                    scorer.evaluate,
+                    tickers=req.tickers,
+                    market=req.market,
+                    date_range=date_range,
+                    skip_layers=req.skip_layers,
+                ),
+                timeout=300,  # 5-minute hard cap
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=504, detail="Verdict timed out after 5 minutes")
 
         results = []
         for v in verdicts:
@@ -541,6 +548,8 @@ async def verdict_run(req: VerdictRunRequest):
             })
 
         return results
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Verdict error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

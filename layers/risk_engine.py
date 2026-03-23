@@ -41,37 +41,14 @@ class RiskEngine:
     for Indian stocks and provides a unified interface.
     """
 
-    # Sector mapping for IND stocks (derived from INDEX_CONSTITUENTS)
-    _SECTOR_MAP: Dict[str, str] = {
-        # Banking
-        **{s: "BANKING" for s in [
-            "HDFCBANK", "ICICIBANK", "KOTAKBANK", "AXISBANK", "SBIN",
-            "INDUSINDBK", "AUBANK", "BANDHANBNK", "BANKBARODA", "CANBK",
-            "FEDERALBNK", "IDFCFIRSTB", "PNB",
-        ]},
-        # IT
-        **{s: "IT" for s in [
-            "INFY", "TCS", "HCLTECH", "WIPRO", "TECHM", "LTIM",
-            "COFORGE", "LTTS", "MPHASIS", "PERSISTENT",
-        ]},
-        # Energy
-        **{s: "ENERGY" for s in [
-            "RELIANCE", "ONGC", "BPCL", "NTPC", "POWERGRID", "COALINDIA",
-            "IOC", "GAIL", "HINDPETRO", "TATAPOWER", "ADANIGREEN", "ADANIENSOL",
-        ]},
-        # Auto
-        **{s: "AUTO" for s in [
-            "TATAMOTORS", "MARUTI", "M&M", "BAJAJ-AUTO", "EICHERMOT", "HEROMOTOCO",
-        ]},
-        # FMCG
-        **{s: "FMCG" for s in [
-            "HINDUNILVR", "ITC", "NESTLEIND", "BRITANNIA", "GODREJCP", "COLPAL",
-        ]},
-        # Pharma
-        **{s: "PHARMA" for s in [
-            "SUNPHARMA", "DRREDDY", "CIPLA", "APOLLOHOSP", "TORNTPHARM", "MAXHEALTH",
-        ]},
-    }
+    # Sector mapping for IND stocks — sourced from Config.NSE_SECTOR_MAP.
+    # Inverted to ticker→sector for fast lookups.
+    @staticmethod
+    def _build_sector_map() -> Dict[str, str]:
+        from config import Config
+        return {ticker: sector for ticker, sector in Config.NSE_SECTOR_MAP.items()}
+
+    _SECTOR_MAP: Dict[str, str] = None  # type: ignore[assignment]
 
     MAX_SECTOR_CONCENTRATION_PCT: float = 30.0  # max 30% of capital per sector
 
@@ -88,6 +65,9 @@ class RiskEngine:
         self.max_open_positions = max_open_positions
         self.max_portfolio_drawdown_pct = max_portfolio_drawdown_pct
         self._open_positions: Dict[str, dict] = {}
+        # Lazy-initialise the class-level sector map once
+        if RiskEngine._SECTOR_MAP is None:
+            RiskEngine._SECTOR_MAP = RiskEngine._build_sector_map()
 
     def check_pre_trade(
         self,

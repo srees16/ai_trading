@@ -38,55 +38,9 @@ class PortfolioSnapshot:
     concentration_warnings: List[str] = field(default_factory=list)
 
 
-# Sector mapping for NIFTY 50 + Next 50 constituents.
-# This is a simplified mapping — in production, pull from NSE index CSVs.
-_SECTOR_MAP: Dict[str, str] = {
-    # IT
-    "TCS": "IT", "INFY": "IT", "HCLTECH": "IT", "WIPRO": "IT",
-    "TECHM": "IT", "LTIM": "IT", "COFORGE": "IT", "MPHASIS": "IT",
-    "PERSISTENT": "IT",
-    # Financials — Banks
-    "HDFCBANK": "Financials", "ICICIBANK": "Financials", "SBIN": "Financials",
-    "KOTAKBANK": "Financials", "AXISBANK": "Financials", "INDUSINDBK": "Financials",
-    "BANKBARODA": "Financials", "PNB": "Financials", "IDFCFIRSTB": "Financials",
-    "FEDERALBNK": "Financials", "CANBK": "Financials",
-    # Financials — NBFC / Insurance
-    "BAJFINANCE": "Financials", "BAJAJFINSV": "Financials",
-    "HDFCLIFE": "Financials", "SBILIFE": "Financials", "ICICIGI": "Financials",
-    "CHOLAFIN": "Financials", "SHRIRAMFIN": "Financials",
-    # Energy / O&G
-    "RELIANCE": "Energy", "ONGC": "Energy", "NTPC": "Energy",
-    "POWERGRID": "Energy", "ADANIGREEN": "Energy", "ADANIENSOL": "Energy",
-    "TATAPOWER": "Energy", "BPCL": "Energy", "IOC": "Energy",
-    "ADANIENT": "Energy", "COAL": "Energy", "GAIL": "Energy",
-    # Auto
-    "MARUTI": "Auto", "M&M": "Auto", "TMPV": "Auto",
-    "BAJAJ-AUTO": "Auto", "HEROMOTOCO": "Auto", "EICHERMOT": "Auto",
-    "BOSCHLTD": "Auto", "TVS MOTOR": "Auto",
-    # Consumer
-    "HINDUNILVR": "Consumer", "ITC": "Consumer", "NESTLEIND": "Consumer",
-    "TITAN": "Consumer", "BRITANNIA": "Consumer", "DABUR": "Consumer",
-    "GODREJCP": "Consumer", "COLPAL": "Consumer", "TRENT": "Consumer",
-    "MARICO": "Consumer", "UNITDSPR": "Consumer",
-    # Pharma / Healthcare
-    "SUNPHARMA": "Pharma", "DRREDDY": "Pharma", "CIPLA": "Pharma",
-    "DIVISLAB": "Pharma", "APOLLOHOSP": "Pharma", "MAXHEALTH": "Pharma",
-    "TORNTPHARM": "Pharma",
-    # Metals / Materials
-    "TATASTEEL": "Metals", "JSWSTEEL": "Metals", "HINDALCO": "Metals",
-    "VEDL": "Metals", "ULTRACEMCO": "Metals", "GRASIM": "Metals",
-    "SHREECEM": "Metals", "AMBUJACEM": "Metals", "ADANIPORTS": "Metals",
-    # Telecom
-    "BHARTIARTL": "Telecom",
-    # Infra / Capital Goods
-    "LT": "Infra", "SIEMENS": "Infra", "ABB": "Infra",
-    "HAL": "Infra", "BEL": "Infra",
-    # Others
-    "ZOMATO": "Consumer Tech", "PAYTM": "Consumer Tech",
-    "DMART": "Retail", "NAUKRI": "Consumer Tech",
-    "PIDILITIND": "Chemicals", "SRF": "Chemicals",
-    "JSWENERGY": "Energy",
-}
+# Sector mapping for NIFTY 50 + Next 50 constituents — sourced from Config.
+from config import Config
+_SECTOR_MAP: Dict[str, str] = Config.NSE_SECTOR_MAP
 
 
 class PortfolioAnalyzer:

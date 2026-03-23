@@ -7,7 +7,7 @@ export function useVerdict(market: Market) {
 
   const runMutation = useMutation({
     mutationFn: (req: VerdictRequest) =>
-      api.post<VerdictResult[]>("/api/v1/verdict/run", req),
+      api.postDirect<VerdictResult[]>("/api/v1/verdict/run", req),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["history", market] });
     },

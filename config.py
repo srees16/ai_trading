@@ -7,7 +7,7 @@ the CENTURION_ prefix.
 """
 
 import os
-from typing import List
+from typing import Dict, List
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -143,6 +143,60 @@ class Config:
         "TSLA", "NVDA", "JPM", "V", "WMT"
     ]
     
+    # =================================================================
+    # NSE Sector Mapping (NIFTY 50 + NIFTY Next 50 constituents)
+    # Shared across risk_engine, portfolio_analyzer, and screener.
+    # =================================================================
+    NSE_SECTOR_MAP: Dict[str, str] = {
+        # IT
+        "TCS": "IT", "INFY": "IT", "HCLTECH": "IT", "WIPRO": "IT",
+        "TECHM": "IT", "LTIM": "IT", "COFORGE": "IT", "MPHASIS": "IT",
+        "PERSISTENT": "IT", "LTTS": "IT",
+        # Financials — Banks
+        "HDFCBANK": "Financials", "ICICIBANK": "Financials", "SBIN": "Financials",
+        "KOTAKBANK": "Financials", "AXISBANK": "Financials", "INDUSINDBK": "Financials",
+        "BANKBARODA": "Financials", "PNB": "Financials", "IDFCFIRSTB": "Financials",
+        "FEDERALBNK": "Financials", "CANBK": "Financials", "AUBANK": "Financials",
+        "BANDHANBNK": "Financials",
+        # Financials — NBFC / Insurance
+        "BAJFINANCE": "Financials", "BAJAJFINSV": "Financials",
+        "HDFCLIFE": "Financials", "SBILIFE": "Financials", "ICICIGI": "Financials",
+        "CHOLAFIN": "Financials", "SHRIRAMFIN": "Financials",
+        # Energy / O&G
+        "RELIANCE": "Energy", "ONGC": "Energy", "NTPC": "Energy",
+        "POWERGRID": "Energy", "ADANIGREEN": "Energy", "ADANIENSOL": "Energy",
+        "TATAPOWER": "Energy", "BPCL": "Energy", "IOC": "Energy",
+        "ADANIENT": "Energy", "COALINDIA": "Energy", "GAIL": "Energy",
+        "HINDPETRO": "Energy", "JSWENERGY": "Energy",
+        # Auto
+        "MARUTI": "Auto", "M&M": "Auto", "TATAMOTORS": "Auto",
+        "BAJAJ-AUTO": "Auto", "HEROMOTOCO": "Auto", "EICHERMOT": "Auto",
+        "BOSCHLTD": "Auto", "TVSMOTOR": "Auto",
+        # Consumer / FMCG
+        "HINDUNILVR": "Consumer", "ITC": "Consumer", "NESTLEIND": "Consumer",
+        "TITAN": "Consumer", "BRITANNIA": "Consumer", "DABUR": "Consumer",
+        "GODREJCP": "Consumer", "COLPAL": "Consumer", "TRENT": "Consumer",
+        "MARICO": "Consumer", "UNITDSPR": "Consumer",
+        # Pharma / Healthcare
+        "SUNPHARMA": "Pharma", "DRREDDY": "Pharma", "CIPLA": "Pharma",
+        "DIVISLAB": "Pharma", "APOLLOHOSP": "Pharma", "MAXHEALTH": "Pharma",
+        "TORNTPHARM": "Pharma",
+        # Metals / Materials
+        "TATASTEEL": "Metals", "JSWSTEEL": "Metals", "HINDALCO": "Metals",
+        "VEDL": "Metals", "ULTRACEMCO": "Metals", "GRASIM": "Metals",
+        "SHREECEM": "Metals", "AMBUJACEM": "Metals", "ADANIPORTS": "Metals",
+        # Telecom
+        "BHARTIARTL": "Telecom",
+        # Infra / Capital Goods
+        "LT": "Infra", "SIEMENS": "Infra", "ABB": "Infra",
+        "HAL": "Infra", "BEL": "Infra",
+        # Consumer Tech
+        "ZOMATO": "Consumer Tech", "PAYTM": "Consumer Tech",
+        "DMART": "Retail", "NAUKRI": "Consumer Tech",
+        # Chemicals
+        "PIDILITIND": "Chemicals", "SRF": "Chemicals",
+    }
+
     # =================================================================
     # News Keywords for Categorization
     # =================================================================

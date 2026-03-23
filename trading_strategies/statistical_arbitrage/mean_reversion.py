@@ -624,11 +624,18 @@ class MeanReversionStrategy(BaseStrategy):
 # Standalone entry point (for testing outside the UI)
 # ────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+    from config import Config
+    from datetime import date, timedelta
+    _end = date.today()
+    _start = _end - timedelta(days=730)  # 2-year window for stat-arb
+
     strategy = MeanReversionStrategy()
     result = strategy.run(
-        tickers=["GLD", "SLV"],
-        start_date="2023-01-01",
-        end_date="2025-01-01",
+        tickers=Config.DEFAULT_TICKERS[:2],
+        start_date=_start.isoformat(),
+        end_date=_end.isoformat(),
         capital=10000,
         lookback=30,
         threshold=2.0,
