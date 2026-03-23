@@ -54,7 +54,7 @@ export default function INDBacktestPage() {
                 <MetricCard label="Max Drawdown" value={formatPct(result.max_drawdown)} color="text-red-500" />
                 <MetricCard label="Win Rate" value={formatPct(result.win_rate)} />
                 <MetricCard label="Total Trades" value={result.total_trades} />
-                <MetricCard label="Final Value" value={formatCurrency(result.final_value)} />
+                <MetricCard label="Final Value" value={formatCurrency(result.final_value, "INR")} />
               </MetricsGrid>
               {result.equity_curve.length > 0 && (
                 <div className="content-panel p-4">

@@ -49,9 +49,22 @@ def main():
         host=args.host,
         port=args.port,
         reload=args.reload,
-        reload_excludes=["kite_connect/auth/*", "data/*", "*.json", "*.csv", "*.log"] if args.reload else None,
+        reload_includes=["*.py"] if args.reload else None,
+        reload_excludes=[
+            "kite_connect/auth/*",
+            "data/*",
+            "_test_*",
+            "__pycache__/*",
+            "chroma_store/*",
+            "financial_ML/_cache/*",
+            "financial_ML/_output/*",
+            "*.json",
+            "*.csv",
+            "*.log",
+        ] if args.reload else None,
         workers=args.workers,
         log_config=log_config,
+        timeout_keep_alive=300,
     )
 
 

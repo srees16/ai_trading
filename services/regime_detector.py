@@ -224,7 +224,7 @@ class RegimeDetector:
             import yfinance as yf
             data = yf.download("^INDIAVIX", period="5d", progress=False)
             if not data.empty:
-                return float(data["Close"].iloc[-1])
+                return float(data["Close"].iloc[-1].item())
         except Exception:
             pass
         return 16.0  # default moderate VIX
@@ -273,7 +273,7 @@ class RegimeDetector:
             if data.empty:
                 return 0.5
             # Approximate breadth from index return sign
-            ret = float(data["Close"].iloc[-1] / data["Close"].iloc[-2] - 1)
+            ret = float((data["Close"].iloc[-1] / data["Close"].iloc[-2] - 1).item())
             if ret > 0.005:
                 return 0.6
             elif ret < -0.005:

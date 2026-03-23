@@ -75,10 +75,12 @@ def discover_strategies() -> dict[str, Path]:
             if py_file.name.startswith("_"):
                 continue
             
+            # Skip standalone backtest scripts (module-level code)
+            if py_file.stem.endswith("_bktest"):
+                continue
+            
             # Generate strategy key
             strategy_name = py_file.stem
-            if strategy_name.endswith("_bktest"):
-                strategy_name = strategy_name[:-7]  # Remove _bktest suffix
             
             key = f"{category_dir.name}/{strategy_name}"
             discovered[key] = py_file

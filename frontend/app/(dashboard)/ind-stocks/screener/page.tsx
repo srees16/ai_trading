@@ -12,7 +12,8 @@ import { formatCurrency, formatPct } from "@/lib/utils";
 import type { ScreenerConfig, RiskConfig } from "@/lib/types";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Search, Zap } from "lucide-react";
+import { Search } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 
 export default function INDScreenerPage() {
   const [screenerCfg, setScreenerCfg] = useState<ScreenerConfig>({
@@ -22,16 +23,15 @@ export default function INDScreenerPage() {
     total_capital: 500000, max_open_trades: 5, risk_per_trade_pct: 2, pullback_tolerance_pct: 3, min_rr_ratio: 2, stop_loss_method: "tighter",
   });
 
-  const { screen, screenAsync, isScreening, screenResult, screenError, execute, isExecuting } = useScreener();
+  const { screenAsync, isScreening, screenResult, screenError, execute, isExecuting } = useScreener();
+  const [fireOrders, setFireOrders] = useState(false);
   const [pipelineRunning, setPipelineRunning] = useState(false);
 
-  const handleRun = () => screen({ screener: screenerCfg, risk: riskCfg, tickers: [] });
-
-  const handlePipeline = async () => {
+  const handleRun = async () => {
     setPipelineRunning(true);
     try {
       const result = await screenAsync({ screener: screenerCfg, risk: riskCfg, tickers: [] });
-      if (result?.trade_plans?.length > 0) {
+      if (fireOrders && result?.trade_plans?.length > 0) {
         execute(result.trade_plans);
       }
     } finally {
@@ -55,12 +55,13 @@ export default function INDScreenerPage() {
             <div><Label className="text-xs">Min R:R Ratio</Label><Input type="number" className="h-8 text-sm" value={riskCfg.min_rr_ratio} onChange={(e) => setRiskCfg({ ...riskCfg, min_rr_ratio: Number(e.target.value) })} /></div>
           </div>
 
-          <Button className="w-full" onClick={handleRun} disabled={isScreening || pipelineRunning}>
-            {isScreening ? "Screening…" : <><Search className="mr-1 h-4 w-4" /> Screen</>}
+          <Button className="w-full" onClick={handleRun} disabled={isScreening || pipelineRunning || isExecuting}>
+            {(isScreening || pipelineRunning) ? "Screening…" : <><Search className="mr-1 h-4 w-4" /> Screen &amp; Verdict</>}
           </Button>
-          <Button className="w-full" variant="outline" onClick={handlePipeline} disabled={isScreening || pipelineRunning || isExecuting}>
-            {pipelineRunning ? "Running Pipeline…" : <><Zap className="mr-1 h-4 w-4" /> Screen, Verdict & Fire Orders</>}
-          </Button>
+          <div className="flex items-center gap-2 mt-1">
+            <Checkbox id="fire-orders" checked={fireOrders} onCheckedChange={(v) => setFireOrders(v === true)} />
+            <Label htmlFor="fire-orders" className="text-xs cursor-pointer select-none">Fire orders after screening &amp; verdict</Label>
+          </div>
           {screenError && <p className="text-sm text-destructive">{screenError}</p>}
         </div>
 

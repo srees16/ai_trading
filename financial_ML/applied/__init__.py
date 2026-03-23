@@ -107,8 +107,14 @@ def get_batch_progress(batch_id: str) -> Optional[Dict[str, Any]]:
         return _batch_progress.get(batch_id)
 
 
-def _execute_chapter(ch_key: str) -> Dict[str, Any]:
+def _execute_chapter(
+    ch_key: str,
+    tickers: Optional[List[str]] = None,
+    date_start: Optional[str] = None,
+    date_end: Optional[str] = None,
+) -> Dict[str, Any]:
     """Run a single chapter script and capture output + figures."""
+    import os
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -137,6 +143,19 @@ def _execute_chapter(ch_key: str) -> Dict[str, Any]:
     figs_before = set(plt.get_fignums())
     stdout_capture = io.StringIO()
 
+    # Inject tickers / date range as env vars so chapter scripts can read them
+    env_overrides = {}
+    if tickers:
+        env_overrides["FML_TICKERS"] = ",".join(tickers)
+    if date_start:
+        env_overrides["FML_DATE_START"] = date_start
+    if date_end:
+        env_overrides["FML_DATE_END"] = date_end
+
+    old_env = {k: os.environ.get(k) for k in env_overrides}
+    for k, v in env_overrides.items():
+        os.environ[k] = v
+
     # Ensure `from sample_data import ...` resolves to financial_ML/sample_data.py
     # rather than testune_trade_sys/sample_data.py which lacks some functions.
     fml_dir = str(_APPLIED_DIR.parent)
@@ -154,6 +173,12 @@ def _execute_chapter(ch_key: str) -> Dict[str, Any]:
     finally:
         if path_inserted and fml_dir in sys.path:
             sys.path.remove(fml_dir)
+        # Restore env vars
+        for k, v in old_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
     result["text_output"] = stdout_capture.getvalue()
 
@@ -174,7 +199,13 @@ def _execute_chapter(ch_key: str) -> Dict[str, Any]:
     return result
 
 
-async def run_chapters_async(batch_id: str, chapter_keys: List[str]):
+async def run_chapters_async(
+    batch_id: str,
+    chapter_keys: List[str],
+    tickers: Optional[List[str]] = None,
+    date_start: Optional[str] = None,
+    date_end: Optional[str] = None,
+):
     """Run chapters in background and update progress."""
     total = len(chapter_keys)
     with _batch_lock:
@@ -192,7 +223,7 @@ async def run_chapters_async(batch_id: str, chapter_keys: List[str]):
         with _batch_lock:
             _batch_progress[batch_id]["chapters"][ch_key]["status"] = "running"
 
-        result = await asyncio.to_thread(_execute_chapter, ch_key)
+        result = await asyncio.to_thread(_execute_chapter, ch_key, tickers, date_start, date_end)
 
         with _batch_lock:
             _batch_progress[batch_id]["chapters"][ch_key] = result
