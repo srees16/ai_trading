@@ -396,16 +396,16 @@ def main():
 
     # --- 3) High-Low volatility -------------------------------------------
     print("\n[3] High-Low volatility estimator:")
-    prices_dict = get_prices(["MSFT"], start="2023-01-01", end="2024-12-31")
-    ohlc = prices_dict["MSFT"]
+    prices_dict = get_prices(SYMBOLS[:1], start="2023-01-01", end="2024-12-31")
+    ohlc = prices_dict[SYMBOLS[0]]
     hl_vol = hl_volatility(ohlc, window=20)
-    print(f"    MSFT: mean HL vol = {hl_vol.mean():.6f}, "
+    print(f"    {SYMBOLS[0]}: mean HL vol = {hl_vol.mean():.6f}, "
           f"last = {hl_vol.iloc[-1]:.6f}")
 
     # --- 4) Corwin-Schultz spread ------------------------------------------
     print("\n[4] Corwin-Schultz spread estimator:")
     cs_spread = corwinSchultz(ohlc, sl=1)
-    print(f"    MSFT: mean spread = {cs_spread['Spread'].mean():.6f}, "
+    print(f"    {SYMBOLS[0]}: mean spread = {cs_spread['Spread'].mean():.6f}, "
           f"max = {cs_spread['Spread'].max():.6f}")
 
     # --- 5) Beckers-Parkinson volatility -----------------------------------
@@ -413,7 +413,7 @@ def main():
     beta = getBeta(ohlc, sl=1)
     gamma = getGamma(ohlc)
     sigma = getSigma(beta, gamma)
-    print(f"    MSFT: mean sigma = {sigma.mean():.6f}")
+    print(f"    {SYMBOLS[0]}: mean sigma = {sigma.mean():.6f}")
 
     # --- 6) Kyle's lambda on tick data ------------------------------------
     print("\n[6] Kyle's Lambda on synthetic tick data:")
@@ -425,7 +425,7 @@ def main():
 
     # --- 7) Amihud's lambda -----------------------------------------------
     print("\n[7] Amihud's Lambda:")
-    for sym in ["MSFT", "NVDA"]:
+    for sym in SYMBOLS[:2]:
         data = get_prices([sym], start="2023-01-01", end="2024-12-31")
         df = data[sym]
         al = amihud_lambda(df['Close'].squeeze(), df['Volume'].squeeze(), window=20)
@@ -438,9 +438,9 @@ def main():
 
     # --- 9) Save summary --------------------------------------------------
     summary = {
-        'MSFT_Roll_spread': roll_model(get_close_series("MSFT", "2023-01-01", "2024-12-31"))['spread'],
-        'MSFT_HL_vol_mean': hl_vol.mean(),
-        'MSFT_CS_spread_mean': cs_spread['Spread'].mean(),
+        f'{SYMBOLS[0]}_Roll_spread': roll_model(get_close_series(SYMBOLS[0], "2023-01-01", "2024-12-31"))['spread'],
+        f'{SYMBOLS[0]}_HL_vol_mean': hl_vol.mean(),
+        f'{SYMBOLS[0]}_CS_spread_mean': cs_spread['Spread'].mean(),
         'VPIN_synthetic': vpin_val,
     }
     pd.Series(summary).to_csv(OUTPUT_DIR / "ch19_microstructure.csv")

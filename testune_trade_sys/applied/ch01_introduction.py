@@ -23,6 +23,7 @@ from sample_data import (
     get_close_series,
     generate_returns,
     generate_random_trading_system,
+    SYMBOLS,
 )
 
 # ======================================================================
@@ -175,10 +176,10 @@ def main():
 
     # 1. Market returns
     print("\n--- Market Returns ---")
-    prices = get_close_series("SPY")
+    prices = get_close_series(SYMBOLS[0])
     log_ret = compute_log_returns(prices)
     simple_ret = compute_simple_returns(prices)
-    print(f"  SPY: {len(prices)} bars")
+    print(f"  {SYMBOLS[0]}: {len(prices)} bars")
     print(f"  Log returns:    mean={log_ret.mean():.6f}, std={log_ret.std():.6f}")
     print(f"  Simple returns: mean={simple_ret.mean():.6f}, std={simple_ret.std():.6f}")
 
@@ -187,7 +188,7 @@ def main():
     axes1[0].set_title("Log Returns Distribution")
     axes1[0].set_xlabel("Return")
     axes1[1].plot(prices.index, prices.values, color="steelblue", linewidth=0.8)
-    axes1[1].set_title("SPY Price History")
+    axes1[1].set_title(f"{SYMBOLS[0]} Price History")
     axes1[1].set_ylabel("Price ($)")
     fig1.tight_layout()
 

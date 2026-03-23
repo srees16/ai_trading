@@ -27,6 +27,7 @@ from sample_data import (
     get_close_series,
     generate_returns,
     generate_random_trading_system,
+    SYMBOLS,
 )
 
 
@@ -405,7 +406,7 @@ def main():
     print("  (Testing and Tuning Market Trading Systems)")
     print("=" * 70)
 
-    prices = get_close_series("SPY")
+    prices = get_close_series(SYMBOLS[0])
     returns = prices.pct_change().dropna().values
 
     # --- 1. Profit Analysis ---

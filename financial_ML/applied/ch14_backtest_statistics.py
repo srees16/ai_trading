@@ -24,7 +24,7 @@ from scipy.stats import norm
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from sample_data import generate_returns, get_close_series
+from sample_data import generate_returns, get_close_series, SYMBOLS
 
 # ============================================================================
 # Snippet 14.1 – Deriving the timing of bets from a series of target positions
@@ -315,7 +315,7 @@ if __name__ == "__main__":
     # Generate data
     # ------------------------------------------------------------------
     print("\n[1] Generating data ...")
-    close = get_close_series("MSFT")
+    close = get_close_series(SYMBOLS[0])
     retDf = generate_returns(n=len(close), n_assets=1, seed=42)
     ret = retDf.iloc[:, 0]
     ret.index = close.index[:len(ret)]  # align dates

@@ -17,6 +17,7 @@ from sample_data import (
     get_multi_close,
     generate_tick_data,
     generate_ohlcv_bars,
+    SYMBOLS,
 )
 
 # ---------------------------------------------------------------------------
@@ -268,7 +269,7 @@ if __name__ == "__main__":
     # Demo 4 – Snippet 2.4: CUSUM Filter
     # ------------------------------------------------------------------
     print("\n--- Snippet 2.4: getTEvents (CUSUM filter) ---")
-    close = get_close_series("MSFT", start="2022-01-01", end="2024-01-01")
+    close = get_close_series(SYMBOLS[0], start="2022-01-01", end="2024-01-01")
     print(f"Close series length: {len(close)}")
 
     # Pick a threshold roughly equal to a meaningful price move

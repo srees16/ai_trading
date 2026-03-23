@@ -1181,6 +1181,17 @@ async def fml_run(req: ChapterRunRequest):
     return {"batch_id": batch_id}
 
 
+@router.post("/fml/abort/{batch_id}")
+async def fml_abort(batch_id: str):
+    """Abort a running FML batch."""
+    try:
+        from financial_ML.applied import abort_batch
+        ok = abort_batch(batch_id)
+        return {"aborted": ok}
+    except ImportError:
+        raise HTTPException(404, "FML module not available")
+
+
 @router.get("/fml/progress/{batch_id}")
 async def fml_progress(batch_id: str):
     """SSE stream for FML batch progress."""
@@ -1193,6 +1204,8 @@ async def fml_progress(batch_id: str):
                 if progress:
                     yield f"data: {json.dumps(progress)}\n\n"
                     if progress.get("completed", 0) >= progress.get("total", 1):
+                        break
+                    if progress.get("status") == "aborted":
                         break
                 await asyncio.sleep(1)
         except ImportError:
@@ -1262,6 +1275,17 @@ async def tts_run(req: ChapterRunRequest):
     return {"batch_id": batch_id}
 
 
+@router.post("/tts/abort/{batch_id}")
+async def tts_abort(batch_id: str):
+    """Abort a running TTS batch."""
+    try:
+        from testune_trade_sys.applied import abort_batch
+        ok = abort_batch(batch_id)
+        return {"aborted": ok}
+    except ImportError:
+        raise HTTPException(404, "TTS module not available")
+
+
 @router.get("/tts/progress/{batch_id}")
 async def tts_progress(batch_id: str):
     """SSE stream for TTS batch progress."""
@@ -1274,6 +1298,8 @@ async def tts_progress(batch_id: str):
                 if progress:
                     yield f"data: {json.dumps(progress)}\n\n"
                     if progress.get("completed", 0) >= progress.get("total", 1):
+                        break
+                    if progress.get("status") == "aborted":
                         break
                 await asyncio.sleep(1)
         except ImportError:

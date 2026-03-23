@@ -24,6 +24,7 @@ from sample_data import (
     get_close_series,
     generate_returns,
     generate_random_trading_system,
+    SYMBOLS,
 )
 
 
@@ -252,7 +253,7 @@ def main():
 
     # --- 1. StocBias ---
     print("\n--- StocBias: Cheap Bias Estimation ---")
-    prices = get_close_series("SPY")
+    prices = get_close_series(SYMBOLS[0])
     returns = prices.pct_change().dropna().values
 
     bias_estimator = StocBias(n_resamples=100, seed=42)
