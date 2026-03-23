@@ -115,13 +115,13 @@ class SentimentAnalyzer:
         # ── Recency weighting (#12) ──────────────────────────
         # Apply exponential decay based on article age.
         # weight = e^(-λ × days_old) where λ = 0.1 (half-life ~7 days)
-        if news_item.published_at:
+        if news_item.timestamp:
             try:
                 from datetime import datetime
                 import math
                 now = datetime.now()
-                if hasattr(news_item.published_at, 'timestamp'):
-                    age_days = (now - news_item.published_at).total_seconds() / 86400
+                if hasattr(news_item.timestamp, 'timestamp'):
+                    age_days = (now - news_item.timestamp).total_seconds() / 86400
                 else:
                     age_days = 0
                 decay = math.exp(-0.1 * max(0, age_days))

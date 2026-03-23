@@ -10,15 +10,24 @@ import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, Query
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from api.dependencies import get_db_service, get_kite_session, get_rag_engine, get_trading_system
+from api.dependencies import get_db_service, get_kite_session, get_rag_engine
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["API v1"])
+
+
+def _metrics_to_dict(m) -> dict:
+    """Convert a StockMetrics dataclass to a JSON-safe dict."""
+    from dataclasses import asdict
+    d = asdict(m)
+    if d.get("timestamp"):
+        d["timestamp"] = d["timestamp"].isoformat() if hasattr(d["timestamp"], "isoformat") else str(d["timestamp"])
+    return d
 
 
 # ─── Request / Response Models ──────────────────────────────────────────
@@ -57,6 +66,9 @@ class ScreenerRunRequest(BaseModel):
 
 class ChapterRunRequest(BaseModel):
     chapters: List[str]
+    tickers: Optional[List[str]] = None
+    date_start: Optional[str] = None
+    date_end: Optional[str] = None
 
 
 class LoginRequest(BaseModel):
@@ -188,34 +200,45 @@ async def analysis_run(req: AnalysisRunRequest):
         calculator = MetricsCalculator()
         engine = DecisionEngine()
 
-        news_items = await asyncio.to_thread(aggregator.get_news, req.tickers)
-        analyzed = analyzer.analyze_batch(news_items)
+        news_items = await aggregator.fetch_news_for_tickers(req.tickers)
+        analyzed = await asyncio.to_thread(analyzer.analyze_news_items, news_items)
 
         metrics_map = {}
         for ticker in req.tickers:
             try:
-                m = await asyncio.to_thread(calculator.calculate, ticker, req.period)
+                m = await asyncio.to_thread(calculator.get_stock_metrics, ticker)
                 metrics_map[ticker] = m
             except Exception:
                 metrics_map[ticker] = None
 
         signals = []
         for item in analyzed:
-            ticker = item.get("ticker", "")
-            m = metrics_map.get(ticker)
-            decision = engine.decide(item, m)
+            m = metrics_map.get(item.ticker)
+            sig = engine.generate_signal(item, m)
+            ni = sig.news_item
             signals.append({
-                "news_item": item,
-                "metrics": m,
-                "decision": decision.get("decision", "HOLD"),
-                "decision_score": decision.get("score", 0),
-                "reasoning": decision.get("reasoning", ""),
-                "timestamp": item.get("timestamp", ""),
+                "news_item": {
+                    "title": ni.title,
+                    "summary": ni.summary,
+                    "url": ni.url,
+                    "timestamp": ni.timestamp.isoformat() if hasattr(ni.timestamp, "isoformat") else str(ni.timestamp),
+                    "source": ni.source,
+                    "ticker": ni.ticker,
+                    "category": ni.category.value if ni.category else "general",
+                    "sentiment_score": ni.sentiment_score,
+                    "sentiment_label": ni.sentiment_label.value if ni.sentiment_label else None,
+                    "sentiment_confidence": ni.sentiment_confidence,
+                },
+                "metrics": _metrics_to_dict(sig.metrics) if sig.metrics else None,
+                "decision": sig.decision.value,
+                "decision_score": sig.decision_score,
+                "reasoning": sig.reasoning,
+                "timestamp": sig.timestamp.isoformat() if hasattr(sig.timestamp, "isoformat") else str(sig.timestamp),
             })
 
         summary = {"total": len(signals), "strong_buy": 0, "buy": 0, "hold": 0, "sell": 0, "strong_sell": 0}
         for s in signals:
-            key = s["decision"].lower()
+            key = s.get("decision", "hold").lower()
             if key in summary:
                 summary[key] += 1
 
@@ -224,7 +247,14 @@ async def analysis_run(req: AnalysisRunRequest):
         run_id = None
         if db:
             try:
-                run_id = str(db.save_analysis_run(req.market, req.tickers, signals))
+                run_id = db.start_analysis_run(
+                    run_type="stock_analysis",
+                    tickers=req.tickers,
+                    market=req.market,
+                )
+                if run_id:
+                    db.save_signals(signals, analysis_run_id=run_id, market=req.market)
+                    run_id = str(run_id)
             except Exception as e:
                 logger.warning("Failed to save analysis run: %s", e)
 
@@ -258,9 +288,9 @@ async def analysis_metrics(tickers: str, market: str = "US"):
         if not ticker:
             continue
         try:
-            m = await asyncio.to_thread(calc.calculate, ticker)
+            m = await asyncio.to_thread(calc.get_stock_metrics, ticker)
             if m:
-                results.append(m)
+                results.append(_metrics_to_dict(m))
         except Exception:
             pass
     return results
@@ -317,47 +347,147 @@ async def macro_fear_greed():
 
 @router.get("/backtest/strategies")
 async def backtest_strategies(market: str = "US"):
-    """List available trading strategies."""
+    """List available trading strategies (lightweight, no heavy imports)."""
     try:
-        from strategies import get_available_strategies
-        return get_available_strategies(market)
-    except ImportError:
-        # Fallback: import from the us_stocks or ind_stocks modules
-        try:
-            ts = get_trading_system()
-            return ts.list_strategies() if ts else []
-        except Exception:
-            return []
+        from trading_strategies import list_strategies, get_strategy
+
+        result = []
+        for info in list_strategies():
+            try:
+                strategy_cls = get_strategy(info["id"])
+                params_raw = strategy_cls.get_parameters() if strategy_cls else {}
+                params = [
+                    {"name": k, **v}
+                    for k, v in params_raw.items()
+                ]
+            except Exception:
+                params = []
+            result.append({
+                "id": info["id"],
+                "name": info.get("name", info["id"]),
+                "category": info.get("category", "general"),
+                "description": info.get("description", ""),
+                "parameters": params,
+            })
+
+        return result
+    except Exception as e:
+        logger.error("Strategy listing error: %s", e, exc_info=True)
+        return []
 
 
 @router.post("/backtest/run")
 async def backtest_run(req: BacktestRunRequest):
-    """Run a strategy backtest."""
-    try:
-        ts = get_trading_system(tickers=req.tickers)
-        if not ts:
-            raise HTTPException(status_code=503, detail="Trading system unavailable")
+    """Run a strategy backtest using the strategy registry directly."""
+    import uuid as _uuid
+    from datetime import datetime, timedelta
+    from trading_strategies import get_strategy
 
-        result = await asyncio.to_thread(
-            ts.run_backtest,
-            strategy_id=req.strategy_id,
-            tickers=req.tickers,
-            params=req.params,
-            initial_capital=req.initial_capital,
-            period=req.period,
-            start_date=req.start_date,
-            end_date=req.end_date,
-        )
+    try:
+        strategy_cls = get_strategy(req.strategy_id)
+        if strategy_cls is None:
+            raise HTTPException(status_code=404, detail=f"Strategy '{req.strategy_id}' not found")
+
+        # Resolve date range: explicit dates take priority, else derive from period
+        end_date = req.end_date
+        start_date = req.start_date
+        if not end_date:
+            end_date = datetime.now().strftime("%Y-%m-%d")
+        if not start_date:
+            period_map = {"1m": 30, "3m": 90, "6m": 180, "1y": 365, "2y": 730, "5y": 1825}
+            days = period_map.get(req.period, 365)
+            start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+        # Build kwargs: strategy-specific params + required run() args
+        run_kwargs = {
+            "tickers": req.tickers,
+            "start_date": start_date,
+            "end_date": end_date,
+            "capital": req.initial_capital,
+            **req.params,
+        }
+
+        strategy = strategy_cls()
+        result = await asyncio.to_thread(strategy.run, **run_kwargs)
+
+        if not result.success:
+            raise HTTPException(status_code=500, detail=result.error_message or "Strategy execution failed")
+
+        # Extract flat metrics (result.metrics may be nested by ticker)
+        metrics = result.metrics or {}
+        first_ticker = req.tickers[0] if req.tickers else ""
+        if first_ticker and first_ticker in metrics and isinstance(metrics[first_ticker], dict):
+            m = metrics[first_ticker]
+        else:
+            m = metrics
+
+        # Build equity_curve from portfolio DataFrame
+        equity_curve = []
+        if result.portfolio is not None and not result.portfolio.empty:
+            df = result.portfolio
+            date_col = next((c for c in df.columns if c.lower() in ("date", "datetime", "timestamp")), None)
+            value_col = next((c for c in df.columns if c.lower() in ("value", "portfolio_value", "equity", "total")), None)
+            dd_col = next((c for c in df.columns if "drawdown" in c.lower()), None)
+            if date_col and value_col:
+                for _, row in df.iterrows():
+                    equity_curve.append({
+                        "date": str(row[date_col])[:10],
+                        "value": float(row[value_col]),
+                        "drawdown": float(row[dd_col]) if dd_col else 0.0,
+                    })
+
+        # Build signals list from signals DataFrame
+        signals = []
+        if result.signals is not None and not result.signals.empty:
+            df = result.signals
+            for _, row in df.iterrows():
+                row_dict = row.to_dict()
+                signals.append({
+                    "date": str(row_dict.get("date", row_dict.get("datetime", "")))[:10],
+                    "ticker": str(row_dict.get("ticker", row_dict.get("symbol", ""))),
+                    "signal": str(row_dict.get("signal", row_dict.get("action", ""))),
+                    "price": float(row_dict.get("price", row_dict.get("close", 0))),
+                    "quantity": int(row_dict.get("quantity", row_dict.get("qty", 0))),
+                })
+
+        # Build charts list
+        charts = []
+        for c in (result.charts or []):
+            charts.append({
+                "type": c.chart_type,
+                "data": c.data,
+                "title": c.title,
+            })
+
+        response = {
+            "id": _uuid.uuid4().hex,
+            "strategy_id": req.strategy_id,
+            "strategy_name": getattr(strategy_cls, "name", req.strategy_id),
+            "tickers": req.tickers,
+            "total_return": float(m.get("total_return", 0)),
+            "sharpe_ratio": float(m.get("sharpe_ratio", 0)),
+            "sortino_ratio": float(m.get("sortino_ratio", 0)),
+            "max_drawdown": float(m.get("max_drawdown", 0)),
+            "total_trades": int(m.get("total_trades", 0)),
+            "win_rate": float(m.get("win_rate", 0)),
+            "final_value": float(m.get("final_value", req.initial_capital)),
+            "initial_capital": req.initial_capital,
+            "charts": charts,
+            "signals": signals,
+            "equity_curve": equity_curve,
+            "metrics": metrics,
+            "created_at": datetime.now().isoformat(),
+        }
 
         # Persist
         db = get_db_service()
         if db:
             try:
-                db.save_backtest_result(req.market, result)
+                db.save_backtest_result(req.market, response)
             except Exception as e:
                 logger.warning("Failed to save backtest: %s", e)
 
-        return result
+        return response
     except HTTPException:
         raise
     except Exception as e:
@@ -381,24 +511,34 @@ async def backtest_get(backtest_id: str):
 
 @router.post("/verdict/run")
 async def verdict_run(req: VerdictRunRequest):
-    """Run the multi-layer verdict engine."""
+    """Run the multi-layer verdict engine via IntegratedScorer."""
     try:
-        from decision_engine import DecisionEngine
-        engine = DecisionEngine()
+        from services.integrated_scorer import IntegratedScorer
+
+        scorer = IntegratedScorer(weights=req.weights)
+        date_range = tuple(req.date_range) if req.date_range and req.date_range[0] else None
+        verdicts = await asyncio.to_thread(
+            scorer.evaluate,
+            tickers=req.tickers,
+            market=req.market,
+            date_range=date_range,
+            skip_layers=req.skip_layers,
+        )
 
         results = []
-        for ticker in req.tickers:
-            try:
-                result = await asyncio.to_thread(
-                    engine.verdict,
-                    ticker=ticker,
-                    market=req.market,
-                    weights=req.weights,
-                    skip_layers=req.skip_layers,
-                )
-                results.append(result)
-            except Exception as e:
-                logger.warning("Verdict error for %s: %s", ticker, e)
+        for v in verdicts:
+            ls = v.layer_scores or {}
+            results.append({
+                "ticker": v.ticker,
+                "core_score": ls.get("core", 0) or 0,
+                "strategy_score": ls.get("strategy", 0) or 0,
+                "ml_score": ls.get("ml_features", 0) or 0,
+                "robustness_score": ls.get("robustness", 0) or 0,
+                "weighted_score": v.final_score,
+                "verdict": v.classification,
+                "layer_details": v.layer_details,
+                "strategy_breakdown": v.layer_details.get("strategy", {}),
+            })
 
         return results
     except Exception as e:
@@ -442,17 +582,63 @@ async def history_backtests(market: str = "US", page: int = 1, limit: int = 50):
 async def screener_run(req: ScreenerRunRequest):
     """Run the stock screener pipeline."""
     try:
-        from kite_connect.trading.screener import NSEScreener
-        from kite_connect.trading.risk_manager import RiskManager
+        from kite_connect.nse.screener import NSEScreener, ScreenerConfig
+        from kite_connect.trading.risk_manager import RiskManager, RiskConfig
+        from kite_connect.core.config import INDEX_CONSTITUENTS
 
-        screener = NSEScreener(**req.screener)
-        risk_mgr = RiskManager(**req.risk)
+        # Map frontend field names → ScreenerConfig field names
+        scfg = req.screener
+        screener_cfg = ScreenerConfig(
+            min_price=scfg.get("min_price", 100),
+            min_avg_volume=int(scfg.get("min_avg_volume", 500_000)),
+            min_beta=scfg.get("min_beta", 1.0),
+            max_workers=int(scfg.get("workers", 8)),
+            breakout_vol_mult=scfg.get("volume_multiplier", 1.5),
+            history_days=int(scfg.get("lookback_days", 250)),
+            index_mode=scfg.get("index_mode", False),
+        )
 
-        stocks = await asyncio.to_thread(screener.screen, req.tickers or None)
-        passed = [s for s in stocks if s.get("passed", False)]
-        plans = risk_mgr.generate_trade_plans(passed) if passed else []
+        # Map frontend field names → RiskConfig field names
+        rcfg = req.risk
+        risk_cfg = RiskConfig(
+            total_capital=rcfg.get("total_capital", 500_000),
+            max_open_trades=int(rcfg.get("max_open_trades", 6)),
+            risk_per_trade_pct=rcfg.get("risk_per_trade_pct", 2) / 100,  # UI sends 2 → config wants 0.02
+            min_rr_ratio=rcfg.get("min_rr_ratio", 2.5),
+            sl_method=rcfg.get("stop_loss_method", "tighter"),
+        )
 
-        return {"stocks": stocks, "trade_plans": plans, "summary": {"screened": len(stocks), "passed": len(passed)}}
+        screener = NSEScreener(config=screener_cfg)
+        risk_mgr = RiskManager(config=risk_cfg)
+
+        # Default to NIFTY50 when no tickers provided
+        tickers = req.tickers if req.tickers else list(INDEX_CONSTITUENTS.get("NIFTY50", []))
+
+        df = await asyncio.to_thread(screener.screen, tickers)
+        stocks_raw = df.to_dict("records") if not df.empty else []
+
+        # Map backend field names → frontend expectations
+        stocks = []
+        for s in stocks_raw:
+            stocks.append({
+                **s,
+                "ticker": s.get("symbol", ""),
+                "price": s.get("close", 0),
+                "passed": True,  # all returned stocks passed Stage 1
+            })
+
+        plans = risk_mgr.plan_trades(df) if stocks else []
+        plan_dicts = []
+        for p in plans:
+            d = p.to_dict()
+            plan_dicts.append({
+                **d,
+                "ticker": d.get("symbol", ""),
+                "risk": d.get("risk_amount", 0),
+                "reward": d.get("reward_amount", 0),
+            })
+
+        return {"stocks": stocks, "trade_plans": plan_dicts, "summary": {"screened": len(stocks), "passed": len(stocks)}}
     except Exception as e:
         logger.error("Screener error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -504,11 +690,31 @@ async def screener_execute(req: Dict[str, Any]):
         if not filtered_plans:
             return {"orders": [], "message": f"No plans passed verdict filter ({blocked} blocked)"}
 
-        from kite_connect.trading.order_manager import OrderManager
-        om = OrderManager(kite)
-        results = await asyncio.to_thread(om.execute_plans, filtered_plans)
-        results["verdict_blocked"] = blocked
-        return results
+        from kite_connect.trading.order_service import place_order
+
+        order_results = []
+        for plan in filtered_plans:
+            try:
+                res = await asyncio.to_thread(
+                    place_order,
+                    kite,
+                    symbol=plan.get("symbol", ""),
+                    exchange=plan.get("exchange", "NSE"),
+                    transaction_type=plan.get("transaction_type", "BUY"),
+                    quantity=int(plan.get("quantity", 0)),
+                    order_type=plan.get("order_type", "MARKET"),
+                    product=plan.get("product", "CNC"),
+                    price=plan.get("price"),
+                    trigger_price=plan.get("trigger_price"),
+                )
+                order_results.append(res)
+            except Exception as e:
+                order_results.append({"success": False, "error": str(e), "symbol": plan.get("symbol")})
+        return {
+            "orders": order_results,
+            "verdict_blocked": blocked,
+            "total_placed": len(filtered_plans),
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -519,7 +725,7 @@ async def screener_monitor():
     try:
         from kite_connect.trading.trade_monitor import TradeMonitor
         monitor = TradeMonitor()
-        return monitor.get_summary()
+        return monitor.summary()
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -868,7 +1074,7 @@ async def dw_login(req: DWLoginRequest):
             client_secret=req.client_secret,
             app_key=req.app_key,
         )
-        token = await asyncio.to_thread(client.authenticate, req.user_id)
+        token = await asyncio.to_thread(client.authenticate)
         account = await asyncio.to_thread(client.get_account, req.account_id)
         _dw_session["client"] = client
         _dw_session["account_id"] = req.account_id
@@ -899,7 +1105,7 @@ async def dw_positions():
     if not client:
         raise HTTPException(status_code=401, detail="Not connected to DriveWealth")
     try:
-        positions = await asyncio.to_thread(client.get_positions, _dw_session["account_id"])
+        positions = await asyncio.to_thread(client.list_positions, _dw_session["account_id"])
         return positions
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -912,15 +1118,16 @@ async def dw_place_order(req: OrderRequest):
     if not client:
         raise HTTPException(status_code=401, detail="Not connected to DriveWealth")
     try:
-        result = await asyncio.to_thread(
-            client.place_order,
-            account_id=_dw_session["account_id"],
-            symbol=req.symbol,
-            side=req.side,
-            order_type=req.order_type,
-            quantity=req.quantity,
-            limit_price=req.limit_price,
-        )
+        payload = {
+            "accountNo": _dw_session["account_id"],
+            "symbol": req.symbol,
+            "side": req.side,
+            "type": req.order_type,
+            "quantity": str(req.quantity),
+        }
+        if req.limit_price is not None:
+            payload["price"] = str(req.limit_price)
+        result = await asyncio.to_thread(client.create_order, payload)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -962,7 +1169,12 @@ async def fml_run(req: ChapterRunRequest):
     # Start async execution
     try:
         from financial_ML.applied import run_chapters_async
-        asyncio.create_task(run_chapters_async(batch_id, req.chapters))
+        asyncio.create_task(run_chapters_async(
+            batch_id, req.chapters,
+            tickers=req.tickers,
+            date_start=req.date_start,
+            date_end=req.date_end,
+        ))
     except ImportError:
         logger.warning("FML module not found — run will be a no-op")
 

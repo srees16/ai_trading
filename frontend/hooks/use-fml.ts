@@ -10,13 +10,20 @@ export function useFmlChapters() {
   });
 }
 
+export interface FmlRunParams {
+  chapters: string[];
+  tickers?: string[];
+  date_start?: string;
+  date_end?: string;
+}
+
 export function useFmlRun() {
   const [progress, setProgress] = useState<AsyncBatchProgress | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
   const runMutation = useMutation({
-    mutationFn: (chapterKeys: string[]) =>
-      api.post<{ batch_id: string }>("/api/v1/fml/run", { chapters: chapterKeys }),
+    mutationFn: (params: FmlRunParams) =>
+      api.post<{ batch_id: string }>("/api/v1/fml/run", params),
   });
 
   const startSSE = useCallback(

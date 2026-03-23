@@ -144,7 +144,7 @@ def _render_config():
                 key="risk_max"
             )
             rcfg.min_rr_ratio = st.number_input(
-                "Min R:R ratio", value=2.0, step=0.5, format="%.1f",
+                "Min Risk To Reward ratio", value=2.0, step=0.5, format="%.1f",
                 key="risk_rr"
             )
             rcfg.sl_method = st.selectbox(

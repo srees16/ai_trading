@@ -36,7 +36,7 @@ class DecisionEngine:
         self._macro_snapshot = snapshot
 
     def _get_regime(self):
-        \"\"\"Lazily fetch the current market regime.\"\"\"
+        """Lazily fetch the current market regime."""
         if self._regime_snapshot is None:
             try:
                 from services.regime_detector import regime_detector

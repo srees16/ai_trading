@@ -410,7 +410,7 @@ class NSEScreener:
     # ── Live LTP refresh via Kite (Feature #4) ────────────────
 
     def _refresh_with_kite_ltp(self, stocks: List[ScreenedStock], _cb) -> None:
-        \"\"\"Refresh close prices for screened stocks using Kite batch quote().\"\"\"
+        """Refresh close prices for screened stocks using Kite batch quote()."""
         if not stocks or self.kite is None:
             return
         try:

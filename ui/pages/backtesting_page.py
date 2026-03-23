@@ -501,9 +501,11 @@ def _render_data_settings(strategy_info: Dict, param_values: Dict):
     param_values['end_date'] = end_date.strftime('%Y-%m-%d')
     
     # Capital input
+    market = st.session_state.get('current_market', 'US')
+    currency_symbol = '₹' if market == 'IND' else '$'
     capital = st.number_input(
-        "Initial Capital ($)",
-        value=10000,
+        f"Initial Capital ({currency_symbol})",
+        value=100000 if market == 'IND' else 10000,
         min_value=1000,
         step=1000
     )
@@ -924,7 +926,9 @@ def _format_metric_value(val, fmt: str) -> str:
     if fmt == 'int':
         return str(int(val)) if isinstance(val, (int, float)) else str(val)
     if fmt == 'dollar' and isinstance(val, (int, float)):
-        return f"${val:,.2f}"
+        market = st.session_state.get('current_market', 'US')
+        sym = '₹' if market == 'IND' else '$'
+        return f"{sym}{val:,.2f}"
     # auto
     if isinstance(val, float):
         return f"{val:.4f}"

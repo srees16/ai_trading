@@ -630,6 +630,7 @@ details = minio.list_runs_detailed()         # metadata: size, chart count, stra
 | **Indian Main** | `ind_main` | Indian equities analysis dashboard with auto-order execution for STRONG_BUY signals |
 | **NSE Screener** | `screener` | 3-stage NSE screener → IntegratedScorer verdicts → risk-managed order placement (auto or manual) |
 | **Indian Equities** | `ind_kite` | Live quotes, order book, positions, holdings, option chain, RSI scanner (Kite Connect) |
+| **Verdict** | `verdict` | IntegratedScorer 5-layer verdict with composite scores, layer breakdowns, reasoning (IND & US) |
 | **Options** | `options` | Concurrent option chain with OI, Greeks, IV, Sensibull-style colouring |
 
 ### Next.js Frontend (Primary UI)
@@ -646,8 +647,11 @@ A modern React-based frontend built with Next.js 14, Tailwind CSS, and TanStack 
 | **Sidebar** | Collapsible sidebar with US/IND stock tabs, module navigation (Financial ML, Test & Tune, Crypto, RAG Engine) |
 | **Ticker Ribbon** | Scrolling LTP ribbon with TTL-cached backend prices |
 | **Lazy Loading** | `loading.tsx` skeleton + `dynamic()` imports with `ssr: false` for heavy components |
+| **Financial ML** | Ticker input (Default / Manual / CSV), calendar popover date pickers, chapter selection with descriptions, spinner progress indicator, collapsible chapter results |
+| **Verdict Pages** | 5-layer IntegratedScorer verdict for both US and IND stocks with composite scores, layer breakdowns, and reasoning |
+| **Calendar Popover** | `react-day-picker` v9 date pickers with Radix Popover, styled for dark theme |
 
-**Tech stack:** Next.js 14, React 18, TypeScript, Tailwind CSS, Radix UI primitives, TanStack Query v5, Zustand (auth state), `next-themes`, Lucide icons.
+**Tech stack:** Next.js 14, React 18, TypeScript, Tailwind CSS, Radix UI primitives, TanStack Query v5, Zustand (auth state), `next-themes`, `react-day-picker` v9, `date-fns`, Lucide icons.
 
 ### Authentication
 - YAML-based credentials (`auth/credentials.yaml`)
@@ -682,7 +686,8 @@ Based on *Advances in Financial Machine Learning* by Marcos López de Prado. 19 
 | Portfolio | ML Asset Allocation (HRP) |
 | Computation | Multiprocessing & Vectorization, Brute Force & Quantum |
 
-UI page: `ui/pages/finance_ml_page.py` — Route: `finance_ml`
+Streamlit page: `ui/pages/finance_ml_page.py` — Route: `finance_ml`
+Next.js page: `frontend/app/(dashboard)/financial-ml/page.tsx` — Route: `/financial-ml` — with ticker input (Default / Manual / CSV), calendar popover date pickers, chapter selection, spinner progress, and collapsible results
 
 ### Test & Tune (TTMTS)
 
@@ -697,7 +702,8 @@ Based on *Testing and Tuning Market Trading Systems* by Timothy Masters (2018). 
 
 C++ algorithms from the book are converted to Python (NumPy/SciPy). Each chapter has a companion reading in `testune_trade_sys/readings/`.
 
-UI page: `ui/pages/testune_page.py` — Route: `testune_ts`
+Streamlit page: `ui/pages/testune_page.py` — Route: `testune_ts`
+Next.js page: `frontend/app/(dashboard)/test-tune/page.tsx` — Route: `/test-tune`
 
 ### Shared Architecture
 
@@ -744,15 +750,15 @@ centurion_core/
 │   │       ├── layout.tsx        # Auth guard, sidebar, header, footer
 │   │       ├── settings/page.tsx # Settings (profile, appearance, change password)
 │   │       ├── us-stocks/        # US stock pages (main, fundamentals, backtest, verdict, holdings, history)
-│   │       ├── ind-stocks/       # Indian stock pages
-│   │       ├── financial-ml/     # Financial ML chapter runner
+│   │       ├── ind-stocks/       # Indian stock pages (main, fly-kite, fundamentals, screener, verdict, backtest, options, history)
+│   │       ├── financial-ml/     # Financial ML chapter runner (ticker/date inputs, calendar popovers, collapsible results)
 │   │       ├── test-tune/        # Test & Tune chapter runner
 │   │       ├── crypto/           # Crypto strategies
 │   │       └── rag-engine/       # RAG document Q&A
 │   ├── components/
 │   │   ├── layout/               # Sidebar, HeaderBar, UserMenu, Footer
 │   │   ├── rag/                  # PDF uploader, streaming answer, knowledge base, source selector
-│   │   ├── ui/                   # Radix primitives (button, input, dropdown-menu, tabs, etc.)
+│   │   ├── ui/                   # Radix primitives (button, input, dropdown-menu, tabs, popover, calendar, etc.)
 │   │   ├── charts/               # Chart components
 │   │   ├── tables/               # Data tables
 │   │   └── common/               # Spinner, shared components
@@ -778,6 +784,7 @@ centurion_core/
 │       ├── testune_page.py       # Test & Tune chapter analyses (TTMTS)
 │       ├── ind_main_page.py      # Indian equities analysis + auto-order execution
 │       ├── screener_page.py      # NSE screener → IntegratedScorer → risk → order pipeline
+│       ├── verdict_page.py       # IntegratedScorer verdict detail view
 │       ├── verdict_page.py       # IntegratedScorer verdict detail view
 │       └── options_page.py       # Option chain analysis page
 │
@@ -960,6 +967,7 @@ centurion_core/
 │       ├── us_stocks.py          # 9 endpoints
 │       ├── ind_stocks.py         # 11 endpoints
 │       ├── rag.py                # 10 endpoints
+│       ├── v1_gateway.py         # 50+ /api/v1/* endpoints (primary Next.js gateway)
 │       ├── crypto.py             # 4 endpoints
 │       └── streaming.py          # 9 endpoints (SSE, WS, postback, OHLC, alerts, status)
 │
@@ -1435,15 +1443,13 @@ GOOGL
 
 ### Navigation
 
-All pages share consistent navigation buttons:
+Tab-based sub-navigation per market section:
 
-| Button | Action |
-|---|---|
-| **Main** | Return to the main dashboard |
-| **Stock Analysis** | View analysis results |
-| **Fundamental Analysis** | Open fundamental metrics |
-| **Backtest Strategy** | Open backtesting |
-| **History** | Browse historical results |
+**IND Stocks:** Main → Fly Kite → Fundamentals → Screener → Verdict → Backtest → Options → History
+
+**US Stocks:** Main → Fundamentals → Verdict → Backtest → Holdings → History
+
+**Modules:** Financial ML, Test & Tune, Crypto, RAG Engine, Settings
 
 ---
 
@@ -1458,6 +1464,7 @@ A full REST API runs alongside the Streamlit UI on a separate port (default `900
 | Module | Prefix | Endpoints | Examples |
 |--------|--------|-----------|----------|
 | Health | `/api/health` | 1 | DB, RAG, Kite status check |
+| V1 Gateway | `/api/v1` | 50+ | `/analysis/run`, `/analysis/metrics`, `/macro/snapshot`, `/kite/auth`, `/fml/run`, `/verdict/run` |
 | US Stocks | `/api/us-stocks` | 9 | `/analysis`, `/news`, `/sentiment`, `/backtest`, `/strategies` |
 | Indian Stocks | `/api/ind-stocks` | 11 | `/auth`, `/quotes`, `/orders`, `/positions`, `/option-chain` |
 | RAG Pipeline | `/api/rag` | 10 | `/ingest`, `/query`, `/collection/stats`, `/evaluate` |
@@ -1592,7 +1599,7 @@ docker-compose down -v
 
 | Category | Packages |
 |---|---|
-| **Web Framework** | streamlit, plotly, **Next.js 14** (React 18, Tailwind CSS, TanStack Query v5) |
+| **Web Framework** | streamlit, plotly, **Next.js 14** (React 18, Tailwind CSS, TanStack Query v5, react-day-picker v9, date-fns) |
 | **Data** | pandas, numpy, openpyxl |
 | **Financial Data** | yfinance |
 | **Crypto Data** | Binance public REST API (no key required) |

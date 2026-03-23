@@ -173,6 +173,13 @@ function KiteDashboard({ onDisconnect }: { onDisconnect: () => void }) {
   const holdingsPnl = holdingsQ.data?.reduce((a, h) => a + h.pnl, 0) ?? 0;
   const positionsPnl = positionsQ.data?.reduce((a, p) => a + p.pnl, 0) ?? 0;
 
+  // NSE market hours: Mon–Fri, 9:15 AM – 3:30 PM IST
+  const now = new Date();
+  const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  const day = ist.getDay();
+  const mins = ist.getHours() * 60 + ist.getMinutes();
+  const isMarketOpen = day >= 1 && day <= 5 && mins >= 555 && mins <= 930;
+
   const handleDisconnect = () => {
     stopSession.mutate(undefined, { onSuccess: onDisconnect });
   };
@@ -182,9 +189,9 @@ function KiteDashboard({ onDisconnect }: { onDisconnect: () => void }) {
       <RibbonVixBar symbols={NIFTY_50_TICKERS} market="IND" />
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Badge variant="default" className="bg-green-600 text-white">
-            <span className="mr-1.5 inline-block h-2 w-2 rounded-full bg-green-300 animate-pulse" />
-            Connected
+          <Badge variant="default" className={isMarketOpen ? "bg-green-600 text-white" : "bg-zinc-600 text-white"}>
+            <span className={`mr-1.5 inline-block h-2 w-2 rounded-full ${isMarketOpen ? "bg-green-300 animate-pulse" : "bg-zinc-400"}`} />
+            {isMarketOpen ? "Live" : "Closed"}
           </Badge>
         </div>
         <Button variant="outline" size="sm" onClick={handleDisconnect} disabled={stopSession.isPending}>
@@ -196,12 +203,12 @@ function KiteDashboard({ onDisconnect }: { onDisconnect: () => void }) {
       <MetricsGrid>
         <MetricCard
           label="Holdings P&L"
-          value={formatCurrency(holdingsPnl)}
+          value={formatCurrency(holdingsPnl, "INR")}
           color={holdingsPnl >= 0 ? "text-green-500" : "text-red-500"}
         />
         <MetricCard
           label="Positions P&L"
-          value={formatCurrency(positionsPnl)}
+          value={formatCurrency(positionsPnl, "INR")}
           color={positionsPnl >= 0 ? "text-green-500" : "text-red-500"}
         />
         <MetricCard
@@ -262,10 +269,10 @@ function KiteDashboard({ onDisconnect }: { onDisconnect: () => void }) {
                       <tr key={h.tradingsymbol} className="border-b">
                         <td className="py-2 pr-3 font-mono">{h.tradingsymbol}</td>
                         <td className="py-2 pr-3">{h.quantity}</td>
-                        <td className="py-2 pr-3">{formatCurrency(h.average_price)}</td>
-                        <td className="py-2 pr-3">{formatCurrency(h.last_price)}</td>
+                        <td className="py-2 pr-3">{formatCurrency(h.average_price, "INR")}</td>
+                        <td className="py-2 pr-3">{formatCurrency(h.last_price, "INR")}</td>
                         <td className={`py-2 pr-3 ${h.pnl >= 0 ? "pnl-positive" : "pnl-negative"}`}>
-                          {formatCurrency(h.pnl)}
+                          {formatCurrency(h.pnl, "INR")}
                         </td>
                         <td className={`py-2 ${(h.day_change_pct ?? 0) >= 0 ? "pnl-positive" : "pnl-negative"}`}>
                           {(h.day_change_pct ?? 0).toFixed(2)}%
@@ -303,10 +310,10 @@ function KiteDashboard({ onDisconnect }: { onDisconnect: () => void }) {
                       <tr key={p.tradingsymbol} className="border-b">
                         <td className="py-2 pr-3 font-mono">{p.tradingsymbol}</td>
                         <td className="py-2 pr-3">{p.quantity}</td>
-                        <td className="py-2 pr-3">{formatCurrency(p.average_price)}</td>
-                        <td className="py-2 pr-3">{formatCurrency(p.last_price)}</td>
+                        <td className="py-2 pr-3">{formatCurrency(p.average_price, "INR")}</td>
+                        <td className="py-2 pr-3">{formatCurrency(p.last_price, "INR")}</td>
                         <td className={`py-2 pr-3 ${p.pnl >= 0 ? "pnl-positive" : "pnl-negative"}`}>
-                          {formatCurrency(p.pnl)}
+                          {formatCurrency(p.pnl, "INR")}
                         </td>
                         <td className="py-2">{p.product}</td>
                       </tr>
@@ -346,7 +353,7 @@ function KiteDashboard({ onDisconnect }: { onDisconnect: () => void }) {
                         <td className="py-2 pr-3">{o.order_type}</td>
                         <td className="py-2 pr-3">{o.transaction_type}</td>
                         <td className="py-2 pr-3">{o.quantity}</td>
-                        <td className="py-2 pr-3">{formatCurrency(o.price)}</td>
+                        <td className="py-2 pr-3">{formatCurrency(o.price, "INR")}</td>
                         <td className="py-2">{o.status}</td>
                       </tr>
                     ))}
