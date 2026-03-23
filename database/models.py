@@ -690,3 +690,79 @@ class OrderRecord(Base, TimestampMixin):
         Index('idx_orders_symbol_date', 'symbol', 'placed_at'),
         Index('idx_orders_status', 'status'),
     )
+
+
+# =====================================================================
+# Live Trade Journal
+# =====================================================================
+
+class TradeJournal(Base, TimestampMixin):
+    """
+    Complete trade lifecycle journal for live and paper trades.
+
+    Records entry, exit, P&L, strategy attribution, regime at entry,
+    and post-trade analysis. Essential for performance attribution and
+    reconciliation.
+    """
+    __tablename__ = 'trade_journal'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # Instrument
+    symbol = Column(String(30), nullable=False, index=True)
+    exchange = Column(String(10), nullable=False, default='NSE')
+    side = Column(String(10), nullable=False)        # BUY / SELL
+    trade_type = Column(String(20), default='CNC')   # CNC / MIS / paper
+
+    # Entry
+    entry_price = Column(Numeric(12, 4), nullable=False)
+    entry_date = Column(DateTime(timezone=True), nullable=False)
+    quantity = Column(Integer, nullable=False)
+
+    # Exit (populated on close)
+    exit_price = Column(Numeric(12, 4))
+    exit_date = Column(DateTime(timezone=True))
+    exit_reason = Column(String(50))                 # SL / TP / MANUAL / TRAILING_SL
+
+    # P&L
+    gross_pnl = Column(Numeric(12, 4))               # raw P&L
+    charges = Column(Numeric(12, 4), default=0)       # STT + brokerage + GST
+    net_pnl = Column(Numeric(12, 4))                  # gross - charges
+    pnl_pct = Column(Float)                           # % return on entry capital
+    holding_days = Column(Integer)                     # trading days held
+
+    # Strategy attribution
+    strategy_name = Column(String(100))               # which strategy triggered
+    decision_score = Column(Float)                     # score at entry
+    screener_score = Column(Float)                     # NSE screener score
+
+    # Context at entry
+    regime_at_entry = Column(String(30))               # TRENDING_BULL / etc.
+    vix_at_entry = Column(Float)
+    sector_name = Column(String(50))
+    delivery_pct_at_entry = Column(Float)
+
+    # Risk management
+    planned_sl = Column(Numeric(12, 4))
+    planned_tp = Column(Numeric(12, 4))
+    actual_rr = Column(Float)                          # actual R:R achieved
+
+    # Kite order references
+    entry_order_id = Column(String(50))
+    exit_order_id = Column(String(50))
+
+    # Mode: 'live' or 'paper'
+    mode = Column(String(10), default='live')
+
+    # Status
+    is_open = Column(Boolean, default=True, index=True)
+
+    # Free-form notes / post-trade analysis
+    notes = Column(JSONB)
+
+    __table_args__ = (
+        Index('idx_journal_symbol_date', 'symbol', 'entry_date'),
+        Index('idx_journal_strategy', 'strategy_name'),
+        Index('idx_journal_open', 'is_open'),
+        Index('idx_journal_mode', 'mode'),
+    )

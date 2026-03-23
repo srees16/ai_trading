@@ -67,9 +67,16 @@ class Config:
     # =================================================================
     # Transaction Costs (round-trip, as fraction)
     # =================================================================
-    TRANSACTION_COST_IND: float = 0.0015   # 15 bps NSE (STT + brokerage + GST + stamp)
+    TRANSACTION_COST_IND: float = 0.0013   # 13 bps NSE (STT + exchange + stamp + GST)
     TRANSACTION_COST_US: float = 0.001     # 10 bps US equities
-    
+    SLIPPAGE_MODEL_IND_BPS: float = 20.0   # 20 bps assumed slippage for NSE mid-caps
+    SLIPPAGE_MODEL_US_BPS: float = 5.0     # 5 bps for US large-cap
+
+    # =================================================================
+    # Paper Trading Mode
+    # =================================================================
+    PAPER_TRADE_MODE: bool = False          # Set True to route orders to PaperTrader
+
     # =================================================================
     # Signal Freshness (data staleness gate)
     # =================================================================

@@ -415,7 +415,20 @@ class BaseStrategy(ABC):
         portfolio['positions'] = signals['positions']
         portfolio['Close'] = signals['Close']
         portfolio['holdings'] = signals['positions'] * signals['Close'] * shares
-        portfolio['cash'] = capital - (signals['signals'] * signals['Close'] * shares).cumsum()
+
+        # ── Slippage deduction (#3) ───────────────────────────
+        # On every trade (signal != 0), deduct slippage from cash
+        # in addition to the position cost.
+        try:
+            from config import Config
+            slippage_bps = getattr(Config, 'SLIPPAGE_MODEL_IND_BPS', 0.0)
+        except Exception:
+            slippage_bps = 0.0
+        slippage_frac = slippage_bps / 10_000.0
+        trade_cost = signals['signals'].abs() * signals['Close'] * shares
+        slippage_cost = (trade_cost * slippage_frac).cumsum()
+
+        portfolio['cash'] = capital - (signals['signals'] * signals['Close'] * shares).cumsum() - slippage_cost
         portfolio['total_value'] = portfolio['holdings'] + portfolio['cash']
         portfolio['returns'] = portfolio['total_value'].pct_change().fillna(0)
         
@@ -459,7 +472,18 @@ class BaseStrategy(ABC):
         portfolio['positions'] = long_positions
         portfolio['Close'] = signals['Close']
         portfolio['holdings'] = long_positions * signals['Close'] * shares
-        portfolio['cash'] = capital - (long_signals * signals['Close'] * shares).cumsum()
+
+        # ── Slippage deduction (#3) ───────────────────────────
+        try:
+            from config import Config
+            slippage_bps = getattr(Config, 'SLIPPAGE_MODEL_IND_BPS', 0.0)
+        except Exception:
+            slippage_bps = 0.0
+        slippage_frac = slippage_bps / 10_000.0
+        trade_cost = long_signals.abs() * signals['Close'] * shares
+        slippage_cost = (trade_cost * slippage_frac).cumsum()
+
+        portfolio['cash'] = capital - (long_signals * signals['Close'] * shares).cumsum() - slippage_cost
         portfolio['total_value'] = portfolio['holdings'] + portfolio['cash']
         portfolio['returns'] = portfolio['total_value'].pct_change().fillna(0)
         

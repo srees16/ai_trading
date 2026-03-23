@@ -200,12 +200,32 @@ def _run_layer_core(ticker: str, market: str) -> Dict[str, Any]:
             + macro_score * w["macro"]
         ) / total_w
 
+        # ── Delivery volume conviction multiplier ─────────────
+        delivery_mult = 1.0
+        try:
+            from services.delivery_volume import get_delivery_conviction
+            delivery_mult = get_delivery_conviction(ticker)
+            core_score *= delivery_mult
+        except Exception:
+            pass
+
+        # ── Post-earnings momentum boost ──────────────────────
+        earnings_boost = 0.0
+        try:
+            from services.earnings_momentum import get_post_earnings_boost
+            earnings_boost = get_post_earnings_boost(ticker)
+            core_score = _clamp(core_score + earnings_boost)
+        except Exception:
+            pass
+
         return {
             "score": _clamp(core_score),
             "details": {
                 "fundamental": round(fundamental_score, 4),
                 "technical": round(technical_score, 4),
                 "macro": round(macro_score, 4),
+                "delivery_conviction": round(delivery_mult, 3),
+                "earnings_momentum_boost": round(earnings_boost, 4),
                 "combined": round(core_score, 4),
             },
         }
@@ -238,6 +258,13 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
 
         # Strategies that require ≥2 tickers (cointegration / pairs)
         _MULTI_TICKER_STRATEGIES = {"pairs trading", "mean reversion (z-score)"}
+        # Strategies unsuitable for Indian (NSE) stocks — cointegration and
+        # mean-reversion assumptions break down due to lower liquidity,
+        # operator-driven moves, and fragmented order books.
+        _IND_EXCLUDED = _MULTI_TICKER_STRATEGIES | {
+            "pairs trading", "mean reversion", "mean reversion (z-score)",
+            "statistical arbitrage",
+        }
 
         for name, strategy_cls in all_strategies.items():
             # Skip crypto strategies when evaluating US/IND stocks
@@ -246,6 +273,10 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
             # Skip multi-ticker strategies in per-ticker evaluation
             if name.lower() in _MULTI_TICKER_STRATEGIES:
                 strategy_results[name] = {"skipped": "requires multiple tickers"}
+                continue
+            # Skip IND-incompatible strategies
+            if market == "IND" and name.lower() in _IND_EXCLUDED:
+                strategy_results[name] = {"skipped": "excluded for IND market"}
                 continue
             try:
                 strategy = strategy_cls()
@@ -368,7 +399,45 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
         # Drawdown penalty (worst drawdown, negative = bad)
         dd_adj = _clamp(worst_dd / 2.0, -0.3, 0.0) if worst_dd < -0.10 else 0.0
 
-        score = _clamp(weighted_consensus * 0.6 + sharpe_adj + dd_adj)
+        # ── Walk-forward degradation penalty (#1) ────────────
+        # Run walk-forward validation on top-voted strategies to
+        # detect overfitting.  A degradation ratio < 0.5 (OOS Sharpe
+        # is less than half of IS Sharpe) penalises the score.
+        wf_adj = 0.0
+        wf_details: Dict[str, Any] = {}
+        try:
+            from services.walk_forward import walk_forward_validate
+            # Pick the single best strategy by Sharpe for WF validation
+            best_strat_name = None
+            best_strat_sharpe = -999.0
+            for name, res in strategy_results.items():
+                if isinstance(res, dict) and "sharpe" in res and res["sharpe"] is not None:
+                    sr_val = float(res["sharpe"])
+                    if sr_val > best_strat_sharpe:
+                        best_strat_sharpe = sr_val
+                        best_strat_name = name
+            if best_strat_name and best_strat_name in all_strategies:
+                wf_summary = walk_forward_validate(
+                    strategy_cls=all_strategies[best_strat_name],
+                    ticker=ticker,
+                    capital=10000,
+                    train_days=252,
+                    test_days=63,
+                    total_days=756,
+                )
+                wf_details = wf_summary.to_dict()
+                deg = wf_summary.degradation_ratio
+                if deg < 0.3:
+                    wf_adj = -0.2  # heavy overfitting penalty
+                elif deg < 0.5:
+                    wf_adj = -0.1  # moderate penalty
+                elif deg > 0.8:
+                    wf_adj = 0.05  # slight bonus for robust strategy
+                wf_details["adjustment"] = round(wf_adj, 3)
+        except Exception as e:
+            wf_details = {"error": str(e)}
+
+        score = _clamp(weighted_consensus * 0.6 + sharpe_adj + dd_adj + wf_adj)
 
         return {
             "score": score,
@@ -379,6 +448,7 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
                 "median_sharpe": round(median_sharpe, 4),
                 "worst_max_drawdown": round(worst_dd, 4),
                 "consensus_raw": round(consensus, 4),
+                "walk_forward": wf_details,
                 "per_strategy": strategy_results,
             },
         }
@@ -839,6 +909,25 @@ class IntegratedScorer:
         run_id = str(uuid.uuid4())
         verdicts: List[StockVerdict] = []
 
+        # ── Survivorship bias gate ─────────────────────────────
+        # Reject delisted / suspended tickers before running
+        # expensive layer evaluations.
+        try:
+            from services.survivorship_filter import filter_valid_tickers
+            valid_tickers, rejected = filter_valid_tickers(
+                tickers, market=market,
+            )
+            for r in rejected:
+                verdicts.append(StockVerdict(
+                    ticker=r.ticker, market=market,
+                    final_score=0.0, classification="HOLD",
+                    layer_scores={}, layer_details={"survivorship_rejected": r.reason},
+                    confidence=0.0, run_id=run_id,
+                ))
+            tickers = valid_tickers
+        except Exception as exc:
+            logger.debug("Survivorship filter skipped in scorer: %s", exc)
+
         for ticker in tickers:
             t0 = time.time()
             logger.info("IntegratedScorer: evaluating %s (%s)", ticker, market)
@@ -873,20 +962,63 @@ class IntegratedScorer:
                             "details": {"error": str(exc)},
                         }
 
-            # ── Aggregate ──
+            # ── Regime-adaptive weight overrides (#1) ────────────
+            regime_info: Dict[str, Any] = {}
+            try:
+                from services.regime_detector import regime_detector
+                snapshot = regime_detector.detect()
+                regime_info = {
+                    "regime": snapshot.regime.value,
+                    "position_scale": snapshot.position_scale,
+                    "vix_level": snapshot.vix_panic,
+                }
+                # Shift weights based on regime
+                if snapshot.regime.value in ("HIGH_VOLATILITY", "CRISIS"):
+                    # Favour robustness & ML layers during turbulence
+                    effective_weights = dict(self.weights)
+                    effective_weights["robustness"] = self.weights.get("robustness", 0.25) * 1.4
+                    effective_weights["core"] = self.weights.get("core", 0.35) * 0.8
+                    tw = sum(effective_weights.values())
+                    effective_weights = {k: v / tw for k, v in effective_weights.items()}
+                else:
+                    effective_weights = dict(self.weights)
+            except Exception:
+                effective_weights = dict(self.weights)
+
+            # ── Fundamental freshness adjustment (#9) ─────────
+            freshness_adj = 0.0
+            try:
+                from services.fundamental_freshness import get_freshness_adjustment
+                fadj = get_freshness_adjustment(ticker)
+                freshness_adj = fadj.adjustment_score
+                layer_details.setdefault("freshness", {})
+                layer_details["freshness"] = {
+                    "adjustment": round(freshness_adj, 4),
+                    "bulk_deals": fadj.bulk_deal_detected,
+                    "pledge_change": round(fadj.promoter_pledge_change_pct, 2),
+                    "mf_change": round(fadj.mf_holding_change_pct, 2),
+                }
+            except Exception:
+                pass  # freshness data unavailable — degrade gracefully
+
+            # ── Aggregate (with effective weights) ──
             layer_scores: Dict[str, Optional[float]] = {}
-            layer_details: Dict[str, Any] = {}
+            layer_details_out: Dict[str, Any] = {}
             available_weight = 0.0
             weighted_sum = 0.0
 
-            for layer_name, w in self.weights.items():
+            for layer_name, w in effective_weights.items():
                 res = layer_results.get(layer_name, {})
                 sc = res.get("score")
                 layer_scores[layer_name] = round(sc, 4) if sc is not None else None
-                layer_details[layer_name] = res.get("details", {})
+                layer_details_out[layer_name] = res.get("details", {})
 
                 if sc is not None:
-                    weighted_sum += sc * w
+                    # Apply freshness adjustment to core layer
+                    adjusted_sc = sc
+                    if layer_name == "core" and freshness_adj != 0:
+                        adjusted_sc = _clamp(sc + freshness_adj)
+                    weighted_sum += adjusted_sc * w
                     available_weight += w
 
             if available_weight > 0:
@@ -894,9 +1026,33 @@ class IntegratedScorer:
             else:
                 final_score = 0.0
 
+            # ── FII/DII gating (#10) — suppress BUY during heavy outflows ──
+            fii_info: Dict[str, Any] = {}
+            try:
+                from scrapers.macro.fii_dii_tracker import compute_fii_dii_signal
+                fii_signal = compute_fii_dii_signal()
+                fii_info = {
+                    "sentiment_score": round(fii_signal.sentiment_score, 3),
+                    "consecutive_fii_selling": fii_signal.consecutive_fii_selling_days,
+                    "is_heavy": fii_signal.is_heavy_fii_selling,
+                }
+                if fii_signal.is_heavy_fii_selling and final_score > 0:
+                    final_score = min(final_score, Config.BUY_THRESHOLD - 0.01)
+                elif fii_signal.is_fii_selling_pressure and final_score > 0:
+                    final_score *= 0.8
+                    final_score = _clamp(final_score)
+            except Exception:
+                pass
+
+            # Merge extra details
+            layer_details_out["regime"] = regime_info
+            layer_details_out["fii_dii"] = fii_info
+            if "freshness" in layer_details:
+                layer_details_out["freshness"] = layer_details["freshness"]
+
             # Confidence = fraction of layers that returned data
             active_layers = sum(1 for s in layer_scores.values() if s is not None)
-            total_layers = len(self.weights)
+            total_layers = len(effective_weights)
             confidence = active_layers / total_layers if total_layers else 0.0
 
             verdict = StockVerdict(
@@ -905,7 +1061,7 @@ class IntegratedScorer:
                 final_score=round(final_score, 4),
                 classification=_classify(final_score),
                 layer_scores=layer_scores,
-                layer_details=layer_details,
+                layer_details=layer_details_out,
                 confidence=round(confidence, 2),
                 run_id=run_id,
             )

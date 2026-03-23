@@ -33,10 +33,10 @@ class RiskConfig:
 
     total_capital: float = 500_000.0      # Total trading capital (₹)
     risk_per_trade_pct: float = 0.02      # Max 2 % of capital per trade
-    max_open_trades: int = 10             # Portfolio-level concentration cap
+    max_open_trades: int = 6              # Concentrated portfolio — higher conviction
     sl_method: str = "tighter"            # "ma50", "swing_low", "tighter"
     swing_lookback: int = 10              # Days for swing-low computation
-    min_rr_ratio: float = 2.0            # Minimum reward-to-risk ratio
+    min_rr_ratio: float = 2.5            # Higher R:R for fewer, better trades
     use_kelly_sizing: bool = True         # Scale risk by signal confidence (half-Kelly)
     kelly_floor_pct: float = 0.01         # Minimum risk (1%) for low-confidence
     kelly_cap_pct: float = 0.03           # Maximum risk (3%) for high-confidence

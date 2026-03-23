@@ -131,7 +131,21 @@ class DataService:
         
         # Fetch data
         df = self._fetch_from_yfinance(ticker, start_date, end_date, interval)
-        
+
+        # ── Survivorship bias check ────────────────────────────
+        # Reject delisted / suspended tickers early so strategies
+        # don't backtest on dead stocks.
+        try:
+            from services.survivorship_filter import check_ticker
+            result = check_ticker(ticker, ohlcv=df)
+            if not result.is_valid:
+                logger.warning(
+                    "DataService: rejected %s — %s", ticker, result.reason,
+                )
+                return pd.DataFrame()  # return empty → strategy sees no data
+        except Exception:
+            pass  # degrade gracefully
+
         # Cache result
         if use_cache and df is not None and not df.empty:
             self._cache[cache_key] = df.copy()

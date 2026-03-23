@@ -103,22 +103,36 @@ class SentimentAnalyzer:
     def analyze_news_item(self, news_item: NewsItem) -> NewsItem:
         """
         Analyze sentiment of a news item and update it.
-        
-        Args:
-            news_item: NewsItem to analyze
-            
-        Returns:
-            Updated NewsItem with sentiment information
+
+        Applies exponential time-decay: recent articles carry more weight.
+        Half-life = 7 days (λ = 0.1).
         """
         # Combine title and summary for analysis
         text = f"{news_item.title}. {news_item.summary}"
-        
+
         sentiment_score, sentiment_label, confidence = self.analyze(text)
-        
+
+        # ── Recency weighting (#12) ──────────────────────────
+        # Apply exponential decay based on article age.
+        # weight = e^(-λ × days_old) where λ = 0.1 (half-life ~7 days)
+        if news_item.published_at:
+            try:
+                from datetime import datetime
+                import math
+                now = datetime.now()
+                if hasattr(news_item.published_at, 'timestamp'):
+                    age_days = (now - news_item.published_at).total_seconds() / 86400
+                else:
+                    age_days = 0
+                decay = math.exp(-0.1 * max(0, age_days))
+                sentiment_score *= decay
+            except Exception:
+                pass  # Use undecayed score if date parsing fails
+
         news_item.sentiment_score = sentiment_score
         news_item.sentiment_label = sentiment_label
         news_item.sentiment_confidence = confidence
-        
+
         return news_item
     
     def analyze_news_items(self, news_items: List[NewsItem]) -> List[NewsItem]:

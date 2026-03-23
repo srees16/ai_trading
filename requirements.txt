@@ -25,6 +25,7 @@ python-dotenv
 pyyaml
 bcrypt
 minio
+redis
 scipy
 seaborn
 Backtesting

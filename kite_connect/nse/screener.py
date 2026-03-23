@@ -144,20 +144,45 @@ class ScreenedStock:
 # ═══════════════════════════════════════════════════════════════
 
 def _download_batch(symbols_ns: List[str], period: str = "1y") -> pd.DataFrame:
-    """Download daily OHLCV for a list of ``.NS`` symbols."""
-    try:
-        df = yf.download(
-            symbols_ns,
-            period=period,
-            group_by="ticker",
-            auto_adjust=True,
-            threads=True,
-            progress=False,
-        )
-        return df
-    except Exception as exc:
-        logger.error("yfinance download failed: %s", exc)
-        return pd.DataFrame()
+    """Download daily OHLCV for a list of ``.NS`` symbols.
+
+    Retries up to 3 times with exponential backoff on rate-limit (429)
+    or transient network errors.
+    """
+    import time as _time
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            df = yf.download(
+                symbols_ns,
+                period=period,
+                group_by="ticker",
+                auto_adjust=True,
+                threads=True,
+                progress=False,
+            )
+            return df
+        except Exception as exc:
+            err_str = str(exc).lower()
+            is_retryable = (
+                "429" in err_str
+                or "rate" in err_str
+                or "too many" in err_str
+                or "connection" in err_str
+                or "timeout" in err_str
+            )
+            if is_retryable and attempt < max_retries - 1:
+                wait = 2 ** (attempt + 1)  # 2s, 4s
+                logger.warning(
+                    "yfinance rate-limited (attempt %d/%d), retrying in %ds: %s",
+                    attempt + 1, max_retries, wait, exc,
+                )
+                _time.sleep(wait)
+                continue
+            logger.error("yfinance download failed: %s", exc)
+            return pd.DataFrame()
+    return pd.DataFrame()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -280,8 +305,9 @@ class NSEScreener:
         df = screener.screen(symbols=["RELIANCE", "TCS", ...])
     """
 
-    def __init__(self, config: ScreenerConfig | None = None):
+    def __init__(self, config: ScreenerConfig | None = None, kite=None):
         self.cfg = config or ScreenerConfig()
+        self.kite = kite  # Optional Kite instance for live LTP
         if not self.cfg.sector_indices:
             try:
                 from kite_connect.core.config import INDEX_CONSTITUENTS
@@ -337,6 +363,14 @@ class NSEScreener:
         # ── 2.  Stage 2 — Methodology Analysis ────────────────
         _cb("Stage 2: Running methodology analysis …")
         sector_leaders = _compute_sector_leaders(self.cfg.sector_indices, ohlcv)
+
+        # Seed sector rotation cache with the OHLCV data we already have
+        try:
+            from services.sector_rotation import get_sector_rotation
+            get_sector_rotation(self.cfg.sector_indices, ohlcv)
+        except Exception:
+            pass
+
         for stock in stage1:
             self._stage2_methods(stock, ohlcv.get(stock.symbol), sector_leaders)
 
@@ -361,10 +395,43 @@ class NSEScreener:
 
         stage1.sort(key=lambda s: s.score, reverse=True)
 
+        # ── 4b. Live price refresh via Kite LTP (#4) ──────────
+        # During market hours, replace stale yfinance close with
+        # Kite LTP for top-80 screened stocks.
+        if self.kite is not None:
+            top_80 = stage1[:80]
+            self._refresh_with_kite_ltp(top_80, _cb)
+
         rows = [s.to_dict() for s in stage1]
         df = pd.DataFrame(rows)
         _cb(f"Screening complete — {len(df)} stocks ranked")
         return df
+
+    # ── Live LTP refresh via Kite (Feature #4) ────────────────
+
+    def _refresh_with_kite_ltp(self, stocks: List[ScreenedStock], _cb) -> None:
+        \"\"\"Refresh close prices for screened stocks using Kite batch quote().\"\"\"
+        if not stocks or self.kite is None:
+            return
+        try:
+            # Batch in groups of 200 (Kite API limit)
+            symbols = [s.symbol for s in stocks]
+            updated = 0
+            for i in range(0, len(symbols), 200):
+                batch = symbols[i:i + 200]
+                keys = [f"NSE:{s}" for s in batch]
+                ltp_data = self.kite.ltp(keys)
+                for stock in stocks:
+                    key = f"NSE:{stock.symbol}"
+                    if key in ltp_data:
+                        live = ltp_data[key].get("last_price")
+                        if live and live > 0:
+                            stock.close = float(live)
+                            updated += 1
+            if updated > 0:
+                _cb(f"Refreshed {updated}/{len(stocks)} prices with Kite LTP")
+        except Exception as exc:
+            logger.warning("Kite LTP refresh failed (using yfinance close): %s", exc)
 
     # ── Data download ──────────────────────────────────────────
 
@@ -394,6 +461,40 @@ class NSEScreener:
                         continue
 
         logger.info("Downloaded data for %d / %d symbols", len(cache), len(symbols))
+
+        # ── Survivorship bias filter ──────────────────────────
+        # Remove delisted / suspended / dead tickers before any
+        # technical analysis is computed.
+        try:
+            from services.survivorship_filter import filter_valid_tickers
+            valid_syms, rejected = filter_valid_tickers(
+                list(cache.keys()), market="IND",
+                ohlcv_cache=cache, kite=self.kite,
+            )
+            if rejected:
+                for r in rejected:
+                    cache.pop(r.ticker, None)
+                logger.info(
+                    "Survivorship filter: removed %d delisted/suspended symbols",
+                    len(rejected),
+                )
+        except Exception as exc:
+            logger.debug("Survivorship filter skipped: %s", exc)
+
+        # ── Corporate action adjustment (#2) ──────────────────
+        # Adjust OHLCV for pending splits/bonuses so technical
+        # indicators are computed on adjusted prices.
+        try:
+            from services.corporate_actions import get_actions_for_symbols, adjust_ohlcv_for_action
+            pending = get_actions_for_symbols(list(cache.keys()))
+            for sym, action in pending.items():
+                if sym in cache:
+                    cache[sym] = adjust_ohlcv_for_action(cache[sym], action)
+                    logger.info("Adjusted %s OHLCV for %s (%s)",
+                                sym, action.action_type, action.description[:60])
+        except Exception as exc:
+            logger.debug("Corporate action adjustment skipped: %s", exc)
+
         return cache
 
     def _download_index(self) -> Optional[pd.Series]:
@@ -620,5 +721,20 @@ class NSEScreener:
             score += 5    # outperforming index by > 5%
         elif stock.relative_strength < -0.05:
             score -= 3    # underperforming index
+
+        # Delivery volume conviction — high delivery % = institutional buying
+        try:
+            from services.delivery_volume import get_delivery_score
+            score += get_delivery_score(stock.symbol)
+        except Exception:
+            pass  # degrade gracefully
+
+        # Sector rotation overlay — boost top-momentum sectors
+        if stock.sector_name:
+            try:
+                from services.sector_rotation import get_sector_score_adjustment
+                score += get_sector_score_adjustment(stock.sector_name)
+            except Exception:
+                pass
 
         stock.score = min(100, max(0, score))

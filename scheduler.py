@@ -229,13 +229,97 @@ def _notify_signals(buy_verdicts: list, sell_verdicts: list):
         logger.debug("Notification failed (non-fatal): %s", exc)
 
 
+def _paper_trade_orders(verdicts: list, screened_df):
+    """Route orders to PaperTrader for simulated execution."""
+    try:
+        from kite_connect.trading.paper_trader import PaperTrader
+        from kite_connect.trading.risk_manager import RiskManager, RiskConfig
+
+        signal_dict = {
+            v.ticker.replace(".NS", "").replace(".BO", ""): v.classification
+            for v in verdicts
+        }
+        buy_symbols = [
+            sym for sym, tag in signal_dict.items()
+            if tag in ("BUY", "STRONG_BUY")
+        ]
+        if not buy_symbols:
+            logger.info("Paper trade: no BUY symbols")
+            return
+
+        # Generate trade plans via RiskManager (same as live path)
+        buy_df = screened_df[screened_df["symbol"].isin(buy_symbols)]
+        if buy_df.empty:
+            return
+
+        rm = RiskManager(RiskConfig())
+        plans = rm.plan_trades(buy_df)
+        if not plans:
+            logger.info("Paper trade: no plans met R:R threshold")
+            return
+
+        # Try to get Kite for LTP (optional; PaperTrader uses yfinance fallback)
+        kite = None
+        try:
+            from kite_connect.auth.kite_session import create_kite_session
+            kite = create_kite_session()
+        except Exception:
+            pass
+
+        pt = PaperTrader(kite=kite, initial_capital=100_000)
+        results = pt.execute_plans(plans)
+        filled = sum(1 for r in results if r.get("success"))
+
+        # Check SL/TP immediately
+        close_events = pt.poll()
+
+        dashboard = pt.dashboard()
+        logger.info(
+            "Paper trade: %d/%d filled | capital=%.0f | P&L=%.0f (%.1f%%)",
+            filled, len(plans),
+            dashboard.current_capital,
+            dashboard.total_pnl,
+            dashboard.total_pnl_pct,
+        )
+
+        # Persist summary to scheduler cache
+        _save_run("paper_trade", {
+            "universe_size": len(screened_df),
+            "screened_count": len(buy_df),
+            "buy_signals": filled,
+            "sell_signals": len(close_events),
+            "verdicts": [r for r in results],
+            "plans": [dashboard.to_dict()],
+            "status": "success",
+        })
+
+    except Exception as exc:
+        logger.exception("Paper trade failed: %s", exc)
+
+
 def _auto_place_orders(verdicts: list, screened_df):
     """Auto-authenticate Kite and place orders for BUY/STRONG_BUY verdicts.
 
     Called by the scheduler when STRONG_BUY signals are detected. Uses
     the auto-TOTP flow (pyotp) when ``ZERODHA_TOTP_SECRET`` is configured,
     making the entire pipeline zero-touch.
+
+    When ``PAPER_TRADE_MODE=true`` (env var or Config), orders are
+    routed to the PaperTrader instead of Kite live.
     """
+    # ── Paper-trade mode check ─────────────────────────────────
+    paper_mode = os.environ.get("PAPER_TRADE_MODE", "").lower() in ("true", "1", "yes")
+    if not paper_mode:
+        try:
+            from config import Config
+            paper_mode = getattr(Config, "PAPER_TRADE_MODE", False)
+        except Exception:
+            pass
+
+    if paper_mode:
+        _paper_trade_orders(verdicts, screened_df)
+        return
+
     try:
         from kite_connect.auth.kite_session import create_kite_session
         logger.info("Auto-authenticating Kite for STRONG_BUY order placement…")
@@ -293,6 +377,459 @@ def _auto_place_orders(verdicts: list, screened_df):
 
 
 # ═══════════════════════════════════════════════════════════════
+# Walk-Forward Audit (weekly)
+# ═══════════════════════════════════════════════════════════════
+
+def run_walk_forward_audit():
+    """Run walk-forward validation on all registered strategies.
+
+    Kicks off every Saturday morning via the scheduler.  Results are
+    saved to the scheduler cache DB under run_type='walk_forward'.
+    Strategies with degradation_ratio < 0.5 are flagged as overfit.
+    """
+    logger.info("=== Walk-Forward Audit started ===")
+
+    try:
+        from strategies import StrategyRegistry, load_all_strategies
+        from services.walk_forward import walk_forward_validate
+
+        load_all_strategies()
+        all_strategies = StrategyRegistry._strategies
+
+        # Use a representative NIFTY-50 ticker for validation
+        test_ticker = "RELIANCE.NS"
+
+        audit_results = {}
+        overfit_strategies: List[str] = []
+
+        for name, strategy_cls in all_strategies.items():
+            if "crypto" in name.lower():
+                continue
+            try:
+                summary = walk_forward_validate(
+                    strategy_cls=strategy_cls,
+                    ticker=test_ticker,
+                    capital=100_000,
+                    train_days=252,
+                    test_days=63,
+                    total_days=756,
+                )
+                audit_results[name] = summary.to_dict()
+                if summary.degradation_ratio < 0.5 and summary.total_folds > 0:
+                    overfit_strategies.append(name)
+                    logger.warning(
+                        "OVERFIT: %s — degradation=%.2f (OOS Sharpe=%.2f, IS=%.2f)",
+                        name, summary.degradation_ratio,
+                        summary.avg_oos_sharpe, summary.avg_is_sharpe,
+                    )
+                else:
+                    logger.info(
+                        "OK: %s — degradation=%.2f, OOS Sharpe=%.2f",
+                        name, summary.degradation_ratio, summary.avg_oos_sharpe,
+                    )
+            except Exception as exc:
+                audit_results[name] = {"error": str(exc)}
+                logger.warning("WF audit failed for %s: %s", name, exc)
+
+        _save_run("walk_forward", {
+            "universe_size": len(all_strategies),
+            "screened_count": len(audit_results),
+            "buy_signals": 0,
+            "sell_signals": len(overfit_strategies),
+            "verdicts": [
+                {"strategy": name, **data}
+                for name, data in audit_results.items()
+                if isinstance(data, dict)
+            ],
+            "status": "success",
+        })
+
+        if overfit_strategies:
+            try:
+                from notifications.manager import NotificationManager
+                NotificationManager().send_notification(
+                    "Centurion — Overfit Alert",
+                    f"{len(overfit_strategies)} strategies flagged: "
+                    f"{', '.join(overfit_strategies[:5])}",
+                    duration=20,
+                )
+            except Exception:
+                pass
+
+        logger.info(
+            "=== Walk-Forward Audit complete: %d strategies, %d flagged ===",
+            len(audit_results), len(overfit_strategies),
+        )
+
+    except Exception as exc:
+        logger.exception("Walk-Forward Audit failed: %s", exc)
+        _save_run("walk_forward", {"status": f"error: {exc}"})
+
+
+# ═══════════════════════════════════════════════════════════════
+# Unified Backtest ↔ Paper ↔ Live Reconciliation
+# ═══════════════════════════════════════════════════════════════
+
+def _run_paper_live_reconciliation():
+    """Unified 3-leg parity check: backtest ↔ paper ↔ live.
+
+    Runs weekly (Saturday 7 AM IST) and compares:
+      Leg 1 — Paper vs Live: symbol-level P&L drift for common trades
+      Leg 2 — Backtest vs Live: per-strategy aggregate metrics
+              (win-rate, avg return, Sharpe) — surfaces when live
+              execution degrades vs backtest expectations
+      Leg 3 — Backtest vs Paper: same comparison but for simulated fills
+
+    All discrepancies > 1 % (P&L) or > 0.3 (Sharpe drift) are logged
+    and trigger desktop notifications.
+    """
+    logger.info("=== Unified Reconciliation started ===")
+    report: dict = {"status": "success"}
+
+    # ──────────────────────────────────────────────────────────
+    # Load data sources
+    # ──────────────────────────────────────────────────────────
+    paper_trades = _load_paper_trades()
+    live_trades, live_by_strategy = _load_live_journal()
+    backtest_by_strategy = _load_backtest_summaries()
+
+    # ──────────────────────────────────────────────────────────
+    # Leg 1 — Paper ↔ Live (symbol-level)
+    # ──────────────────────────────────────────────────────────
+    leg1 = _reconcile_paper_vs_live(paper_trades, live_trades)
+    report["paper_vs_live"] = leg1
+
+    # ──────────────────────────────────────────────────────────
+    # Leg 2 — Backtest ↔ Live (strategy-level)
+    # ──────────────────────────────────────────────────────────
+    leg2 = _reconcile_backtest_vs_execution(backtest_by_strategy, live_by_strategy, "live")
+    report["backtest_vs_live"] = leg2
+
+    # ──────────────────────────────────────────────────────────
+    # Leg 3 — Backtest ↔ Paper (strategy-level)
+    # ──────────────────────────────────────────────────────────
+    paper_by_strategy = _group_by_strategy_paper(paper_trades)
+    leg3 = _reconcile_backtest_vs_execution(backtest_by_strategy, paper_by_strategy, "paper")
+    report["backtest_vs_paper"] = leg3
+
+    _save_run("reconciliation", report)
+
+    # ── Alert on discrepancies ──
+    all_issues: List[str] = []
+    for leg_name, leg_data in [("Paper↔Live", leg1), ("BT↔Live", leg2), ("BT↔Paper", leg3)]:
+        discs = leg_data.get("discrepancies", [])
+        if discs:
+            all_issues.append(f"{leg_name}: {len(discs)}")
+
+    if all_issues:
+        summary = ", ".join(all_issues)
+        logger.warning("Reconciliation: %s", summary)
+        try:
+            from notifications.manager import NotificationManager
+            NotificationManager().send_notification(
+                "Centurion — Reconciliation Alert",
+                f"Parity issues: {summary}",
+                duration=15,
+            )
+        except Exception:
+            pass
+    else:
+        logger.info("Reconciliation: all 3 legs clean — no significant drift")
+
+    logger.info("=== Unified Reconciliation complete ===")
+
+
+# ── Reconciliation helpers ─────────────────────────────────────
+
+def _load_paper_trades() -> dict:
+    """Load closed paper trades from SQLite → {symbol: {...}}."""
+    try:
+        import sqlite3
+        from pathlib import Path
+        paper_db = Path("data/paper_trades.sqlite3")
+        if not paper_db.exists():
+            return {}
+        conn = sqlite3.connect(str(paper_db))
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM paper_positions WHERE is_open = 0 "
+            "ORDER BY closed_at DESC LIMIT 200"
+        ).fetchall()
+        conn.close()
+        return {
+            r["symbol"]: {
+                "entry_price": r["entry_price"],
+                "exit_price": r["exit_price"],
+                "pnl_pct": r["pnl_pct"],
+                "exit_reason": r["exit_reason"],
+            }
+            for r in rows
+        }
+    except Exception as exc:
+        logger.debug("Paper trades load failed: %s", exc)
+        return {}
+
+
+def _load_live_journal() -> tuple:
+    """Load closed live journal trades → (by_symbol, by_strategy).
+
+    Returns:
+        Tuple of (
+            {symbol: {entry_price, exit_price, pnl_pct, exit_reason}},
+            {strategy_name: {trades, wins, total_pnl_pct}},
+        )
+    """
+    by_symbol: dict = {}
+    by_strategy: dict = {}
+    try:
+        from database.service import get_database_service
+        db = get_database_service()
+        if not db:
+            return by_symbol, by_strategy
+        from database.models import TradeJournal
+        session = db.Session()
+        try:
+            recent = (
+                session.query(TradeJournal)
+                .filter(TradeJournal.is_open.is_(False))
+                .order_by(TradeJournal.exit_date.desc())
+                .limit(200)
+                .all()
+            )
+            for t in recent:
+                pnl = t.pnl_pct or 0
+                by_symbol[t.symbol] = {
+                    "entry_price": float(t.entry_price) if t.entry_price else 0,
+                    "exit_price": float(t.exit_price) if t.exit_price else 0,
+                    "pnl_pct": pnl,
+                    "exit_reason": t.exit_reason or "",
+                    "strategy": t.strategy_name or "unknown",
+                }
+                strat = t.strategy_name or "unknown"
+                if strat not in by_strategy:
+                    by_strategy[strat] = {"trades": 0, "wins": 0, "total_pnl_pct": 0.0, "pnls": []}
+                by_strategy[strat]["trades"] += 1
+                by_strategy[strat]["total_pnl_pct"] += pnl
+                by_strategy[strat]["pnls"].append(pnl)
+                if pnl > 0:
+                    by_strategy[strat]["wins"] += 1
+        finally:
+            session.close()
+    except Exception as exc:
+        logger.debug("Live journal load failed: %s", exc)
+    return by_symbol, by_strategy
+
+
+def _load_backtest_summaries() -> dict:
+    """Load per-strategy backtest aggregate metrics → {strategy_name: {...}}.
+
+    Pulls from BacktestResult or StrategyPerformanceSummary.
+    """
+    summaries: dict = {}
+    try:
+        from database.service import get_database_service
+        db = get_database_service()
+        if not db:
+            return summaries
+        from database.models import BacktestResult
+        from sqlalchemy import func as sqlfunc
+        session = db.Session()
+        try:
+            # Aggregate by strategy (most recent 6 months)
+            from datetime import datetime, timedelta
+            cutoff = datetime.utcnow() - timedelta(days=180)
+            rows = (
+                session.query(
+                    BacktestResult.strategy_name,
+                    sqlfunc.count(BacktestResult.id).label("n"),
+                    sqlfunc.avg(BacktestResult.total_return).label("avg_return"),
+                    sqlfunc.avg(BacktestResult.win_rate).label("avg_win_rate"),
+                    sqlfunc.avg(BacktestResult.sharpe_ratio).label("avg_sharpe"),
+                    sqlfunc.avg(BacktestResult.max_drawdown).label("avg_dd"),
+                )
+                .filter(
+                    BacktestResult.success.is_(True),
+                    BacktestResult.created_at >= cutoff,
+                )
+                .group_by(BacktestResult.strategy_name)
+                .all()
+            )
+            for row in rows:
+                summaries[row.strategy_name] = {
+                    "backtests": row.n,
+                    "avg_return": float(row.avg_return or 0),
+                    "avg_win_rate": float(row.avg_win_rate or 0),
+                    "avg_sharpe": float(row.avg_sharpe or 0),
+                    "avg_drawdown": float(row.avg_dd or 0),
+                }
+        finally:
+            session.close()
+    except Exception as exc:
+        logger.debug("Backtest summary load failed: %s", exc)
+    return summaries
+
+
+def _group_by_strategy_paper(paper_trades: dict) -> dict:
+    """Group paper trades by strategy (if available in exit_reason or symbol patterns).
+
+    Paper trades don't have strategy attribution, so we return an
+    'all_paper' bucket with aggregate stats for coarse comparison.
+    """
+    if not paper_trades:
+        return {}
+    pnls = [t["pnl_pct"] for t in paper_trades.values() if t.get("pnl_pct") is not None]
+    wins = sum(1 for p in pnls if p > 0)
+    return {
+        "all_paper": {
+            "trades": len(pnls),
+            "wins": wins,
+            "total_pnl_pct": sum(pnls),
+            "pnls": pnls,
+        }
+    }
+
+
+def _reconcile_paper_vs_live(paper: dict, live: dict) -> dict:
+    """Leg 1: symbol-level paper ↔ live P&L comparison."""
+    common = set(paper.keys()) & set(live.keys())
+    discrepancies = []
+    slippage_diffs = []
+
+    for sym in common:
+        p = paper[sym]
+        l = live[sym]
+        pnl_diff = abs((p.get("pnl_pct") or 0) - (l.get("pnl_pct") or 0))
+        entry_drift = 0
+        p_entry = p.get("entry_price") or 0
+        l_entry = l.get("entry_price") or 0
+        if p_entry > 0 and l_entry > 0:
+            entry_drift = abs(l_entry - p_entry) / p_entry * 100
+            slippage_diffs.append(entry_drift)
+
+        if pnl_diff > 1.0:
+            discrepancies.append({
+                "symbol": sym,
+                "paper_pnl": round(p.get("pnl_pct") or 0, 2),
+                "live_pnl": round(l.get("pnl_pct") or 0, 2),
+                "diff_pct": round(pnl_diff, 2),
+                "entry_slippage_pct": round(entry_drift, 3),
+                "root_cause": (
+                    "entry_slippage" if entry_drift > 0.5
+                    else "exit_timing" if p.get("exit_reason") != l.get("exit_reason")
+                    else "commission_gap"
+                ),
+            })
+
+    paper_only = set(paper.keys()) - set(live.keys())
+    live_only = set(live.keys()) - set(paper.keys())
+
+    return {
+        "paper_count": len(paper),
+        "live_count": len(live),
+        "common": len(common),
+        "paper_only_count": len(paper_only),
+        "live_only_count": len(live_only),
+        "avg_entry_slippage_pct": round(
+            sum(slippage_diffs) / len(slippage_diffs), 3
+        ) if slippage_diffs else 0,
+        "discrepancies": discrepancies,
+    }
+
+
+def _reconcile_backtest_vs_execution(
+    bt_strategies: dict,
+    exec_strategies: dict,
+    exec_label: str,
+) -> dict:
+    """Leg 2/3: backtest ↔ live/paper per-strategy metric comparison.
+
+    Compares avg_return, win_rate, and Sharpe between backtest
+    expectations and actual execution results.
+    """
+    common = set(bt_strategies.keys()) & set(exec_strategies.keys())
+    discrepancies = []
+
+    for strat in common:
+        bt = bt_strategies[strat]
+        ex = exec_strategies[strat]
+
+        bt_win = bt.get("avg_win_rate", 0)
+        ex_trades = ex.get("trades", 0)
+        ex_wins = ex.get("wins", 0)
+        ex_win = (ex_wins / ex_trades * 100) if ex_trades > 0 else 0
+
+        bt_ret = bt.get("avg_return", 0)
+        ex_ret = (ex.get("total_pnl_pct", 0) / ex_trades) if ex_trades > 0 else 0
+
+        # Compute live Sharpe proxy from per-trade P&L
+        ex_sharpe = 0
+        pnls = ex.get("pnls", [])
+        if len(pnls) >= 3:
+            import numpy as np
+            avg_p = float(np.mean(pnls))
+            std_p = float(np.std(pnls, ddof=1))
+            ex_sharpe = (avg_p / std_p) if std_p > 0 else 0
+
+        bt_sharpe = bt.get("avg_sharpe", 0)
+        sharpe_drift = bt_sharpe - ex_sharpe
+
+        win_drift = bt_win - ex_win
+        ret_drift = bt_ret - ex_ret
+
+        issues = []
+        if abs(sharpe_drift) > 0.3:
+            issues.append(f"Sharpe drift {sharpe_drift:+.2f}")
+        if abs(win_drift) > 10:
+            issues.append(f"Win-rate drift {win_drift:+.1f}%")
+        if abs(ret_drift) > 5:
+            issues.append(f"Return drift {ret_drift:+.1f}%")
+
+        if issues:
+            discrepancies.append({
+                "strategy": strat,
+                "bt_sharpe": round(bt_sharpe, 2),
+                f"{exec_label}_sharpe": round(ex_sharpe, 2),
+                "bt_win_rate": round(bt_win, 1),
+                f"{exec_label}_win_rate": round(ex_win, 1),
+                "bt_avg_return": round(bt_ret, 2),
+                f"{exec_label}_avg_return": round(ex_ret, 2),
+                f"{exec_label}_trades": ex_trades,
+                "issues": issues,
+            })
+
+    return {
+        "bt_strategies": len(bt_strategies),
+        f"{exec_label}_strategies": len(exec_strategies),
+        "common": len(common),
+        "discrepancies": discrepancies,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════
+# Utility jobs (backup, pre-warming)
+# ═══════════════════════════════════════════════════════════════
+
+def _pre_market_with_warmup():
+    """Pre-warm DB connection (wakes Neon auto-suspend) then run pipeline."""
+    try:
+        from database.connection import DatabaseManager
+        DatabaseManager().pre_warm()
+    except Exception as e:
+        logger.warning("DB pre-warm failed (non-fatal): %s", e)
+    run_pipeline("pre_market")
+
+
+def _run_nightly_backup():
+    """Upload SQLite databases to R2/MinIO storage."""
+    try:
+        from infrastructure.backup_service import run_backup
+        result = run_backup()
+        logger.info("Nightly backup result: %s", result)
+    except Exception as e:
+        logger.error("Nightly backup failed: %s", e)
+
+
+# ═══════════════════════════════════════════════════════════════
 # Scheduler setup
 # ═══════════════════════════════════════════════════════════════
 
@@ -305,6 +842,8 @@ def start_scheduler():
        Full pipeline run before market opens (NSE opens 9:15).
     2. **intraday_rescan** — every 2 hours (10:30, 12:30, 14:30) Mon-Fri
        Lighter re-scan for intraday momentum shifts.
+    3. **walk_forward_audit** — Saturday 6:00 AM IST
+       Weekly walk-forward validation of registered strategies.
     """
     try:
         from apscheduler.schedulers.blocking import BlockingScheduler
@@ -322,10 +861,10 @@ def start_scheduler():
     scheduler = BlockingScheduler(timezone="Asia/Kolkata")
 
     # Job 1: Pre-market full scan at 9:20 AM IST, weekdays
+    # (includes DB pre-warming to wake Neon auto-suspended compute)
     scheduler.add_job(
-        run_pipeline,
+        _pre_market_with_warmup,
         CronTrigger(hour=9, minute=20, day_of_week="mon-fri", timezone="Asia/Kolkata"),
-        args=["pre_market"],
         id="pre_market_scan",
         name="Pre-Market Full Scan",
         misfire_grace_time=600,
@@ -341,9 +880,39 @@ def start_scheduler():
         misfire_grace_time=600,
     )
 
+    # Job 3: Weekly walk-forward strategy audit — Saturday 6 AM IST
+    scheduler.add_job(
+        run_walk_forward_audit,
+        CronTrigger(hour=6, minute=0, day_of_week="sat", timezone="Asia/Kolkata"),
+        id="walk_forward_audit",
+        name="Weekly Walk-Forward Audit",
+        misfire_grace_time=3600,
+    )
+
+    # Job 4: Weekly paper vs live reconciliation — Saturday 7 AM IST
+    scheduler.add_job(
+        _run_paper_live_reconciliation,
+        CronTrigger(hour=7, minute=0, day_of_week="sat", timezone="Asia/Kolkata"),
+        id="paper_live_reconciliation",
+        name="Paper vs Live Reconciliation",
+        misfire_grace_time=3600,
+    )
+
+    # Job 5: Nightly SQLite backup to R2 — 23:00 IST daily
+    scheduler.add_job(
+        _run_nightly_backup,
+        CronTrigger(hour=23, minute=0, timezone="Asia/Kolkata"),
+        id="nightly_backup",
+        name="Nightly SQLite Backup to R2",
+        misfire_grace_time=3600,
+    )
+
     logger.info("Scheduler started — press Ctrl+C to stop")
     logger.info("  Pre-market scan : 09:20 IST, Mon-Fri")
     logger.info("  Intraday re-scan: 10:30, 12:30, 14:30 IST, Mon-Fri")
+    logger.info("  Walk-forward    : 06:00 IST, Saturday")
+    logger.info("  Reconciliation  : 07:00 IST, Saturday")
+    logger.info("  Nightly backup  : 23:00 IST, daily")
 
     try:
         scheduler.start()
