@@ -59,9 +59,9 @@ export function useTickerPrices(symbols: string[], market: string) {
     enabled: symbols.length > 0,
     refetchInterval: (query) => {
       const isOpen = query.state.data?.is_market_open;
-      return isOpen ? 5_000 : 60_000; // 5s live, 60s after hours
+      return isOpen ? 2_000 : 60_000; // 2s live, 60s after hours
     },
-    staleTime: 4_000,
+    staleTime: 1_500,
     placeholderData: keepPreviousData,
     retry: 1,
   });
