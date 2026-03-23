@@ -177,9 +177,19 @@ def _execute_chapter(
         sys.path.remove(fml_dir)
         sys.path.insert(0, fml_dir)
 
-    # Evict any previously cached sample_data (e.g. from testune_trade_sys)
-    # so the correct financial_ML/sample_data.py is imported fresh.
-    _stale_sd = sys.modules.pop("sample_data", None)
+    # Evict any previously cached sample_data and pre-import it fresh.
+    # Then directly patch SYMBOLS / DEFAULT_START / DEFAULT_END on the
+    # module object so chapter scripts' `from sample_data import SYMBOLS`
+    # picks up the user's tickers regardless of env-var caching quirks.
+    sys.modules.pop("sample_data", None)
+    import importlib
+    _sd = importlib.import_module("sample_data")
+    if tickers:
+        _sd.SYMBOLS = list(tickers)
+    if date_start:
+        _sd.DEFAULT_START = date_start
+    if date_end:
+        _sd.DEFAULT_END = date_end
 
     try:
         with redirect_stdout(stdout_capture):

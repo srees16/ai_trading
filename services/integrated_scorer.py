@@ -463,6 +463,14 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
 
 def _run_layer_ml(ticker: str) -> Dict[str, Any]:
     """Compute AFML-based feature scores for a ticker."""
+    import concurrent.futures
+
+    def _run_with_timeout(fn, timeout_sec=30):
+        """Run *fn* in a thread; return result or raise TimeoutError."""
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            fut = pool.submit(fn)
+            return fut.result(timeout=timeout_sec)
+
     try:
         import yfinance as yf
 
@@ -504,12 +512,22 @@ def _run_layer_ml(ticker: str) -> Dict[str, Any]:
             sadf_series = ch17.sadf_series
 
             log_close = np.log(close).to_frame("logP")
-            sadf = sadf_series(log_close, minSL=20, constant="nc", lags=1)
+            # Subsample to max 200 points to keep SADF O(n^2) tractable
+            if len(log_close) > 200:
+                step = len(log_close) // 200
+                log_close = log_close.iloc[::step]
+
+            def _compute_sadf():
+                return sadf_series(log_close, minSL=20, constant="nc", lags=1)
+
+            sadf = _run_with_timeout(_compute_sadf, timeout_sec=30)
             peak_sadf = float(sadf.max()) if len(sadf) > 0 else 0
             # SADF > 1.0 ⇒ explosiveness ⇒ potential bubble (bearish signal)
             sb_score = _clamp(-peak_sadf / 3.0)
             details["sadf_peak"] = round(peak_sadf, 4)
             sub_scores.append(sb_score)
+        except concurrent.futures.TimeoutError:
+            details["sadf_error"] = "timed out (30s)"
         except Exception as e:
             details["sadf_error"] = str(e)
 
@@ -577,31 +595,39 @@ def _run_layer_ml(ticker: str) -> Dict[str, Any]:
             close_series = close.copy()
             close_series.index = pd.to_datetime(close_series.index)
 
-            daily_vol = getDailyVol(close_series, span0=50)
+            def _compute_triple_barrier():
+                daily_vol = getDailyVol(close_series, span0=50)
 
-            # Use simple CUSUM-like trigger: price crosses 1 std dev
-            t_events = close_series.index[50:]  # skip warmup
+                # Use simple CUSUM-like trigger: price crosses 1 std dev
+                t_events = close_series.index[50:]  # skip warmup
 
-            # Get events with symmetric barriers (pt_sl = [1, 1])
-            events = getEvents(
-                close_series, tEvents=t_events, ptSl=[1, 1],
-                trgt=daily_vol, minRet=0.0,
-                t1=pd.Series(
-                    data=[t_events[-1]] * len(t_events),
-                    index=t_events,
-                ),
-            )
-            if events is not None and not events.empty:
-                bins = getBins(events, close_series)
-                if bins is not None and not bins.empty:
-                    # Recent label distribution → bullish/bearish signal
-                    recent = bins.tail(20)
-                    buy_ratio = (recent["bin"] == 1).mean()
-                    sell_ratio = (recent["bin"] == -1).mean()
-                    tb_score = _clamp((buy_ratio - sell_ratio) * 2)
-                    details["triple_barrier_buy_pct"] = round(float(buy_ratio), 4)
-                    details["triple_barrier_sell_pct"] = round(float(sell_ratio), 4)
-                    sub_scores.append(tb_score)
+                # Get events with symmetric barriers (pt_sl = [1, 1])
+                events = getEvents(
+                    close_series, tEvents=t_events, ptSl=[1, 1],
+                    trgt=daily_vol, minRet=0.0,
+                    t1=pd.Series(
+                        data=[t_events[-1]] * len(t_events),
+                        index=t_events,
+                    ),
+                )
+                if events is not None and not events.empty:
+                    bins = getBins(events, close_series)
+                    if bins is not None and not bins.empty:
+                        # Recent label distribution → bullish/bearish signal
+                        recent = bins.tail(20)
+                        buy_ratio = (recent["bin"] == 1).mean()
+                        sell_ratio = (recent["bin"] == -1).mean()
+                        return buy_ratio, sell_ratio
+                return None, None
+
+            buy_ratio, sell_ratio = _run_with_timeout(_compute_triple_barrier, timeout_sec=30)
+            if buy_ratio is not None:
+                tb_score = _clamp((buy_ratio - sell_ratio) * 2)
+                details["triple_barrier_buy_pct"] = round(float(buy_ratio), 4)
+                details["triple_barrier_sell_pct"] = round(float(sell_ratio), 4)
+                sub_scores.append(tb_score)
+        except concurrent.futures.TimeoutError:
+            details["triple_barrier_error"] = "timed out (30s)"
         except Exception as e:
             details["triple_barrier_error"] = str(e)
 
@@ -616,9 +642,6 @@ def _run_layer_ml(ticker: str) -> Dict[str, Any]:
             if len(returns) >= 200:
                 from sklearn.linear_model import SGDClassifier
 
-                # Binary classification: next-day up/down
-                # PurgedKFold.split() requires X with a DatetimeIndex
-                # matching t1.index — pass a DataFrame, not numpy array.
                 X_vals = returns.values[:-1].reshape(-1, 1)
                 y = (returns.values[1:] > 0).astype(int)
                 X = pd.DataFrame(
@@ -631,12 +654,16 @@ def _run_layer_ml(ticker: str) -> Dict[str, Any]:
                     index=returns.index[:-1],
                 )
 
-                pkf = PurgedKFold(n_splits=5, t1=t1, pctEmbargo=0.01)
-                cv_scores = []
-                for train_idx, test_idx in pkf.split(X):
-                    clf = SGDClassifier(loss="log_loss", random_state=42, max_iter=200)
-                    clf.fit(X_vals[train_idx], y[train_idx])
-                    cv_scores.append(float(clf.score(X_vals[test_idx], y[test_idx])))
+                def _compute_purged_cv():
+                    pkf = PurgedKFold(n_splits=5, t1=t1, pctEmbargo=0.01)
+                    cv_scores = []
+                    for train_idx, test_idx in pkf.split(X):
+                        clf = SGDClassifier(loss="log_loss", random_state=42, max_iter=200)
+                        clf.fit(X_vals[train_idx], y[train_idx])
+                        cv_scores.append(float(clf.score(X_vals[test_idx], y[test_idx])))
+                    return cv_scores
+
+                cv_scores = _run_with_timeout(_compute_purged_cv, timeout_sec=20)
 
                 mean_cv = float(np.mean(cv_scores))
                 # CV accuracy > 0.55 = meaningful edge
@@ -644,6 +671,8 @@ def _run_layer_ml(ticker: str) -> Dict[str, Any]:
                 details["purged_cv_mean_accuracy"] = round(mean_cv, 4)
                 details["purged_cv_scores"] = [round(s, 4) for s in cv_scores]
                 sub_scores.append(cv_score)
+        except concurrent.futures.TimeoutError:
+            details["purged_cv_error"] = "timed out (20s)"
         except Exception as e:
             details["purged_cv_error"] = str(e)
 
@@ -987,12 +1016,12 @@ class IntegratedScorer:
 
             # ── Fundamental freshness adjustment (#9) ─────────
             freshness_adj = 0.0
+            freshness_info: Dict[str, Any] = {}
             try:
                 from services.fundamental_freshness import get_freshness_adjustment
                 fadj = get_freshness_adjustment(ticker)
                 freshness_adj = fadj.adjustment_score
-                layer_details.setdefault("freshness", {})
-                layer_details["freshness"] = {
+                freshness_info = {
                     "adjustment": round(freshness_adj, 4),
                     "bulk_deals": fadj.bulk_deal_detected,
                     "pledge_change": round(fadj.promoter_pledge_change_pct, 2),
@@ -1047,8 +1076,8 @@ class IntegratedScorer:
             # Merge extra details
             layer_details_out["regime"] = regime_info
             layer_details_out["fii_dii"] = fii_info
-            if "freshness" in layer_details:
-                layer_details_out["freshness"] = layer_details["freshness"]
+            if freshness_info:
+                layer_details_out["freshness"] = freshness_info
 
             # Confidence = fraction of layers that returned data
             active_layers = sum(1 for s in layer_scores.values() if s is not None)
