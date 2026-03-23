@@ -162,6 +162,14 @@ def _execute_chapter(
     path_inserted = fml_dir not in sys.path
     if path_inserted:
         sys.path.insert(0, fml_dir)
+    else:
+        # Make sure fml_dir is first so it wins over testune_trade_sys
+        sys.path.remove(fml_dir)
+        sys.path.insert(0, fml_dir)
+
+    # Evict any previously cached sample_data (e.g. from testune_trade_sys)
+    # so the correct financial_ML/sample_data.py is imported fresh.
+    _stale_sd = sys.modules.pop("sample_data", None)
 
     try:
         with redirect_stdout(stdout_capture):
@@ -173,6 +181,8 @@ def _execute_chapter(
     finally:
         if path_inserted and fml_dir in sys.path:
             sys.path.remove(fml_dir)
+        # Clean up cached sample_data so it doesn't leak to other modules
+        sys.modules.pop("sample_data", None)
         # Restore env vars
         for k, v in old_env.items():
             if v is None:

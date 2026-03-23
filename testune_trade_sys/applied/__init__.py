@@ -5,7 +5,9 @@ testune_trade_sys.applied — chapter registry, async batch runner, and progress
 import asyncio
 import io
 import logging
+import os
 import runpy
+import sys
 import threading
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -68,7 +70,12 @@ def get_batch_progress(batch_id: str) -> Optional[Dict[str, Any]]:
         return _batch_progress.get(batch_id)
 
 
-def _execute_chapter(ch_key: str) -> Dict[str, Any]:
+def _execute_chapter(
+    ch_key: str,
+    tickers: Optional[List[str]] = None,
+    date_start: Optional[str] = None,
+    date_end: Optional[str] = None,
+) -> Dict[str, Any]:
     """Run a single chapter script and capture output + figures."""
     import matplotlib
     matplotlib.use("Agg")
@@ -98,6 +105,27 @@ def _execute_chapter(ch_key: str) -> Dict[str, Any]:
     figs_before = set(plt.get_fignums())
     stdout_capture = io.StringIO()
 
+    # Inject tickers / date range as env vars so chapter scripts can read them
+    env_overrides = {}
+    if tickers:
+        env_overrides["TTS_TICKERS"] = ",".join(tickers)
+    if date_start:
+        env_overrides["TTS_DATE_START"] = date_start
+    if date_end:
+        env_overrides["TTS_DATE_END"] = date_end
+
+    old_env = {k: os.environ.get(k) for k in env_overrides}
+    for k, v in env_overrides.items():
+        os.environ[k] = v
+
+    # Manage sys.path so `from sample_data import ...` resolves to
+    # testune_trade_sys/sample_data.py, and clean up any stale cached module.
+    tts_dir = str(_APPLIED_DIR.parent)
+    path_inserted = tts_dir not in sys.path
+    if path_inserted:
+        sys.path.insert(0, tts_dir)
+    _stale_sd = sys.modules.pop("sample_data", None)
+
     try:
         with redirect_stdout(stdout_capture):
             runpy.run_path(str(script_path), run_name="__main__")
@@ -105,6 +133,16 @@ def _execute_chapter(ch_key: str) -> Dict[str, Any]:
         result["status"] = "error"
         result["error_message"] = str(exc)
         logger.exception("TTS chapter %s failed", ch_key)
+    finally:
+        if path_inserted and tts_dir in sys.path:
+            sys.path.remove(tts_dir)
+        sys.modules.pop("sample_data", None)
+        # Restore env vars
+        for k, v in old_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
     result["text_output"] = stdout_capture.getvalue()
 
@@ -125,7 +163,13 @@ def _execute_chapter(ch_key: str) -> Dict[str, Any]:
     return result
 
 
-async def run_chapters_async(batch_id: str, chapter_keys: List[str]):
+async def run_chapters_async(
+    batch_id: str,
+    chapter_keys: List[str],
+    tickers: Optional[List[str]] = None,
+    date_start: Optional[str] = None,
+    date_end: Optional[str] = None,
+):
     """Run chapters in background and update progress."""
     total = len(chapter_keys)
     with _batch_lock:
@@ -143,7 +187,7 @@ async def run_chapters_async(batch_id: str, chapter_keys: List[str]):
         with _batch_lock:
             _batch_progress[batch_id]["chapters"][ch_key]["status"] = "running"
 
-        result = await asyncio.to_thread(_execute_chapter, ch_key)
+        result = await asyncio.to_thread(_execute_chapter, ch_key, tickers, date_start, date_end)
 
         with _batch_lock:
             _batch_progress[batch_id]["chapters"][ch_key] = result

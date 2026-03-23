@@ -10,13 +10,20 @@ export function useTtsChapters() {
   });
 }
 
+export interface TtsRunParams {
+  chapters: string[];
+  tickers?: string[];
+  date_start?: string;
+  date_end?: string;
+}
+
 export function useTtsRun() {
   const [progress, setProgress] = useState<AsyncBatchProgress | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
 
   const runMutation = useMutation({
-    mutationFn: (chapterKeys: string[]) =>
-      api.post<{ batch_id: string }>("/api/v1/tts/run", { chapters: chapterKeys }),
+    mutationFn: (params: TtsRunParams) =>
+      api.post<{ batch_id: string }>("/api/v1/tts/run", params),
   });
 
   const startSSE = useCallback(

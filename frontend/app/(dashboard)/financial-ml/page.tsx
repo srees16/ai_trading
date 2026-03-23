@@ -5,7 +5,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Spinner } from "@/components/common/spinner";
@@ -262,7 +261,7 @@ export default function FinancialMLPage() {
         {/* ─── Right panel: results ─── */}
         <div className="md:col-span-3 space-y-4">
           {isRunning && progress && (
-            <div className="content-panel p-4 space-y-3">
+            <div className="content-panel p-4">
               <div className="flex items-center gap-3">
                 <Spinner />
                 <div>
@@ -270,7 +269,6 @@ export default function FinancialMLPage() {
                   <p className="text-xs text-muted-foreground">{pct}% complete</p>
                 </div>
               </div>
-              <Progress value={pct} />
             </div>
           )}
 

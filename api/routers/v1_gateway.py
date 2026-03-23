@@ -1250,7 +1250,12 @@ async def tts_run(req: ChapterRunRequest):
 
     try:
         from testune_trade_sys.applied import run_chapters_async
-        asyncio.create_task(run_chapters_async(batch_id, req.chapters))
+        asyncio.create_task(run_chapters_async(
+            batch_id, req.chapters,
+            tickers=req.tickers,
+            date_start=req.date_start,
+            date_end=req.date_end,
+        ))
     except ImportError:
         logger.warning("TTS module not found — run will be a no-op")
 
