@@ -8,6 +8,7 @@ FML, TTS chapters) is stubbed with minimal implementations.
 
 import asyncio
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
@@ -787,21 +788,39 @@ async def kite_session_start():
         pass  # token invalid/expired, continue
 
     # Step 2: Try auto-login with Selenium + TOTP (with timeout)
-    try:
-        from kite_connect.auth.kite_session import create_kite_session
-        loop = asyncio.get_event_loop()
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            kite = await asyncio.wait_for(
-                loop.run_in_executor(pool, create_kite_session),
-                timeout=90,
-            )
-        set_kite_session(kite)
-        profile = await asyncio.to_thread(kite.profile)
-        return {"success": True, "profile": profile}
-    except asyncio.TimeoutError:
-        logger.warning("Kite auto-login timed out after 90s")
-    except Exception as e:
-        logger.warning("Kite auto-login failed: %s", e)
+    # Skip Selenium on containerised environments (HF Spaces, Docker) where
+    # no browser is available — use HTTP-based login instead.
+    _in_container = os.path.exists("/.dockerenv") or os.getenv("SPACE_ID")
+    if _in_container:
+        # Step 2a: HTTP-based login (no browser needed, ~3-5s)
+        logger.info("Container detected — using HTTP-based Kite login")
+        try:
+            from kite_connect.auth.kite_session import http_login_kite
+            kite = await asyncio.to_thread(http_login_kite)
+            if kite:
+                set_kite_session(kite)
+                profile = await asyncio.to_thread(kite.profile)
+                return {"success": True, "profile": profile}
+            logger.warning("HTTP-based Kite login returned None")
+        except Exception as e:
+            logger.warning("HTTP-based Kite login failed: %s", e)
+    else:
+        # Step 2b: Selenium + TOTP auto-login (local dev with browser)
+        try:
+            from kite_connect.auth.kite_session import create_kite_session
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                kite = await asyncio.wait_for(
+                    loop.run_in_executor(pool, create_kite_session),
+                    timeout=90,
+                )
+            set_kite_session(kite)
+            profile = await asyncio.to_thread(kite.profile)
+            return {"success": True, "profile": profile}
+        except asyncio.TimeoutError:
+            logger.warning("Kite auto-login timed out after 90s")
+        except Exception as e:
+            logger.warning("Kite auto-login failed: %s", e)
 
     # Step 3: Return structured response so frontend can prompt manual login
     from kite_connect.core.config import LOGIN_URL
