@@ -198,7 +198,7 @@ class PriceAlertEngine:
         if not ticks:
             return
 
-        # Build a lookup: symbol → tick data
+        # Build a lookup: symbol tick data
         tick_map: Dict[str, Dict] = {}
         for t in ticks:
             sym = t.get("name", "").upper()

@@ -55,11 +55,13 @@ class NewsItem:
     sentiment_score: Optional[float] = None
     sentiment_label: Optional[SentimentLabel] = None
     sentiment_confidence: Optional[float] = None
+    relevance_score: Optional[float] = None
+    importance_rank: Optional[int] = None
     
     def __repr__(self) -> str:
         return (
             f"NewsItem(ticker={self.ticker!r}, source={self.source!r}, "
-            f"sentiment={self.sentiment_label}, title={self.title[:40]!r}...)"
+            f"sentiment={self.sentiment_label}, title={self.title[:40]!r})"
         )
     
     def is_highly_positive(self) -> bool:
@@ -109,6 +111,10 @@ class StockMetrics:
     bollinger_lower: Optional[float] = None
     max_drawdown: Optional[float] = None
     current_price: Optional[float] = None
+    adx: Optional[float] = None            # Average Directional Index (trend strength)
+    obv: Optional[float] = None            # On-Balance Volume (latest)
+    obv_sma: Optional[float] = None        # On-Balance Volume smoothed
+    volume_sma_20: Optional[float] = None  # 20-day volume moving average
 
     def __repr__(self) -> str:
         return (

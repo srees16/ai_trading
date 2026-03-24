@@ -60,6 +60,43 @@ class DataService:
         """Check if yfinance is available."""
         return True
     
+    @staticmethod
+    def _ensure_exchange_suffix(ticker: str) -> str:
+        """Add .NS suffix for Indian tickers that are missing it.
+
+        yfinance requires NSE tickers to end with ``.NS`` (e.g.
+        ``RELIANCE.NS``).  If the ticker already carries an exchange
+        suffix (``.NS``, ``.BO``, ``.L``, etc.) it is returned as-is.
+        Otherwise we make a quick ``yf.Ticker`` probe: if the bare
+        symbol fails but ``{symbol}.NS`` succeeds, we return the
+        suffixed version.
+        """
+        # Already has an exchange suffix nothing to do
+        if '.' in ticker:
+            return ticker
+
+        # Quick probe: try the bare ticker first
+        try:
+            info = yf.Ticker(ticker).fast_info
+            if info and getattr(info, 'timezone', None):
+                return ticker  # bare symbol works (US stock, etc.)
+        except Exception:
+            pass
+
+        # Try with .NS suffix (NSE India), applying override map
+        from utils import yf_nse_symbol
+        ns_ticker = yf_nse_symbol(ticker)
+        try:
+            info = yf.Ticker(ns_ticker).fast_info
+            if info and getattr(info, 'timezone', None):
+                logger.info("DataService: Resolved %s %s", ticker, ns_ticker)
+                return ns_ticker
+        except Exception:
+            pass
+
+        # Return original — let downstream handle the error
+        return ticker
+    
     def get_ohlcv(
         self,
         ticker: str,
@@ -94,7 +131,21 @@ class DataService:
         
         # Fetch data
         df = self._fetch_from_yfinance(ticker, start_date, end_date, interval)
-        
+
+        # ── Survivorship bias check ────────────────────────────
+        # Reject delisted / suspended tickers early so strategies
+        # don't backtest on dead stocks.
+        try:
+            from services.survivorship_filter import check_ticker
+            result = check_ticker(ticker, ohlcv=df)
+            if not result.is_valid:
+                logger.warning(
+                    "DataService: rejected %s — %s", ticker, result.reason,
+                )
+                return pd.DataFrame()  # return empty → strategy sees no data
+        except Exception:
+            pass  # degrade gracefully
+
         # Cache result
         if use_cache and df is not None and not df.empty:
             self._cache[cache_key] = df.copy()
@@ -112,7 +163,10 @@ class DataService:
         """Fetch data from Yahoo Finance."""
         if not self._yf_available:
             raise ImportError("yfinance is required for data fetching")
-        
+
+        # Ensure Indian tickers have .NS suffix for yfinance
+        ticker = self._ensure_exchange_suffix(ticker)
+
         try:
             df = yf.download(
                 ticker,
@@ -323,95 +377,3 @@ class DataService:
         else:
             self._cache.clear()
             self._cache_expiry.clear()
-    
-    def preload_data(
-        self,
-        tickers: list[str],
-        start_date: str,
-        end_date: str
-    ) -> None:
-        """
-        Preload data for multiple tickers into cache.
-        
-        Useful for batch operations to minimize download time.
-        """
-        if not self._yf_available:
-            return
-        
-        # Batch download
-        try:
-            data = yf.download(
-                tickers,
-                start=start_date,
-                end=end_date,
-                progress=False,
-                group_by='ticker'
-            )
-            
-            # Cache each ticker
-            for ticker in tickers:
-                try:
-                    if len(tickers) == 1:
-                        df = data
-                    else:
-                        df = data[ticker].copy()
-                    
-                    if isinstance(df.columns, pd.MultiIndex):
-                        df.columns = df.columns.droplevel(1)
-                    
-                    df = self._clean_ohlcv(df)
-                    
-                    cache_key = f"{ticker}_{start_date}_{end_date}_1d"
-                    self._cache[cache_key] = df
-                    self._cache_expiry[cache_key] = datetime.now() + self._cache_duration
-                
-                except Exception as e:
-                    logger.debug(f"Preload failed for {ticker}: {e}")
-        
-        except Exception as e:
-            logger.warning(f"Batch preload failed: {e}")
-
-
-# Convenience function for quick access
-def get_data(
-    ticker: str,
-    start_date: str,
-    end_date: str,
-    **kwargs
-) -> pd.DataFrame:
-    """
-    Quick access function to get OHLCV data.
-    
-    Args:
-        ticker: Stock ticker
-        start_date: Start date
-        end_date: End date
-        **kwargs: Additional arguments passed to DataService.get_ohlcv
-    
-    Returns:
-        DataFrame with OHLCV data
-    """
-    service = DataService()
-    return service.get_ohlcv(ticker, start_date, end_date, **kwargs)
-
-
-def get_multiple_data(
-    tickers: list[str],
-    start_date: str,
-    end_date: str,
-    **kwargs
-) -> dict[str, pd.DataFrame]:
-    """
-    Quick access function to get multiple tickers.
-    
-    Args:
-        tickers: List of tickers
-        start_date: Start date
-        end_date: End date
-        **kwargs: Additional arguments
-    
-    Returns:
-        Dictionary of DataFrames
-    """
-    service = DataService()
-    return service.get_multiple_ohlcv(tickers, start_date, end_date, **kwargs)

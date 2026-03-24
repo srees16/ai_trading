@@ -7,7 +7,7 @@ authentication tokens, and service singletons.
 
 import logging
 from functools import lru_cache
-from typing import Generator, Optional
+
 
 logger = logging.getLogger(__name__)
 
@@ -69,9 +69,11 @@ def get_rag_engine():
     if _rag_engine is None:
         try:
             from rag_pipeline.config import RAGConfig
-            from rag_pipeline.query_engine import RAGQueryEngine
+            from rag_pipeline.core.query_engine import RAGQueryEngine
+            from rag_pipeline.storage.vector_store import VectorStoreManager
             config = RAGConfig()
-            _rag_engine = RAGQueryEngine(config)
+            vs = VectorStoreManager(config)
+            _rag_engine = RAGQueryEngine(vector_store=vs, config=config)
             logger.info("RAG QueryEngine initialised")
         except Exception as exc:
             logger.error("Failed to initialise RAG engine: %s", exc)

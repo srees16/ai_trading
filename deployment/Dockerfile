@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
     build-essential \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
@@ -26,12 +27,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Expose Streamlit default port
-EXPOSE 9000
+# Create data directory for SQLite files (Railway volume mount point)
+RUN mkdir -p /app/data
 
-# Health check
+# Expose FastAPI port (Railway sets $PORT dynamically)
+EXPOSE 9001
+
+# Health check against FastAPI
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl --fail http://localhost:9000/_stcore/health || exit 1
+    CMD curl --fail http://localhost:${PORT:-9001}/api/v1/health || exit 1
 
-# Run Streamlit app
-CMD ["streamlit", "run", "app.py", "--server.port=9000", "--server.address=0.0.0.0", "--server.headless=true", "--browser.serverAddress=0.0.0.0", "--browser.gatherUsageStats=false"]
+# Start script: FastAPI server + Scheduler in background
+COPY deployment/start.sh /app/start.sh
+RUN chmod +x /app/start.sh
+CMD ["/app/start.sh"]

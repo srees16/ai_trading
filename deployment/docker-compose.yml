@@ -7,15 +7,16 @@ services:
       dockerfile: deployment/Dockerfile
     container_name: algo-trading-system
     ports:
-      - "9000:9000"
+      - "9001:9001"
     environment:
       - PYTHONUNBUFFERED=1
+      - PORT=9001
     volumes:
       # Mount a volume to persist output files
       - ../data:/app/data
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/_stcore/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:9001/api/v1/health"]
       interval: 30s
       timeout: 10s
       retries: 3

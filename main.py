@@ -17,12 +17,26 @@ from datetime import datetime
 
 from config import Config
 from models import TradingSignal
-from scrapers.aggregator import NewsAggregator
+from scrapers.us_aggregator import USNewsAggregator
+from scrapers.ind_aggregator import IndianNewsAggregator
+from scrapers.macro.macro_indicators import MacroIndicators
 from sentiment import SentimentAnalyzer
 from metrics import MetricsCalculator
 from decision_engine import DecisionEngine
 from notifications import NotificationManager
 from storage import StorageManager
+
+# Infrastructure
+from infrastructure.event_bus import event_bus
+from infrastructure.latency_tracker import latency_tracker
+from infrastructure.replay_engine import replay_engine
+
+# ── Wire replay recording to event bus ──────────────────────────
+# Every event that flows through the bus is automatically captured
+# for deterministic replay in backtest mode.
+@event_bus.on("*")
+def _record_to_replay(event):
+    replay_engine.record_event(event.to_dict())
 
 # Setup Logging
 logging.basicConfig(
@@ -36,27 +50,47 @@ logger = logging.getLogger(__name__)
 class AlgoTradingSystem:
     """Main orchestration class for the algo-trading alert system."""
     
-    def __init__(self, tickers: List[str] = None):
+    def __init__(self, tickers: List[str] = None, market: str = "US"):
         """
         Initialize the trading system.
         
         Args:
             tickers: List of stock tickers to monitor
+            market: Market identifier ('US' or 'IND')
         """
         self.tickers = tickers or Config.DEFAULT_TICKERS
+        self.market = market
         
-        logger.info("Initializing Algo Trading Alert System...")
-        logger.info(f"Monitoring tickers: {', '.join(self.tickers)}")
+        logger.info("Initializing Algo Trading Alert System")
+        logger.info(f"Market: {market} | Monitoring tickers: {', '.join(self.tickers)}")
         
-        # Initialize components
-        self.news_aggregator = NewsAggregator()
+        # Initialize components — pick the right news aggregator
+        if market == "IND":
+            self.news_aggregator = IndianNewsAggregator()
+        else:
+            self.news_aggregator = USNewsAggregator()
         self.sentiment_analyzer = SentimentAnalyzer()
         self.metrics_calculator = MetricsCalculator()
         self.decision_engine = DecisionEngine()
         self.notification_manager = NotificationManager()
         self.storage_manager = StorageManager()
+        self.macro_indicators = MacroIndicators()
         
         logger.info("System initialized successfully!")
+
+        # Start event recording for deterministic replay
+        session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{market}"
+        try:
+            replay_engine.start_recording(session_id)
+        except Exception:
+            pass  # Recording is optional — don't block init
+
+        # Emit system init event
+        event_bus.emit(
+            "system.initialized",
+            payload={"market": market, "tickers": self.tickers},
+            source="AlgoTradingSystem",
+        )
     
     async def run(self):
         """Run the complete trading system pipeline."""
@@ -65,29 +99,43 @@ class AlgoTradingSystem:
         logger.info("=" * 70)
         
         # Step 1: Scrape news
-        logger.info("Step 1: Scraping news from multiple sources...")
-        all_news = await self.news_aggregator.fetch_news_for_tickers(self.tickers)
+        logger.info(" Step 1: Scraping news from multiple sources")
+        with latency_tracker.measure("pipeline.scrape_news"):
+            all_news = await self.news_aggregator.fetch_news_for_tickers(self.tickers)
         logger.info(f"Collected {len(all_news)} news items")
+        event_bus.emit("pipeline.news_scraped", payload={"count": len(all_news)}, source="main")
         
         if not all_news:
             logger.warning("No news found. Exiting.")
             return
         
         # Step 2: Analyze sentiment
-        logger.info("Step 2: Analyzing sentiment...")
-        analyzed_news = self.sentiment_analyzer.analyze_news_items(all_news)
+        logger.info("Step 2: Analyzing sentiment")
+        with latency_tracker.measure("pipeline.sentiment"):
+            analyzed_news = self.sentiment_analyzer.analyze_news_items(all_news)
         logger.info(f"Analyzed sentiment for {len(analyzed_news)} items")
+        event_bus.emit("pipeline.sentiment_done", payload={"count": len(analyzed_news)}, source="main")
         
         # Step 3: Send notifications for high-confidence news
-        logger.info("Step 3: Checking for high-confidence alerts...")
+        logger.info("Step 3: Checking for high-confidence alerts")
         self.notification_manager.notify_multiple_news(analyzed_news)
         
-        # Step 4: Calculate metrics and generate signals
-        logger.info("Step 4: Calculating metrics and generating trading signals...")
+        # Step 4: Macro-economic indicators
+        logger.info("Step 4: Fetching macro-economic indicators")
+        macro_snap = self.macro_indicators.fetch(market=self.market)
+        self.decision_engine.set_macro_snapshot(macro_snap)
+        logger.info(
+            "Macro sentiment: %s (score=%.2f)",
+            macro_snap.macro_sentiment_label or "n/a",
+            macro_snap.macro_sentiment_score or 0,
+        )
+
+        # Step 5: Calculate metrics and generate signals
+        logger.info("Step 5: Calculating metrics and generating trading signals")
         signals: List[TradingSignal] = []
         
         for news_item in analyzed_news:
-            logger.debug(f"  Analyzing {news_item.ticker}...")
+            logger.debug(f"  Analyzing {news_item.ticker}")
             
             # Calculate metrics
             metrics = self.metrics_calculator.get_stock_metrics(news_item.ticker)
@@ -97,6 +145,17 @@ class AlgoTradingSystem:
             signals.append(signal)
             
             logger.info(f"  {news_item.ticker}: Decision = {signal.decision.value}")
+
+            # Record signal event for replay
+            event_bus.emit(
+                "pipeline.signal_generated",
+                payload={
+                    "ticker": news_item.ticker,
+                    "decision": signal.decision.value,
+                    "score": signal.decision_score,
+                },
+                source="main",
+            )
             
             # Send notification for strong signals
             if signal.decision.value in ['STRONG_BUY', 'STRONG_SELL']:
@@ -104,11 +163,11 @@ class AlgoTradingSystem:
         
         logger.info(f"Generated {len(signals)} trading signals")
         
-        # Step 5: Save results
-        logger.info("Step 5: Saving results to file...")
+        # Step 7: Save results
+        logger.info("Step 7: Saving results to file")
         self.storage_manager.save_signals(signals, append=Config.APPEND_MODE)
         
-        # Step 6: Display summary
+        # Step 8: Display summary
         self._display_summary(signals)
         
         logger.info("=" * 70)
@@ -133,32 +192,27 @@ class AlgoTradingSystem:
         logger.info("-" * 70)
         
         # Display top signals
-        logger.info("🔝 Top 5 Strongest Buy Signals:")
+        logger.info("Top 5 Strongest Buy Signals:")
         buy_signals = [s for s in signals if s.decision.value in ['STRONG_BUY', 'BUY']]
         buy_signals.sort(key=lambda x: x.decision_score, reverse=True)
         
         for i, signal in enumerate(buy_signals[:5], 1):
             logger.info(f"  {i}. {signal.news_item.ticker} - {signal.decision.value} "
                   f"(Score: {signal.decision_score:.2f})")
-            logger.debug(f"     {signal.news_item.title[:70]}...")
+            logger.debug(f"     {signal.news_item.title[:70]}")
         
-        logger.info("⚠️  Top 5 Strongest Sell Signals:")
+        logger.info(" Top 5 Strongest Sell Signals:")
         sell_signals = [s for s in signals if s.decision.value in ['STRONG_SELL', 'SELL']]
         sell_signals.sort(key=lambda x: x.decision_score)
         
         for i, signal in enumerate(sell_signals[:5], 1):
             logger.info(f"  {i}. {signal.news_item.ticker} - {signal.decision.value} "
                   f"(Score: {signal.decision_score:.2f})")
-            logger.debug(f"     {signal.news_item.title[:70]}...")
+            logger.debug(f"     {signal.news_item.title[:70]}")
 
 
 async def main():
     """Main entry point."""
-    # You can customize tickers here
-    # tickers = ["AAPL", "MSFT", "GOOGL", "TSLA", "NVDA"]
-    # system = AlgoTradingSystem(tickers=tickers)
-    
-    # Or use default tickers from config
     system = AlgoTradingSystem()
     
     await system.run()
@@ -169,6 +223,6 @@ if __name__ == "__main__":
         # Run the async main function
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("System interrupted by user. Exiting gracefully...")
+        logger.info("System interrupted by user. Exiting gracefully")
     except Exception as e:
         logger.error(f"Error running system: {e}", exc_info=True)

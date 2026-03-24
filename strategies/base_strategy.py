@@ -79,6 +79,7 @@ class StrategyResult:
         error_message: Error message if execution failed
         execution_time: Time taken to execute in seconds
         metadata: Additional strategy-specific information
+        transaction_cost_pct: Round-trip transaction cost as a fraction (default 0.001 = 0.1%)
     """
     charts: list[ChartData] = field(default_factory=list)
     tables: list[TableData] = field(default_factory=list)
@@ -89,6 +90,7 @@ class StrategyResult:
     error_message: str = ""
     execution_time: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
+    transaction_cost_pct: float = 0.0015  # 0.15% round-trip (NSE: STT + brokerage + GST + stamp)
     
     def to_dict(self) -> dict:
         """
@@ -406,11 +408,27 @@ class BaseStrategy(ABC):
         max_position_value = capital * risk.max_position_size
         close_max = signals['Close'].dropna().max()
         shares = int(max_position_value / close_max) if close_max > 0 else 0
+        # Guarantee at least 1 share so high-priced stocks still trade
+        if shares == 0 and close_max > 0 and close_max <= capital:
+            shares = 1
         
         portfolio['positions'] = signals['positions']
         portfolio['Close'] = signals['Close']
         portfolio['holdings'] = signals['positions'] * signals['Close'] * shares
-        portfolio['cash'] = capital - (signals['signals'] * signals['Close'] * shares).cumsum()
+
+        # ── Slippage deduction (#3) ───────────────────────────
+        # On every trade (signal != 0), deduct slippage from cash
+        # in addition to the position cost.
+        try:
+            from config import Config
+            slippage_bps = getattr(Config, 'SLIPPAGE_MODEL_IND_BPS', 0.0)
+        except Exception:
+            slippage_bps = 0.0
+        slippage_frac = slippage_bps / 10_000.0
+        trade_cost = signals['signals'].abs() * signals['Close'] * shares
+        slippage_cost = (trade_cost * slippage_frac).cumsum()
+
+        portfolio['cash'] = capital - (signals['signals'] * signals['Close'] * shares).cumsum() - slippage_cost
         portfolio['total_value'] = portfolio['holdings'] + portfolio['cash']
         portfolio['returns'] = portfolio['total_value'].pct_change().fillna(0)
         
@@ -441,16 +459,31 @@ class BaseStrategy(ABC):
         portfolio = pd.DataFrame(index=signals.index)
         
         long_positions = signals['positions'].clip(lower=0)
-        long_signals = signals['signals'].clip(lower=0)
+        # Recompute signals from clipped positions so sells (10) restore cash
+        long_signals = long_positions.diff().fillna(0)
         
         max_position_value = capital * risk.max_position_size
         close_max = signals['Close'].dropna().max()
         shares = int(max_position_value / close_max) if close_max > 0 else 0
+        # Guarantee at least 1 share so high-priced stocks still trade
+        if shares == 0 and close_max > 0 and close_max <= capital:
+            shares = 1
         
         portfolio['positions'] = long_positions
         portfolio['Close'] = signals['Close']
         portfolio['holdings'] = long_positions * signals['Close'] * shares
-        portfolio['cash'] = capital - (long_signals * signals['Close'] * shares).cumsum()
+
+        # ── Slippage deduction (#3) ───────────────────────────
+        try:
+            from config import Config
+            slippage_bps = getattr(Config, 'SLIPPAGE_MODEL_IND_BPS', 0.0)
+        except Exception:
+            slippage_bps = 0.0
+        slippage_frac = slippage_bps / 10_000.0
+        trade_cost = long_signals.abs() * signals['Close'] * shares
+        slippage_cost = (trade_cost * slippage_frac).cumsum()
+
+        portfolio['cash'] = capital - (long_signals * signals['Close'] * shares).cumsum() - slippage_cost
         portfolio['total_value'] = portfolio['holdings'] + portfolio['cash']
         portfolio['returns'] = portfolio['total_value'].pct_change().fillna(0)
         

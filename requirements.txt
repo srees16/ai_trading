@@ -2,6 +2,7 @@ aiohttp
 anthropic
 openai
 beautifulsoup4
+fake-useragent
 lxml
 requests
 pandas
@@ -24,6 +25,7 @@ python-dotenv
 pyyaml
 bcrypt
 minio
+redis
 scipy
 seaborn
 Backtesting
@@ -31,6 +33,7 @@ chromadb
 sentence-transformers
 PyMuPDF
 kiteconnect
+pyotp
 tiktoken
 webdriver-manager
 arch
@@ -39,4 +42,6 @@ pydantic
 uvicorn[standard]
 python-multipart
 itsdangerous
+apscheduler
 # a2a-sdk[http-server]==0.3.20
+sensibull-quotes

@@ -21,7 +21,6 @@ __all__ = [
     'render_header',
     'render_footer',
     'render_page_header',
-    'load_logo_base64',
     'render_navigation_buttons',
     'render_metrics_cards',
     # Charts
@@ -44,7 +43,6 @@ _LAZY_MAP: dict[str, tuple[str, str]] = {
     'render_header':             ('ui.components',  'render_header'),
     'render_footer':             ('ui.components',  'render_footer'),
     'render_page_header':        ('ui.components',  'render_page_header'),
-    'load_logo_base64':          ('ui.components',  'load_logo_base64'),
     'render_navigation_buttons': ('ui.components',  'render_navigation_buttons'),
     'render_metrics_cards':      ('ui.components',  'render_metrics_cards'),
     # charts

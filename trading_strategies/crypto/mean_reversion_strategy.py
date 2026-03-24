@@ -1150,12 +1150,15 @@ class CryptoMeanReversionStrategy(BaseStrategy):
 # ================================================================
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
+    from datetime import date, timedelta
+    _end = date.today()
+    _start = _end - timedelta(days=365 * 3)  # 3-year window for crypto
 
     strategy = CryptoMeanReversionStrategy()
     result = strategy.run(
         tickers=["ETH", "BTC", "LTC"],
-        start_date="2020-01-01",
-        end_date="2025-12-31",
+        start_date=_start.isoformat(),
+        end_date=_end.isoformat(),
         capital=10000,
         lookback=30,
         threshold=2.0,

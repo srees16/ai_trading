@@ -175,8 +175,8 @@ def _fetch_with_incremental_cache(
     Fetch klines for *symbol*, using a per-symbol CSV cache to avoid
     re-downloading data that already exists locally.
 
-    * If no cache exists → full download.
-    * If cache exists but doesn't cover the requested range →
+    * If no cache exists full download.
+    * If cache exists but doesn't cover the requested range 
       download only the missing tail (or head) and append.
     """
     requested_start = pd.Timestamp(start, tz="UTC")
@@ -206,7 +206,7 @@ def _fetch_with_incremental_cache(
 
         if need_before:
             head_end = (cache_min - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
-            logger.info("  %s: fetching earlier data %s → %s", symbol, start, head_end)
+            logger.info(" %s: fetching earlier data %s %s", symbol, start, head_end)
             head = fetch_klines(symbol, interval, start, head_end, pause)
             if not head.empty:
                 parts.insert(0, head)
@@ -214,7 +214,7 @@ def _fetch_with_incremental_cache(
         if need_after:
             tail_start = (cache_max + pd.Timedelta(days=1)).strftime("%Y-%m-%d")
             tail_end = end  # None means today
-            logger.info("  %s: fetching newer data %s → %s", symbol, tail_start, tail_end or "today")
+            logger.info(" %s: fetching newer data %s %s", symbol, tail_start, tail_end or "today")
             tail = fetch_klines(symbol, interval, tail_start, tail_end, pause)
             if not tail.empty:
                 parts.append(tail)
@@ -255,7 +255,7 @@ def fetch_crypto_prices(
     Parameters
     ----------
     symbols : dict
-        **Required.** Mapping of Binance symbol → column name,
+        **Required.** Mapping of Binance symbol column name,
         e.g. ``{"ETHUSDT": "eth", "BTCUSDT": "btc"}``.
     interval : str
         Kline interval (default ``"1d"``).
@@ -324,7 +324,7 @@ def migrate_legacy_cache() -> None:
     if not os.path.isfile(old_path):
         return
 
-    logger.info("Migrating legacy cache %s → per-symbol files", old_path)
+    logger.info("Migrating legacy cache %s per-symbol files", old_path)
     cached = pd.read_csv(old_path, index_col="timestamp", parse_dates=True)
 
     # Guess the Binance symbol from column name
@@ -372,4 +372,4 @@ if __name__ == "__main__":
     print(prices.head(10))
     print(prices.tail(5))
     print(f"\nShape: {prices.shape}")
-    print(f"Date range: {prices.index.min()} → {prices.index.max()}")
+    print(f"Date range: {prices.index.min()} {prices.index.max()}")
