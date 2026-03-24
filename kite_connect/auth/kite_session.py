@@ -114,21 +114,32 @@ def http_login_kite():
             logger.warning("HTTP login step 2 (TOTP) failed: %s", twofa_data.get("message", "unknown"))
             return None
 
-        # Step 3: Visit OAuth login URL — capture redirect without following it
+        # Step 3: Visit OAuth login URL and follow redirect chain.
+        # Zerodha's flow: /connect/login → /connect/finish?sess_id=...
+        #                  /connect/finish → <redirect_url>?request_token=...
+        # We follow up to 5 hops (without requests auto-redirect) to
+        # capture the final Location header that contains request_token.
         oauth_url = f"https://kite.zerodha.com/connect/login?v=3&api_key={API_KEY}"
-        redirect_resp = session.get(oauth_url, allow_redirects=False)
+        request_token = None
 
-        if redirect_resp.status_code not in (301, 302, 303):
-            logger.warning("HTTP login step 3: expected redirect, got %s", redirect_resp.status_code)
-            return None
-
-        location = redirect_resp.headers.get("Location", "")
-        parsed = urlparse(location)
-        params = parse_qs(parsed.query)
-        request_token = params.get("request_token", [None])[0]
+        for _hop in range(5):
+            resp = session.get(oauth_url, allow_redirects=False)
+            if resp.status_code not in (301, 302, 303):
+                logger.warning("HTTP login step 3: expected redirect, got %s (hop %d)", resp.status_code, _hop)
+                break
+            location = resp.headers.get("Location", "")
+            parsed = urlparse(location)
+            params = parse_qs(parsed.query)
+            request_token = params.get("request_token", [None])[0]
+            if request_token:
+                break
+            # Follow next hop (only within kite.zerodha.com)
+            if parsed.netloc and "zerodha.com" not in parsed.netloc:
+                break
+            oauth_url = location
 
         if not request_token:
-            logger.warning("HTTP login: no request_token in redirect URL: %s", location)
+            logger.warning("HTTP login: no request_token after redirect chain")
             return None
 
         logger.info("HTTP login: obtained request_token successfully")
