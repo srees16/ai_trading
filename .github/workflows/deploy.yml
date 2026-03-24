@@ -1,48 +1,85 @@
-name: Deploy Centurion Core
+name: Deploy Backend to HF Spaces
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
 jobs:
-  backend:
-    name: Deploy Backend to Railway
+  deploy-hf-spaces:
+    name: Deploy to Hugging Face Spaces
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: pip install -r centurion_core/requirements.txt
-
-      - name: Run lint check
-        run: python -m py_compile centurion_core/run_api.py
-
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-
-      - name: Deploy to Railway
+      - name: Clone HF Space repo
         env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          cd centurion_core
-          railway up --service centurion-backend
+          git clone https://srees16:${HF_TOKEN}@huggingface.co/spaces/srees16/centurion-core /tmp/hf-space
 
-  frontend:
-    name: Deploy Frontend to Vercel
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+      - name: Copy application files
+        run: |
+          # Sync files from GitHub checkout to HF Space repo, excluding
+          # dev artifacts, large files, frontend, and secrets
+          rsync -a --delete \
+            --exclude='.git' \
+            --exclude='__pycache__' \
+            --exclude='myenv' \
+            --exclude='node_modules' \
+            --exclude='.next' \
+            --exclude='frontend' \
+            --exclude='chroma_store' \
+            --exclude='financial_ML/_cache' \
+            --exclude='financial_ML/_output' \
+            --exclude='rag_pipeline/ingest_docs' \
+            --exclude='data/rag_uploads' \
+            --exclude='data/bhavcopy_cache' \
+            --exclude='data/chroma_db' \
+            --exclude='data/event_logs' \
+            --exclude='.env' \
+            --exclude='.env.*' \
+            --exclude='*.pyc' \
+            --exclude='*.pdf' \
+            --exclude='*.sqlite3' \
+            --exclude='*_original.png' \
+            --exclude='*_original.jpg' \
+            --exclude='_test_*' \
+            --exclude='_debug_*' \
+            --exclude='_compare_*' \
+            ./ /tmp/hf-space/
 
-      - name: Deploy to Vercel
-        uses: amondnet/vercel-action@v25
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          working-directory: centurion_core/frontend
-          vercel-args: "--prod"
+      - name: Inject credentials and HF-specific files
+        env:
+          CREDENTIALS_YAML: ${{ secrets.CREDENTIALS_YAML }}
+        run: |
+          # auth/credentials.yaml is in .gitignore — inject from GitHub secret
+          mkdir -p /tmp/hf-space/auth
+          echo "$CREDENTIALS_YAML" > /tmp/hf-space/auth/credentials.yaml
+
+          # HF-specific Dockerfile and README
+          cp deployment/Dockerfile.hf /tmp/hf-space/Dockerfile
+          cp deployment/hf-spaces/README.md /tmp/hf-space/README.md
+
+      - name: Validate file sizes
+        run: |
+          LARGE=$(find /tmp/hf-space -not -path '*/.git/*' -type f -size +10M 2>/dev/null)
+          if [ -n "$LARGE" ]; then
+            echo "ERROR: Files exceeding 10 MB:"
+            echo "$LARGE" | while read f; do echo "  $(du -h "$f" | cut -f1)  $f"; done
+            exit 1
+          fi
+          echo "All files under 10 MB - OK"
+
+      - name: Push to HF Spaces
+        run: |
+          cd /tmp/hf-space
+          # Minimal .gitignore so credentials.yaml gets included
+          printf '__pycache__/\n*.pyc\n.env\n.env.*\n' > .gitignore
+
+          git config user.email "ci@centurion.dev"
+          git config user.name "Centurion CI"
+          git add -A
+          git diff --cached --quiet && echo "No changes to deploy" && exit 0
+          git commit -m "Deploy from GitHub main ($(date -u +%Y-%m-%dT%H:%M:%SZ))"
+          git push
