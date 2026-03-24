@@ -1126,6 +1126,8 @@ class _FallbackChainBackend:
             answer = self._primary.generate(query, context)
             # Detect error responses from the primary backend
             if self._is_error_token(answer):
+                if self._is_user_actionable_error(answer):
+                    return answer  # show billing/auth errors directly
                 logger.warning(
                     "%s returned error — falling back to %s",
                     self._primary_name, self._fallback_name,
@@ -1143,6 +1145,15 @@ class _FallbackChainBackend:
     def _is_error_token(text: str) -> bool:
         """Return True if *text* looks like an LLM-backend error string."""
         return text.lstrip().startswith("\u26a0\ufe0f")
+
+    @staticmethod
+    def _is_user_actionable_error(text: str) -> bool:
+        """Errors the user must fix (billing, auth) — don't fall back."""
+        lower = text.lower()
+        return any(kw in lower for kw in (
+            "credit balance", "authentication failed",
+            "billing", "api_key", "api key",
+        ))
 
     def generate_stream(
         self, query: str, context: str
@@ -1167,16 +1178,24 @@ class _FallbackChainBackend:
                 yield from self._fallback.generate_stream(query, context)
                 return
 
-            # First token is an error — fall back
+            # First token is an error — check if user-actionable or fallback
             if self._is_error_token(first_token):
+                if self._is_user_actionable_error(first_token):
+                    # Auth/billing errors: show directly, don't try Ollama
+                    logger.warning(
+                        "%s user-actionable error (no fallback): %s",
+                        self._primary_name, first_token[:120],
+                    )
+                    yield first_token
+                    return
                 logger.warning(
                     "%s stream returned error — falling back to %s: %s",
                     self._primary_name, self._fallback_name,
                     first_token[:120],
                 )
                 yield (
-                    f"\u26a0\ufe0f *Claude LLM unavailable - "
-                    f"Ollama invoked as fallback*\n\n"
+                    f"\u26a0\ufe0f *{self._primary_name} unavailable — "
+                    f"falling back to {self._fallback_name}*\n\n"
                 )
                 yield from self._fallback.generate_stream(query, context)
                 return
@@ -1204,8 +1223,8 @@ class _FallbackChainBackend:
                 self._primary_name, e, self._fallback_name,
             )
             yield (
-                f"\u26a0\ufe0f *Claude LLM unavailable - "
-                f"Ollama invoked as fallback*\n\n"
+                f"\u26a0\ufe0f *{self._primary_name} unavailable — "
+                f"falling back to {self._fallback_name}*\n\n"
             )
             yield from self._fallback.generate_stream(query, context)
 
