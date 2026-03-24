@@ -1043,6 +1043,17 @@ def create_llm_backend(config: Optional[RAGConfig] = None):
     config = config or RAGConfig()
     provider = config.llm_provider  # already lowered in config
 
+    # Auto-detect: if provider is default "ollama" but an API key for a
+    # cloud provider is available, promote it to primary automatically.
+    # This lets containerised deployments (HF Spaces) work without Ollama.
+    if provider == "ollama":
+        if config.claude_api_key:
+            provider = "claude"
+            logger.info("Auto-detected ANTHROPIC_API_KEY — using Claude as primary LLM")
+        elif config.openai_api_key:
+            provider = "openai"
+            logger.info("Auto-detected OPENAI_API_KEY — using OpenAI as primary LLM")
+
     # --- Claude ---
     if provider == "claude":
         if not config.claude_api_key:
