@@ -8,6 +8,7 @@ FML, TTS chapters) is stubbed with minimal implementations.
 
 import asyncio
 import logging
+import os
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File
@@ -787,21 +788,27 @@ async def kite_session_start():
         pass  # token invalid/expired, continue
 
     # Step 2: Try auto-login with Selenium + TOTP (with timeout)
-    try:
-        from kite_connect.auth.kite_session import create_kite_session
-        loop = asyncio.get_event_loop()
-        with concurrent.futures.ThreadPoolExecutor() as pool:
-            kite = await asyncio.wait_for(
-                loop.run_in_executor(pool, create_kite_session),
-                timeout=90,
-            )
-        set_kite_session(kite)
-        profile = await asyncio.to_thread(kite.profile)
-        return {"success": True, "profile": profile}
-    except asyncio.TimeoutError:
-        logger.warning("Kite auto-login timed out after 90s")
-    except Exception as e:
-        logger.warning("Kite auto-login failed: %s", e)
+    # Skip on containerised environments (HF Spaces, Docker) where no browser
+    # is available — Selenium will always fail, wasting up to 90s.
+    _in_container = os.path.exists("/.dockerenv") or os.getenv("SPACE_ID")
+    if not _in_container:
+        try:
+            from kite_connect.auth.kite_session import create_kite_session
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                kite = await asyncio.wait_for(
+                    loop.run_in_executor(pool, create_kite_session),
+                    timeout=90,
+                )
+            set_kite_session(kite)
+            profile = await asyncio.to_thread(kite.profile)
+            return {"success": True, "profile": profile}
+        except asyncio.TimeoutError:
+            logger.warning("Kite auto-login timed out after 90s")
+        except Exception as e:
+            logger.warning("Kite auto-login failed: %s", e)
+    else:
+        logger.info("Container detected — skipping Selenium auto-login")
 
     # Step 3: Return structured response so frontend can prompt manual login
     from kite_connect.core.config import LOGIN_URL
