@@ -1465,9 +1465,11 @@ async def rag_query(
 
         if not engine or not rag_enabled:
             try:
-                from rag_pipeline.llm import get_llm_response
-                response = await asyncio.to_thread(get_llm_response, q)
-                yield f"event: token\ndata: {json.dumps(response)}\n\n"
+                from rag_pipeline.llm.llm_service import create_llm_backend
+                llm = create_llm_backend()
+                tokens = llm.generate_stream(q, "")
+                for tok in tokens:
+                    yield f"event: token\ndata: {json.dumps(tok)}\n\n"
                 yield f"event: done\ndata: done\n\n"
             except Exception as e:
                 yield f"event: token\ndata: {json.dumps(f'Error: {e}')}\n\n"
