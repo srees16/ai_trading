@@ -562,27 +562,51 @@ def _fetch_ribbon_prices(market: str = "IND") -> list:
     currency = "₹" if market == "IND" else "$"
     items = []
     try:
-        data = yf.download(
-            tickers, period="2d", progress=False, threads=False, group_by="ticker",
-        )
-        for sym in tickers:
-            try:
-                col = data[sym] if sym in data.columns.get_level_values(0) else None
-                if col is None or col.empty:
+        if market == "IND":
+            # Use Bhavcopy-backed batch download for Indian stocks
+            from utils import download_ind_ohlcv_batch
+            plain_syms = [s.replace(".NS", "") for s in tickers]
+            ohlcv = download_ind_ohlcv_batch(plain_syms, period="5d")
+            for sym in plain_syms:
+                try:
+                    df = ohlcv.get(sym)
+                    if df is None or df.empty:
+                        continue
+                    closes = df["Close"].dropna()
+                    if closes.empty:
+                        continue
+                    price = float(closes.iloc[-1])
+                    chg_pct = None
+                    if len(closes) >= 2:
+                        prev = float(closes.iloc[-2])
+                        if prev:
+                            chg_pct = (price - prev) / prev * 100
+                    items.append((sym, price, chg_pct, currency))
+                except Exception:
                     continue
-                closes = col["Close"].dropna()
-                if closes.empty:
+        else:
+            import yfinance as yf
+            data = yf.download(
+                tickers, period="2d", progress=False, threads=False, group_by="ticker",
+            )
+            for sym in tickers:
+                try:
+                    col = data[sym] if sym in data.columns.get_level_values(0) else None
+                    if col is None or col.empty:
+                        continue
+                    closes = col["Close"].dropna()
+                    if closes.empty:
+                        continue
+                    price = float(closes.iloc[-1])
+                    chg_pct = None
+                    if len(closes) >= 2:
+                        prev = float(closes.iloc[-2])
+                        if prev:
+                            chg_pct = (price - prev) / prev * 100
+                    display = sym
+                    items.append((display, price, chg_pct, currency))
+                except Exception:
                     continue
-                price = float(closes.iloc[-1])
-                chg_pct = None
-                if len(closes) >= 2:
-                    prev = float(closes.iloc[-2])
-                    if prev:
-                        chg_pct = (price - prev) / prev * 100
-                display = sym.replace(".NS", "")
-                items.append((display, price, chg_pct, currency))
-            except Exception:
-                continue
     except Exception as exc:
         logger.warning("Ribbon price fetch failed (%s): %s", market, exc)
     finally:

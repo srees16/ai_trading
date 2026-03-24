@@ -9,6 +9,7 @@ import { MetricsGrid, MetricCard } from "@/components/common/metrics-cards";
 import { RibbonVixBar } from "@/components/common/ribbon-vix-bar";
 import { Spinner } from "@/components/common/spinner";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useVerdict } from "@/hooks/use-verdict";
 import { DEFAULT_US_TICKERS, NASDAQ_50_TICKERS } from "@/lib/constants";
 import { Scale } from "lucide-react";
@@ -66,18 +67,30 @@ export default function USVerdictPage() {
                 />
               </MetricsGrid>
 
-              {/* Radar chart for first result */}
-              {results[0] && (
+              {results.length > 0 && (
                 <div className="content-panel p-4">
-                  <h4 className="text-sm font-semibold mb-2">{results[0].ticker} — Layer Scores</h4>
-                  <VerdictRadarChart
-                    data={[
-                      { layer: "Core", score: results[0].core_score },
-                      { layer: "Strategy", score: results[0].strategy_score },
-                      { layer: "ML", score: results[0].ml_score },
-                      { layer: "Robustness", score: results[0].robustness_score },
-                    ]}
-                  />
+                  <Tabs defaultValue={results[0].ticker}>
+                    <TabsList className="flex flex-wrap gap-1 h-auto">
+                      {results.map((r) => (
+                        <TabsTrigger key={r.ticker} value={r.ticker}>
+                          {r.ticker}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                    {results.map((r) => (
+                      <TabsContent key={r.ticker} value={r.ticker}>
+                        <h4 className="text-sm font-semibold mb-2">{r.ticker} — Layer Scores</h4>
+                        <VerdictRadarChart
+                          data={[
+                            { layer: "Core", score: r.core_score },
+                            { layer: "Strategy", score: r.strategy_score },
+                            { layer: "ML", score: r.ml_score },
+                            { layer: "Robustness", score: r.robustness_score },
+                          ]}
+                        />
+                      </TabsContent>
+                    ))}
+                  </Tabs>
                 </div>
               )}
 
