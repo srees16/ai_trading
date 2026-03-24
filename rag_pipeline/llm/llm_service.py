@@ -1126,13 +1126,12 @@ class _FallbackChainBackend:
             answer = self._primary.generate(query, context)
             # Detect error responses from the primary backend
             if self._is_error_token(answer):
-                if self._is_user_actionable_error(answer):
-                    return answer  # show billing/auth errors directly
                 logger.warning(
                     "%s returned error — falling back to %s",
                     self._primary_name, self._fallback_name,
                 )
-                return self._fallback.generate(query, context)
+                fallback_answer = self._fallback.generate(query, context)
+                return answer + "\n\n" + fallback_answer
             return answer
         except Exception as e:
             logger.error(
@@ -1178,25 +1177,15 @@ class _FallbackChainBackend:
                 yield from self._fallback.generate_stream(query, context)
                 return
 
-            # First token is an error — check if user-actionable or fallback
+            # First token is an error — show notification and fall back
             if self._is_error_token(first_token):
-                if self._is_user_actionable_error(first_token):
-                    # Auth/billing errors: show directly, don't try Ollama
-                    logger.warning(
-                        "%s user-actionable error (no fallback): %s",
-                        self._primary_name, first_token[:120],
-                    )
-                    yield first_token
-                    return
                 logger.warning(
                     "%s stream returned error — falling back to %s: %s",
                     self._primary_name, self._fallback_name,
                     first_token[:120],
                 )
-                yield (
-                    f"\u26a0\ufe0f *{self._primary_name} unavailable — "
-                    f"falling back to {self._fallback_name}*\n\n"
-                )
+                # Show the primary's error as a notification, then fall back
+                yield first_token + "\n\n"
                 yield from self._fallback.generate_stream(query, context)
                 return
 
