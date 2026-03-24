@@ -10,6 +10,7 @@ Creates and configures the root FastAPI app with:
 """
 
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -110,9 +111,13 @@ def create_app() -> FastAPI:
     )
 
     # --- CORS ---
+    # Read allowed origins from env (comma-separated) or default to permissive for local dev
+    _raw_origins = os.getenv("CENTURION_ALLOWED_ORIGINS", "")
+    _cors_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()] if _raw_origins else ["*"]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],         # tighten in production
+        allow_origins=_cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
