@@ -204,10 +204,17 @@ async def analysis_run(req: AnalysisRunRequest):
         news_items = await aggregator.fetch_news_for_tickers(req.tickers)
         analyzed = await asyncio.to_thread(analyzer.analyze_news_items, news_items)
 
+        # Indian tickers need .NS suffix for yfinance / metrics lookups
+        if req.market == "IND":
+            from utils import yf_nse_symbol
+            yf_tickers = {t: yf_nse_symbol(t) for t in req.tickers}
+        else:
+            yf_tickers = {t: t for t in req.tickers}
+
         metrics_map = {}
         for ticker in req.tickers:
             try:
-                m = await asyncio.to_thread(calculator.get_stock_metrics, ticker)
+                m = await asyncio.to_thread(calculator.get_stock_metrics, yf_tickers[ticker])
                 metrics_map[ticker] = m
             except Exception:
                 metrics_map[ticker] = None
