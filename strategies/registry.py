@@ -231,22 +231,3 @@ class StrategyRegistry:
     def set_initialized(cls) -> None:
         """Mark registry as initialized."""
         cls._initialized = True
-
-
-def register_strategy(name: Optional[str] = None):
-    """
-    Decorator factory for registering strategies with custom names.
-    
-    Args:
-        name: Optional custom name for the strategy
-    
-    Usage:
-        @register_strategy("custom_name")
-        class MyStrategy(BaseStrategy):
-            ...
-    """
-    def decorator(strategy_class: Type[BaseStrategy]) -> Type[BaseStrategy]:
-        StrategyRegistry.register(strategy_class, name)
-        return strategy_class
-    
-    return decorator

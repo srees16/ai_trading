@@ -4,9 +4,10 @@ Main Page Module for Centurion Capital LLC.
 Contains the main dashboard and control panel rendering.
 """
 
+import asyncio
 import logging
 from pathlib import Path
-from typing import List
+from typing import Any, List
 
 import streamlit as st
 
@@ -14,7 +15,10 @@ from config import Config
 from ui.components import (
     render_header,
     render_footer,
+    render_metrics_cards,
     render_navigation_buttons,
+    render_ribbon_and_vix,
+    spinner_html,
 )
 from utils import parse_ticker_csv, validate_tickers, create_sample_csv
 
@@ -27,16 +31,13 @@ def render_main_page():
                 st.session_state.get('username', 'unknown'))
     render_header()
 
-    # Navigation buttons — directly below the header bar
+    # Scrolling ribbon + VIX indicator (merged into single DOM element)
+    render_ribbon_and_vix(market="US")
+
+    # Navigation buttons
     render_navigation_buttons(
         current_page='main',
         back_key_suffix='from_main',
-    )
-
-    # Tighten the gap between nav buttons and control panel
-    st.markdown(
-        '<div style="margin-top: -0.6rem;"></div>',
-        unsafe_allow_html=True,
     )
 
     # Render control panel
@@ -52,20 +53,12 @@ def render_control_panel():
     st.markdown(
         """<style>
         /* Reduce whitespace around radio buttons, expanders, and text areas */
-        [data-testid="stRadio"] { margin-bottom: -0.6rem; }
-        [data-testid="stExpander"] { margin-top: -0.4rem; margin-bottom: -0.4rem; }
-        [data-testid="stTextArea"] { margin-top: -0.4rem; }
-        [data-testid="stFileUploader"] { margin-top: -0.4rem; }
-        [data-testid="stSelectbox"] { margin-bottom: -0.6rem; }
-        [data-testid="stCheckbox"] { margin-top: -0.4rem; margin-bottom: -0.4rem; }
-
-        /* Collapse the gap between the two-column panel and the Run button */
-        [data-testid="stHorizontalBlock"] + [data-testid="stElementContainer"],
-        [data-testid="stHorizontalBlock"] + div {
-            margin-top: -1.2rem !important;
-        }
-        /* Also tighten the warning / button row itself */
-        [data-testid="stAlert"] { margin-top: -0.4rem !important; margin-bottom: -0.4rem !important; }
+        [data-testid="stRadio"] { margin-top: -0.2rem; margin-bottom: -0.3rem; }
+        [data-testid="stExpander"] { margin-top: -0.3rem; margin-bottom: -0.3rem; }
+        [data-testid="stTextArea"] { margin-top: -0.3rem; }
+        [data-testid="stFileUploader"] { margin-top: -0.3rem; }
+        [data-testid="stSelectbox"] { margin-bottom: -0.3rem; }
+        [data-testid="stCheckbox"] { margin-top: -0.2rem; margin-bottom: -0.2rem; }
         </style>""",
         unsafe_allow_html=True,
     )
@@ -82,7 +75,7 @@ def render_control_panel():
     st.session_state.tickers = tickers
     
     # Run Analysis section — full width below the settings (tighter spacing)
-    st.markdown('<div style="margin-top: -2.5rem;"></div>', unsafe_allow_html=True)
+    st.markdown('<div style="margin-top: -1.5rem;"></div>', unsafe_allow_html=True)
     run_clicked = _render_run_controls(tickers)
     
     if run_clicked and len(tickers) > 0:
@@ -100,8 +93,18 @@ def render_control_panel():
         # Bump the analysis run counter so the backtesting cache knows
         # a fresh analysis was requested and will recompute strategies.
         st.session_state.analysis_run_id = st.session_state.get('analysis_run_id', 0) + 1
-        st.session_state.current_page = 'analysis'
-        st.rerun()
+
+        # Run analysis inline
+        _run_and_render_analysis(tickers)
+
+    elif (not st.session_state.get('analysis_complete', True)
+          and st.session_state.get('analysis_tickers')):
+        # Pending analysis triggered from another page (e.g. Screener)
+        _run_and_render_analysis(st.session_state.analysis_tickers)
+
+    elif st.session_state.get('analysis_complete') and st.session_state.get('signals'):
+        # Re-render previous results on page re-visit
+        _render_analysis_results(st.session_state.signals)
 
 
 def _render_ticker_selection() -> List[str]:
@@ -155,10 +158,10 @@ def _handle_manual_entry() -> List[str]:
 
 def _handle_csv_upload() -> List[str]:
     """Handle CSV file upload for tickers."""
-    with st.expander("📄 View CSV format example"):
+    with st.expander("View CSV format example"):
         st.code(create_sample_csv(), language="csv")
         st.download_button(
-            label="⬇️ Download Sample CSV",
+            label=" Download Sample CSV",
             data=create_sample_csv(),
             file_name="sample_tickers.csv",
             mime="text/csv"
@@ -177,10 +180,10 @@ def _handle_csv_upload() -> List[str]:
             
             if parsed_tickers:
                 valid_tickers, invalid_tickers = validate_tickers(parsed_tickers)
-                st.success(f"✓ Found {len(valid_tickers)} valid ticker(s)")
+                st.success(f"Found {len(valid_tickers)} valid ticker(s)")
                 
                 if invalid_tickers:
-                    st.warning(f"⚠️ Skipped {len(invalid_tickers)} invalid ticker(s)")
+                    st.warning(f"Skipped {len(invalid_tickers)} invalid ticker(s)")
                     with st.expander("View invalid tickers"):
                         st.write(", ".join(invalid_tickers))
                 
@@ -189,17 +192,17 @@ def _handle_csv_upload() -> List[str]:
                 
                 return valid_tickers
             else:
-                st.error("❌ No valid tickers found in CSV")
+                st.error("No valid tickers found in CSV")
         except Exception as e:
             logger.error(f"Error parsing CSV: {e}")
-            st.error(f"❌ Error parsing CSV: {e}")
+            st.error(f"Error parsing CSV: {e}")
     
     return []
 
 
 def _render_output_settings():
     """Render output settings controls."""
-    st.markdown("**Output Settings**")
+    st.markdown(" **Output Settings**")
     
     output_format = st.selectbox(
         "Output format:",
@@ -236,7 +239,7 @@ def _render_output_settings():
         extension = ".xlsx" if output_format == "Excel (.xlsx)" else ".csv"
         full_path = Path(custom_path) / f"{filename}{extension}"
         Config.OUTPUT_FILE = str(full_path)
-        st.caption(f"📁 Save to: `{full_path}`")
+        st.caption(f"Save to: `{full_path}`")
     else:
         default_filename = (
             "daily_stock_news.xlsx"
@@ -245,7 +248,7 @@ def _render_output_settings():
         )
         Config.OUTPUT_FILE = default_filename
         default_path = Path.cwd() / default_filename
-        st.caption(f"📁 Save to: `{default_path}`")
+        st.caption(f"Save to: `{default_path}`")
 
 
 def _render_run_controls(tickers: List[str]) -> bool:
@@ -260,7 +263,7 @@ def _render_run_controls(tickers: List[str]) -> bool:
     """
     # Status + Run button (left-aligned)
     if not tickers:
-        st.warning("⚠️ No tickers selected")
+        st.warning("No tickers selected")
     
     btn_col, _ = st.columns([1, 2])
     
@@ -272,3 +275,66 @@ def _render_run_controls(tickers: List[str]) -> bool:
         )
     
     return run_button
+
+
+def _run_and_render_analysis(tickers: List[str]):
+    """Run analysis inline and display results below the button."""
+    _user = st.session_state.get('username', 'unknown')
+    logger.info("[user=%s] Analysis started for %d tickers: %s",
+                _user, len(tickers), ', '.join(tickers))
+
+    spinner_slot = st.empty()
+    spinner_slot.markdown(spinner_html("Loading analysis engine"), unsafe_allow_html=True)
+
+    def _on_progress(pct: int, label: str):
+        spinner_slot.markdown(
+            spinner_html(f"{label} — {pct}%"),
+            unsafe_allow_html=True,
+        )
+
+    from services.analysis import run_analysis_async  # deferred (heavy)
+    spinner_slot.markdown(spinner_html("Starting analysis…"), unsafe_allow_html=True)
+
+    st.session_state.signals = asyncio.run(
+        run_analysis_async(
+            tickers,
+            progress_callback=_on_progress,
+            market=st.session_state.get("current_market", "US"),
+        )
+    )
+    st.session_state.analysis_complete = True
+    logger.info("[user=%s] Analysis completed — %d signals generated",
+                _user, len(st.session_state.signals))
+    spinner_slot.empty()
+    st.rerun()
+
+
+def _render_analysis_results(signals: List[Any]):
+    """Render analysis results inline on the main page."""
+    from ui.charts import render_decision_chart, render_score_distribution
+    from ui.tables import render_simple_summary_table, render_signals_table, render_top_signals
+
+    st.markdown("---")
+    render_simple_summary_table(signals)
+    st.markdown("---")
+    render_metrics_cards(signals)
+    st.markdown("---")
+
+    tab1, tab2, tab3 = st.tabs([
+        "Overview",
+        "Detailed Table",
+        "Top Signals",
+    ])
+
+    with tab1:
+        col1, col2 = st.columns(2)
+        with col1:
+            render_decision_chart(signals)
+        with col2:
+            render_score_distribution(signals)
+
+    with tab2:
+        render_signals_table(signals)
+
+    with tab3:
+        render_top_signals(signals)

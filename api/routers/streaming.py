@@ -230,7 +230,7 @@ async def websocket_tick_stream(websocket: WebSocket):
     symbol_filter: set = set()
 
     def _on_tick_batch(event):
-        """Sync callback → async queue bridge."""
+        """Sync callback async queue bridge."""
         ticks = event.payload.get("ticks", [])
         if not ticks:
             return
@@ -371,7 +371,7 @@ async def websocket_tick_stream(websocket: WebSocket):
     summary="Receive Kite order postback",
     description=(
         "Zerodha POSTs order status updates to this endpoint when an order "
-        "transitions (e.g. OPEN → COMPLETE). Configure the postback URL in "
+        "transitions (e.g. OPEN COMPLETE). Configure the postback URL in "
         "the Kite Developer Console: ``https://your-domain/stream/postback``."
     ),
 )

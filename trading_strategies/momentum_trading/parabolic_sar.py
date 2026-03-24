@@ -81,10 +81,10 @@ class ParabolicSARStrategy(BaseStrategy):
             },
             "af_increment": {
                 "type": "float",
-                "default": 0.02,
+                "default": 0.025,
                 "min": 0.01,
                 "max": 0.05,
-                "description": "AF increment step"
+                "description": "AF increment step (0.025 for IND volatility)"
             },
             "af_max": {
                 "type": "float",
@@ -133,7 +133,7 @@ class ParabolicSARStrategy(BaseStrategy):
         
         # Parse parameters
         af_start = kwargs.get('af_start', 0.02)
-        af_increment = kwargs.get('af_increment', 0.02)
+        af_increment = kwargs.get('af_increment', 0.025)
         af_max = kwargs.get('af_max', 0.2)
         risk = self.get_risk_params(risk_params)
         
@@ -340,7 +340,13 @@ class ParabolicSARStrategy(BaseStrategy):
         af_increment: float,
         af_max: float
     ) -> pd.DataFrame:
-        """Generate trading signals based on Parabolic SAR."""
+        """Generate trading signals based on Parabolic SAR.
+
+        IND calibration (swing / long-term):
+        - AF increment raised to 0.025 (default) for higher IND volatility
+        - ATR filter: only enter when 14-day ATR > 1.5% of price,
+          avoiding low-volatility chop zones
+        """
         signals = df.copy()
         
         # Calculate Parabolic SAR
@@ -356,8 +362,32 @@ class ParabolicSARStrategy(BaseStrategy):
         signals['psar'] = psar
         signals['trend'] = trend
         
-        # Generate positions (1 = long when uptrend, 0 = no position)
-        signals['positions'] = np.where(signals['trend'] == 1, 1, 0)
+        # ATR filter: 14-day ATR must be > 1.5% of price
+        tr = pd.DataFrame({
+            'hl': signals['High'] - signals['Low'],
+            'hc': (signals['High'] - signals['Close'].shift(1)).abs(),
+            'lc': (signals['Low'] - signals['Close'].shift(1)).abs(),
+        })
+        signals['atr_14'] = tr.max(axis=1).rolling(window=14, min_periods=1).mean()
+        signals['atr_pct'] = signals['atr_14'] / signals['Close']
+        signals['atr_confirm'] = signals['atr_pct'] > 0.015  # 1.5%
+        
+        # Generate positions: uptrend AND sufficient volatility
+        raw_pos = np.where(signals['trend'] == 1, 1, 0)
+        confirmed = np.zeros(len(signals), dtype=int)
+        in_position = False
+        for i in range(len(signals)):
+            if raw_pos[i] == 1 and not in_position:
+                # Entry requires ATR confirmation
+                if signals['atr_confirm'].iloc[i]:
+                    in_position = True
+                    confirmed[i] = 1
+            elif raw_pos[i] == 1 and in_position:
+                confirmed[i] = 1
+            else:
+                in_position = False
+        
+        signals['positions'] = confirmed
         
         # Generate trading signals (difference shows entry/exit points)
         signals['signals'] = signals['positions'].diff().fillna(0)
@@ -553,13 +583,20 @@ class ParabolicSARStrategy(BaseStrategy):
 
 # For backward compatibility - can still be used as a standalone script
 if __name__ == "__main__":
-    # Example usage
+    # Example usage — tickers and dates are config-driven
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+    from config import Config
+    from datetime import date, timedelta
+    _end = date.today()
+    _start = _end - timedelta(days=365)
+
     strategy = ParabolicSARStrategy()
     
     result = strategy.run(
-        tickers=["AAPL"],
-        start_date="2023-01-01",
-        end_date="2024-01-01",
+        tickers=[Config.DEFAULT_TICKERS[0]],
+        start_date=_start.isoformat(),
+        end_date=_end.isoformat(),
         capital=10000,
         af_start=0.02,
         af_increment=0.02,

@@ -29,7 +29,6 @@ import logging
 import base64
 from datetime import timedelta
 from typing import List, Dict, Any, Optional
-from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +43,11 @@ except ImportError:
 
 
 class MinIOConfig:
-    """MinIO configuration from environment variables."""
+    """S3-compatible storage configuration.
+    
+    Supports MinIO (local) and Cloudflare R2 (production).
+    R2 endpoint format: <account-id>.r2.cloudflarestorage.com
+    """
 
     def __init__(self):
         self.endpoint = os.getenv("MINIO_ENDPOINT", "localhost:9004")
@@ -53,6 +56,12 @@ class MinIOConfig:
         self.secure = os.getenv("MINIO_SECURE", "false").lower() == "true"
         self.bucket_name = os.getenv("MINIO_BUCKET", "centurion-backtests")
         self.enabled = os.getenv("MINIO_ENABLED", "true").lower() == "true"
+        self.region = os.getenv("MINIO_REGION", "auto")
+    
+    @property
+    def is_r2(self) -> bool:
+        """Check if endpoint is Cloudflare R2."""
+        return 'r2.cloudflarestorage.com' in self.endpoint
 
 
 class MinIOService:
@@ -88,17 +97,24 @@ class MinIOService:
 
     @property
     def client(self) -> Optional[Minio]:
-        """Lazy-init MinIO client."""
+        """Lazy-init S3-compatible client (MinIO or Cloudflare R2)."""
         if self._client is None and MINIO_SDK_AVAILABLE and self._config.enabled:
             try:
-                self._client = Minio(
-                    self._config.endpoint,
+                kwargs = dict(
+                    endpoint=self._config.endpoint,
                     access_key=self._config.access_key,
                     secret_key=self._config.secret_key,
                     secure=self._config.secure,
                 )
+                # R2 requires region and always uses HTTPS
+                if self._config.is_r2:
+                    kwargs['secure'] = True
+                    kwargs['region'] = self._config.region
+                    logger.info(f"Using Cloudflare R2 endpoint: {self._config.endpoint}")
+                
+                self._client = Minio(**kwargs)
             except Exception as e:
-                logger.error(f"Failed to create MinIO client: {e}")
+                logger.error(f"Failed to create storage client: {e}")
         return self._client
 
     @property
@@ -145,6 +161,34 @@ class MinIOService:
     # Save operations
     # ------------------------------------------------------------------
 
+    def upload_file(self, local_path: str, object_name: str,
+                    content_type: str = "application/octet-stream") -> bool:
+        """Upload a local file to the bucket (used by backup service).
+        
+        Args:
+            local_path: Absolute path to the local file
+            object_name: Target object name in the bucket
+            content_type: MIME type
+            
+        Returns:
+            True on success, False on failure
+        """
+        if not self.client:
+            return False
+        self._ensure_bucket()
+        try:
+            self.client.fput_object(
+                self._config.bucket_name,
+                object_name,
+                local_path,
+                content_type=content_type,
+            )
+            logger.info(f"Uploaded {local_path} → {object_name}")
+            return True
+        except Exception as e:
+            logger.error(f"Upload failed for {local_path}: {e}")
+            return False
+
     def save_backtest_image(
         self,
         run_id: str,
@@ -184,12 +228,15 @@ class MinIOService:
         else:
             object_name = f"{run_id}/{safe_strategy}/{filename}"
 
+        def _ascii_safe(val: str) -> str:
+            return val.encode("ascii", "replace").decode("ascii")
+
         metadata = {
-            "x-amz-meta-run-id": run_id,
-            "x-amz-meta-strategy": strategy_name,
-            "x-amz-meta-ticker": ticker,
-            "x-amz-meta-chart-title": chart_title,
-            "x-amz-meta-chart-type": chart_type,
+            "x-amz-meta-run-id": _ascii_safe(run_id),
+            "x-amz-meta-strategy": _ascii_safe(strategy_name),
+            "x-amz-meta-ticker": _ascii_safe(ticker),
+            "x-amz-meta-chart-title": _ascii_safe(chart_title),
+            "x-amz-meta-chart-type": _ascii_safe(chart_type),
         }
 
         try:

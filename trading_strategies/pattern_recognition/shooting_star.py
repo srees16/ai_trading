@@ -97,10 +97,10 @@ class ShootingStarStrategy(BaseStrategy):
             },
             "holding_period": {
                 "type": "int",
-                "default": 7,
+                "default": 15,
                 "min": 1,
-                "max": 30,
-                "description": "Maximum holding period in days"
+                "max": 60,
+                "description": "Maximum holding period in days (15 for swing trades)"
             }
         }
     
@@ -144,7 +144,7 @@ class ShootingStarStrategy(BaseStrategy):
         lower_bound = kwargs.get('lower_bound', 0.2)
         body_size = kwargs.get('body_size', 0.5)
         stop_threshold = kwargs.get('stop_threshold', 0.05)
-        holding_period = kwargs.get('holding_period', 7)
+        holding_period = kwargs.get('holding_period', 15)
         risk = self.get_risk_params(risk_params)
         
         # Initialize results containers
@@ -274,7 +274,12 @@ class ShootingStarStrategy(BaseStrategy):
         lower_bound: float,
         body_size: float
     ) -> pd.DataFrame:
-        """Identify shooting star patterns in candlestick data."""
+        """Identify shooting star patterns in candlestick data.
+
+        IND calibration (swing / long-term):
+        - Added condition c9: volume must be >= 1.5× 20-day avg volume
+          to confirm institutional participation
+        """
         signals = df.copy()
         
         # Calculate candle components
@@ -290,6 +295,9 @@ class ShootingStarStrategy(BaseStrategy):
         
         avg_body = signals['body'].rolling(window=20, min_periods=1).mean()
         signals['body_ratio'] = signals['body'] / avg_body
+        
+        # Volume confirmation: >= 1.5× 20-day average
+        signals['avg_volume'] = signals['Volume'].rolling(window=20, min_periods=1).mean()
         
         # Shooting star conditions
         # 1: Open > Close (red candle) or close to equal
@@ -314,10 +322,14 @@ class ShootingStarStrategy(BaseStrategy):
         # 7: Confirmation (next candle's close below shooting star close)
         signals['c8'] = signals['Close'].shift(-1) <= signals['Close']
         
+        # 8: Volume confirmation — >= 1.5× 20-day avg (IND calibration)
+        signals['c9'] = signals['Volume'] >= 1.5 * signals['avg_volume']
+        
         # All conditions met = shooting star pattern
         signals['pattern'] = (
             signals['c1'] & signals['c2'] & signals['c3'] & signals['c4'] &
-            signals['c5'] & signals['c6'] & signals['c7'] & signals['c8']
+            signals['c5'] & signals['c6'] & signals['c7'] & signals['c8'] &
+            signals['c9']
         ).astype(int)
         
         return signals
@@ -588,13 +600,20 @@ class ShootingStarStrategy(BaseStrategy):
 
 # For backward compatibility - can still be used as a standalone script
 if __name__ == "__main__":
-    # Example usage
+    # Example usage — tickers and dates are config-driven
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+    from config import Config
+    from datetime import date, timedelta
+    _end = date.today()
+    _start = _end - timedelta(days=365)
+
     strategy = ShootingStarStrategy()
     
     result = strategy.run(
-        tickers=["AAPL"],
-        start_date="2023-01-01",
-        end_date="2024-01-01",
+        tickers=[Config.DEFAULT_TICKERS[0]],
+        start_date=_start.isoformat(),
+        end_date=_end.isoformat(),
         capital=10000,
         lower_bound=0.2,
         body_size=0.5

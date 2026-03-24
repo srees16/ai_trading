@@ -76,7 +76,7 @@ class TickData:
         tick : dict
             Raw tick from KiteTicker on_ticks callback.
         symbol_map : dict
-            Mapping of instrument_token → tradingsymbol.
+            Mapping of instrument_token tradingsymbol.
         """
         token = tick.get("instrument_token", 0)
         ohlc = tick.get("ohlc", {})

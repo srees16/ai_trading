@@ -14,7 +14,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Column, String, Float, Integer, Boolean, DateTime, Text,
-    ForeignKey, Index, Enum as SQLEnum, JSON, Numeric, UniqueConstraint
+    ForeignKey, Index, Enum as SQLEnum, Numeric, UniqueConstraint
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB, ARRAY
 from sqlalchemy.orm import declarative_base, relationship
@@ -63,6 +63,9 @@ class AnalysisRun(Base, TimestampMixin):
     run_type = Column(String(50), nullable=False)  # 'stock_analysis', 'backtest', 'fundamental'
     status = Column(SQLEnum(AnalysisStatus), default=AnalysisStatus.PENDING, nullable=False)
     
+    # Market identifier (US, IND)
+    market = Column(String(10), nullable=False, default='US', server_default='US', index=True)
+    
     # Input parameters
     tickers = Column(ARRAY(String), nullable=False)
     parameters = Column(JSONB, default={})
@@ -105,6 +108,9 @@ class NewsItem(Base, TimestampMixin):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     analysis_run_id = Column(UUID(as_uuid=True), ForeignKey('analysis_runs.id'), nullable=True)
     
+    # Market identifier (US, IND)
+    market = Column(String(10), nullable=False, default='US', server_default='US', index=True)
+    
     # Core news data
     ticker = Column(String(20), nullable=False, index=True)
     title = Column(Text, nullable=False)
@@ -113,8 +119,8 @@ class NewsItem(Base, TimestampMixin):
     source = Column(String(100), nullable=False)
     author = Column(String(200))
     
-    # Timestamps
-    published_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    # Timestamps - published_at is part of PK for TimescaleDB hypertable partitioning
+    published_at = Column(DateTime(timezone=True), primary_key=True, nullable=False, index=True)
     scraped_at = Column(DateTime(timezone=True), default=func.now())
     
     # Sentiment analysis results
@@ -131,12 +137,12 @@ class NewsItem(Base, TimestampMixin):
     
     # Relationships
     analysis_run = relationship("AnalysisRun", back_populates="news_items")
-    signal = relationship("StockSignal", back_populates="news_item", uselist=False)
+    signal = relationship("StockSignal", back_populates="news_item", uselist=False, primaryjoin="foreign(StockSignal.news_item_id) == NewsItem.id", viewonly=True)
     
     __table_args__ = (
         Index('idx_news_ticker_date', 'ticker', 'published_at'),
         Index('idx_news_source', 'source'),
-        UniqueConstraint('content_hash', 'ticker', name='uq_news_content_ticker'),
+        UniqueConstraint('content_hash', 'ticker', 'published_at', name='uq_news_content_ticker'),
     )
 
 
@@ -148,8 +154,14 @@ class StockSignal(Base, TimestampMixin):
     __tablename__ = 'stock_signals'
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # Override created_at from mixin to include in PK for TimescaleDB hypertable partitioning
+    created_at = Column(DateTime(timezone=True), primary_key=True, server_default=func.now(), nullable=False)
     analysis_run_id = Column(UUID(as_uuid=True), ForeignKey('analysis_runs.id'), nullable=True)
-    news_item_id = Column(UUID(as_uuid=True), ForeignKey('news_items.id'), nullable=True)
+    # No DB-level FK: news_items has composite PK (id, published_at) for TimescaleDB
+    news_item_id = Column(UUID(as_uuid=True), nullable=True)
+    
+    # Market identifier (US, IND)
+    market = Column(String(10), nullable=False, default='US', server_default='US', index=True)
     
     # Core signal data
     ticker = Column(String(20), nullable=False, index=True)
@@ -185,7 +197,7 @@ class StockSignal(Base, TimestampMixin):
     
     # Relationships
     analysis_run = relationship("AnalysisRun", back_populates="signals")
-    news_item = relationship("NewsItem", back_populates="signal")
+    news_item = relationship("NewsItem", back_populates="signal", primaryjoin="foreign(StockSignal.news_item_id) == NewsItem.id", viewonly=True)
     
     __table_args__ = (
         Index('idx_signals_ticker_date', 'ticker', 'created_at'),
@@ -202,10 +214,14 @@ class FundamentalMetric(Base, TimestampMixin):
     __tablename__ = 'fundamental_metrics'
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # recorded_at is part of PK for TimescaleDB hypertable partitioning
+    recorded_at = Column(DateTime(timezone=True), primary_key=True, nullable=False, default=func.now(), index=True)
+    
+    # Market identifier (US, IND)
+    market = Column(String(10), nullable=False, default='US', server_default='US', index=True)
     
     # Core data
     ticker = Column(String(20), nullable=False, index=True)
-    recorded_at = Column(DateTime(timezone=True), nullable=False, default=func.now(), index=True)
     
     # Price data
     current_price = Column(Numeric(12, 4))
@@ -266,6 +282,9 @@ class BacktestResult(Base, TimestampMixin):
     __tablename__ = 'backtest_results'
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # Market identifier (US, IND)
+    market = Column(String(10), nullable=False, default='US', server_default='US', index=True)
     
     # Strategy identification
     strategy_id = Column(String(100), nullable=False, index=True)
@@ -420,7 +439,8 @@ class RawScrapedNews(Base):
     # Processing state
     is_processed = Column(Boolean, default=False, index=True)
     processed_at = Column(DateTime(timezone=True))
-    enriched_news_id = Column(UUID(as_uuid=True), ForeignKey('news_items.id'), nullable=True)
+    # No DB-level FK: news_items has composite PK for TimescaleDB
+    enriched_news_id = Column(UUID(as_uuid=True), nullable=True)
 
     # Ingestion timestamp
     ingested_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -609,4 +629,140 @@ class DataFreshness(Base):
         UniqueConstraint('ticker', 'data_type', name='uq_freshness_ticker_type'),
         Index('idx_freshness_ticker', 'ticker'),
         Index('idx_freshness_next_refresh', 'next_refresh_at'),
+    )
+
+
+class OrderStatus(enum.Enum):
+    """Kite order lifecycle statuses."""
+    PLACED = "placed"
+    FILLED = "filled"
+    SL_TRIGGERED = "sl_triggered"
+    TP_FILLED = "tp_filled"
+    CANCELLED = "cancelled"
+    REJECTED = "rejected"
+    FAILED = "failed"
+
+
+class OrderRecord(Base, TimestampMixin):
+    """
+    Persisted record of every order placed via the auto-executor.
+
+    Survives session restarts so the trade lifecycle can be recovered.
+    """
+    __tablename__ = 'order_records'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # Instrument
+    symbol = Column(String(30), nullable=False, index=True)
+    exchange = Column(String(10), nullable=False, default='NSE')
+    side = Column(String(10), nullable=False)                      # BUY / SELL
+
+    # Sizing
+    quantity = Column(Integer, nullable=False)
+    entry_price = Column(Numeric(12, 4), nullable=False)
+    stop_loss = Column(Numeric(12, 4))
+    target_price = Column(Numeric(12, 4))
+
+    # Kite order IDs (nullable: may not succeed)
+    entry_order_id = Column(String(50))
+    sl_order_id = Column(String(50))
+    tp_order_id = Column(String(50))
+
+    # Lifecycle
+    status = Column(SQLEnum(OrderStatus), default=OrderStatus.PLACED, nullable=False)
+    fill_price = Column(Numeric(12, 4))
+    exit_price = Column(Numeric(12, 4))
+    error_message = Column(Text)
+
+    # Risk metrics at time of placement
+    risk_amount = Column(Numeric(12, 4))
+    reward_amount = Column(Numeric(12, 4))
+    rr_ratio = Column(Float)
+    score = Column(Float)
+
+    # Timing
+    placed_at = Column(DateTime(timezone=True), server_default=func.now())
+    filled_at = Column(DateTime(timezone=True))
+    closed_at = Column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index('idx_orders_symbol_date', 'symbol', 'placed_at'),
+        Index('idx_orders_status', 'status'),
+    )
+
+
+# =====================================================================
+# Live Trade Journal
+# =====================================================================
+
+class TradeJournal(Base, TimestampMixin):
+    """
+    Complete trade lifecycle journal for live and paper trades.
+
+    Records entry, exit, P&L, strategy attribution, regime at entry,
+    and post-trade analysis. Essential for performance attribution and
+    reconciliation.
+    """
+    __tablename__ = 'trade_journal'
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    # Instrument
+    symbol = Column(String(30), nullable=False, index=True)
+    exchange = Column(String(10), nullable=False, default='NSE')
+    side = Column(String(10), nullable=False)        # BUY / SELL
+    trade_type = Column(String(20), default='CNC')   # CNC / MIS / paper
+
+    # Entry
+    entry_price = Column(Numeric(12, 4), nullable=False)
+    entry_date = Column(DateTime(timezone=True), nullable=False)
+    quantity = Column(Integer, nullable=False)
+
+    # Exit (populated on close)
+    exit_price = Column(Numeric(12, 4))
+    exit_date = Column(DateTime(timezone=True))
+    exit_reason = Column(String(50))                 # SL / TP / MANUAL / TRAILING_SL
+
+    # P&L
+    gross_pnl = Column(Numeric(12, 4))               # raw P&L
+    charges = Column(Numeric(12, 4), default=0)       # STT + brokerage + GST
+    net_pnl = Column(Numeric(12, 4))                  # gross - charges
+    pnl_pct = Column(Float)                           # % return on entry capital
+    holding_days = Column(Integer)                     # trading days held
+
+    # Strategy attribution
+    strategy_name = Column(String(100))               # which strategy triggered
+    decision_score = Column(Float)                     # score at entry
+    screener_score = Column(Float)                     # NSE screener score
+
+    # Context at entry
+    regime_at_entry = Column(String(30))               # TRENDING_BULL / etc.
+    vix_at_entry = Column(Float)
+    sector_name = Column(String(50))
+    delivery_pct_at_entry = Column(Float)
+
+    # Risk management
+    planned_sl = Column(Numeric(12, 4))
+    planned_tp = Column(Numeric(12, 4))
+    actual_rr = Column(Float)                          # actual R:R achieved
+
+    # Kite order references
+    entry_order_id = Column(String(50))
+    exit_order_id = Column(String(50))
+
+    # Mode: 'live' or 'paper'
+    mode = Column(String(10), default='live')
+
+    # Status
+    is_open = Column(Boolean, default=True, index=True)
+
+    # Free-form notes / post-trade analysis
+    notes = Column(JSONB)
+
+    __table_args__ = (
+        Index('idx_journal_symbol_date', 'symbol', 'entry_date'),
+        Index('idx_journal_strategy', 'strategy_name'),
+        Index('idx_journal_open', 'is_open'),
+        Index('idx_journal_mode', 'mode'),
     )

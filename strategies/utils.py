@@ -88,23 +88,6 @@ def matplotlib_to_base64(
     return f"data:{mime_type};base64,{base64_str}"
 
 
-def matplotlib_figures_to_base64(
-    figs: list,
-    **kwargs
-) -> list[str]:
-    """
-    Convert multiple matplotlib figures to base64 strings.
-    
-    Args:
-        figs: List of matplotlib Figure objects
-        **kwargs: Arguments passed to matplotlib_to_base64
-    
-    Returns:
-        List of base64-encoded strings
-    """
-    return [matplotlib_to_base64(fig, **kwargs) for fig in figs]
-
-
 def plotly_to_json(fig) -> dict:
     """
     Convert a plotly figure to JSON-serializable dictionary.
@@ -319,109 +302,46 @@ def calculate_max_drawdown(values: pd.Series) -> float:
     return float(drawdown.min() * 100)
 
 
-def format_currency(value: float, currency: str = "$") -> str:
-    """Format a number as currency."""
-    return f"{currency}{value:,.2f}"
-
-
-def format_percentage(value: float, decimals: int = 2) -> str:
-    """Format a number as percentage."""
-    return f"{value:.{decimals}f}%"
-
-
-def safe_divide(numerator: float, denominator: float, default: float = 0.0) -> float:
-    """Safely divide two numbers, returning default if denominator is zero."""
-    if denominator == 0 or np.isnan(denominator) or np.isinf(denominator):
-        return default
-    return numerator / denominator
-
-
-def clean_dataframe_for_json(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Clean a DataFrame for JSON serialization.
-    
-    Handles NaN, Inf, and datetime conversion.
-    """
-    df = df.copy()
-    
-    # Replace inf values
-    df = df.replace([np.inf, -np.inf], np.nan)
-    
-    # Convert datetime columns
-    for col in df.select_dtypes(include=['datetime64']).columns:
-        df[col] = df[col].astype(str)
-    
-    # Fill NaN values
-    for col in df.select_dtypes(include=['float64', 'float32']).columns:
-        df[col] = df[col].fillna(0)
-    
-    return df
-
-
-def calculate_trading_statistics(
+def apply_transaction_costs(
+    portfolio: pd.DataFrame,
     signals: pd.DataFrame,
-    prices: pd.Series,
-    signal_col: str = 'signals'
-) -> dict:
+    cost_pct: float = 0.001,
+    signal_col: str = "signal",
+) -> pd.DataFrame:
     """
-    Calculate trading statistics from signals.
-    
+    Deduct transaction costs from a portfolio DataFrame whenever
+    a position change (trade) occurs.
+
     Args:
-        signals: DataFrame with trading signals
-        prices: Series of prices
-        signal_col: Name of the signal column
-    
+        portfolio: DataFrame with a 'value' column (portfolio values over time).
+        signals: DataFrame with a signal column indicating position changes.
+        cost_pct: Round-trip cost as a fraction (0.001 = 0.1%).
+        signal_col: Name of the column containing trade signals.
+
     Returns:
-        Dictionary of trading statistics
+        Portfolio DataFrame with costs deducted in-place.
     """
-    stats = {
-        'total_trades': 0,
-        'winning_trades': 0,
-        'losing_trades': 0,
-        'win_rate': 0.0,
-        'avg_win': 0.0,
-        'avg_loss': 0.0,
-        'profit_factor': 0.0
-    }
-    
-    if signal_col not in signals.columns:
-        return stats
-    
-    # Find entry and exit points
-    trades = signals[signals[signal_col] != 0].copy()
-    stats['total_trades'] = len(trades)
-    
-    if stats['total_trades'] > 0:
-        # Calculate individual trade returns
-        trade_returns = []
-        position = 0
-        entry_price = 0
-        
-        for idx, row in trades.iterrows():
-            signal = row[signal_col]
-            price = prices.loc[idx] if idx in prices.index else 0
-            
-            if signal > 0 and position == 0:  # Entry
-                position = 1
-                entry_price = price
-            elif signal < 0 and position > 0:  # Exit
-                if entry_price > 0:
-                    trade_return = (price - entry_price) / entry_price
-                    trade_returns.append(trade_return)
-                position = 0
-        
-        if trade_returns:
-            wins = [r for r in trade_returns if r > 0]
-            losses = [r for r in trade_returns if r < 0]
-            
-            stats['winning_trades'] = len(wins)
-            stats['losing_trades'] = len(losses)
-            stats['win_rate'] = len(wins) / len(trade_returns) * 100
-            stats['avg_win'] = np.mean(wins) * 100 if wins else 0
-            stats['avg_loss'] = np.mean(losses) * 100 if losses else 0
-            
-            total_wins = sum(wins)
-            total_losses = abs(sum(losses))
-            stats['profit_factor'] = safe_divide(total_wins, total_losses)
-    
-    return stats
+    if portfolio.empty or signals.empty or "value" not in portfolio.columns:
+        return portfolio
+
+    # Ensure value column is float to avoid dtype warnings
+    portfolio["value"] = portfolio["value"].astype(float)
+
+    sig_col = None
+    for c in (signal_col, "signal", "Signal", "position", "Position"):
+        if c in signals.columns:
+            sig_col = c
+            break
+    if sig_col is None:
+        return portfolio
+
+    # Detect position changes (trades)
+    sig = signals[sig_col].reindex(portfolio.index, method="ffill").fillna(0)
+    trades = sig.diff().fillna(0) != 0
+
+    # Deduct cost on each trade
+    cost_multiplier = 1.0 - cost_pct
+    for idx in portfolio.index[trades]:
+        portfolio.loc[idx:, "value"] *= cost_multiplier
+
+    return portfolio

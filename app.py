@@ -35,6 +35,7 @@ if os.getcwd() != _PROJECT_ROOT:
     os.chdir(_PROJECT_ROOT)
 
 import logging
+import time as _time
 
 import streamlit as st
 
@@ -55,61 +56,83 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Suppress noisy yfinance download-failure logs (transient Yahoo API errors);
+# all download call-sites already handle empty / missing data gracefully.
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
 
-# ── Ollama model warm-up (runs exactly once per process) ────────
+_LOG_INTERVAL = 5  # seconds
+_last_module_log_ts: float = 0.0
+
+def _throttled_module_info(msg: str, *args) -> None:
+    """Log module-rendering messages at most once every _LOG_INTERVAL seconds."""
+    global _last_module_log_ts
+    now = _time.monotonic()
+    if now - _last_module_log_ts >= _LOG_INTERVAL:
+        logger.info(msg, *args)
+        _last_module_log_ts = now
+
+
+# ── Ollama model warm-up (runs exactly once per process, in background) ──
 @st.cache_resource(show_spinner=False)
 def _warmup_ollama() -> bool:
-    """Pre-load the RAG LLM model into Ollama's memory.
+    """Kick off a background thread to pre-load the RAG LLM model.
 
     Sends a minimal ``/api/generate`` request with ``num_predict=1``
     so the model weights are loaded into RAM/VRAM *before* the first
-    real user query.  Returns True on success, False otherwise.
+    real user query.  Runs in a daemon thread so the UI renders
+    immediately without waiting for the model to finish loading.
+    Returns True once the thread is launched.
     """
-    import requests as _req
-    import time as _time
+    import threading
 
-    model = os.getenv(
-        "RAG_MODEL",
-        os.getenv("CENTURION_RAG_LLM_MODEL", "mistral"),
-    )
-    base_url = os.getenv(
-        "CENTURION_RAG_LLM_URL", "http://localhost:11434"
-    ).rstrip("/")
+    def _do_warmup() -> None:
+        import requests as _req
+        import time as _t
 
-    logger.info("Ollama startup warm-up: loading model '%s' …", model)
-    try:
-        t0 = _time.monotonic()
-        resp = _req.post(
-            f"{base_url}/api/generate",
-            json={
-                "model": model,
-                "prompt": "warmup",
-                "num_predict": 1,
-                "stream": False,
-            },
-            timeout=(10, 120),
+        model = os.getenv(
+            "RAG_MODEL",
+            os.getenv("CENTURION_RAG_LLM_MODEL", "qwen2.5:3b"),
         )
-        resp.raise_for_status()
-        elapsed = _time.monotonic() - t0
-        logger.info(
-            "Ollama startup warm-up complete: model=%s loaded in %.1fs",
-            model, elapsed,
-        )
-        return True
-    except _req.ConnectionError:
-        logger.warning(
-            "Ollama startup warm-up skipped: cannot connect to %s", base_url,
-        )
-    except Exception as exc:
-        logger.warning("Ollama startup warm-up failed: %s", exc)
-    return False
+        base_url = os.getenv(
+            "CENTURION_RAG_LLM_URL", "http://localhost:11434"
+        ).rstrip("/")
+
+        logger.info("Ollama startup warm-up: loading model '%s' …", model)
+        try:
+            t0 = _t.monotonic()
+            resp = _req.post(
+                f"{base_url}/api/generate",
+                json={
+                    "model": model,
+                    "prompt": "warmup",
+                    "num_predict": 1,
+                    "stream": False,
+                },
+                timeout=(10, 120),
+            )
+            resp.raise_for_status()
+            elapsed = _t.monotonic() - t0
+            logger.info(
+                "Ollama startup warm-up complete: model=%s loaded in %.1fs",
+                model, elapsed,
+            )
+        except _req.ConnectionError:
+            logger.warning(
+                "Ollama startup warm-up skipped: cannot connect to %s", base_url,
+            )
+        except Exception as exc:
+            logger.warning("Ollama startup warm-up failed: %s", exc)
+
+    t = threading.Thread(target=_do_warmup, daemon=True, name="ollama-warmup")
+    t.start()
+    return True
 
 
 # Trigger warm-up at import time (first Streamlit process spin-up).
 
 st.set_page_config(
     page_title="Centurion Capital LLC",
-    page_icon="📈",
+    page_icon="",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -140,10 +163,12 @@ def main():
     # ── Top-level app selector ──────────────────────────────────
     # Displayed as a compact radio bar right after login.
     APP_OPTIONS = {
-        "trading_platform": "📈 US Stocks",
-        "live_stocks":      "📈 Ind Stocks",
-        "crypto":           "₿ Crypto",
-        "rag_engine":       "📚 RAG Engine",
+        "trading_platform": "US Stocks",
+        "live_stocks": "Ind Stocks",
+        "finance_ml": "Financial ML",
+        "testune_ts": "Test & Tune",
+        "crypto": "Crypto",
+        "rag_engine": "RAG Engine"
     }
 
     current_app = st.session_state.get("current_app", "trading_platform")
@@ -178,10 +203,18 @@ def main():
 
     if selected_app == "live_stocks":
         logger.info("[user=%s] Rendering module: Ind Stocks", _user)
-        _get_renderer("live_stocks")()
+        _route_ind_stocks()
+
+    elif selected_app == "finance_ml":
+        _throttled_module_info("[user=%s] Rendering module: Financial ML", _user)
+        _route_finance_ml()
+
+    elif selected_app == "testune_ts":
+        _throttled_module_info("[user=%s] Rendering module: Test & Tune", _user)
+        _route_testune_ts()
 
     elif selected_app == "rag_engine":
-        logger.info("[user=%s] Rendering module: RAG Engine", _user)
+        _throttled_module_info("[user=%s] Rendering module: RAG Engine", _user)
         _get_renderer("rag_engine")()
 
     elif selected_app == "crypto":
@@ -208,9 +241,15 @@ def _get_renderer(module_key: str):
     elif module_key == "crypto":
         from ui.pages.crypto_page import render_crypto_page
         return render_crypto_page
-    elif module_key == "analysis":
-        from ui.pages.analysis_page import render_analysis_page
-        return render_analysis_page
+    elif module_key == "finance_ml":
+        from ui.pages.finance_ml_page import render_finance_ml_page
+        return render_finance_ml_page
+    elif module_key == "fml_history":
+        from ui.pages.fml_history_page import render_fml_history_page
+        return render_fml_history_page
+    elif module_key == "testune_ts":
+        from ui.pages.testune_page import render_testune_page
+        return render_testune_page
     elif module_key == "fundamental":
         from ui.pages.fundamental_page import render_fundamental_page
         return render_fundamental_page
@@ -220,6 +259,21 @@ def _get_renderer(module_key: str):
     elif module_key == "history":
         from ui.pages.history_page import render_history_page
         return render_history_page
+    elif module_key == "us_holdings":
+        from ui.pages.us_holdings_page import render_us_holdings_page
+        return render_us_holdings_page
+    elif module_key == "ind_main":
+        from ui.pages.ind_main_page import render_ind_main_page
+        return render_ind_main_page
+    elif module_key == "options":
+        from ui.pages.options_page import render_options_page
+        return render_options_page
+    elif module_key == "verdict":
+        from ui.pages.verdict_page import render_verdict_page
+        return render_verdict_page
+    elif module_key == "screener":
+        from ui.pages.screener_page import render_screener_page
+        return render_screener_page
     elif module_key == "main":
         from ui.pages.main_page import render_main_page
         return render_main_page
@@ -232,10 +286,59 @@ def _route_trading_platform():
     _user = st.session_state.get('username', 'unknown')
     logger.info("[user=%s] US Stocks sub-page: %s", _user, current_page)
 
+    st.session_state['current_market'] = 'US'
+
     renderer = _get_renderer(current_page if current_page in (
-        'analysis', 'fundamental', 'backtesting', 'history',
+        'fundamental', 'backtesting', 'history', 'us_holdings', 'verdict',
     ) else 'main')
     renderer()
+
+
+def _route_ind_stocks():
+    """Route to the appropriate Indian Stocks sub-page."""
+    current_page = st.session_state.get('current_page', 'main')
+    _user = st.session_state.get('username', 'unknown')
+    logger.info("[user=%s] Ind Stocks sub-page: %s", _user, current_page)
+
+    st.session_state['current_market'] = 'IND'
+
+    if current_page == 'ind_kite':
+        # Render the live Kite dashboard
+        _get_renderer('live_stocks')()
+    elif current_page == 'options':
+        _get_renderer('options')()
+    elif current_page == 'screener':
+        _get_renderer('screener')()
+    elif current_page in ('fundamental', 'backtesting', 'history'):
+        # Reuse the same pages as US Stocks — they read current_market
+        _get_renderer(current_page)()
+    else:
+        # Default: Indian Stocks main page (ticker selection)
+        _get_renderer('ind_main')()
+
+
+def _route_finance_ml():
+    """Route to Financial ML main page or its history sub-page."""
+    current_page = st.session_state.get('current_page', 'finance_ml')
+    _user = st.session_state.get('username', 'unknown')
+    logger.info("[user=%s] Financial ML sub-page: %s", _user, current_page)
+
+    if current_page == 'fml_history':
+        _get_renderer('fml_history')()
+    else:
+        _get_renderer('finance_ml')()
+
+
+def _route_testune_ts():
+    """Route to TestTune Trading System main page or its history sub-page."""
+    current_page = st.session_state.get('current_page', 'testune_ts')
+    _user = st.session_state.get('username', 'unknown')
+    logger.info("[user=%s] Test & Tune sub-page: %s", _user, current_page)
+
+    if current_page == 'tts_history':
+        _get_renderer('testune_ts')()  # history page TBD
+    else:
+        _get_renderer('testune_ts')()
 
 
 if __name__ == "__main__":

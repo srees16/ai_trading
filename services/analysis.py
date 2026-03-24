@@ -18,8 +18,6 @@ from collections import defaultdict
 from datetime import timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
-import streamlit as st
-
 from config import Config
 from database.service import get_database_service
 from main import AlgoTradingSystem
@@ -34,6 +32,7 @@ DB_AVAILABLE = Config.is_database_configured()
 async def run_analysis_async(
     tickers: List[str],
     progress_callback=None,
+    market: str = "US",
 ) -> List[Any]:
     """
     Run the stock analysis asynchronously, reusing cached data
@@ -41,19 +40,17 @@ async def run_analysis_async(
     
     Args:
         tickers: List of stock ticker symbols to analyze
+        progress_callback: Optional callable(pct, label) for progress updates
+        market: Market identifier ("US" or "IND")
     
     Returns:
         List of TradingSignal objects
     """
-    system = AlgoTradingSystem(tickers=tickers)
+    system = AlgoTradingSystem(tickers=tickers, market=market)
     cache = get_session_cache()
-    
-    # Status tracking
-    status_placeholder = st.empty()
     
     signals = await _execute_analysis(
         system, tickers, cache,
-        status_placeholder,
         progress_callback=progress_callback,
     )
 
@@ -62,30 +59,26 @@ async def run_analysis_async(
 
     # Persist results
     save_path = _save_results(system, signals, tickers)
-    db_saved = _save_to_database(signals, tickers)
+    db_saved = _save_to_database(signals, tickers, market=market)
 
-    # Show cache diagnostics
+    # Log cache diagnostics
     stats = cache.stats
     scraper_stats = get_scraper_cache().stats
     logger.info("Session cache stats: %s", stats)
     logger.info("Scraper cache stats: %s", scraper_stats)
 
-    # Clear status indicator
-    status_placeholder.empty()
-
     if save_path:
-        st.caption(f"Results saved to: {save_path}")
+        logger.info("Results saved to: %s", save_path)
 
-    # Show how many API calls were saved
     cached_news_count = len(cache.get_cached_tickers("news"))
     scraper_cached = scraper_stats.get('cached_tickers', 0)
     dedup_hashes = scraper_stats.get('content_hashes', 0)
     if cached_news_count > 0 or scraper_cached > 0:
-        st.caption(
-            f"Cache: {stats['hits']} hits / {stats['misses']} misses "
-            f"({stats['hit_rate']} hit rate) — "
-            f"{cached_news_count} ticker(s) cached, "
-            f"{dedup_hashes} dedup hashes tracked"
+        logger.info(
+            "Cache: %d hits / %d misses (%s hit rate) — "
+            "%d ticker(s) cached, %d dedup hashes tracked",
+            stats['hits'], stats['misses'], stats['hit_rate'],
+            cached_news_count, dedup_hashes,
         )
 
     return signals
@@ -95,7 +88,6 @@ async def _execute_analysis(
     system: AlgoTradingSystem,
     tickers: List[str],
     cache,
-    status_placeholder,
     progress_callback=None,
 ) -> List[Any]:
     """
@@ -111,35 +103,32 @@ async def _execute_analysis(
     # ── Step 1: News scraping (with cache) ───────────────────────────
     # (Spinner already shows status; skip redundant info notification)
     if progress_callback:
-        progress_callback(2, "📰 Scraping news…")
+        progress_callback(2, " Scraping news")
     
     # Build dict of cached news
     cached_news: Dict[str, list] = cache.get_all("news")
     new_tickers = cache.get_new_tickers("news", tickers)
     
     if progress_callback:
-        progress_callback(5, f"📰 Fetching news for {len(new_tickers)} new ticker(s)…")
+        progress_callback(5, f" Fetching news for {len(new_tickers)} new ticker(s)")
 
     if cached_news:
         cached_list = [t for t in tickers if t in cached_news]
-        if cached_list:
-            status_placeholder.info(
-                f"📰 Reusing cached news for {len(cached_list)} ticker(s), "
-                f"fetching {len(new_tickers)} new…"
-            )
+        if cached_list and progress_callback:
+            progress_callback(5, f" Reusing cache for {len(cached_list)} ticker(s), fetching {len(new_tickers)} new")
     
     if progress_callback:
-        progress_callback(8, "📰 Querying news sources…")
+        progress_callback(8, " Querying news sources")
 
     all_news = await system.news_aggregator.fetch_news_for_tickers(
         tickers, cached_news=cached_news
     )
     if not all_news:
-        status_placeholder.warning("⚠️ No news found")
+        logger.warning("No news found for tickers: %s", tickers)
         return []
     
     if progress_callback:
-        progress_callback(22, f"📰 Collected {len(all_news)} articles — caching…")
+        progress_callback(22, f" Collected {len(all_news)} articles — caching")
 
     # Cache newly fetched news by ticker
     news_ttl = timedelta(minutes=Config.NEWS_CACHE_TTL_MINUTES)
@@ -157,13 +146,12 @@ async def _execute_analysis(
             )
     
     if progress_callback:
-        progress_callback(28, f"✓ {len(all_news)} news items collected")
-    status_placeholder.success(f"✓ Collected {len(all_news)} news items")
+        progress_callback(28, f" {len(all_news)} news items collected")
     
     # ── Step 2: Sentiment analysis (with cache) ──────────────────────
     # (Spinner already shows status; skip redundant info notification)
     if progress_callback:
-        progress_callback(30, "🧠 Analyzing sentiment…")
+        progress_callback(30, "Analyzing sentiment")
     
     # Separate already-analysed items from new ones
     items_to_analyse = []
@@ -175,7 +163,7 @@ async def _execute_analysis(
             items_to_analyse.append(item)
     
     if progress_callback:
-        progress_callback(35, f"🧠 {len(items_to_analyse)} items to analyse ({len(already_analysed)} cached)…")
+        progress_callback(35, f"{len(items_to_analyse)} items to analyse ({len(already_analysed)} cached)")
 
     if items_to_analyse:
         newly_analysed = system.sentiment_analyzer.analyze_news_items(items_to_analyse)
@@ -183,7 +171,7 @@ async def _execute_analysis(
         newly_analysed = []
     
     if progress_callback:
-        progress_callback(48, "🧠 Caching sentiment results…")
+        progress_callback(48, "Caching sentiment results")
 
     analyzed_news = already_analysed + newly_analysed
     
@@ -197,16 +185,32 @@ async def _execute_analysis(
         cache.put("news", ticker, items, ttl=news_ttl)
     
     if progress_callback:
-        progress_callback(52, f"✓ Sentiment done — {len(analyzed_news)} items")
-    status_placeholder.success(
-        f"✓ Analyzed {len(analyzed_news)} items "
-        f"({len(already_analysed)} cached, {len(newly_analysed)} new)"
-    )
-    
+        progress_callback(52, f" Sentiment done — {len(analyzed_news)} items")
+
+
+    # ── Step 2b: Macro-economic indicators ───────────────────────────
+    if progress_callback:
+        progress_callback(53, " Fetching macro-economic indicators")
+
+    market = system.market
+    try:
+        macro_snap = system.macro_indicators.fetch(market=market)
+        system.decision_engine.set_macro_snapshot(macro_snap)
+        logger.info(
+            "Macro sentiment: %s (%.2f)",
+            macro_snap.macro_sentiment_label or "n/a",
+            macro_snap.macro_sentiment_score or 0,
+        )
+    except Exception as exc:
+        logger.warning("Macro indicators unavailable: %s", exc)
+
+    if progress_callback:
+        progress_callback(55, "\u2705 Macro indicators loaded")
+
     # ── Step 3: Metrics + signals ────────────────────────────────────
     # (Spinner already shows status; skip redundant info notification)
     if progress_callback:
-        progress_callback(55, "📊 Calculating metrics…")
+        progress_callback(55, " Calculating metrics")
     
     # Pre-populate MetricsCalculator cache with any previously cached metrics
     cached_metrics = cache.get_all("metrics")
@@ -217,12 +221,12 @@ async def _execute_analysis(
     # Prefetch metrics for all unique tickers at once
     unique_tickers = list({item.ticker for item in analyzed_news})
     if progress_callback:
-        progress_callback(58, f"📊 Fetching metrics for {len(unique_tickers)} ticker(s)…")
+        progress_callback(58, f" Fetching metrics for {len(unique_tickers)} ticker(s)")
 
     system.metrics_calculator.prefetch_metrics(unique_tickers)
     
     if progress_callback:
-        progress_callback(70, "📊 Caching metrics & recording freshness…")
+        progress_callback(70, " Caching metrics & recording freshness")
 
     # Save back to session cache + record freshness
     sc = get_scraper_cache()
@@ -240,11 +244,11 @@ async def _execute_analysis(
             pass
         if progress_callback and unique_tickers:
             pct = 70 + int(10 * (idx + 1) / len(unique_tickers))
-            progress_callback(pct, f"📊 Metrics cached — {t}")
+            progress_callback(pct, f" Metrics cached — {t}")
     
     # Generate signals
     if progress_callback:
-        progress_callback(82, "⚡ Generating trading signals…")
+        progress_callback(82, " Generating trading signals")
 
     signals = []
     total_news = len(analyzed_news)
@@ -255,11 +259,11 @@ async def _execute_analysis(
         if progress_callback and total_news:
             pct = 82 + int(10 * (i + 1) / total_news)
             if (i + 1) % max(1, total_news // 5) == 0 or i + 1 == total_news:
-                progress_callback(pct, f"⚡ Signal {i + 1}/{total_news}…")
+                progress_callback(pct, f" Signal {i + 1}/{total_news}")
         
     # Cache signals
     if progress_callback:
-        progress_callback(93, "💾 Caching signals…")
+        progress_callback(93, " Caching signals")
 
     signals_by_ticker: Dict[str, list] = defaultdict(list)
     for sig in signals:
@@ -268,10 +272,9 @@ async def _execute_analysis(
         cache.put("signals", ticker, sigs)
     
     if progress_callback:
-        progress_callback(95, f"✓ {len(signals)} trading signals generated")
-    status_placeholder.success(f"✓ Generated {len(signals)} trading signals")
+        progress_callback(95, f"\u2705 {len(signals)} trading signals generated")
     if progress_callback:
-        progress_callback(100, "Analysis complete ✅")
+        progress_callback(100, "Analysis complete ")
     
     # ── Step 4: WSB email report (auto-send when SMTP configured) ────
     wsb_news = [n for n in analyzed_news if n.source == "WallStreetBets"]
@@ -280,9 +283,7 @@ async def _execute_analysis(
             from notifications.manager import NotificationManager
             sent = NotificationManager.send_wsb_email(analyzed_news, tickers)
             if sent:
-                status_placeholder.success(
-                    f"✓ WSB email report sent ({len(wsb_news)} mentions)"
-                )
+                logger.info("WSB email report sent (%d mentions)", len(wsb_news))
             else:
                 logger.info("WSB email skipped (SMTP not configured)")
         except Exception as exc:
@@ -310,13 +311,14 @@ def _save_results(system: AlgoTradingSystem, signals: List[Any], tickers: List[s
         return None
 
 
-def _save_to_database(signals: List[Any], tickers: List[str]) -> bool:
+def _save_to_database(signals: List[Any], tickers: List[str], market: str = "US") -> bool:
     """
     Save analysis results to database if available.
     
     Args:
         signals: List of TradingSignal objects
         tickers: List of tickers analyzed
+        market: Market identifier ("US" or "IND")
     
     Returns:
         True if saved successfully, False otherwise
@@ -336,8 +338,9 @@ def _save_to_database(signals: List[Any], tickers: List[str]) -> bool:
             signals=signal_data,
             news_items=news_data,
             fundamental_metrics=fundamental_data,
-            parameters={'analysis_type': 'stock_analysis'},
-            run_type='stock_analysis'
+            parameters={'analysis_type': 'stock_analysis', 'market': market},
+            run_type='stock_analysis',
+            market=market,
         )
         
         if run_id:

@@ -1,95 +1,134 @@
 # Centurion Capital LLC — Enterprise AI Trading Platform
 
-A Python-based enterprise trading platform combining multi-source news scraping, AI-powered sentiment analysis, fundamental & technical analysis, strategy backtesting, persistent data storage, live Indian market trading via Zerodha Kite Connect, and a RAG-powered document intelligence pipeline. Built on Streamlit with PostgreSQL persistence, MinIO object storage, ChromaDB vector search, and multi-provider LLM integration.
+A Python-based enterprise trading platform combining multi-source news scraping, AI-powered sentiment analysis, fundamental & technical analysis, strategy backtesting, persistent data storage, live Indian market trading via Zerodha Kite Connect, and a RAG-powered document intelligence pipeline. Built with a **Next.js 14 frontend** (React, TanStack Query, Tailwind CSS) and a **FastAPI backend**, plus a Streamlit UI for legacy workflows. Backed by PostgreSQL/Neon persistence, MinIO/Cloudflare R2 object storage, Upstash Redis caching, ChromaDB vector search, and multi-provider LLM integration (Claude / OpenAI / Ollama). Deployable on Railway + Vercel with GitHub Actions CI/CD.
 
 ---
 
-## ⚡ Quick Start (5 Minutes)
+## Quick Start
 
-Get the app running on a new machine with these commands:
+---
 
-### 1️⃣ Clone & Install Dependencies
-```powershell
-git clone https://github.com/srees16/centurion_core.git
+### Step 1 — Clone & install dependencies
+
+```powershell/bash
+git clone -b develop https://github.com/srees16/centurion_core.git
 cd centurion_core
-python3 -m venv myenv
-.\myenv\Scripts\activate or (macOS: source myenv/bin/activate)
+python -m venv myenv 
+myenv\Scripts\activate (macOS/Linux: source myenv/bin/activate)
 pip install -r requirements.txt
+
+> Install Next.js frontend dependencies
+cd frontend
+npm install
+cd ..
+```
+---
+
+### Step 2 — Set environment variables
+
+**Windows PowerShell:**
+```powershell
+$env:ZERODHA_API_KEY='YOUR_API_KEY'; $env:ZERODHA_API_SECRET='YOUR_API_SECRET'; $env:ZERODHA_USER_ID='YOUR_ZERODHA_ID'; $env:ZERODHA_PASSWORD='YOUR_ZERODHA_PASSWORD'; $env:ZERODHA_TOTP_SECRET='YOUR_BASE32_TOTP_SECRET'; $env:ANTHROPIC_API_KEY='YOUR_ANTHROPIC_API_KEY'; $env:CENTURION_RAG_LLM_PROVIDER='YOUR_LLM_PROVIDER'; $env:CENTURION_RAG_CLAUDE_MODEL='YOUR_LLM_MODEL'; $env:CENTURION_EMAIL_USER='YOUR_GMAIL_ID'; $env:CENTURION_EMAIL_PASS='YOUR_GMAIL_APP_PASSWORD'; $env:STREAMLIT_SERVER_PORT='9000'; $env:API_PORT='9001'; $env:CENTURION_DB_HOST='localhost'; $env:CENTURION_DB_PORT='9003'; $env:CENTURION_DB_NAME='centurion_rag'; $env:CENTURION_DB_USER='postgres'; $env:CENTURION_DB_PASSWORD='superadmin1'; $env:KITE_DB_HOST='localhost'; $env:KITE_DB_PORT='9003'; $env:KITE_DB_NAME='livestocks_ind'; $env:KITE_DB_USER='postgres'; $env:KITE_DB_PASSWORD='superadmin1'; $env:KITE_POOL_MAXSIZE='40'; $env:MINIO_ENDPOINT='localhost:9004'; $env:MINIO_ACCESS_KEY='minioadmin'; $env:MINIO_SECRET_KEY='minioadmin123'; $env:MINIO_SECURE='false'; $env:MINIO_BUCKET='centurion-backtests'; $env:MINIO_ENABLED='true'; $env:CENTURION_DEFAULT_ADMIN_PASSWORD='admin123'; $env:CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'; $env:CENTURION_RAG_LLM_URL='http://localhost:11434'; $env:RAG_MODEL='qwen2.5:3b'; $env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300'; $env:CENTURION_RAG_LLM_CHUNK_TIMEOUT='30'; $env:CENTURION_RAG_LLM_NUM_CTX='4096'; $env:CENTURION_RAG_LLM_NUM_PREDICT='500'; $env:CENTURION_RAG_LLM_MAX_TOKENS='500'; $env:CENTURION_RAG_LLM_TEMPERATURE='0.2'; $env:CENTURION_RAG_CLAUDE_MAX_TOKENS='1024'; $env:CENTURION_RAG_CLAUDE_TEMPERATURE='0.2'; $env:CENTURION_RAG_CHROMA_DIR='./data/chroma_db'; $env:CENTURION_RAG_EMBEDDING_MODEL='BAAI/bge-base-en-v1.5'; $env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET='2000'; $env:CENTURION_RAG_MAX_CONTEXT_CHUNKS='8'; $env:CENTURION_RAG_TOP_K='15'; $env:CENTURION_RAG_SIMILARITY_THRESHOLD='0.70'; $env:CENTURION_RAG_QUERY_BUDGET='300'; $env:CENTURION_RAG_QUERY_REWRITE='false'; $env:CENTURION_RAG_STREAMING='true'; $env:CENTURION_RAG_CACHE_ENABLED='false'; $env:CENTURION_RAG_FAQ_ENABLED='false'; $env:RAG_FAST_MODE='false'; $env:CENTURION_EMAIL_HOST='smtp.gmail.com'; $env:CENTURION_EMAIL_PORT='587'
 ```
 
-### 1️⃣🅰️ Execute environment variables
-Windows powershell:
+**macOS / Linux:**
+```bash
+export ZERODHA_API_KEY="YOUR_API_KEY" && export ZERODHA_API_SECRET="YOUR_API_SECRET" && export ZERODHA_USER_ID="YOUR_ZERODHA_ID" && export ZERODHA_PASSWORD='YOUR_ZERODHA_PASSWORD' && export ZERODHA_TOTP_SECRET="YOUR_BASE32_TOTP_SECRET" && export ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY" && export CENTURION_RAG_LLM_PROVIDER="YOUR_LLM_PROVIDER" && export CENTURION_RAG_CLAUDE_MODEL="YOUR_LLM_MODEL" && export CENTURION_EMAIL_USER="YOUR_GMAIL_ID" && export CENTURION_EMAIL_PASS="YOUR_GMAIL_APP_PASSWORD" && export STREAMLIT_SERVER_PORT="9000" && export API_PORT="9001" && export CENTURION_DB_HOST="localhost" && export CENTURION_DB_PORT="9003" && export CENTURION_DB_NAME="centurion_rag" && export CENTURION_DB_USER="postgres" && export CENTURION_DB_PASSWORD="superadmin1" && export KITE_DB_HOST="localhost" && export KITE_DB_PORT="9003" && export KITE_DB_NAME="livestocks_ind" && export KITE_DB_USER="postgres" && export KITE_DB_PASSWORD="superadmin1" && export KITE_POOL_MAXSIZE="40" && export MINIO_ENDPOINT="localhost:9004" && export MINIO_ACCESS_KEY="minioadmin" && export MINIO_SECRET_KEY="minioadmin123" && export MINIO_SECURE="false" && export MINIO_BUCKET="centurion-backtests" && export MINIO_ENABLED="true" && export CENTURION_DEFAULT_ADMIN_PASSWORD="admin123" && export CENTURION_DEFAULT_ANALYST_PASSWORD="analyst123" && export CENTURION_RAG_LLM_URL="http://localhost:11434" && export RAG_MODEL="qwen2.5:3b" && export CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT="300" && export CENTURION_RAG_LLM_CHUNK_TIMEOUT="30" && export CENTURION_RAG_LLM_NUM_CTX="4096" && export CENTURION_RAG_LLM_NUM_PREDICT="500" && export CENTURION_RAG_LLM_MAX_TOKENS="500" && export CENTURION_RAG_CLAUDE_MAX_TOKENS="1024" && export CENTURION_RAG_CLAUDE_TEMPERATURE="0.2" && export CENTURION_RAG_LLM_TEMPERATURE="0.2" && export CENTURION_RAG_CHROMA_DIR="./data/chroma_db" && export CENTURION_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5" && export CENTURION_RAG_CONTEXT_TOKEN_BUDGET="2000" && export CENTURION_RAG_MAX_CONTEXT_CHUNKS="8" && export CENTURION_RAG_TOP_K="15" && export CENTURION_RAG_SIMILARITY_THRESHOLD="0.70" && export CENTURION_RAG_QUERY_BUDGET="300" && export CENTURION_RAG_QUERY_REWRITE="false" && export CENTURION_RAG_STREAMING="true" && export CENTURION_RAG_CACHE_ENABLED="false" && export CENTURION_RAG_FAQ_ENABLED="false" && export RAG_FAST_MODE="false" && export CENTURION_EMAIL_HOST="smtp.gmail.com" && export CENTURION_EMAIL_PORT="587"
+```
 
+---
+
+### Step 3 — Start PostgreSQL + create databases (Docker)
+
+**Windows PowerShell:**
+```powershell
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag timescale/timescaledb:latest-pg15; Start-Sleep -Seconds 9; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_trading;"; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
+```
+
+**macOS / Linux:**
+```bash
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag timescale/timescaledb:latest-pg15 && sleep 9 && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_trading;" && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
+```
+
+This creates three databases: `centurion_rag` (analysis results, backtesting, RAG pipeline — default), `centurion_trading` (strategy metrics, Financial ML and Test & Tune chapter outputs), `livestocks_ind` (Kite/Zerodha live trading).
+
+---
+
+### Step 4 — Initialize database tables
+
+Run in the same terminal (env vars from Step 2 are still active):
 ```
 $env:STREAMLIT_SERVER_PORT=9000; $env:API_PORT=9001; $env:ZERODHA_API_KEY="YOUR_KEY_HERE"; $env:ZERODHA_API_SECRET="YOUR_SECRET_HERE"; $env:ZERODHA_USER_ID="YOUR_USER_HERE"; $env:ZERODHA_PASSWORD="YOUR_PASSWORD_HERE"; $env:KITE_DB_HOST="localhost"; $env:KITE_DB_PORT="9003"; $env:KITE_DB_NAME="livestocks_ind"; $env:KITE_DB_USER="postgres"; $env:KITE_DB_PASSWORD="superadmin1"; $env:KITE_POOL_MAXSIZE=40; $env:MINIO_ENDPOINT="localhost:9004"; $env:MINIO_ACCESS_KEY="minioadmin"; $env:MINIO_SECRET_KEY="minioadmin123"; $env:MINIO_SECURE="false"; $env:MINIO_BUCKET="centurion-backtests"; $env:MINIO_ENABLED="true"; $env:CENTURION_DB_HOST="localhost"; $env:CENTURION_DB_PORT="9003"; $env:CENTURION_DB_NAME="centurion_rag"; $env:CENTURION_DB_USER="postgres"; $env:CENTURION_DB_PASSWORD="superadmin1"; $env:CENTURION_RAG_LLM_URL="http://localhost:11434"; $env:RAG_MODEL="qwen2.5:3b"; $env:CENTURION_RAG_CHROMA_DIR="./data/chroma_db"; $env:CENTURION_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5"; $env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET="2000"; $env:CENTURION_RAG_MAX_CONTEXT_CHUNKS="8"; $env:CENTURION_RAG_TOP_K="15"; $env:CENTURION_RAG_SIMILARITY_THRESHOLD="0.70"; $env:CENTURION_RAG_LLM_NUM_CTX="4096"; $env:CENTURION_RAG_LLM_NUM_PREDICT="500"; $env:CENTURION_RAG_LLM_MAX_TOKENS="500"; $env:CENTURION_RAG_LLM_TEMPERATURE="0.2"; $env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT="300"; $env:CENTURION_RAG_LLM_CHUNK_TIMEOUT="30"; $env:CENTURION_RAG_QUERY_BUDGET="300"; $env:CENTURION_RAG_QUERY_REWRITE="false"; $env:CENTURION_RAG_STREAMING="true"; $env:CENTURION_RAG_FAQ_ENABLED="false"; $env:RAG_FAST_MODE="false"; $env:CENTURION_RAG_CACHE_ENABLED="false"; $env:CENTURION_DEFAULT_ADMIN_PASSWORD="admin123"; $env:CENTURION_DEFAULT_ANALYST_PASSWORD="analyst123"; $env:CENTURION_RAG_LLM_PROVIDER="claude"; $env:ANTHROPIC_API_KEY="YOUR_KEY_HERE"; $env:CENTURION_RAG_CLAUDE_MODEL="claude-opus-4-20250514"; $env:CENTURION_RAG_CLAUDE_MAX_TOKENS="1024"; $env:CENTURION_RAG_CLAUDE_TEMPERATURE="0.2"
 ```
-MacOS:
+Expected output: `✓ Database tables created successfully`
+
+This creates all 14 tables in the `centurion_rag` database: `analysis_runs`, `news_items`, `stock_signals`, `fundamental_metrics`, `backtest_results`, `backtest_trades`, `backtest_equity_points`, `backtest_daily_returns`, `strategy_performance_summary`, `user_watchlists`, `alert_configurations`, `raw_scraped_news`, `data_freshness`, and `order_records`.
+> The `livestocks_ind` tables (`stocks`, `index_groups`, `index_stocks`, `tick_data`) are auto-created at runtime when the Kite dashboard or webhook service starts.
+
+---
+
+### Step 5 — Start MinIO (Docker) — for backtest, Financial ML & Test-and-Tune charts
+
 ```
 export STREAMLIT_SERVER_PORT=9000 API_PORT=9001 ZERODHA_API_KEY="YOUR_KEY_HERE" ZERODHA_API_SECRET="YOUR_SECRET_HERE" ZERODHA_USER_ID="YOUR_USER_HERE" ZERODHA_PASSWORD="YOUR_PASSWORD_HERE" KITE_DB_HOST="localhost" KITE_DB_PORT="9003" KITE_DB_NAME="livestocks_ind" KITE_DB_USER="postgres" KITE_DB_PASSWORD="superadmin1" KITE_POOL_MAXSIZE=40 MINIO_ENDPOINT="localhost:9004" MINIO_ACCESS_KEY="minioadmin" MINIO_SECRET_KEY="minioadmin123" MINIO_SECURE="false" MINIO_BUCKET="centurion-backtests" MINIO_ENABLED="true" CENTURION_DB_HOST="localhost" CENTURION_DB_PORT="9003" CENTURION_DB_NAME="centurion_rag" CENTURION_DB_USER="postgres" CENTURION_DB_PASSWORD="superadmin1" CENTURION_RAG_LLM_URL="http://localhost:11434" RAG_MODEL="qwen2.5:3b" CENTURION_RAG_CHROMA_DIR="./data/chroma_db" CENTURION_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5" CENTURION_RAG_CONTEXT_TOKEN_BUDGET="2000" CENTURION_RAG_MAX_CONTEXT_CHUNKS="8" CENTURION_RAG_TOP_K="15" CENTURION_RAG_SIMILARITY_THRESHOLD="0.70" CENTURION_RAG_LLM_NUM_CTX="4096" CENTURION_RAG_LLM_NUM_PREDICT="500" CENTURION_RAG_LLM_MAX_TOKENS="500" CENTURION_RAG_LLM_TEMPERATURE="0.2" CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT="300" CENTURION_RAG_LLM_CHUNK_TIMEOUT="30" CENTURION_RAG_QUERY_BUDGET="300" CENTURION_RAG_QUERY_REWRITE="false" CENTURION_RAG_STREAMING="true" CENTURION_RAG_FAQ_ENABLED="false" RAG_FAST_MODE="false" CENTURION_RAG_CACHE_ENABLED="false" CENTURION_DEFAULT_ADMIN_PASSWORD="admin123" CENTURION_DEFAULT_ANALYST_PASSWORD="analyst123" CENTURION_RAG_LLM_PROVIDER="claude" ANTHROPIC_API_KEY="YOUR_KEY_HERE" CENTURION_RAG_CLAUDE_MODEL="claude-opus-4-20250514" CENTURION_RAG_CLAUDE_MAX_TOKENS="1024" CENTURION_RAG_CLAUDE_TEMPERATURE="0.2"
 ```
 
-### 2️⃣ Start PostgreSQL (Docker)
-windows powershell:
-```
-docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15; Start-Sleep 2; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
-```
-*check which works in new setup*
-```
-docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_trading postgres:15; Start-Sleep 2; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
-```
-MacOS:
-```
-docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag postgres:15 && sleep 2 && docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"
-```
+The `centurion-backtests` bucket is auto-created on first use. It stores backtest strategy charts, Financial ML figures.
 
-### 3️⃣ Initialize Database
-```powershell
-python setup_database.py
+---
+
+### Step 6 (Optional) — Install Ollama for local RAG
+
+**Windows:**
 ```
-Expected: `✓ Database tables created successfully`
-
-### 4️⃣ Start MinIO (Docker) — for Backtest Charts
-```powershell
-docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"
+winget install Ollama.Ollama (or download from https://ollama.ai/download)
 ```
-
-### 5️⃣ (Optional) Install Ollama — for RAG Document Q&A
-```powershell
-# Download from https://ollama.ai/download, then:
-ollama pull qwen2.5:3b
-
-OR
-```powershell
+**macOS:**
+```
 curl -fsSL https://ollama.com/install.sh | sh
-# then:
+```
+Then pull the model:
+```
 ollama pull qwen2.5:3b
 ```
+---
 
-### 6️⃣ Launch the App
-**Terminal 1 — Streamlit UI:**
-```powershell
+### Step 7 — Terminal 1: Launch FastAPI backend
+
+Run in the **same terminal** (env vars from Step 2 must still be active):
+```
+python run_api.py --reload
+```
+Backend API at: **http://localhost:9001** — API docs at **http://localhost:9001/docs**
+
+---
+
+### Step 8 — Terminal 2: Launch Next.js frontend
+
+Open a new terminal:
+> cd centurion_core/frontend
+```
+npm run dev
+```
+Opens at: **http://localhost:3000** — login with `admin` / `admin123`
+
+---
+
+### Step 9 (Optional) — Terminal 3: Launch Streamlit
+
+> Set env variables from Step 2 in this new terminal too, then run:
+```
 streamlit run app.py
 ```
-Opens at: **http://localhost:9000** 
-login with `admin` / `admin123`
+Opens at: **http://localhost:9000** — login with `admin` / `admin123`
 
-**Terminal 2 (optional) — FastAPI REST API:**
-```powershell
-python run_api.py
-```
-API docs at: **http://localhost:9001/docs** (auth required)
+> **SSO:** Logging into the Streamlit app or the FastAPI docs shares session cookies. Both URLs must use `localhost` (not `127.0.0.1`) for this to work.
 
-Open Minio at **http://localhost:9002/login**
-login with: `minioadmin` / `minioadmin123`
+MinIO console at: **http://localhost:9002/login** — login with `minioadmin` / `minioadmin123`
 
-### ✅ Verify Everything Works
-- [ ] Streamlit opens at http://localhost:9000
-- [ ] Login succeeds with `admin` / `admin123`
-- [ ] No database errors in console
-- [ ] Run a quick analysis with 2 tickers (AAPL, MSFT) — should complete in <2 min
-- [ ] Check **History** tab — results persist to PostgreSQL
+---
 
-**Stuck?** Jump to **Section 13: Troubleshooting** or **Section 10: Installation** for detailed setup.
+Jump to **Section 14: Troubleshooting** or **Section 11: Installation** for detailed setup.
 
 ---
 
@@ -101,27 +140,37 @@ login with: `minioadmin` / `minioadmin123`
 4. [Live Trading — Zerodha Kite Connect](#4-live-trading--zerodha-kite-connect)
 5. [RAG Document Intelligence](#5-rag-document-intelligence)
 6. [Database Layer](#6-database-layer)
-7. [Object Storage (MinIO)](#7-object-storage-minio)
+7. [Object Storage (MinIO / Cloudflare R2)](#7-object-storage-minio--cloudflare-r2)
 8. [Interactive Web Interface](#8-interactive-web-interface)
-9. [Project Structure](#9-project-structure)
-10. [Installation (Detailed)](#10-installation)
-11. [Usage Guide](#11-usage-guide)
-12. [API Reference](#12-api-reference)
-13. [Troubleshooting](#13-troubleshooting)
-14. [Dependencies](#14-dependencies)
-15. [Changelog](#15-changelog)
+9. [Financial ML & Test-and-Tune](#9-financial-ml--test-and-tune)
+10. [Project Structure](#10-project-structure)
+11. [Installation (Detailed)](#11-installation)
+12. [Usage Guide](#12-usage-guide)
+13. [API Reference](#13-api-reference)
+14. [Troubleshooting](#14-troubleshooting)
+15. [Dependencies](#15-dependencies)
 
 ---
 
 ## 1. Architecture Overview
 
-The application follows a modular, deferred-import architecture for fast startup:
+The application follows a modular, deferred-import architecture with dual frontends:
 
 ```
-app.py (Streamlit Router)
-  ├── apply_custom_styles() → initialize_session_state() → check_authentication()
-  ├── Page routing via st.session_state.current_page:
-  │     main → analysis → fundamental → backtesting → crypto → history
+Next.js 14 Frontend (primary — port 3000)
+  ├── React 18, TypeScript, Tailwind CSS, TanStack Query v5
+  ├── JWT auth (Zustand store) + next-themes dark/light mode
+  ├── API proxy rewrites → FastAPI backend (port 9001)
+  └── Pages: US/IND Stocks, Financial ML, Test & Tune, RAG Engine, Settings
+
+FastAPI Backend (port 9001)
+  ├── /api/v1/* — 50+ REST + SSE endpoints
+  ├── Auth: itsdangerous signed tokens (8h TTL)
+  └── Delegates to: scrapers, sentiment, metrics, decision_engine, rag_pipeline
+
+app.py (Streamlit Router — legacy, port 9000)
+  ├── apply_custom_styles() initialize_session_state() check_authentication()
+  ├── Page routing via st.session_state.current_page
   └── All page imports deferred to route branches
 ```
 
@@ -129,12 +178,95 @@ app.py (Streamlit Router)
 
 ```
 AlgoTradingSystem (main.py)
-  ├── NewsAggregator     → Yahoo Finance, Finviz, Investing.com, TradingView, r/WallStreetBets
-  ├── SentimentAnalyzer   → DistilBERT transformer model
-  ├── MetricsCalculator   → Fundamentals (yfinance) + Technicals (RSI, MACD, Bollinger)
-  ├── DecisionEngine      → Weighted scoring → STRONG_BUY / BUY / HOLD / SELL / STRONG_SELL
-  ├── NotificationManager → Desktop popups (plyer) + HTML email via SMTP
-  └── StorageManager      → Excel/CSV export + MinIO object storage
+  ├── USNewsAggregator Yahoo Finance, Finviz, Investing.com, TradingView, r/WallStreetBets
+  ├── IndianNewsAggregator MoneyControl, Economic Times, LiveMint, Business Standard, NDTV Profit, Zerodha Pulse, Google News India
+  ├── SentimentAnalyzer DistilBERT transformer model
+  ├── MetricsCalculator Fundamentals (yfinance) + Technicals (RSI, MACD, Bollinger)
+  ├── DecisionEngine Weighted scoring with regime-adaptive thresholds
+  ├── RegimeDetector 5-state market regime (BULL, BEAR, RANGE, VOLATILITY, CRISIS)
+  ├── NotificationManager Desktop popups (plyer) + HTML email via SMTP
+  └── StorageManager Excel/CSV export + MinIO / R2 object storage
+```
+
+### IntegratedScorer — 5-Layer Evaluation Pipeline
+
+```
+IntegratedScorer (services/integrated_scorer.py)
+  Layer 1 — Core Analysis     sentiment, fundamentals, technicals, macro, public opinion
+  Layer 2 — Strategy Signals   all registered strategies run in parallel (ThreadPoolExecutor)
+  Layer 3 — ML Ensemble        AFML chapter models (feature importance, ensemble methods)
+  Layer 4 — Robustness Checks  CSCV, walk-forward, permutation tests (TTMTS chapters)
+  Layer 5 — RAG Context        document-augmented evidence from uploaded PDFs
+  ──────────────────────────────────────────────────────────────────────
+  Output → StockVerdict (classification, composite_score, layer_scores, reasoning)
+```
+
+### Auto-Execution Engine
+
+```
+AutoExecutor (kite_connect/trading/auto_executor.py)
+  1. NSE Universe Download   → nse_universe.py (NIFTY50 / BANKNIFTY / full NSE)
+  2. 3-Stage NSE Screening   → screener.py (liquidity → volatility → technical filters)
+  3. Signal Filtering         → only BUY / STRONG_BUY verdicts pass through
+  4. Risk Management          → risk_manager.py (position sizing, max drawdown, beta adjustment, SL/TP)
+  5. Order Placement          → order_service.py (Kite API, circuit breaker, idempotent retry) + DB + email
+  6. Post-Trade Monitoring    → trade_monitor.py (SL/TP lifecycle, trailing stop, crash recovery)
+```
+
+### Background Scheduler
+
+```
+scheduler.py (APScheduler)
+  ├── Pre-market (09:20 IST)        DB pre-warm → full pipeline: scrape → analyse → screen → auto-execute
+  ├── Intraday (10:30, 12:30, 14:30) Score refresh + re-screen for new signals
+  ├── Walk-forward audit (Sat 06:00)  Weekly walk-forward validation of all strategies
+  ├── Reconciliation (Sat 07:00)      3-leg: backtest ↔ paper ↔ live parity check
+  ├── Nightly backup (23:00)          SQLite databases → R2/MinIO object storage
+  └── Auto-auth                       Kite TOTP auto-fill via pyotp (zero-touch)
+```
+
+### Services Layer
+
+```
+services/
+  ├── RegimeDetector       5-state regime (VIX, NIFTY returns, ADX); 30-min cache; adaptive thresholds
+  ├── WalkForward          Rolling 1Y train / 1Q test; degradation ratio (OOS/IS < 0.5 = overfit)
+  ├── CorporateActions     NSE SPLIT/BONUS/DIVIDEND/RIGHTS; adjusts OHLCV, positions, SL/TP
+  ├── DeliveryVolume       NSE delivery % analysis (≥ 60% = institutional conviction, +12 pts)
+  ├── EarningsMomentum     Post-earnings drift (5-day momentum); score boost +0.12 → +0.02 decay
+  ├── SectorRotation       NIFTY sector 1-month momentum; top 3 bonus, bottom 3 penalty
+  ├── SurvivorshipFilter   Detects delisted/suspended/dead stocks (4 methods, 1-hour cache)
+  ├── FundamentalFreshness Intra-quarter freshness via bulk deals, promoter pledges, MF holdings
+  └── IntegratedScorer     5-layer eval: Core 35% → Strategy 25% → ML 15% → Robustness 25%
+```
+
+### Infrastructure Layer
+
+```
+infrastructure/
+  ├── EventBus         In-process pub/sub with JSONL replay log; topic routing, correlation IDs
+  ├── FaultIsolation   SupervisedWorker (crash recovery) + CircuitBreaker (cascading failure prevention)
+  ├── LatencyTracker   Microsecond SLA tracking (100-200ms target); p50/p95/p99 sliding window
+  ├── ModelRegistry    Lazy-loading ML model registry (FinBERT, transformers); thread-safe singleton
+  ├── ReplayEngine     Deterministic event replay from JSONL logs for live → backtest reproducibility
+  ├── TimeSeriesStore  TimescaleDB (live) / in-memory ring buffer (replay); unified tick/OHLCV API
+  ├── ExecutionContext Dual-mode context (live / paper / backtest); same code path for all modes
+  ├── AnalysisPipeline 8-stage institutional pipeline: Raw → Clean → Feature → Alpha → Combine → Optimize → Execute → Post-Trade
+  ├── LoggingConfig    JSON structured logging with correlation IDs; thread-local context
+  ├── CacheService     Redis (Upstash) backend with in-memory fallback; TTL, key prefix, health check
+  └── BackupService    Nightly SQLite backup to R2/MinIO (scheduler_cache, trade_monitor, chroma)
+```
+
+### Architectural Layers
+
+```
+layers/
+  ├── AlphaResearch    Coordinates all alpha sources; emits alpha.signal events; customisable weights
+  ├── ExecutionEngine  Routes orders: Kite (IND) / DriveWealth (US) / PaperBroker based on context
+  ├── MarketData       Unified data feed (OHLCV, ticks, fundamentals, news); .NS/.BO → Kite + yfinance
+  ├── Monitoring       Health checks, latency dashboards, audit trail via EventBus subscription
+  ├── Portfolio        Allocation tracking, P&L computation, rebalancing logic with events
+  └── RiskEngine       Pre-trade + post-trade risk checks (max position, drawdown circuit breaker)
 ```
 
 ### Dual Strategy System
@@ -150,7 +282,9 @@ AlgoTradingSystem (main.py)
 
 ### News Scraping
 
-Five concurrent scrapers with 3-layer caching (session → scraper cache → DB freshness):
+Five concurrent US scrapers + eleven Indian scrapers with 3-layer caching (session → scraper cache → DB freshness):
+
+**US Market:**
 
 | Source | Method | Limit |
 |--------|--------|-------|
@@ -159,6 +293,22 @@ Five concurrent scrapers with 3-layer caching (session → scraper cache → DB 
 | Investing.com | HTTP with custom headers | 10/ticker |
 | TradingView | JSON API (`news-headlines.tradingview.com`) | 10/ticker |
 | r/WallStreetBets | Reddit public JSON API (8 flairs) | 50/flair |
+
+**Indian Market:**
+
+| Source | Method | Limit |
+|--------|--------|-------|
+| MoneyControl | HTTP scraping | 10/ticker |
+| Economic Times | HTTP scraping | 10/ticker |
+| LiveMint | HTTP scraping | 10/ticker |
+| Business Standard | HTTP scraping | 10/ticker |
+| Hindu BusinessLine | HTTP scraping | 10/ticker |
+| Zerodha Pulse | HTTP scraping | 10/ticker |
+| NDTV Profit | HTTP scraping | 10/ticker |
+| Google News India | HTTP scraping | 10/ticker |
+| FII/DII Flows | NSE data API | Daily |
+| Circuit Detector | NSE bhavcopy | Daily |
+| Market Breadth | NSE advance/decline | Daily |
 
 - `asyncio.Semaphore(5)` for concurrency control
 - SHA-256 content deduplication
@@ -265,16 +415,20 @@ Streamlit dashboard for real-time Indian equity monitoring, order management, op
 
 | Module | Purpose |
 |--------|---------|
-| `zerodha_live.py` | Main dashboard (~1326 lines) — live quotes, order book, positions, holdings, RSI scanner |
-| `auth/kite_auth.py` | OAuth flow with local HTTP callback + Selenium auto-login |
+| `zerodha_live.py` | Main dashboard — live quotes, order book, positions, holdings, RSI scanner |
+| `auth/kite_auth.py` | OAuth flow with Selenium auto-login + **automated TOTP** via `pyotp` (zero-touch 2FA when `ZERODHA_TOTP_SECRET` is set; falls back to visible browser for manual entry) |
 | `auth/kite_session.py` | Reusable authenticated `KiteConnect` session |
 | `core/config.py` | API credentials, DB config, index groups (NIFTY50, BANKNIFTY, NIFTYIT, NIFTYENERGY) |
 | `core/database_service.py` | PostgreSQL connection pool for `livestocks_ind` database |
-| `core/selenium_service.py` | Chrome/Edge WebDriver lifecycle management |
-| `nse/nse_csv_downloader.py` | NSE bhavcopy CSV download via Selenium |
-| `nse/nse_data_loader.py` | CSV → PostgreSQL bulk loader |
+| `core/selenium_service.py` | Chrome/Edge WebDriver lifecycle management (headless mode via `--headless=new`) |
+| `nse/screener.py` | **3-stage NSE screener** — liquidity filter → volatility filter → technical composite score (RSI + MACD + Bollinger + volume surge + price range) |
+| `nse/nse_universe.py` | NSE symbol list download (NIFTY50, BANKNIFTY, full NSE) |
 | `options/option_chain.py` | Concurrent option chain with OI, Greeks, and IV (ThreadPoolExecutor, 20 workers) |
-| `trading/order_service.py` | Market/Limit/SL/SL-M orders, CNC/MIS/NRML products, DAY/IOC validity |
+| `trading/order_service.py` | Market/Limit/SL/SL-M orders, CNC/MIS/NRML products, DAY/IOC validity — **auto-persists every order to DB** (`order_records` table) + **sends email confirmation** + **circuit breaker** (3 failures → 120s halt) |
+| `trading/auto_executor.py` | End-to-end execution engine: screen → signal-filter → risk-check → order → monitor |
+| `trading/risk_manager.py` | Position sizing (max 5% per position, max 25% total), SL/TP calculation (ATR-based), beta adjustment, earnings blackout detection, VIX/ADX regime scaling, sector limits (40% cap, 3 trades/sector) |
+| `trading/trade_monitor.py` | Post-trade SL/TP lifecycle — polls fill status, places SL-M/limit orders after entry fills, trailing stop support, **crash recovery** (SQLite WAL persistence, auto-restore on restart), corporate action adjustments |
+| `trading/paper_trader.py` | Virtual broker (Zerodha has no native paper trading) — simulates fills with live Kite LTP + slippage model, persists P&L & trades to SQLite; used for strategy validation before live deployment |
 | `trading/rsi_strategy.py` | Live RSI scanner — BUY (RSI<30 + reversal), SELL (RSI>70 + reversal), auto-order placement |
 
 ### Real-time Streaming Architecture
@@ -302,12 +456,21 @@ Push-based tick distribution via Kite WebSocket (KiteTicker) with an internal ev
 | `GET` | `/stream/status` | Full streaming pipeline status |
 
 ### Key Features
+- **Automated TOTP 2FA** — when `ZERODHA_TOTP_SECRET` is set, Kite login is fully automated via `pyotp`: headless Chrome auto-fills credentials + TOTP, captures redirect token. Falls back to visible browser for manual entry if auto-fill fails
+- **Order database persistence** — every order (BUY/SELL, MARKET/LIMIT/AMO, success/failure) is automatically saved to the `order_records` PostgreSQL table with fill_price, filled_at, and status
+- **Email order confirmations** — styled HTML email sent via SMTP for every placed order (requires `CENTURION_EMAIL_*` env vars)
+- **Circuit breaker** — 3 consecutive API failures → order placement halted for 120 seconds; auto-recovers via half-open test; manual reset available via `reset_circuit_breaker()`
+- **Crash recovery** — TradeMonitor persists all open trade state to SQLite (WAL mode); on container/process restart, active trades are automatically restored and monitoring resumes
+- **Paper trading engine** — virtual broker that simulates fills using live Kite LTP + configurable slippage; persists trades and P&L to SQLite for paper ↔ live reconciliation
+- **3-leg reconciliation** — weekly automated comparison: backtest ↔ paper, paper ↔ live, backtest ↔ live (Sharpe, win-rate, return drift detection)
 - Auto-refresh every 30 seconds via `@st.fragment(run_every=...)`
 - Market status pill indicators from NSE API (pre-open, live, post-market)
 - Batch quote fetching (200 symbols/batch)
 - Option chain: expiry discovery (45 days + monthly), Sensibull-style colouring, ATM highlighting, PCR metric
 - Price alerts: `price_above`, `price_below`, `change_pct_above`, `change_pct_below`, `volume_above` with desktop notifications
 - All-combinations pairs trading: C(n,2) pair analysis when >2 tickers provided
+- **Portfolio Analyzer** — sector weights, allocation drift analysis from live Kite holdings
+- **SELL Pipeline** — automated exit for SELL/STRONG_SELL verdicts on existing holdings
 
 ---
 
@@ -351,7 +514,9 @@ Retrieval-Augmented Generation pipeline for document Q&A with PDF ingestion, hyb
 
 ## 6. Database Layer
 
-### PostgreSQL Schema (12 tables)
+### PostgreSQL Schema (14 tables)
+
+Supports both local PostgreSQL + TimescaleDB and cloud-hosted **Neon** serverless PostgreSQL.
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
@@ -359,6 +524,8 @@ Retrieval-Augmented Generation pipeline for document Q&A with PDF ingestion, hyb
 | `news_items` | Scraped news with sentiment | ticker, source, sentiment_label, content_hash (SHA-256 dedup) |
 | `stock_signals` | Trading signals | decision, decision_score, reasoning, technical indicators |
 | `fundamental_metrics` | Per-ticker fundamental snapshots | PE, PEG, ROE, Z-Score, M-Score, F-Score |
+| `order_records` | Every Kite order (BUY/SELL, success/failure) | symbol, side, quantity, fill_price, filled_at, status, order_id, exchange |
+| `trade_journal` | Live trade journal with entry/exit tracking | symbol, side, strategy, entry_price, exit_price, pnl, holding_period, notes |
 | `backtest_results` | Strategy backtest outcomes | total_return, sharpe_ratio, max_drawdown, equity_curve (JSONB) |
 | `backtest_trades` | Individual trade records | entry/exit price, PnL, holding period |
 | `backtest_equity_points` | Equity curve data points | portfolio_value, drawdown, benchmark |
@@ -369,13 +536,27 @@ Retrieval-Augmented Generation pipeline for document Q&A with PDF ingestion, hyb
 | `raw_scraped_news` | Bronze/raw layer | raw content, is_processed flag |
 | `data_freshness` | Cache staleness tracking | last_fetched_at, consecutive_errors |
 
-**TimescaleDB** (optional): Hypertables on `stock_signals`, `fundamental_metrics`, `news_items` with 7-day chunk interval.
+**TimescaleDB** (optional, local only): Hypertables on `stock_signals`, `fundamental_metrics`, `news_items` with 7-day chunk interval. Disabled for Neon (`DB_ENABLE_TIMESCALEDB=false`).
+
+### Neon Serverless PostgreSQL (Cloud)
+
+The database connection layer supports direct `DATABASE_URL` connection strings for Neon:
+
+| Feature | Detail |
+|---------|--------|
+| **Connection** | `CENTURION_DATABASE_URL` env var (Neon pooled string) |
+| **SSL** | Auto-forced `sslmode=require` for Neon endpoints |
+| **Pool** | Smaller defaults (5 pool, 5 overflow) for serverless connection limits |
+| **Recycle** | 300s `pool_recycle` to handle Neon's connection timeout |
+| **Pre-warming** | `DatabaseManager.pre_warm()` wakes Neon auto-suspended compute before market hours |
+| **URL rewrite** | `postgres://` → `postgresql+psycopg2://` handled automatically |
 
 ### Service Layer
 
 `DatabaseService` (singleton) provides a unified API:
-- Analysis lifecycle: `start_analysis_run()` → `complete_analysis_run()` / `fail_analysis_run()`
+- Analysis lifecycle: `start_analysis_run()` `complete_analysis_run()` / `fail_analysis_run()`
 - Persistence: `save_signals()`, `save_news_items()` (SHA-256 dedup), `save_fundamental_metrics()` (upsert)
+- Order persistence: `save_single_order()` — auto-called by `order_service.place_order()` for every order (maps fill_price, filled_at, status)
 - Backtesting: `save_backtest_result()` with normalised detail tables + strategy summary refresh
 - Freshness: `check_freshness()`, `record_fetch()`, `record_error()`
 
@@ -392,20 +573,23 @@ Retrieval-Augmented Generation pipeline for document Q&A with PDF ingestion, hyb
 
 ---
 
-## 7. Object Storage (MinIO)
+## 7. Object Storage (MinIO / Cloudflare R2)
 
-S3-compatible storage for backtest chart images:
+S3-compatible storage for backtest chart images. Supports **MinIO** (local development) and **Cloudflare R2** (production — free tier: 10 GB, zero egress fees):
 
 - **Path pattern**: `centurion-backtests/<run_id>/<TICKER>/<strategy_name>/<filename>`
 - **Metadata tags**: `x-amz-meta-run-id`, `x-amz-meta-strategy`, `x-amz-meta-ticker`, `x-amz-meta-chart-title`
-- **Formats**: matplotlib (base64 → PNG), plotly (JSON), backtesting.py (HTML)
+- **Formats**: matplotlib (base64 PNG), plotly (JSON), backtesting.py (HTML)
 - **Presigned URLs**: 1-hour expiry for History page viewing
+- **R2 auto-detection**: Endpoints containing `r2.cloudflarestorage.com` auto-force HTTPS and pass `region=auto`
+- **Backup prefix**: `backups/<YYYY-MM-DD>/` for nightly SQLite database backups
 
 ```python
 from storage.minio_service import get_minio_service
 
 minio = get_minio_service()
 minio.save_backtest_image(run_id, image_data, filename, strategy_name, ticker, chart_title)
+minio.upload_file("/path/to/file.sqlite3", "backups/2026-03-23/cache.sqlite3")
 images = minio.get_backtest_images(run_id)  # with presigned URLs
 details = minio.list_runs_detailed()         # metadata: size, chart count, strategies
 ```
@@ -419,29 +603,104 @@ details = minio.list_runs_detailed()         # metadata: size, chart count, stra
 | Page | Route | Description |
 |------|-------|-------------|
 | **Main** | `main` | Ticker selection (default / manual / CSV upload), output settings, Run Analysis button |
-| **Stock Analysis** | `analysis` | Multi-colour CSS spinner during analysis → 4-tab results (Overview, Detailed Table, Top Signals, Sentiment) |
+| **Stock Analysis** | `analysis` | Multi-colour CSS spinner during analysis 4-tab results (Overview, Detailed Table, Top Signals, Sentiment) |
 | **Fundamental** | `fundamental` | Z/M/F score interpretations, all-stocks table, three charts side-by-side |
 | **Backtesting** | `backtesting` | Auto pre-computes all strategies on first visit; config panel + per-strategy result tabs with charts |
+| **US Holdings** | `us_holdings` | US portfolio holdings view |
 | **Crypto** | `crypto` | Isolated crypto strategies (default: ETH, BTC, LTC); Binance data, separate cache |
 | **History** | `history` | 3 tabs: Analysis Runs (drill-down), Trading Signals (filterable), Backtest Results (with MinIO charts) |
 | **RAG** | `rag` | PDF upload, query input with KB source selector, streaming response, code applicator |
-| **Indian Equities** | Kite Connect | Live quotes, order book, positions, holdings, option chain, RSI scanner |
+| **Financial ML** | `finance_ml` | 19 AFML chapter analyses — data structures, labeling, feature importance, HRP, CSCV, and more |
+| **Test & Tune** | `testune_ts` | 7 chapter analyses from *Testing and Tuning Market Trading Systems* (Timothy Masters) |
+| **Indian Main** | `ind_main` | Indian equities analysis dashboard with auto-order execution for STRONG_BUY signals |
+| **NSE Screener** | `screener` | 3-stage NSE screener → IntegratedScorer verdicts → risk-managed order placement (auto or manual) |
+| **Indian Equities** | `ind_kite` | Live quotes, order book, positions, holdings, option chain, RSI scanner (Kite Connect) |
+| **Verdict** | `verdict` | IntegratedScorer 5-layer verdict with composite scores, layer breakdowns, reasoning (IND & US) |
+| **Options** | `options` | Concurrent option chain with OI, Greeks, IV, Sensibull-style colouring |
+
+### Next.js Frontend (Primary UI)
+
+A modern React-based frontend built with Next.js 14, Tailwind CSS, and TanStack Query (React Query v5). Connects to the FastAPI backend at `http://localhost:9001`.
+
+| Feature | Description |
+|---------|-------------|
+| **Authentication** | JWT token-based login with signed session cookies (8-hour TTL, 30-min inactivity timeout) |
+| **User Menu** | Header dropdown showing username, avatar initials, dark/light mode toggle, Settings link, and logout |
+| **Dark / Light Mode** | `next-themes` provider with system detection; toggle available in header menu and Settings page |
+| **Settings Page** | `/settings` — profile info, appearance theme picker (Light / Dark / System), change password form |
+| **RAG Engine** | PDF upload (drag-and-drop, direct to backend), async background ingestion with polling status, SSE streaming query with token-by-token LLM response, knowledge base with document metadata |
+| **Sidebar** | Collapsible sidebar with US/IND stock tabs, module navigation (Financial ML, Test & Tune, Crypto, RAG Engine) |
+| **Ticker Ribbon** | Scrolling LTP ribbon with TTL-cached backend prices |
+| **Lazy Loading** | `loading.tsx` skeleton + `dynamic()` imports with `ssr: false` for heavy components |
+| **Financial ML** | Ticker input (Default / Manual / CSV), calendar popover date pickers, chapter selection with descriptions, spinner progress indicator, collapsible chapter results |
+| **Verdict Pages** | 5-layer IntegratedScorer verdict for both US and IND stocks with composite scores, layer breakdowns, and reasoning |
+| **Calendar Popover** | `react-day-picker` v9 date pickers with Radix Popover, styled for dark theme |
+
+**Tech stack:** Next.js 14, React 18, TypeScript, Tailwind CSS, Radix UI primitives, TanStack Query v5, Zustand (auth state), `next-themes`, `react-day-picker` v9, `date-fns`, Lucide icons.
 
 ### Authentication
 - YAML-based credentials (`auth/credentials.yaml`)
-- SHA-256 password hashing with `hmac.compare_digest`
-- Session timeout: 60 min absolute, 30 min inactivity
-- Max 3 login attempts
+- Bcrypt password hashing (with legacy SHA-256 support via `hmac.compare_digest`)
+- JWT tokens via `itsdangerous` signed serializer (8-hour TTL)
+- Session timeout: 30 min inactivity, 8 hours absolute
+- Password change via Settings page (`POST /api/v1/auth/change-password`)
 - Default users: `admin`/`admin123`, `analyst`/`analyst123`
 
 ### Styling
-- Enterprise CSS: dark gradient theme with Centurion branding
+- Enterprise CSS: dark gradient theme with Centurion branding (dark mode default)
+- Light mode support via Tailwind CSS `dark:` variants and CSS custom properties
 - Decision colours: STRONG_BUY `#00ff88`, BUY `#00cc44`, HOLD `#ffd700`, SELL `#ff6b6b`, STRONG_SELL `#ff0000`
 - Background image overlay, custom buttons, consistent footer
 
 ---
 
-## 9. Project Structure
+## 9. Financial ML & Test-and-Tune
+
+Two book-based quantitative research modules share the same UI pattern — tabbed chapter analyses, async background pre-computation, MinIO figure persistence, and PostgreSQL result storage.
+
+### Financial ML (AFML)
+
+Based on *Advances in Financial Machine Learning* by Marcos López de Prado. 19 chapter scripts in `financial_ML/applied/` covering:
+
+| Tab | Chapters |
+|-----|----------|
+| Data Structures | Financial Data Structures, Triple-Barrier Labeling, Sample Weights |
+| Features | Fractional Differentiation, Feature Importance, Structural Breaks, Entropy, Microstructure |
+| Modeling | Ensemble Methods, Cross-Validation, Hyper-Parameter Tuning, Bet Sizing |
+| Backtesting | Dangers of Backtesting, Synthetic Backtesting, Backtest Statistics, Strategy Risk |
+| Portfolio | ML Asset Allocation (HRP) |
+| Computation | Multiprocessing & Vectorization, Brute Force & Quantum |
+
+Streamlit page: `ui/pages/finance_ml_page.py` — Route: `finance_ml`
+Next.js page: `frontend/app/(dashboard)/financial-ml/page.tsx` — Route: `/financial-ml` — with ticker input (Default / Manual / CSV), calendar popover date pickers, chapter selection, spinner progress, and collapsible results
+
+### Test & Tune (TTMTS)
+
+Based on *Testing and Tuning Market Trading Systems* by Timothy Masters (2018). 7 chapter scripts in `testune_trade_sys/applied/` covering:
+
+| Tab | Chapters |
+|-----|----------|
+| Foundations | Introduction (returns, future leak, percent wins), Pre-Optimization Issues (stationarity, entropy) |
+| Optimization | Optimization Issues (elastic-net, differential evolution), Post-Optimization Issues (StocBias, sensitivity) |
+| Performance Estimation | Unbiased Performance (walk-forward, CSCV), Trade-Based Analysis (BCa bootstrap, drawdown bounds) |
+| Statistical Testing | Permutation Tests (return/price/bar permutation, walk-forward permutation) |
+
+C++ algorithms from the book are converted to Python (NumPy/SciPy). Each chapter has a companion reading in `testune_trade_sys/readings/`.
+
+Streamlit page: `ui/pages/testune_page.py` — Route: `testune_ts`
+Next.js page: `frontend/app/(dashboard)/test-tune/page.tsx` — Route: `/test-tune`
+
+### Shared Architecture
+
+Both modules follow the same pattern:
+- `sample_data.py` — Data generators with yfinance caching to `_cache/` (parquet)
+- `applied/chNN_*.py` — Chapter scripts with algorithm functions and a `main()` entry point
+- `readings/chNN_*.md` — Companion documentation
+- Streamlit page with `ANALYSIS_TABS` registry, `_execute_chapter()` via `importlib`, matplotlib figure capture (PNG bytes), MinIO + PostgreSQL persistence
+
+---
+
+## 10. Project Structure
 
 ```
 centurion_core/
@@ -450,43 +709,89 @@ centurion_core/
 ├── config.py                     # Configuration (~140 settings, CENTURION_* env vars)
 ├── models.py                     # Data models (NewsItem, StockMetrics, TradingSignal)
 ├── utils.py                      # CSV parsing and ticker validation
+├── scheduler.py                  # APScheduler — 5 jobs (pre-market, intraday, walk-forward, reconciliation, backup)
+├── run_api.py                    # FastAPI server launcher (port 9001)
 ├── setup_database.py             # Database schema initialisation
 ├── requirements.txt              # Python dependencies
 ├── sample_tickers.csv            # Example ticker list
-├── run_streamlit.bat             # Windows quick-launch script
+├── railway.toml                  # Railway deployment config (Dockerfile builder, health check)
+├── .env.example                  # Complete environment variable reference
 │
-├── ui/                           # Modular UI layer
+├── .github/
+│   └── workflows/
+│       └── deploy.yml            # CI/CD: Railway backend + Vercel frontend deployment
+│
+├── frontend/                     # Next.js 14 frontend (primary UI)
+│   ├── package.json              # Node.js dependencies
+│   ├── next.config.js            # API proxy rewrites, standalone output
+│   ├── tailwind.config.js        # Tailwind CSS + Radix UI theme tokens
+│   ├── middleware.ts             # Auth redirect middleware
+│   ├── vercel.json               # Vercel deployment config with API rewrites
+│   ├── app/
+│   │   ├── layout.tsx            # Root layout (ThemeProvider, QueryClient)
+│   │   ├── providers.tsx         # next-themes + TanStack QueryClientProvider
+│   │   ├── login/page.tsx        # Login page
+│   │   └── (dashboard)/
+│   │       ├── layout.tsx        # Auth guard, sidebar, header, footer
+│   │       ├── settings/page.tsx # Settings (profile, appearance, change password)
+│   │       ├── us-stocks/        # US stock pages (main, fundamentals, backtest, verdict, holdings, history)
+│   │       ├── ind-stocks/       # Indian stock pages (main, fly-kite, fundamentals, screener, verdict, backtest, options, history)
+│   │       ├── financial-ml/     # Financial ML chapter runner (ticker/date inputs, calendar popovers, collapsible results)
+│   │       ├── test-tune/        # Test & Tune chapter runner
+│   │       ├── crypto/           # Crypto strategies
+│   │       └── rag-engine/       # RAG document Q&A
+│   ├── components/
+│   │   ├── layout/               # Sidebar, HeaderBar, UserMenu, Footer
+│   │   ├── rag/                  # PDF uploader, streaming answer, knowledge base, source selector
+│   │   ├── ui/                   # Radix primitives (button, input, dropdown-menu, tabs, popover, calendar, etc.)
+│   │   ├── charts/               # Chart components
+│   │   ├── tables/               # Data tables
+│   │   └── common/               # Spinner, shared components
+│   ├── hooks/                    # React hooks (use-auth, use-rag, use-analysis, use-backtest, etc.)
+│   ├── lib/                      # API client, types, constants, utilities
+│   └── styles/globals.css        # CSS custom properties (light/dark), component styles
+│
+├── ui/                           # Streamlit UI layer (legacy)
 │   ├── components.py             # Header, footer, navigation, metrics cards
 │   ├── charts.py                 # Plotly charts (decision, sentiment, scores)
 │   ├── tables.py                 # Data tables with CSV download
 │   ├── styles.py                 # CSS styling and colour constants
 │   ├── assets/                   # Logo, background images
 │   └── pages/
-│       ├── main_page.py          # Dashboard & control panel
+│       ├── main_page.py          # Dashboard & control panel (US)
 │       ├── analysis_page.py      # Analysis results with CSS spinner
 │       ├── fundamental_page.py   # Fundamental analysis drill-down
 │       ├── backtesting_page.py   # Strategy backtesting + MinIO/DB integration
 │       ├── crypto_page.py        # Crypto strategy page (Binance API)
-│       └── history_page.py       # Historical results browser
+│       ├── history_page.py       # Historical results browser
+│       ├── us_holdings_page.py   # US portfolio holdings view
+│       ├── finance_ml_page.py    # Financial ML chapter analyses (AFML)
+│       ├── testune_page.py       # Test & Tune chapter analyses (TTMTS)
+│       ├── ind_main_page.py      # Indian equities analysis + auto-order execution
+│       ├── screener_page.py      # NSE screener → IntegratedScorer → risk → order pipeline
+│       ├── verdict_page.py       # IntegratedScorer verdict detail view
+│       ├── verdict_page.py       # IntegratedScorer verdict detail view
+│       └── options_page.py       # Option chain analysis page
 │
 ├── auth/                         # Authentication
 │   ├── authenticator.py          # Login/session management
 │   └── credentials.yaml          # User credentials (SHA-256 hashed)
 │
-├── database/                     # PostgreSQL persistence layer
-│   ├── connection.py             # SQLAlchemy engine (QueuePool, pool_pre_ping)
-│   ├── models.py                 # ORM models (12 tables)
+├── database/                     # PostgreSQL persistence layer (local + Neon serverless)
+│   ├── connection.py             # SQLAlchemy engine (QueuePool, SSL, DATABASE_URL, Neon auto-detect)
+│   ├── models.py                 # ORM models (15 tables incl. TradeJournal)
 │   ├── service.py                # DatabaseService singleton
 │   └── repositories/             # Repository pattern (6 repos + base)
 │
 ├── scrapers/                     # News scraping modules
-│   ├── aggregator.py             # Concurrent coordinator (Semaphore, 3-layer cache)
+│   ├── us_aggregator.py          # US market concurrent coordinator (Semaphore, 3-layer cache)
+│   ├── ind_aggregator.py         # Indian market news aggregator
+│   ├── broader_sentiment.py      # Macro / broader market sentiment
+│   ├── morningstar.py            # Morningstar data scraper
 │   ├── cache.py                  # Rate limiter + content deduplicator
-│   ├── yahoo_finance.py          # yfinance library
-│   ├── finviz.py                 # HTTP + optional Selenium Elite
-│   ├── investing.py              # HTTP with custom headers
-│   ├── tradingview.py            # JSON API
-│   └── wallstreetbets.py         # Reddit public JSON (8 flairs)
+│   ├── us_news/                  # US news source scrapers (Yahoo, Finviz, Investing, TradingView, WSB)
+│   ├── ind_news/                 # Indian news source scrapers
+│   └── macro/                    # FII/DII tracker, India Fear & Greed, RBI/NSDL, macro indicators
 │
 ├── sentiment/                    # AI sentiment analysis
 │   └── analyzer.py               # DistilBERT implementation
@@ -495,12 +800,44 @@ centurion_core/
 │   └── calculator.py             # Fundamentals + technicals (yfinance)
 │
 ├── decision_engine/              # Trading logic
-│   └── engine.py                 # Weighted scoring algorithm
+│   └── engine.py                 # Weighted scoring with regime-adaptive thresholds
 │
-├── services/                     # Business logic
-│   ├── analysis.py               # Analysis orchestration (async)
-│   ├── session.py                # Session state initialisation
-│   └── cache.py                  # SessionCache (TTL-aware, thread-safe)
+├── infrastructure/               # Platform infrastructure & reliability
+│   ├── event_bus.py              # In-process pub/sub with JSONL replay; correlation IDs, priorities
+│   ├── fault_isolation.py        # SupervisedWorker + CircuitBreaker (cascading failure prevention)
+│   ├── latency_tracker.py        # Microsecond SLA tracking (p50/p95/p99 sliding window)
+│   ├── model_registry.py         # Lazy-loading ML model registry (thread-safe singleton)
+│   ├── replay_engine.py          # Deterministic event replay from JSONL logs
+│   ├── timeseries_store.py       # TimescaleDB (live) / in-memory ring buffer (replay)
+│   ├── execution_context.py      # Dual-mode context (live / paper / backtest)
+│   ├── analysis_pipeline.py      # 8-stage institutional pipeline (Raw → Post-Trade)
+│   ├── logging_config.py         # JSON structured logging with correlation IDs
+│   ├── cache.py                  # Redis (Upstash) cache with in-memory fallback
+│   └── backup_service.py         # Nightly SQLite backup to R2/MinIO
+│
+├── layers/                       # Architectural abstraction layers
+│   ├── alpha_research.py         # Coordinates all alpha sources; emits alpha.signal events
+│   ├── execution_engine.py       # Order routing: Kite (IND) / DriveWealth (US) / PaperBroker
+│   ├── market_data.py            # Unified data feed (OHLCV, ticks, fundamentals, news)
+│   ├── monitoring.py             # Health checks, latency dashboards, audit trail
+│   ├── portfolio.py              # Allocation tracking, P&L, rebalancing
+│   └── risk_engine.py            # Pre-trade + post-trade risk checks, drawdown circuit breaker
+│
+├── services/                     # Business logic & analysis services
+│   ├── analysis.py               # Analysis orchestration (async, Streamlit-free)
+│   ├── integrated_scorer.py      # 5-layer evaluation pipeline (core + strategy + ML + robustness + RAG)
+│   ├── regime_detector.py        # 5-state market regime (VIX, NIFTY returns, ADX); adaptive thresholds
+│   ├── walk_forward.py           # Rolling walk-forward validation (1Y train / 1Q test)
+│   ├── corporate_actions.py      # NSE SPLIT/BONUS/DIVIDEND/RIGHTS handler
+│   ├── delivery_volume.py        # NSE delivery % analysis (≥60% = institutional conviction)
+│   ├── earnings_momentum.py      # Post-earnings drift detector (5-day momentum boost)
+│   ├── sector_rotation.py        # NIFTY sector momentum ranking (12 sectors)
+│   ├── survivorship_filter.py    # Delisted/suspended/dead stock detector (4 methods)
+│   ├── fundamental_freshness.py  # Intra-quarter freshness (bulk deals, promoter pledges, MF holdings)
+│   ├── portfolio_analyzer.py     # Kite holdings analysis (sector weights, allocation drift)
+│   ├── session.py                # Streamlit session state initialisation
+│   ├── cache.py                  # SessionCache (TTL-aware, thread-safe)
+│   └── drivewealth.py            # DriveWealth API client for US brokerage
 │
 ├── strategies/                   # Strategy framework
 │   ├── base_strategy.py          # BaseStrategy ABC + dataclasses (620 lines)
@@ -521,13 +858,34 @@ centurion_core/
 │   ├── portfolio_analysis/       # Asset Allocation / SLSQP optimisation (standalone)
 │   └── risk_modelling/           # Monte Carlo / GBM simulation (standalone)
 │
+├── financial_ML/                 # AFML chapter analyses (López de Prado)
+│   ├── sample_data.py            # Data generators + yfinance caching (_cache/)
+│   ├── applied/                  # 19 chapter scripts (ch02–ch21)
+│   ├── readings/                 # Companion markdown docs
+│   ├── _cache/                   # Parquet price cache (git-ignored)
+│   └── _output/                  # Analysis outputs (git-ignored)
+│
+├── testune_trade_sys/            # Test & Tune chapter analyses (Timothy Masters)
+│   ├── sample_data.py            # Data generators + yfinance caching (_cache/)
+│   ├── applied/                  # 7 chapter scripts (ch01–ch07)
+│   ├── readings/                 # Companion markdown docs
+│   ├── _cache/                   # Parquet price cache (git-ignored)
+│   └── _output/                  # Analysis outputs (git-ignored)
+│
 ├── kite_connect/                 # Zerodha live trading (Indian markets)
-│   ├── zerodha_live.py           # Main Streamlit dashboard (~1326 lines)
-│   ├── auth/                     # OAuth + Selenium 2FA login
-│   ├── core/                     # Config, PostgreSQL, Selenium service
-│   ├── nse/                      # NSE CSV download + DB loader
+│   ├── zerodha_live.py           # Main Streamlit dashboard
+│   ├── auth/                     # OAuth + Selenium auto-login + TOTP auto-fill (pyotp)
+│   ├── core/                     # Config, PostgreSQL, Selenium (headless)
+│   ├── nse/                      # NSE universe download + 3-stage screener
 │   ├── options/                  # Concurrent option chain + Greeks
-│   ├── trading/                  # Order service + RSI strategy
+│   ├── trading/                  # Order service (circuit breaker), auto-executor, risk manager,
+│   │   │                         # trade monitor (crash recovery), paper trader, RSI strategy
+│   │   ├── order_service.py      # Idempotent retry + circuit breaker (3 failures → 120s halt)
+│   │   ├── trade_monitor.py      # SL/TP lifecycle, trailing stops, SQLite crash recovery
+│   │   ├── paper_trader.py       # Virtual broker — live LTP + slippage, SQLite persistence
+│   │   ├── auto_executor.py      # Screen → signal-filter → risk → order → monitor pipeline
+│   │   ├── risk_manager.py       # Position sizing, ATR SL/TP, regime scaling, sector limits
+│   │   └── rsi_strategy.py       # Live RSI scanner with auto-order placement
 │   └── webhooks/                 # Real-time streaming infrastructure
 │       ├── ticker.py             # KiteWebSocketService (KiteTicker wrapper)
 │       ├── dispatcher.py         # WebhookDispatcher (in-process event fan-out)
@@ -539,30 +897,44 @@ centurion_core/
 │
 ├── rag_pipeline/                 # RAG document intelligence
 │   ├── config.py                 # 60+ field configuration dataclass
-│   ├── embeddings.py             # sentence-transformers (BGE-base-en-v1.5)
-│   ├── vector_store.py           # ChromaDB HNSW cosine wrapper
-│   ├── pdf_ingestion.py          # Structure-aware PDF chunking (~1280 lines)
-│   ├── hybrid_search.py          # BM25 + vector RRF fusion
-│   ├── reranker.py               # Cross-encoder re-ranking
-│   ├── query_rewriter.py         # LLM query expansion + HyDE
-│   ├── semantic_cache.py         # Embedding-based answer cache
-│   ├── llm_service.py            # Ollama / Claude / OpenAI abstraction
-│   ├── query_engine.py           # 10-stage pipeline (~968 lines)
-│   ├── evaluation.py             # IR metrics + LLM-as-Judge
-│   ├── tiered_retrieval.py       # FAQ tier (similarity ≥ 0.90)
-│   ├── token_counter.py          # tiktoken / heuristic counter
-│   ├── triplet_export.py         # Fine-tuning triplet generator
-│   ├── code_applier.py           # RAG → strategy code applicator
-│   ├── ui_components.py          # Streamlit RAG widgets
 │   ├── rag_page.py               # RAG page entry point
-│   └── perf_trace.py             # Pipeline stage timing
+│   ├── core/                     # Query pipeline core
+│   │   ├── query_engine.py       # 10-stage pipeline (~968 lines)
+│   │   ├── reranker.py           # Cross-encoder re-ranking (code_mode support)
+│   │   ├── hybrid_search.py      # BM25 + vector RRF fusion
+│   │   ├── query_rewriter.py     # LLM query expansion + HyDE
+│   │   ├── query_classifier.py   # Query intent classification
+│   │   ├── semantic_cache.py     # Embedding-based answer cache (in-memory)
+│   │   ├── retriever.py          # Unified retrieval interface
+│   │   ├── context_builder.py    # Token-budget context assembly
+│   │   └── fastpath.py           # Fast-path optimisations
+│   ├── storage/                  # Vector & embedding storage
+│   │   ├── vector_store.py       # ChromaDB HNSW cosine wrapper + DualIndexStore
+│   │   ├── embeddings.py         # sentence-transformers (BGE-base-en-v1.5)
+│   │   └── triplet_export.py     # Fine-tuning triplet generator
+│   ├── ingestion/                # Document ingestion
+│   │   ├── pdf_ingestion.py      # Structure-aware PDF chunking
+│   │   ├── chunking.py           # Token-based chunking with code extraction
+│   │   ├── tiered_retrieval.py   # FAQ tier (similarity >= 0.90)
+│   │   └── background_ingest.py  # Background ingestion worker
+│   ├── llm/                      # LLM integration
+│   │   ├── llm_service.py        # Ollama / Claude / OpenAI abstraction
+│   │   ├── evaluation.py         # IR metrics + LLM-as-Judge
+│   │   └── code_applier.py       # RAG → strategy code applicator
+│   ├── ui/                       # RAG Streamlit widgets
+│   │   └── ui_components.py      # Upload, query, response UI
+│   └── utils/                    # Pipeline utilities
+│       ├── token_counter.py      # tiktoken / heuristic counter
+│       ├── perf_trace.py         # Pipeline stage timing
+│       ├── retrieval_evaluator.py # Retrieval quality evaluation
+│       └── time_budget.py        # Query time budget management
 │
 ├── notifications/                # Desktop + email alerts
-│   └── manager.py                # plyer popups + SMTP HTML email
+│   └── manager.py                # plyer popups + SMTP HTML email (order confirmations, WSB reports)
 │
 ├── storage/                      # Object storage
 │   ├── manager.py                # Excel/CSV file export
-│   └── minio_service.py          # MinIO S3 client (singleton)
+│   └── minio_service.py          # S3 client (MinIO local / Cloudflare R2 production)
 │
 ├── api/                          # FastAPI REST API layer
 │   ├── main.py                   # App factory, auth-gated /docs
@@ -575,26 +947,29 @@ centurion_core/
 │   │   ├── rag.py                # Ingest, query, evaluation
 │   │   ├── crypto.py             # Prices, backtest, strategies
 │   │   └── streaming.py          # SSE, WebSocket, Postback, OHLC, Alerts
-│   └── routers/                  # Route modules (50 endpoints)
+│   └── routers/                  # Route modules (50+ endpoints)
 │       ├── health.py             # GET /health
 │       ├── us_stocks.py          # 9 endpoints
 │       ├── ind_stocks.py         # 11 endpoints
 │       ├── rag.py                # 10 endpoints
+│       ├── v1_gateway.py         # 50+ /api/v1/* endpoints (primary Next.js gateway)
 │       ├── crypto.py             # 4 endpoints
 │       └── streaming.py          # 9 endpoints (SSE, WS, postback, OHLC, alerts, status)
 │
 └── deployment/                   # Deployment configs
-    ├── docker-compose.yml        # App + MinIO containers
-    ├── Dockerfile
+    ├── Dockerfile                # Production: Python 3.11-slim, FastAPI + Scheduler
+    ├── start.sh                  # Dual-process entrypoint (graceful shutdown + backup-on-exit)
+    ├── docker-compose.yml        # FastAPI + MinIO containers
     ├── deploy.ps1 / deploy.sh    # General deployment
     ├── deploy-azure.ps1          # Azure deployment
     ├── deploy-gcp.ps1            # GCP deployment
-    └── DEPLOYMENT.md             # Cloud deployment guide
+    ├── DEPLOYMENT.md             # Cloud deployment guide
+    └── DOCKER_QUICKSTART.md      # Docker quick start guide
 ```
 
 ---
 
-## 10. Installation
+## 11. Installation
 
 Complete step-by-step setup guide for fresh machine deployment.
 
@@ -616,9 +991,9 @@ $ports = @(9000, 9001, 9002, 9003, 9004, 11434)
 foreach ($port in $ports) {
     $connection = Test-NetConnection -ComputerName localhost -Port $port -InformationLevel Quiet
     if ($connection) {
-        Write-Host "⚠️  Port $port is in use" -ForegroundColor Yellow
+        Write-Host " Port $port is in use" -ForegroundColor Yellow
     } else {
-        Write-Host "✓ Port $port is available" -ForegroundColor Green
+        Write-Host " Port $port is available" -ForegroundColor Green
     }
 }
 ```
@@ -632,8 +1007,8 @@ If ports are in use, either:
 ### Step 1: Clone Repository & Setup Python Environment
 
 ```powershell
-# Clone the repository
-git clone https://github.com/srees16/centurion_core.git
+# Clone the repository (dev branch)
+git clone -b dev https://github.com/srees16/centurion_core.git
 cd centurion_core
 
 # Create and activate virtual environment
@@ -646,6 +1021,11 @@ python --version  # should be 3.10+
 # Install Python dependencies (installs DistilBERT ~250MB on first run)
 pip install --upgrade pip
 pip install -r requirements.txt
+
+# Install Next.js frontend dependencies
+cd frontend
+npm install
+cd ..
 ```
 
 **Expected output:**
@@ -662,30 +1042,13 @@ Choose **Option A (Docker)** or **Option B (Local PostgreSQL)**.
 #### **Option A: PostgreSQL via Docker** (Recommended)
 
 ```powershell
-# Pull and run PostgreSQL container
-docker run -d `
-  --name centurion-postgres `
-  -p 9003:5432 `
-  -e POSTGRES_USER=postgres `
-  -e POSTGRES_PASSWORD=superadmin1 `
-  -e POSTGRES_DB=centurion_rag `
-  postgres:15
-
-# Wait 5 seconds for container to start
-Start-Sleep -Seconds 5
-
-# Verify container is running
-docker ps | findstr centurion-postgres
-
-# Check logs for startup
-docker logs centurion-postgres
+docker run -d --name centurion-postgres -p 9003:5432 -e POSTGRES_USER=postgres -e POSTGRES_PASSWORD=superadmin1 -e POSTGRES_DB=centurion_rag timescale/timescaledb:latest-pg15; Start-Sleep -Seconds 9; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE centurion_trading;"; docker exec centurion-postgres psql -U postgres -c "CREATE DATABASE livestocks_ind;"; docker ps | findstr centurion-postgres
 ```
 
 #### **Option B: Local PostgreSQL Installation**
 
 ```powershell
-# Verify PostgreSQL is installed and running
-# Windows Service Status:
+# Verify PostgreSQL is installed and running in Windows Service Status:
 Get-Service postgresql-x64-15
 
 # If not running, start it:
@@ -710,10 +1073,10 @@ python setup_database.py
 
 **Expected output:**
 ```
-✓ Database connection successful
-✓ Database tables created successfully
-✓ Database service layer ready
-✅ Database setup completed successfully!
+ Database connection successful
+ Database tables created successfully
+ Database service layer ready
+ Database setup completed successfully!
 ```
 
 **If this fails:**
@@ -726,22 +1089,9 @@ python setup_database.py
 ### Step 4: Set Up MinIO Object Storage (for Backtest Charts)
 
 ```powershell
-# Pull and run MinIO container
-docker run -d `
-  --name centurion-minio `
-  -p 9004:9000 `
-  -p 9002:9001 `
-  -e MINIO_ROOT_USER=minioadmin `
-  -e MINIO_ROOT_PASSWORD=minioadmin123 `
-  minio/minio:latest server /data --console-address ":9001"
-
-# Wait for startup
+docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"
 Start-Sleep -Seconds 5
-
-# Verify container
 docker ps | findstr centurion-minio
-
-# Create the bucket (optional — created auto on first use)
 docker exec centurion-minio mc mb minio/centurion-backtests
 ```
 
@@ -757,12 +1107,7 @@ docker exec centurion-minio mc mb minio/centurion-backtests
 If you plan to use the RAG document Q&A feature, install Ollama:
 
 ```powershell
-# Download from https://ollama.ai/download
-# Or via PowerShell:
-Invoke-WebRequest -Uri "https://ollama.ai/download/OllamaSetup.exe" -OutFile OllamaSetup.exe
-.\OllamaSetup.exe
-
-# After installation, download the default model
+winget install Ollama.Ollama
 ollama pull qwen2.5:3b
 
 # Verify Ollama is running (should listen on port 11434)
@@ -773,11 +1118,11 @@ Test-NetConnection -ComputerName localhost -Port 11434
 
 ### Step 6: Configure Environment Variables
 
-Create `.env` file in the `centurion_core/` root directory with **all** required variables:
+If you already set environment variables in Step 2 of the Quick Start, you can skip this step. Otherwise, create a `.env` file in the `centurion_core/` root directory:
 
 ```ini
 # ═══════════════════════════════════════════════════════════════════
-# CRITICAL: Copy this entire block to .env (replace /path with actual)
+# CRITICAL: Copy this entire block to .env (replace YOUR_*_HERE)
 # ═══════════════════════════════════════════════════════════════════
 
 # ─── Streamlit App ─────────────────────────────────────────────────
@@ -786,13 +1131,12 @@ STREAMLIT_SERVER_PORT=9000
 # ─── FastAPI Backend ──────────────────────────────────────────────
 API_PORT=9001
 
-# ─── PostgreSQL (US Stocks Analysis & Backtesting) ──────────────────
+# ─── PostgreSQL (Analysis, Backtesting, RAG) ───────────────────────
 CENTURION_DB_HOST=localhost
 CENTURION_DB_PORT=9003
 CENTURION_DB_NAME=centurion_rag
 CENTURION_DB_USER=postgres
 CENTURION_DB_PASSWORD=superadmin1
-CENTURION_DB_ENABLED=true
 
 # ─── Separate PostgreSQL for Kite Connect (Live Trading) ────────────
 KITE_DB_HOST=localhost
@@ -811,10 +1155,18 @@ MINIO_ENABLED=true
 
 # ─── Zerodha Kite Connect (Live Indian Trading) ────────────────────
 # Obtain from Zerodha – https://kite.zerodha.com/app/settings/api
-ZERODHA_API_KEY=your_api_key_here
-ZERODHA_API_SECRET=your_api_secret_here
-ZERODHA_USER_ID=your_user_id_here
-ZERODHA_PASSWORD=your_password_here
+ZERODHA_API_KEY=YOUR_KEY_HERE
+ZERODHA_API_SECRET=YOUR_SECRET_HERE
+ZERODHA_USER_ID=YOUR_USER_HERE
+ZERODHA_PASSWORD=YOUR_PASSWORD_HERE
+ZERODHA_TOTP_SECRET=YOUR_BASE32_TOTP_SECRET
+
+# ─── Email Notifications (Order Confirmations) ─────────────────────
+# Gmail: enable 2-Step Verification → https://myaccount.google.com/apppasswords
+CENTURION_EMAIL_HOST=smtp.gmail.com
+CENTURION_EMAIL_PORT=587
+CENTURION_EMAIL_USER=YOUR_GMAIL_HERE
+CENTURION_EMAIL_PASS=YOUR_GMAIL_APP_PASSWORD
 
 # ─── KiteConnect Connection Pool ──────────────────────────────────
 KITE_POOL_MAXSIZE=40
@@ -822,15 +1174,15 @@ KITE_POOL_MAXSIZE=40
 # ─── RAG Document Pipeline ────────────────────────────────────────
 CENTURION_RAG_LLM_URL=http://localhost:11434
 RAG_MODEL=qwen2.5:3b
-CENTURION_RAG_CHROMA_DIR=./chroma_store
-CENTURION_RAG_EMBED_MODEL=BAAI/bge-base-en-v1.5
-CENTURION_RAG_CONTEXT_TOKEN_BUDGET=1200
+CENTURION_RAG_CHROMA_DIR=./data/chroma_db
+CENTURION_RAG_EMBEDDING_MODEL=BAAI/bge-base-en-v1.5
+CENTURION_RAG_CONTEXT_TOKEN_BUDGET=2000
 CENTURION_RAG_MAX_CONTEXT_CHUNKS=8
 CENTURION_RAG_TOP_K=15
 CENTURION_RAG_SIMILARITY_THRESHOLD=0.70
-CENTURION_RAG_LLM_NUM_CTX=2048
-CENTURION_RAG_LLM_NUM_PREDICT=400
-CENTURION_RAG_LLM_MAX_TOKENS=400
+CENTURION_RAG_LLM_NUM_CTX=4096
+CENTURION_RAG_LLM_NUM_PREDICT=500
+CENTURION_RAG_LLM_MAX_TOKENS=500
 CENTURION_RAG_LLM_TEMPERATURE=0.2
 CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT=300
 CENTURION_RAG_LLM_CHUNK_TIMEOUT=30
@@ -839,15 +1191,21 @@ CENTURION_RAG_QUERY_REWRITE=false
 CENTURION_RAG_STREAMING=true
 CENTURION_RAG_FAQ_ENABLED=false
 RAG_FAST_MODE=false
+CENTURION_RAG_CACHE_ENABLED=false
 
 # ─── Authentication ───────────────────────────────────────────────
 CENTURION_DEFAULT_ADMIN_PASSWORD=admin123
 CENTURION_DEFAULT_ANALYST_PASSWORD=analyst123
 
-# ─── Optional: Cloud LLM (Alternative to Ollama) ───────────────────
-# Uncomment to use Claude or OpenAI instead of Ollama
-# CENTURION_RAG_LLM_PROVIDER=anthropic  # or "openai"
-# ANTHROPIC_API_KEY=your_claude_key_here
+# ─── Cloud LLM (Claude — default provider) ─────────────────────────
+CENTURION_RAG_LLM_PROVIDER=claude
+ANTHROPIC_API_KEY=YOUR_KEY_HERE
+CENTURION_RAG_CLAUDE_MODEL=claude-opus-4-20250514
+CENTURION_RAG_CLAUDE_MAX_TOKENS=1024
+CENTURION_RAG_CLAUDE_TEMPERATURE=0.2
+
+# ─── Optional: OpenAI (uncomment to use instead of Claude) ──────────
+# CENTURION_RAG_LLM_PROVIDER=openai
 # OPENAI_API_KEY=your_openai_key_here
 ```
 
@@ -873,10 +1231,10 @@ python -c "
 import psycopg2
 try:
     conn = psycopg2.connect('host=localhost port=9003 user=postgres password=superadmin1 dbname=centurion_rag')
-    print('✓ PostgreSQL connection successful')
+    print(' PostgreSQL connection successful')
     conn.close()
 except Exception as e:
-    print(f'✗ PostgreSQL error: {e}')
+    print(f' PostgreSQL error: {e}')
 "
 
 # Test MinIO connection
@@ -885,9 +1243,9 @@ from minio import Minio
 try:
     client = Minio('localhost:9004', access_key='minioadmin', secret_key='minioadmin123', secure=False)
     client.bucket_exists('centurion-backtests')
-    print('✓ MinIO connection successful')
+    print(' MinIO connection successful')
 except Exception as e:
-    print(f'✗ MinIO error: {e}')
+    print(f' MinIO error: {e}')
 "
 
 # Test Ollama (if using RAG)
@@ -898,7 +1256,26 @@ except Exception as e:
 
 ### Step 8: Launch the Application
 
-**Terminal 1 — Streamlit UI:**
+**Terminal 1 — FastAPI Backend:**
+
+```powershell
+cd centurion_core
+.\myenv\Scripts\Activate.ps1
+python run_api.py
+```
+
+Backend API at: **http://localhost:9001** — API docs at **http://localhost:9001/docs**
+
+**Terminal 2 — Next.js Frontend (primary UI):**
+
+```powershell
+cd centurion_core/frontend
+npm run dev
+```
+
+Opens at: **http://localhost:3000** — login with `admin` / `admin123`
+
+**Terminal 3 — Streamlit UI (optional, legacy):**
 
 ```powershell
 cd centurion_core
@@ -908,27 +1285,17 @@ streamlit run app.py
 
 Opens at: **http://localhost:9000**
 
-**Terminal 2 — FastAPI REST API (optional):**
-
-```powershell
-cd centurion_core
-.\myenv\Scripts\Activate.ps1
-python run_api.py --port 9001
-```
-
-API docs at: **http://localhost:9001/docs** (login required)
-
 ---
 
 ### Step 9: Login & Verify Application
 
-1. Open http://localhost:9000 in your browser
+1. Open http://localhost:3000 (Next.js) or http://localhost:9000 (Streamlit) in your browser
 2. Login with default credentials:
    - **Username**: `admin`
    - **Password**: `admin123`
 3. Navigate to **Main** page — ensure no error messages appear
 4. Try a quick analysis with 2-3 tickers (e.g., AAPL, MSFT, GOOGL)
-5. Check **History** → **Analysis Runs** to verify database persistence
+5. Check **History** **Analysis Runs** to verify database persistence
 
 **Expected UI state:**
 - No red error boxes
@@ -973,22 +1340,52 @@ deactivate
 
 ### Production Deployment
 
-For production, see [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md) for:
-- AWS EC2 / Azure VM setup
-- Kubernetes (k8s) manifests
-- SSL/TLS certificates
-- Database backups and recovery
-- Load balancing & horizontal scaling
+The platform supports deployment on free-tier cloud services:
+
+| Service | Role | Free Tier |
+|---------|------|-----------|
+| **Railway** | FastAPI backend + APScheduler | 500 hrs/mo, 1 GB RAM, persistent volume |
+| **Vercel** | Next.js frontend | Unlimited static, 100 GB bandwidth |
+| **Neon** | PostgreSQL (serverless) | 0.5 GB storage, auto-suspend |
+| **Cloudflare R2** | Object storage (S3-compatible) | 10 GB, zero egress |
+| **Upstash Redis** | Caching layer | 10K commands/day |
+| **GitHub Actions** | CI/CD pipeline | 2K minutes/month |
+
+**Deployment files:**
+
+| File | Purpose |
+|------|---------|
+| `railway.toml` | Railway build config (Dockerfile builder, health check, restart policy) |
+| `deployment/Dockerfile` | Production container: Python 3.11-slim, FastAPI + Scheduler via `start.sh` |
+| `deployment/start.sh` | Dual-process entrypoint with graceful shutdown + backup-on-exit |
+| `deployment/docker-compose.yml` | Local Docker Compose (FastAPI + MinIO) |
+| `frontend/vercel.json` | Vercel deployment config with API rewrites |
+| `.github/workflows/deploy.yml` | CI/CD: lint → deploy backend (Railway) + frontend (Vercel) |
+| `.env.example` | Complete environment variable reference for all services |
+
+**Docker commands:**
+
+**Windows PowerShell:**
+```powershell
+cd deployment; docker compose up -d
+```
+
+**macOS / Linux:**
+```bash
+cd deployment && docker-compose up -d
+```
+
+For detailed setup, see [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md) and [deployment/DOCKER_QUICKSTART.md](deployment/DOCKER_QUICKSTART.md).
 
 ---
 
-## 11. Usage Guide
+## 12. Usage Guide
 
 ### Quick Start
 
-1. Launch the app → log in → land on the **Main** page.
+1. Launch the app log in land on the **Main** page.
 2. Select tickers (default list, manual entry, or CSV upload).
-3. Click **Run Analysis** → results appear on the **Stock Analysis** page.
+3. Click **Run Analysis** results appear on the **Stock Analysis** page.
 4. Navigate to **Fundamental Analysis** for Z/M/F score drill-down.
 5. Navigate to **Backtest Strategy** to test any of the 11 strategies.
 6. Navigate to **History** to review past runs, signals, and stored charts.
@@ -1008,7 +1405,7 @@ For production, see [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md) for:
 
 1. Navigate to the **Crypto** page.
 2. Enter crypto tickers (e.g., `ETH, BTC, LTC`) — auto-mapped to USDT pairs.
-3. The pipeline runs: EDA → statistical tests → portfolio construction → backtesting → optimisation.
+3. The pipeline runs: EDA statistical tests portfolio construction backtesting optimisation.
 4. With optimisation enabled (default), four targets are tested: max equity, min drawdown, min volatility, max Sharpe.
 
 ### RAG Document Q&A
@@ -1031,19 +1428,17 @@ GOOGL
 
 ### Navigation
 
-All pages share consistent navigation buttons:
+Tab-based sub-navigation per market section:
 
-| Button | Action |
-|---|---|
-| 🏠 **Main** | Return to the main dashboard |
-| 📈 **Stock Analysis** | View analysis results |
-| 📊 **Fundamental Analysis** | Open fundamental metrics |
-| 🔬 **Backtest Strategy** | Open backtesting |
-| 📋 **History** | Browse historical results |
+**IND Stocks:** Main → Fly Kite → Fundamentals → Screener → Verdict → Backtest → Options → History
+
+**US Stocks:** Main → Fundamentals → Verdict → Backtest → Holdings → History
+
+**Modules:** Financial ML, Test & Tune, Crypto, RAG Engine, Settings
 
 ---
 
-## 12. API Reference
+## 13. API Reference
 
 ### REST API (FastAPI)
 
@@ -1054,6 +1449,7 @@ A full REST API runs alongside the Streamlit UI on a separate port (default `900
 | Module | Prefix | Endpoints | Examples |
 |--------|--------|-----------|----------|
 | Health | `/api/health` | 1 | DB, RAG, Kite status check |
+| V1 Gateway | `/api/v1` | 50+ | `/analysis/run`, `/analysis/metrics`, `/macro/snapshot`, `/kite/auth`, `/fml/run`, `/verdict/run` |
 | US Stocks | `/api/us-stocks` | 9 | `/analysis`, `/news`, `/sentiment`, `/backtest`, `/strategies` |
 | Indian Stocks | `/api/ind-stocks` | 11 | `/auth`, `/quotes`, `/orders`, `/positions`, `/option-chain` |
 | RAG Pipeline | `/api/rag` | 10 | `/ingest`, `/query`, `/collection/stats`, `/evaluate` |
@@ -1082,13 +1478,14 @@ with db.session_scope() as session:
     runs = repo.get_recent_runs(days=7)
 ```
 
-### MinIO Service
+### MinIO / R2 Service
 
 ```python
 from storage.minio_service import get_minio_service
 
 minio = get_minio_service()
 path = minio.save_backtest_image(run_id, png_bytes, "equity_curve.png", "MACD Oscillator", "AAPL", "Equity Curve")
+minio.upload_file("/path/to/file.sqlite3", "backups/2026-03-23/cache.sqlite3")
 images = minio.get_backtest_images(run_id)
 runs = minio.list_runs_detailed()
 minio.delete_run_images(run_id)
@@ -1117,9 +1514,10 @@ print(result.metrics)  # total_return, sharpe_ratio, max_drawdown, etc.
 
 ### Docker Commands
 
+**Windows PowerShell:**
 ```powershell
 # Start everything
-cd deployment && docker compose up -d
+cd deployment; docker compose up -d
 
 # Start only MinIO
 docker compose up -d minio
@@ -1134,9 +1532,27 @@ docker compose down
 docker compose down -v
 ```
 
+**macOS / Linux:**
+```bash
+# Start everything
+cd deployment && docker-compose up -d
+
+# Start only MinIO
+docker-compose up -d minio
+
+# View logs
+docker logs centurion-minio
+
+# Stop
+docker-compose down
+
+# Remove all data (destructive)
+docker-compose down -v
+```
+
 ---
 
-## 13. Troubleshooting
+## 14. Troubleshooting
 
 ### Database
 
@@ -1164,43 +1580,43 @@ docker compose down -v
 
 ---
 
-## 14. Dependencies
+## 15. Dependencies
 
 | Category | Packages |
 |---|---|
-| **Web Framework** | streamlit, plotly |
+| **Web Framework** | streamlit, plotly, **Next.js 14** (React 18, Tailwind CSS, TanStack Query v5, react-day-picker v9, date-fns) |
 | **Data** | pandas, numpy, openpyxl |
 | **Financial Data** | yfinance |
 | **Crypto Data** | Binance public REST API (no key required) |
-| **Live Trading** | kiteconnect (Zerodha Kite Connect SDK) |
+| **Live Trading** | kiteconnect (Zerodha Kite Connect SDK), pyotp (TOTP auto-fill) |
 | **Scraping** | aiohttp, beautifulsoup4, lxml, requests, selenium, webdriver-manager |
 | **AI/ML** | transformers, torch, scikit-learn |
 | **LLM Providers** | anthropic, openai (Ollama via HTTP) |
 | **RAG / Embeddings** | chromadb, sentence-transformers, PyMuPDF, tiktoken |
 | **Analysis** | matplotlib, statsmodels, backtesting (0.6+), arch, scipy, seaborn |
 | **Database** | sqlalchemy ≥ 2.0, psycopg2-binary ≥ 2.9, python-dotenv ≥ 1.0 |
-| **Object Storage** | minio ≥ 7.2 |
-| **Auth** | pyyaml ≥ 6.0, itsdangerous |
+| **Object Storage** | minio ≥ 7.2 (MinIO local / Cloudflare R2 production) |
+| **Caching** | redis (Upstash Redis in production, in-memory fallback) |
+| **Auth** | pyyaml ≥ 6.0, itsdangerous, bcrypt |
 | **Notifications** | plyer |
 | **API** | fastapi, uvicorn[standard], python-multipart |
----
-
-## 15. Changelog
-
-### 2026-02-28
-
-- **FastAPI REST API** — 50 JSON endpoints across 6 modules with Pydantic v2 schemas, auth-gated `/docs` (signed session cookie, 8-hour TTL)
-- **Real-time Streaming** — SSE tick stream, WebSocket proxy, Kite Postback receiver, TimescaleDB OHLC aggregates (1m/5m/15m/1h), price alert engine with CRUD endpoints
-- **MinIO Auto-Bucket** — `centurion-backtests` bucket created automatically on first use; `MinIOService.ensure_bucket_ready()`
-- **Pairs Trading All-Combinations** — C(n,2) pair analysis when >2 tickers provided
-- **Lazy Sentiment Loading** — DistilBERT model deferred to first `analyze()` call (class-level singleton)
 
 ---
 
-## ⚠️ Disclaimer
+## Disclaimer
 
 This software is provided for **educational and informational purposes only**. It does not constitute financial advice, investment recommendations, or professional trading guidance. Stock trading involves substantial risk of loss. Always consult qualified financial advisors before making investment decisions. Use at your own risk.
 
 ---
 
-**Ready to get started? Run `streamlit run app.py` and begin analysing! 🚀📈**
+**Ready to get started?**
+
+```bash
+# Terminal 1: Backend
+python run_api.py
+
+# Terminal 2: Frontend
+cd frontend && npm run dev
+```
+
+Open **http://localhost:3000** and start analysing!

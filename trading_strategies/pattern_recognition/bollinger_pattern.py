@@ -335,9 +335,12 @@ class BollingerPatternStrategy(BaseStrategy):
                     mid_j = signals['mid_band'].iloc[j]
                     upper_i = signals['upper_band'].iloc[i]
                     
-                    # Condition 2: Price near mid band and mid band near current upper
+                    # Condition 2: Price near mid band and mid band in the
+                    # vicinity of the current upper band (use wider tolerance
+                    # for the cross-time comparison so real W-bottoms aren't
+                    # filtered out by a 1 % window).
                     if (abs(mid_j - price_j) < alpha * price_j and 
-                        abs(mid_j - upper_i) < alpha * upper_i):
+                        abs(mid_j - upper_i) < 5 * alpha * upper_i):
                         
                         # Find node K (first bottom - touches lower band)
                         for k in range(j, i - pattern_period, -1):
@@ -570,13 +573,20 @@ class BollingerPatternStrategy(BaseStrategy):
 
 # For backward compatibility - can still be used as a standalone script
 if __name__ == "__main__":
-    # Example usage
+    # Example usage — tickers and dates are config-driven
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+    from config import Config
+    from datetime import date, timedelta
+    _end = date.today()
+    _start = _end - timedelta(days=365)
+
     strategy = BollingerPatternStrategy()
     
     result = strategy.run(
-        tickers=["AAPL"],
-        start_date="2023-01-01",
-        end_date="2024-01-01",
+        tickers=[Config.DEFAULT_TICKERS[0]],
+        start_date=_start.isoformat(),
+        end_date=_end.isoformat(),
         capital=10000,
         bb_period=20,
         bb_std=2.0

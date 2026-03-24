@@ -666,13 +666,20 @@ class PairsTradingStrategy(BaseStrategy):
 
 # For backward compatibility - can still be used as a standalone script
 if __name__ == "__main__":
-    # Example usage
+    # Example usage — tickers and dates are config-driven
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+    from config import Config
+    from datetime import date, timedelta
+    _end = date.today()
+    _start = _end - timedelta(days=730)  # 2-year window for pairs
+
     strategy = PairsTradingStrategy()
     
     result = strategy.run(
-        tickers=["KO", "PEP"],  # Coca-Cola and PepsiCo
-        start_date="2022-01-01",
-        end_date="2024-01-01",
+        tickers=Config.DEFAULT_TICKERS[:2],
+        start_date=_start.isoformat(),
+        end_date=_end.isoformat(),
         capital=10000,
         bandwidth=60,
         z_entry=1.0

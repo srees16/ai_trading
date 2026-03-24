@@ -91,7 +91,7 @@ class WebhookDispatcher:
         self._callbacks[subscriber_id] = callback
         for evt in events:
             self._event_index[evt].add(subscriber_id)
-        logger.info("Subscribed: %s → %s", subscriber_id, [e.value for e in events])
+        logger.info("Subscribed: %s %s", subscriber_id, [e.value for e in events])
 
     def unsubscribe(self, subscriber_id: str) -> None:
         """Remove a subscriber."""

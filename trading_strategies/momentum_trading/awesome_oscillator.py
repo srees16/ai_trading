@@ -245,7 +245,14 @@ class AwesomeOscillatorStrategy(BaseStrategy):
         ao_short: int,
         ao_long: int
     ) -> pd.DataFrame:
-        """Generate trading signals based on Awesome Oscillator logic."""
+        """Generate trading signals based on Awesome Oscillator logic.
+
+        IND calibration (swing / long-term):
+        - Zero-cross signal requires 1.5× avg volume confirmation
+        - Twin Peaks bullish divergence: two negative AO troughs where
+          the second is higher (shallower), confirming upward momentum
+        - ADX > 20 filter: only enter when market is trending
+        """
         signals = df.copy()
         
         # Calculate median price
@@ -257,13 +264,71 @@ class AwesomeOscillatorStrategy(BaseStrategy):
         signals['sma_long'] = signals['median_price'].rolling(window=ao_long, min_periods=1).mean()
         signals['awesome_oscillator'] = signals['sma_short'] - signals['sma_long']
         
-        # Generate positions (1 = long, 0 = no position)
+        # ── ADX filter (Feature #14) ─────────────────────────
+        adx_period = 14
+        high = signals['High']
+        low = signals['Low']
+        close = signals['Close']
+        prev_high = high.shift(1)
+        prev_low = low.shift(1)
+        prev_close = close.shift(1)
+
+        plus_dm = np.where((high - prev_high) > (prev_low - low),
+                           np.maximum(high - prev_high, 0), 0)
+        minus_dm = np.where((prev_low - low) > (high - prev_high),
+                            np.maximum(prev_low - low, 0), 0)
+        tr = np.maximum(high - low,
+                        np.maximum(np.abs(high - prev_close),
+                                   np.abs(low - prev_close)))
+
+        plus_dm_s = pd.Series(plus_dm, index=signals.index).rolling(adx_period).sum()
+        minus_dm_s = pd.Series(minus_dm, index=signals.index).rolling(adx_period).sum()
+        tr_s = pd.Series(tr, index=signals.index).rolling(adx_period).sum()
+
+        plus_di = 100 * plus_dm_s / (tr_s + 1e-10)
+        minus_di = 100 * minus_dm_s / (tr_s + 1e-10)
+        dx = 100 * np.abs(plus_di - minus_di) / (plus_di + minus_di + 1e-10)
+        signals['adx'] = dx.rolling(adx_period).mean()
+        signals['adx_trending'] = signals['adx'] >= 20.0
+
+        # Volume confirmation: 1.5× 20-day average volume
+        signals['avg_volume'] = signals['Volume'].rolling(window=20, min_periods=1).mean()
+        signals['volume_confirm'] = signals['Volume'] >= 1.5 * signals['avg_volume']
+        
+        # Twin Peaks detection: bullish divergence in negative AO territory
+        signals['twin_peaks'] = False
+        ao_vals = signals['awesome_oscillator'].values
+        for i in range(ao_long + 10, len(ao_vals)):
+            # Look for two negative troughs where second is shallower
+            if ao_vals[i] > 0 and ao_vals[i - 1] <= 0:
+                # AO just crossed zero — look back for twin troughs
+                trough2 = min(ao_vals[max(0, i - 10):i])
+                trough1 = min(ao_vals[max(0, i - 25):max(0, i - 10)])
+                if trough1 < 0 and trough2 < 0 and trough2 > trough1:
+                    signals.iloc[i, signals.columns.get_loc('twin_peaks')] = True
+        
+        # Generate positions: AO > 0 AND (volume confirmed OR twin peaks) AND ADX trending
         signals['positions'] = 0
-        signals.loc[signals.index[ao_long:], 'positions'] = np.where(
-            signals['awesome_oscillator'].iloc[ao_long:] > 0, 
-            1, 
-            0
-        )
+        ao_positive = signals['awesome_oscillator'] > 0
+        vol_or_twin = signals['volume_confirm'] | signals['twin_peaks']
+        adx_ok = signals['adx_trending'].fillna(False)
+        
+        # For the initial cross, require confirmation + trending; hold while AO > 0
+        raw_pos = np.where(ao_positive, 1, 0)
+        confirmed = np.zeros(len(signals), dtype=int)
+        in_position = False
+        for i in range(ao_long, len(signals)):
+            if raw_pos[i] == 1 and not in_position:
+                # Entry: require volume/twin peaks AND trending market (ADX > 20)
+                if vol_or_twin.iloc[i] and adx_ok.iloc[i]:
+                    in_position = True
+                    confirmed[i] = 1
+            elif raw_pos[i] == 1 and in_position:
+                confirmed[i] = 1  # Hold
+            else:
+                in_position = False
+        
+        signals['positions'] = confirmed
         
         # Generate trading signals (difference shows entry/exit points)
         signals['signals'] = signals['positions'].diff().fillna(0)
@@ -453,13 +518,20 @@ class AwesomeOscillatorStrategy(BaseStrategy):
 
 # For backward compatibility - can still be used as a standalone script
 if __name__ == "__main__":
-    # Example usage
+    # Example usage — tickers and dates are config-driven
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+    from config import Config
+    from datetime import date, timedelta
+    _end = date.today()
+    _start = _end - timedelta(days=365)
+
     strategy = AwesomeOscillatorStrategy()
     
     result = strategy.run(
-        tickers=["AAPL"],
-        start_date="2023-01-01",
-        end_date="2024-01-01",
+        tickers=[Config.DEFAULT_TICKERS[0]],
+        start_date=_start.isoformat(),
+        end_date=_end.isoformat(),
         capital=10000,
         ao_short=5,
         ao_long=34

@@ -10,6 +10,7 @@ Creates and configures the root FastAPI app with:
 """
 
 import logging
+import os
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -17,7 +18,7 @@ from pathlib import Path
 from fastapi import FastAPI, Form, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
 # Ensure project root is on sys.path so all internal imports resolve
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
@@ -31,6 +32,12 @@ from api.auth import (
     create_session_token,
     verify_session_token,
 )
+from auth.shared_session import (
+    SHARED_COOKIE_MAX_AGE,
+    SHARED_COOKIE_NAME,
+    create_shared_token,
+    verify_shared_token,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,10 +48,17 @@ logger = logging.getLogger(__name__)
 
 def _get_authenticated_user(request: Request) -> dict | None:
     """Return the decoded session payload or None if unauthenticated."""
+    # Check API-specific cookie first
     token = request.cookies.get(SESSION_COOKIE)
-    if not token:
-        return None
-    return verify_session_token(token)
+    if token:
+        result = verify_session_token(token)
+        if result:
+            return result
+    # Fall back to shared SSO cookie (set by Streamlit)
+    shared = request.cookies.get(SHARED_COOKIE_NAME)
+    if shared:
+        return verify_shared_token(shared)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +70,7 @@ async def lifespan(app: FastAPI):
     """
     Initialise heavyweight singletons at startup; tear down on shutdown.
     """
-    logger.info("Centurion API starting up ...")
+    logger.info("Centurion API starting up")
 
     # Pre-warm database connection (optional, fast)
     try:
@@ -97,9 +111,13 @@ def create_app() -> FastAPI:
     )
 
     # --- CORS ---
+    # Read allowed origins from env (comma-separated) or default to permissive for local dev
+    _raw_origins = os.getenv("CENTURION_ALLOWED_ORIGINS", "")
+    _cors_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()] if _raw_origins else ["*"]
+
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],         # tighten in production
+        allow_origins=_cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -112,6 +130,8 @@ def create_app() -> FastAPI:
     from api.routers.rag import router as rag_router
     from api.routers.crypto import router as crypto_router
     from api.routers.streaming import router as streaming_router
+    from api.routers.pipeline import router as pipeline_router
+    from api.routers.v1_gateway import router as v1_gateway_router
 
     app.include_router(health_router)
     app.include_router(us_stocks_router)
@@ -119,6 +139,8 @@ def create_app() -> FastAPI:
     app.include_router(rag_router)
     app.include_router(crypto_router)
     app.include_router(streaming_router)
+    app.include_router(pipeline_router)
+    app.include_router(v1_gateway_router)
 
     # ------------------------------------------------------------------
     # Authentication endpoints
@@ -144,6 +166,7 @@ def create_app() -> FastAPI:
                 content={"success": False, "detail": "Invalid username or password"},
             )
         token = create_session_token(username, role)
+        shared_token = create_shared_token(username, role)
         response = RedirectResponse(url="/docs", status_code=302)
         response.set_cookie(
             key=SESSION_COOKIE,
@@ -152,14 +175,24 @@ def create_app() -> FastAPI:
             samesite="lax",
             max_age=28800,
         )
+        # Shared SSO cookie (readable by Streamlit via JS)
+        response.set_cookie(
+            key=SHARED_COOKIE_NAME,
+            value=shared_token,
+            httponly=False,
+            samesite="lax",
+            path="/",
+            max_age=SHARED_COOKIE_MAX_AGE,
+        )
         logger.info("API docs login: user=%s role=%s", username, role)
         return response
 
     @app.get("/auth/logout", include_in_schema=False)
     async def logout():
-        """Clear the session cookie and redirect to the login page."""
+        """Clear session cookies and redirect to the login page."""
         response = RedirectResponse(url="/auth/login", status_code=302)
         response.delete_cookie(SESSION_COOKIE)
+        response.delete_cookie(SHARED_COOKIE_NAME, path="/")
         return response
 
     # ------------------------------------------------------------------
@@ -190,9 +223,6 @@ def create_app() -> FastAPI:
             title=app.title + " — ReDoc",
         )
 
-    # ------------------------------------------------------------------
-    # Global exception handler
-    # ------------------------------------------------------------------
 
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
@@ -206,9 +236,14 @@ def create_app() -> FastAPI:
             },
         )
 
-    # ------------------------------------------------------------------
-    # Root
-    # ------------------------------------------------------------------
+    _FAVICON_PATH = Path(__file__).resolve().parent.parent / "ui" / "assets" / "centurion_logo.png"
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        if _FAVICON_PATH.is_file():
+            return FileResponse(_FAVICON_PATH, media_type="image/png")
+        return JSONResponse(status_code=204, content=None)
+
 
     @app.get("/", include_in_schema=False)
     async def root():

@@ -1,12 +1,20 @@
 # Quick Start - Docker Deployment
 
-## 🚀 Deploy Locally with Docker
+## Deploy Locally with Docker
 
 ### Option 1: Quick Deploy (Recommended)
+
+**Windows PowerShell:**
 ```powershell
 .\deployment\deploy.ps1
 ```
-Access at: http://localhost:9000
+
+**macOS / Linux:**
+```bash
+bash deployment/deploy.sh
+```
+
+Access API at: http://localhost:9001 — API docs at http://localhost:9001/docs
 
 ### Option 2: Docker Compose
 ```bash
@@ -15,18 +23,31 @@ docker-compose up -d
 ```
 
 ### Option 3: Manual Docker Commands
-```bash
-# Build
+
+**Windows PowerShell:**
+```powershell
 docker build -f deployment/Dockerfile -t algo-trading-system:latest .
-
-# Run
-docker run -d -p 9000:9000 --name algo-trading-system algo-trading-system:latest
-
-# View logs
+docker run -d -p 9001:9001 -e PORT=9001 --name algo-trading-system algo-trading-system:latest
 docker logs -f algo-trading-system
 ```
 
-## ☁️ Deploy to Cloud
+**macOS / Linux:**
+```bash
+docker build -f deployment/Dockerfile -t algo-trading-system:latest .
+docker run -d -p 9001:9001 -e PORT=9001 --name algo-trading-system algo-trading-system:latest
+docker logs -f algo-trading-system
+```
+
+## Deploy to Cloud
+
+### Railway (Recommended)
+```bash
+# Install Railway CLI, then:
+railway login
+railway link
+railway up
+```
+See `railway.toml` for configuration. Environment variables are managed via the Railway dashboard.
 
 ### Azure
 ```powershell
@@ -40,11 +61,16 @@ docker logs -f algo-trading-system
 .\deployment\deploy-gcp.ps1
 ```
 
-## 📊 Verify Deployment
+## Verify Deployment
 
 ### Check Container Status
 ```bash
 docker ps
+```
+
+### Health Check
+```bash
+curl http://localhost:9001/api/v1/health
 ```
 
 ### View Logs
@@ -53,25 +79,31 @@ docker logs -f algo-trading-system
 ```
 
 ### Access Application
-- Local: http://localhost:9000
-- Azure: http://<dns-name>.<region>.azurecontainer.io:9000
+- Local API: http://localhost:9001
+- API Docs: http://localhost:9001/docs
+- Azure: http://<dns-name>.<region>.azurecontainer.io:9001
 - GCP: Provided after deployment
 
-## 🛑 Stop and Clean Up
+## Stop and Clean Up
 
-```bash
-# Stop container
+**Windows PowerShell:**
+```powershell
 docker stop algo-trading-system
-
-# Remove container
 docker rm algo-trading-system
-
-# Remove image
 docker rmi algo-trading-system:latest
 ```
 
-## 📝 Notes
+**macOS / Linux:**
+```bash
+docker stop algo-trading-system
+docker rm algo-trading-system
+docker rmi algo-trading-system:latest
+```
+
+## Notes
 
 - First run downloads ~250MB DistilBERT model
 - Data persists in ./data directory
+- Container runs FastAPI backend + APScheduler in parallel
+- SQLite databases are backed up to R2/MinIO on container shutdown
 - See DEPLOYMENT.md for detailed documentation

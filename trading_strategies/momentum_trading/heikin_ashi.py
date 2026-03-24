@@ -539,13 +539,20 @@ class HeikinAshiStrategy(BaseStrategy):
 
 # For backward compatibility - can still be used as a standalone script
 if __name__ == "__main__":
-    # Example usage
+    # Example usage — tickers and dates are config-driven
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+    from config import Config
+    from datetime import date, timedelta
+    _end = date.today()
+    _start = _end - timedelta(days=365)
+
     strategy = HeikinAshiStrategy()
     
     result = strategy.run(
-        tickers=["AAPL"],
-        start_date="2023-01-01",
-        end_date="2024-01-01",
+        tickers=[Config.DEFAULT_TICKERS[0]],
+        start_date=_start.isoformat(),
+        end_date=_end.isoformat(),
         capital=10000,
         confirmation_candles=1
     )

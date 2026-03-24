@@ -13,7 +13,7 @@ Write-Host "`nBuilding Docker image..." -ForegroundColor Yellow
 docker build -f deployment/Dockerfile -t algo-trading-system:latest .
 
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "✓ Docker image built successfully!" -ForegroundColor Green
+    Write-Host " Docker image built successfully!" -ForegroundColor Green
     
     # Stop and remove existing container if running
     Write-Host "`nStopping existing container (if any)..." -ForegroundColor Yellow
@@ -29,7 +29,7 @@ if ($LASTEXITCODE -eq 0) {
         algo-trading-system:latest
     
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "`n✓ Container started successfully!" -ForegroundColor Green
+        Write-Host "`n Container started successfully!" -ForegroundColor Green
         Write-Host "`n==================================================" -ForegroundColor Cyan
         Write-Host "Application is running at: http://localhost:9000" -ForegroundColor Green
         Write-Host "==================================================" -ForegroundColor Cyan
@@ -40,11 +40,11 @@ if ($LASTEXITCODE -eq 0) {
         Write-Host "  Remove:        docker rm -f algo-trading-system"
     }
     else {
-        Write-Host "`n✗ Failed to start container" -ForegroundColor Red
+        Write-Host "`n Failed to start container" -ForegroundColor Red
         exit 1
     }
 }
 else {
-    Write-Host "`n✗ Failed to build Docker image" -ForegroundColor Red
+    Write-Host "`n Failed to build Docker image" -ForegroundColor Red
     exit 1
 }

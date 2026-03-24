@@ -90,7 +90,8 @@ class DatabaseService:
         run_type: str,
         tickers: List[str],
         parameters: Dict[str, Any] = None,
-        user_id: str = None
+        user_id: str = None,
+        market: str = 'US',
     ) -> Optional[UUID]:
         """
         Start a new analysis run and return its ID for tracking.
@@ -100,6 +101,7 @@ class DatabaseService:
             tickers: List of tickers to analyze
             parameters: Analysis parameters
             user_id: Optional user identifier
+            market: Market identifier ('US' or 'IND')
             
         Returns:
             Run ID for tracking, or None if database unavailable
@@ -115,7 +117,8 @@ class DatabaseService:
                     run_type=run_type,
                     tickers=tickers,
                     parameters=parameters,
-                    user_id=user_id
+                    user_id=user_id,
+                    market=market,
                 )
                 repo.start_run(run.id)
                 return run.id
@@ -178,7 +181,8 @@ class DatabaseService:
     def save_signals(
         self,
         signals: List[Dict[str, Any]],
-        analysis_run_id: UUID = None
+        analysis_run_id: UUID = None,
+        market: str = 'US',
     ) -> int:
         """
         Save trading signals to database.
@@ -212,6 +216,7 @@ class DatabaseService:
                     
                     signal = StockSignal(
                         analysis_run_id=analysis_run_id,
+                        market=market,
                         ticker=sig.get('ticker', '').upper(),
                         decision=decision_str,
                         decision_score=sig.get('confidence', 0.0) / 100.0 if sig.get('confidence', 0) > 1 else sig.get('confidence', 0.0),
@@ -237,7 +242,8 @@ class DatabaseService:
     def save_news_items(
         self,
         news_items: List[Dict[str, Any]],
-        analysis_run_id: UUID = None
+        analysis_run_id: UUID = None,
+        market: str = 'US',
     ) -> int:
         """
         Save news items to database with deduplication.
@@ -290,6 +296,7 @@ class DatabaseService:
 
                     news = NewsItem(
                         analysis_run_id=analysis_run_id,
+                        market=market,
                         ticker=item.get('ticker', '').upper(),
                         title=headline,
                         content=item.get('summary', item.get('content', '')),
@@ -317,7 +324,8 @@ class DatabaseService:
     def save_fundamental_metrics(
         self,
         metrics: List[Dict[str, Any]],
-        analysis_run_id: UUID = None
+        analysis_run_id: UUID = None,
+        market: str = 'US',
     ) -> int:
         """
         Save fundamental metrics with upsert logic.
@@ -340,6 +348,7 @@ class DatabaseService:
                 for m in metrics:
                     # Create FundamentalMetric object
                     metric = FundamentalMetric(
+                        market=market,
                         ticker=m.get('ticker', '').upper(),
                         recorded_at=datetime.utcnow(),
                         current_price=m.get('current_price'),
@@ -379,13 +388,110 @@ class DatabaseService:
             return 0
     
     # =================================================================
+    # Order Persistence
+    # =================================================================
+
+    def save_orders(self, order_results: list, trade_plans: list = None) -> int:
+        """
+        Persist order results to the database for lifecycle recovery.
+
+        Parameters
+        ----------
+        order_results : list[OrderResult]
+            Results returned by AutoExecutor._place_orders().
+        trade_plans : list[TradePlan] | None
+            Corresponding trade plans (for risk metrics).
+
+        Returns
+        -------
+        int
+            Number of records saved.
+        """
+        from database.models import OrderRecord, OrderStatus
+
+        plan_map = {}
+        if trade_plans:
+            for p in trade_plans:
+                plan_map[p.symbol] = p
+
+        try:
+            with self.session_scope() as session:
+                saved = 0
+                for o in order_results:
+                    sym = o.symbol if hasattr(o, 'symbol') else o.get('symbol', '')
+                    plan = plan_map.get(sym)
+                    record = OrderRecord(
+                        symbol=sym,
+                        side=o.side if hasattr(o, 'side') else o.get('side', 'BUY'),
+                        quantity=o.quantity if hasattr(o, 'quantity') else o.get('quantity', 0),
+                        entry_price=o.entry_price if hasattr(o, 'entry_price') else o.get('entry_price', 0),
+                        stop_loss=o.stop_loss if hasattr(o, 'stop_loss') else o.get('stop_loss'),
+                        target_price=o.target_price if hasattr(o, 'target_price') else o.get('target_price'),
+                        entry_order_id=o.order_id if hasattr(o, 'order_id') else o.get('order_id'),
+                        status=OrderStatus.PLACED if (o.success if hasattr(o, 'success') else o.get('success')) else OrderStatus.FAILED,
+                        error_message=o.error if hasattr(o, 'error') else o.get('error'),
+                        risk_amount=plan.risk_amount if plan else None,
+                        reward_amount=plan.reward_amount if plan else None,
+                        rr_ratio=plan.rr_ratio if plan else None,
+                        score=plan.score if plan else None,
+                    )
+                    session.add(record)
+                    saved += 1
+                session.commit()
+                logger.info("Persisted %d order records to database", saved)
+                return saved
+        except Exception as e:
+            logger.error("Failed to persist orders: %s", e)
+            return 0
+
+    def save_single_order(self, symbol: str, exchange: str, side: str,
+                          quantity: int, order_type: str, product: str,
+                          price: float = 0, order_id: str = None,
+                          success: bool = True, error_msg: str = None,
+                          fill_price: float = None, filled_qty: int = None,
+                          status_text: str = None) -> bool:
+        """Persist a single order record from any placement path."""
+        from database.models import OrderRecord, OrderStatus
+        try:
+            if success:
+                db_status = OrderStatus.FILLED if status_text == 'COMPLETE' else OrderStatus.PLACED
+            else:
+                db_status = OrderStatus.REJECTED if 'reject' in (error_msg or '').lower() else OrderStatus.FAILED
+
+            with self.session_scope() as session:
+                filled_at = None
+                if db_status == OrderStatus.FILLED:
+                    from datetime import datetime, timezone
+                    filled_at = datetime.now(timezone.utc)
+                record = OrderRecord(
+                    symbol=symbol,
+                    exchange=exchange,
+                    side=side,
+                    quantity=quantity,
+                    entry_price=price or 0,
+                    entry_order_id=order_id,
+                    status=db_status,
+                    fill_price=fill_price,
+                    filled_at=filled_at,
+                    error_message=error_msg,
+                )
+                session.add(record)
+                session.commit()
+            logger.info("Persisted order record: %s %s %s x%d", side, symbol, db_status.value, quantity)
+            return True
+        except Exception as e:
+            logger.error("Failed to persist single order: %s", e)
+            return False
+
+    # =================================================================
     # Backtest Operations
     # =================================================================
     
     def save_backtest_result(
         self,
         result: Dict[str, Any],
-        analysis_run_id: UUID = None
+        analysis_run_id: UUID = None,
+        market: str = 'US',
     ) -> bool:
         """
         Save a backtest result with normalised detail tables.
@@ -424,6 +530,7 @@ class DatabaseService:
                 }
                 
                 backtest = BacktestResult(
+                    market=market,
                     strategy_id=result.get('strategy_id', result.get('strategy_name', 'unknown').lower().replace(' ', '_')),
                     strategy_name=result.get('strategy_name', 'unknown'),
                     tickers=tickers_list,
@@ -675,7 +782,8 @@ class DatabaseService:
         fundamental_metrics: List[Dict[str, Any]] = None,
         backtest_results: List[Dict[str, Any]] = None,
         parameters: Dict[str, Any] = None,
-        run_type: str = 'stock_analysis'
+        run_type: str = 'stock_analysis',
+        market: str = 'US',
     ) -> Tuple[UUID, Dict[str, int]]:
         """
         Save complete analysis results in a single transaction.
@@ -709,25 +817,26 @@ class DatabaseService:
         run_id = self.start_analysis_run(
             run_type=run_type,
             tickers=tickers,
-            parameters=parameters
+            parameters=parameters,
+            market=market,
         )
         
         try:
             # Save all components
             if signals:
-                counts['signals'] = self.save_signals(signals, run_id)
+                counts['signals'] = self.save_signals(signals, run_id, market=market)
             
             if news_items:
-                counts['news'] = self.save_news_items(news_items, run_id)
+                counts['news'] = self.save_news_items(news_items, run_id, market=market)
             
             if fundamental_metrics:
                 counts['fundamentals'] = self.save_fundamental_metrics(
-                    fundamental_metrics, run_id
+                    fundamental_metrics, run_id, market=market
                 )
             
             if backtest_results:
                 for result in backtest_results:
-                    if self.save_backtest_result(result, run_id):
+                    if self.save_backtest_result(result, run_id, market=market):
                         counts['backtests'] += 1
             
             # Complete the run
