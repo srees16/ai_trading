@@ -4,7 +4,7 @@
 
 set -e
 
-PORT="${PORT:-9001}"
+PORT="${PORT:-7860}"
 
 echo "Starting Centurion Core..."
 echo "  FastAPI  → 0.0.0.0:${PORT}"
