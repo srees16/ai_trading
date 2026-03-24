@@ -102,8 +102,8 @@ class OrderRequest(BaseModel):
 @router.post("/auth/login")
 async def api_login(req: LoginRequest):
     """JWT login for the frontend."""
-    from api.auth import authenticate_user, create_session_token
-    ok, display_name, role = authenticate_user(req.username, req.password)
+    from api.auth import authenticate_user_async, create_session_token
+    ok, display_name, role = await authenticate_user_async(req.username, req.password)
     if not ok:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = create_session_token(req.username, role)
