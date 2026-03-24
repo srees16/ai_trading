@@ -7,6 +7,7 @@ the existing ``auth.authenticator.verify_password`` and the
 YAML credential store.
 """
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -59,7 +60,7 @@ def _verify_password(password: str, hashed: str) -> bool:
 
 
 def _load_credentials_from_yaml() -> Dict:
-    """Load credentials directly from YAML (no Streamlit)."""
+    """Load credentials directly from YAML (no Streamlit). Cached after first load."""
     if not CREDENTIALS_YAML.exists():
         logger.warning("Credentials file not found: %s", CREDENTIALS_YAML)
         return {"users": {}}
@@ -71,6 +72,16 @@ def _load_credentials_from_yaml() -> Dict:
         logger.error("Failed to load credentials: %s", exc)
         return {"users": {}}
 
+# Cache credentials at import time (avoids re-reading YAML on every login)
+_CACHED_CREDENTIALS: Optional[Dict] = None
+
+
+def _get_credentials() -> Dict:
+    global _CACHED_CREDENTIALS
+    if _CACHED_CREDENTIALS is None:
+        _CACHED_CREDENTIALS = _load_credentials_from_yaml()
+    return _CACHED_CREDENTIALS
+
 
 def authenticate_user(username: str, password: str) -> Tuple[bool, str, str]:
     """
@@ -78,7 +89,7 @@ def authenticate_user(username: str, password: str) -> Tuple[bool, str, str]:
 
     Returns (success, user_display_name, role).
     """
-    creds = _load_credentials_from_yaml()
+    creds = _get_credentials()
     users = creds.get("users", {})
     user = users.get(username)
     if user is None:
@@ -86,6 +97,11 @@ def authenticate_user(username: str, password: str) -> Tuple[bool, str, str]:
     if not _verify_password(password, user.get("password", "")):
         return False, "", ""
     return True, user.get("name", username), user.get("role", "user")
+
+
+async def authenticate_user_async(username: str, password: str) -> Tuple[bool, str, str]:
+    """Non-blocking wrapper — runs bcrypt in a thread pool."""
+    return await asyncio.to_thread(authenticate_user, username, password)
 
 
 # ---------------------------------------------------------------------------
