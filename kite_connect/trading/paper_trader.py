@@ -244,10 +244,10 @@ class PaperTrader:
             except Exception:
                 pass
 
-        # Fallback: yfinance
+        # Fallback: Bhavcopy → yfinance
         try:
-            import yfinance as yf
-            df = yf.download(f"{symbol}.NS", period="5d", progress=False)
+            from utils import download_ind_ohlcv
+            df = download_ind_ohlcv(symbol, period="5d")
             if not df.empty:
                 close = df["Close"].iloc[-1]
                 if hasattr(close, "item"):

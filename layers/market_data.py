@@ -173,6 +173,49 @@ class MarketDataService:
 
         return results
 
+    # ── Bhavcopy OHLCV (NSE EOD archive) ─────────────────────
+
+    @staticmethod
+    def _fetch_ohlcv_bhavcopy(
+        tickers: List[str],
+        *,
+        period: str = "1y",
+        interval: str = "1d",
+        start: Optional[str] = None,
+        end: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Fetch OHLCV from NSE Bhavcopy for Indian tickers.
+
+        Only supports daily interval.  Returns empty dict for
+        intraday intervals so the caller can fall through to yfinance.
+        """
+        if interval not in ("1d", "1wk", "1mo"):
+            return {}
+
+        from datetime import date as _date
+        from services.bhavcopy_fetcher import fetch_ohlcv_batch
+
+        if end:
+            end_dt = datetime.strptime(end, "%Y-%m-%d").date()
+        else:
+            end_dt = _date.today()
+        if start:
+            start_dt = datetime.strptime(start, "%Y-%m-%d").date()
+        else:
+            start_dt = end_dt - timedelta(days=_period_to_days(period))
+
+        try:
+            results = fetch_ohlcv_batch(tickers, start=start_dt, end=end_dt)
+            if results:
+                logger.info(
+                    "Bhavcopy returned data for %d / %d IND ticker(s)",
+                    len(results), len(tickers),
+                )
+            return results
+        except Exception as exc:
+            logger.warning("Bhavcopy fetch failed: %s", exc)
+            return {}
+
     # ── yfinance OHLCV ─────────────────────────────────────────
 
     @staticmethod
@@ -228,24 +271,47 @@ class MarketDataService:
             if us_tickers:
                 results.update(self._fetch_ohlcv_yfinance(us_tickers, **kw))
 
-            # ── Indian tickers → Kite, then yfinance fallback ─
+            # ── Indian tickers → Kite, then Bhavcopy, then yfinance ─
             if ind_tickers:
                 kite_results = self._fetch_ohlcv_kite(ind_tickers, **kw)
                 results.update(kite_results)
 
-                # Fallback: any Indian tickers Kite couldn't serve
+                # Fallback 1: Bhavcopy for tickers Kite couldn't serve
                 missed = [t for t in ind_tickers if t not in kite_results]
+                bhavcopy_results: Dict[str, Any] = {}
                 if missed:
                     logger.info(
-                        "Kite missed %d IND ticker(s), falling back to yfinance: %s",
+                        "Kite missed %d IND ticker(s), trying Bhavcopy: %s",
                         len(missed), missed,
                     )
-                    results.update(self._fetch_ohlcv_yfinance(missed, **kw))
+                    bhavcopy_results = self._fetch_ohlcv_bhavcopy(missed, **kw)
+                    results.update(bhavcopy_results)
+
+                # Fallback 2: yfinance for anything still missing
+                still_missed = [
+                    t for t in ind_tickers
+                    if t not in kite_results and t not in bhavcopy_results
+                ]
+                if still_missed:
+                    logger.info(
+                        "Bhavcopy missed %d IND ticker(s), falling back to yfinance: %s",
+                        len(still_missed), still_missed,
+                    )
+                    results.update(self._fetch_ohlcv_yfinance(still_missed, **kw))
 
         for ticker, df in results.items():
+            if _is_indian(ticker):
+                if ind_tickers and ticker in kite_results:
+                    src = "kite"
+                elif ticker in bhavcopy_results:
+                    src = "bhavcopy"
+                else:
+                    src = "yfinance"
+            else:
+                src = "yfinance"
             event_bus.emit(
                 "market_data.ohlcv",
-                payload={"symbol": ticker, "rows": len(df), "source": "kite" if _is_indian(ticker) and ticker in (kite_results if ind_tickers else {}) else "yfinance"},
+                payload={"symbol": ticker, "rows": len(df), "source": src},
                 source="market_data_service",
             )
 

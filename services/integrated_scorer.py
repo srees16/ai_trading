@@ -472,9 +472,9 @@ def _run_layer_ml(ticker: str) -> Dict[str, Any]:
             return fut.result(timeout=timeout_sec)
 
     try:
-        import yfinance as yf
+        from utils import download_ind_ohlcv
 
-        data = yf.download(ticker, period="2y", progress=False)
+        data = download_ind_ohlcv(ticker, period="2y")
         if data.empty:
             return {"score": None, "details": {"error": "No price data"}}
 
@@ -722,9 +722,9 @@ def _run_layer_ml(ticker: str) -> Dict[str, Any]:
 def _run_layer_robustness(ticker: str, date_range: tuple) -> Dict[str, Any]:
     """Apply TTMTS robustness tests to a simple SMA strategy for the ticker."""
     try:
-        import yfinance as yf
+        from utils import download_ind_ohlcv
 
-        data = yf.download(ticker, start=date_range[0], end=date_range[1], progress=False)
+        data = download_ind_ohlcv(ticker, start=date_range[0], end=date_range[1])
         if data.empty:
             return {"score": None, "details": {"error": "No price data"}}
 

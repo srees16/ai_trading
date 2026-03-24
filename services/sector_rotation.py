@@ -123,6 +123,20 @@ def _compute_sector_rotation(
 
     # ── Fallback: compute from constituent OHLCV ──
     if not sector_returns and sector_indices and ohlcv_cache:
+        # Fill gaps from Bhavcopy for constituents not in cache
+        missing_syms = []
+        for members in sector_indices.values():
+            for sym in members:
+                if sym not in ohlcv_cache:
+                    missing_syms.append(sym)
+        if missing_syms:
+            try:
+                from utils import download_ind_ohlcv_batch
+                extra = download_ind_ohlcv_batch(missing_syms, period="3mo")
+                ohlcv_cache.update(extra)
+            except Exception:
+                pass
+
         for sector, members in sector_indices.items():
             rets_1m = []
             rets_3m = []

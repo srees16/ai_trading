@@ -6,8 +6,9 @@ and data handling across the application.
 """
 
 import logging
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 from io import StringIO
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -137,3 +138,162 @@ V,Visa Inc.
 WMT,Walmart Inc."""
     
     return sample
+
+
+# ── Indian stock OHLCV download with Bhavcopy fallback ────────
+
+_IND_SUFFIXES = (".NS", ".BO")
+
+
+def _is_indian_ticker(ticker: str) -> bool:
+    return ticker.upper().endswith(_IND_SUFFIXES)
+
+
+def download_ind_ohlcv(
+    ticker: str,
+    *,
+    period: str = "1y",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> pd.DataFrame:
+    """Download OHLCV for an Indian stock, Bhavcopy-first with yfinance fallback.
+
+    For non-Indian tickers, delegates directly to yfinance.
+
+    Parameters
+    ----------
+    ticker : str
+        Symbol with or without ``.NS`` suffix.
+    period : str
+        yfinance period string (``"1y"``, ``"2y"``, etc.). Ignored if
+        *start* is provided.
+    start, end : str | None
+        ISO date strings (``"2024-01-15"``).
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: Open, High, Low, Close, Volume (yfinance-compatible).
+    """
+    is_ind = _is_indian_ticker(ticker) or not any(c == "." for c in ticker)
+
+    # For tickers that look Indian (no dot → NSE plain symbol), try Bhavcopy first
+    if is_ind:
+        df = _try_bhavcopy(ticker, period=period, start=start, end=end)
+        if df is not None and not df.empty:
+            return df
+
+    # yfinance fallback
+    df = _try_yfinance(ticker, period=period, start=start, end=end)
+    if df is not None and not df.empty:
+        return df
+
+    return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
+
+
+def download_ind_ohlcv_batch(
+    tickers: List[str],
+    *,
+    period: str = "1y",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> Dict[str, pd.DataFrame]:
+    """Batch OHLCV download for Indian stocks: Bhavcopy first, yfinance gap-fill."""
+    from datetime import date as _date, timedelta
+
+    if end:
+        from datetime import datetime as _dt
+        end_dt = _dt.strptime(end, "%Y-%m-%d").date()
+    else:
+        end_dt = _date.today()
+    if start:
+        from datetime import datetime as _dt
+        start_dt = _dt.strptime(start, "%Y-%m-%d").date()
+    else:
+        _period_days = {
+            "1d": 1, "5d": 5, "1mo": 30, "3mo": 90, "6mo": 180,
+            "1y": 365, "2y": 730, "5y": 1825, "max": 3650,
+        }
+        start_dt = end_dt - timedelta(days=_period_days.get(period, 365))
+
+    results: Dict[str, pd.DataFrame] = {}
+
+    # 1. Try Bhavcopy for all tickers
+    try:
+        from services.bhavcopy_fetcher import fetch_ohlcv_batch
+        bhav = fetch_ohlcv_batch(tickers, start=start_dt, end=end_dt)
+        results.update(bhav)
+    except Exception as exc:
+        logger.debug("Bhavcopy batch failed: %s", exc)
+
+    # 2. yfinance gap-fill for missed tickers
+    missed = [t for t in tickers if t not in results]
+    if missed:
+        import yfinance as yf
+        for t in missed:
+            try:
+                ns = t if "." in t else f"{t}.NS"
+                df = yf.download(ns, period=period, start=start, end=end,
+                                 progress=False, auto_adjust=True)
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                if not df.empty:
+                    results[t] = df
+            except Exception:
+                pass
+
+    return results
+
+
+def _try_bhavcopy(
+    ticker: str,
+    *,
+    period: str = "1y",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> Optional[pd.DataFrame]:
+    """Attempt to fetch OHLCV from Bhavcopy."""
+    try:
+        from datetime import date as _date, timedelta
+        from services.bhavcopy_fetcher import fetch_ohlcv
+
+        if end:
+            from datetime import datetime as _dt
+            end_dt = _dt.strptime(end, "%Y-%m-%d").date()
+        else:
+            end_dt = _date.today()
+        if start:
+            from datetime import datetime as _dt
+            start_dt = _dt.strptime(start, "%Y-%m-%d").date()
+        else:
+            _period_days = {
+                "1d": 1, "5d": 5, "1mo": 30, "3mo": 90, "6mo": 180,
+                "1y": 365, "2y": 730, "5y": 1825, "max": 3650,
+            }
+            start_dt = end_dt - timedelta(days=_period_days.get(period, 365))
+
+        return fetch_ohlcv(ticker, start=start_dt, end=end_dt)
+    except Exception as exc:
+        logger.debug("Bhavcopy fallback failed for %s: %s", ticker, exc)
+        return None
+
+
+def _try_yfinance(
+    ticker: str,
+    *,
+    period: str = "1y",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> Optional[pd.DataFrame]:
+    """Attempt to fetch OHLCV from yfinance."""
+    try:
+        import yfinance as yf
+        ns = ticker if "." in ticker else f"{ticker}.NS"
+        df = yf.download(ns, period=period, start=start, end=end,
+                         progress=False, auto_adjust=True)
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        return df if not df.empty else None
+    except Exception as exc:
+        logger.debug("yfinance failed for %s: %s", ticker, exc)
+        return None

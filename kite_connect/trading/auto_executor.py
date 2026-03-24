@@ -266,7 +266,7 @@ class AutoExecutor:
     # ── Order book depth: illiquidity filter (#11) ─────────────
 
     def _filter_by_spread(self, screened_df: pd.DataFrame, _cb) -> pd.DataFrame:
-        \"\"\"Remove stocks with bid-ask spread > 0.5%. Reduce position for > 0.3%.\"\"\"
+        """Remove stocks with bid-ask spread > 0.5%. Reduce position for > 0.3%."""
         try:
             symbols = screened_df["symbol"].tolist()
             instrument_keys = [f"NSE:{s}" for s in symbols]
@@ -302,7 +302,7 @@ class AutoExecutor:
     # ── Portfolio correlation check (#6) ───────────────────────
 
     def _filter_correlated(self, plans: List[TradePlan], _cb) -> List[TradePlan]:
-        \"\"\"Block trades if avg pairwise correlation with existing positions > 0.7.\"\"\"
+        """Block trades if avg pairwise correlation with existing positions > 0.7."""
         if not plans or self.kite is None:
             return plans
 
@@ -323,17 +323,17 @@ class AutoExecutor:
             proposed_syms = [p.symbol for p in plans]
             all_syms = list(set(held_syms + proposed_syms))
 
-            # Download 60-day close prices
-            ns_tickers = [f"{s}.NS" for s in all_syms]
-            data = yf.download(ns_tickers, period="60d", progress=False)
-            if data.empty:
+            # Download 60-day close prices (Bhavcopy → yfinance)
+            from utils import download_ind_ohlcv_batch
+            ohlcv = download_ind_ohlcv_batch(all_syms, period="60d")
+            if not ohlcv:
                 return plans
 
             # Build returns matrix
-            if len(ns_tickers) == 1:
-                returns = data["Close"].pct_change().dropna().to_frame(ns_tickers[0])
-            else:
-                returns = data["Close"].pct_change().dropna()
+            closes = pd.DataFrame({
+                sym: df["Close"].squeeze() for sym, df in ohlcv.items()
+            })
+            returns = closes.pct_change().dropna()
 
             if returns.shape[1] < 2:
                 return plans
@@ -342,19 +342,19 @@ class AutoExecutor:
 
             approved: List[TradePlan] = []
             for plan in plans:
-                ns_key = f"{plan.symbol}.NS"
-                if ns_key not in corr_matrix.columns:
+                sym_key = plan.symbol
+                if sym_key not in corr_matrix.columns:
                     approved.append(plan)
                     continue
 
                 # Check avg correlation with held positions
-                held_keys = [f"{s}.NS" for s in held_syms if f"{s}.NS" in corr_matrix.columns]
+                held_keys = [s for s in held_syms if s in corr_matrix.columns]
                 if not held_keys:
                     approved.append(plan)
                     continue
 
-                corrs = [abs(corr_matrix.loc[ns_key, hk])
-                         for hk in held_keys if hk != ns_key and hk in corr_matrix.index]
+                corrs = [abs(corr_matrix.loc[sym_key, hk])
+                         for hk in held_keys if hk != sym_key and hk in corr_matrix.index]
 
                 if corrs:
                     avg_corr = float(np.mean(corrs))

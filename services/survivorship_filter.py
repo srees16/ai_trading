@@ -70,8 +70,8 @@ def _check_data_recency(
     """
     try:
         if ohlcv is None or ohlcv.empty:
-            import yfinance as yf
-            ohlcv = yf.download(ticker, period="1mo", progress=False)
+            from utils import download_ind_ohlcv
+            ohlcv = download_ind_ohlcv(ticker, period="1mo")
         if ohlcv is None or ohlcv.empty:
             return f"No price data available (likely delisted)"
 

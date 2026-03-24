@@ -21,6 +21,9 @@ def get_prices(symbols, default_start, default_end, cache_dir,
                start=None, end=None, interval="1d"):
     """Download daily OHLCV data via yfinance and cache locally.
 
+    For Indian tickers (.NS / .BO), falls back to NSE Bhavcopy when
+    yfinance returns empty data.
+
     Returns a dict  {symbol: DataFrame} with columns
     ['Open','High','Low','Close','Volume'].
     """
@@ -36,15 +39,36 @@ def get_prices(symbols, default_start, default_end, cache_dir,
         else:
             df = yf.download(sym, start=start, end=end, interval=interval,
                              auto_adjust=True, progress=False)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+
+            # Bhavcopy fallback for Indian tickers
+            if df.empty and sym.upper().endswith((".NS", ".BO")):
+                df = _bhavcopy_fallback(sym, start, end)
+
             if df.empty:
                 print(f"[sample_data] WARNING: no data for {sym}")
                 continue
-            # Flatten multi-level columns if present
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
             df.to_parquet(cache_file)
         result[sym] = df
     return result
+
+
+def _bhavcopy_fallback(sym: str, start, end):
+    """Try fetching OHLCV from NSE Bhavcopy for an Indian ticker."""
+    try:
+        from datetime import date as _date
+        from services.bhavcopy_fetcher import fetch_ohlcv
+
+        start_dt = pd.Timestamp(start).date() if not isinstance(start, _date) else start
+        end_dt = pd.Timestamp(end).date() if not isinstance(end, _date) else end
+        df = fetch_ohlcv(sym, start=start_dt, end=end_dt)
+        if not df.empty:
+            print(f"[sample_data] Bhavcopy fallback succeeded for {sym}")
+        return df
+    except Exception as exc:
+        print(f"[sample_data] Bhavcopy fallback failed for {sym}: {exc}")
+        return pd.DataFrame()
 
 
 def get_close_series(symbols, default_start, default_end, cache_dir,

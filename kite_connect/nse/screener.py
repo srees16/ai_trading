@@ -460,7 +460,32 @@ class NSEScreener:
                     except (KeyError, TypeError):
                         continue
 
-        logger.info("Downloaded data for %d / %d symbols", len(cache), len(symbols))
+        logger.info("Downloaded data for %d / %d symbols via yfinance", len(cache), len(symbols))
+
+        # ── Bhavcopy fallback for missed symbols ──────────────
+        missed = [s for s in symbols if s not in cache]
+        if missed:
+            try:
+                from datetime import date as _date, timedelta as _td
+                from services.bhavcopy_fetcher import fetch_ohlcv_batch
+
+                end_dt = _date.today()
+                start_dt = end_dt - _td(days=self.cfg.history_days + 30)
+                bhav = fetch_ohlcv_batch(missed, start=start_dt, end=end_dt)
+                for sym, df in bhav.items():
+                    # fetch_ohlcv_batch returns original ticker; strip .NS if present
+                    plain = sym.replace(".NS", "").replace(".BO", "")
+                    if not df.empty:
+                        cache[plain] = df
+                if bhav:
+                    logger.info(
+                        "Bhavcopy filled %d / %d missed symbols",
+                        len(bhav), len(missed),
+                    )
+            except Exception as exc:
+                logger.warning("Bhavcopy fallback in screener failed: %s", exc)
+
+        logger.info("Total data: %d / %d symbols after fallbacks", len(cache), len(symbols))
 
         # ── Survivorship bias filter ──────────────────────────
         # Remove delisted / suspended / dead tickers before any

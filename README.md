@@ -10,29 +10,14 @@ A Python-based enterprise trading platform combining multi-source news scraping,
 
 ### Step 1 — Clone & install dependencies
 
-**Windows PowerShell:**
-```powershell
+```powershell/bash
 git clone -b develop https://github.com/srees16/centurion_core.git
 cd centurion_core
-python -m venv myenv
-myenv\Scripts\Activate.ps1
+python -m venv myenv 
+myenv\Scripts\activate (macOS/Linux: source myenv/bin/activate)
 pip install -r requirements.txt
 
-# Install Next.js frontend dependencies
-cd frontend
-npm install
-cd ..
-```
-
-**macOS / Linux:**
-```bash
-git clone -b develop https://github.com/srees16/centurion_core.git
-cd centurion_core
-python3 -m venv myenv
-source myenv/bin/activate
-pip install -r requirements.txt
-
-# Install Next.js frontend dependencies
+> Install Next.js frontend dependencies
 cd frontend
 npm install
 cd ..
