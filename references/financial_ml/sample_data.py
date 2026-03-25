@@ -14,11 +14,11 @@ import sys
 from pathlib import Path
 
 # Ensure project root is importable
-_ROOT = str(Path(__file__).resolve().parent.parent)
+_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from shared.sample_data_base import (  # noqa: E402
+from references.sample_data_base import (  # noqa: E402
     get_prices as _get_prices,
     get_close_series as _get_close_series,
     get_multi_close as _get_multi_close,

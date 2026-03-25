@@ -8,6 +8,7 @@ FML, TTS chapters) is stubbed with minimal implementations.
 
 import asyncio
 import logging
+import math
 import os
 from typing import Any, Dict, List, Optional
 
@@ -22,13 +23,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["API v1"])
 
 
+def _sanitize_floats(obj):
+    """Replace inf/nan floats with None so JSON serialization doesn't fail."""
+    if isinstance(obj, float):
+        return None if math.isinf(obj) or math.isnan(obj) else obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_floats(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_floats(v) for v in obj]
+    return obj
+
+
 def _metrics_to_dict(m) -> dict:
     """Convert a StockMetrics dataclass to a JSON-safe dict."""
     from dataclasses import asdict
     d = asdict(m)
     if d.get("timestamp"):
         d["timestamp"] = d["timestamp"].isoformat() if hasattr(d["timestamp"], "isoformat") else str(d["timestamp"])
-    return d
+    return _sanitize_floats(d)
 
 
 # ─── Request / Response Models ──────────────────────────────────────────
@@ -192,9 +204,9 @@ async def analysis_run(req: AnalysisRunRequest):
         else:
             from scrapers.ind_aggregator import IndianNewsAggregator as USNewsAggregator
 
-        from sentiment import SentimentAnalyzer
-        from metrics import MetricsCalculator
-        from decision_engine import DecisionEngine
+        from services.sentiment import SentimentAnalyzer
+        from services.metrics import MetricsCalculator
+        from services.decision_engine import DecisionEngine
 
         aggregator = USNewsAggregator()
         analyzer = SentimentAnalyzer()
@@ -266,7 +278,7 @@ async def analysis_run(req: AnalysisRunRequest):
             except Exception as e:
                 logger.warning("Failed to save analysis run: %s", e)
 
-        return {"run_id": run_id, "signals": signals, "summary": summary}
+        return _sanitize_floats({"run_id": run_id, "signals": signals, "summary": summary})
     except Exception as e:
         logger.error("Analysis error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -288,7 +300,7 @@ async def analysis_latest(market: str = "US"):
 @router.get("/analysis/metrics")
 async def analysis_metrics(tickers: str, market: str = "US"):
     """Get stock metrics for given tickers."""
-    from metrics import MetricsCalculator
+    from services.metrics import MetricsCalculator
     calc = MetricsCalculator()
     results = []
     for ticker in tickers.split(","):
@@ -535,10 +547,10 @@ async def verdict_run(req: VerdictRunRequest):
                     date_range=date_range,
                     skip_layers=req.skip_layers,
                 ),
-                timeout=300,  # 5-minute hard cap
+                timeout=540,  # 9-minute hard cap
             )
         except asyncio.TimeoutError:
-            raise HTTPException(status_code=504, detail="Verdict timed out after 5 minutes")
+            raise HTTPException(status_code=504, detail="Verdict timed out after 9 minutes")
 
         results = []
         for v in verdicts:
@@ -1174,7 +1186,7 @@ async def dw_place_order(req: OrderRequest):
 async def fml_chapters():
     """List available Financial ML chapters."""
     try:
-        from financial_ML.applied import get_chapters
+        from references.financial_ml.applied import get_chapters
         return get_chapters()
     except ImportError:
         # Fallback: scan the readings directory for chapter files
@@ -1203,7 +1215,7 @@ async def fml_run(req: ChapterRunRequest):
 
     # Start async execution
     try:
-        from financial_ML.applied import run_chapters_async
+        from references.financial_ml.applied import run_chapters_async
         asyncio.create_task(run_chapters_async(
             batch_id, req.chapters,
             tickers=req.tickers,
@@ -1220,7 +1232,7 @@ async def fml_run(req: ChapterRunRequest):
 async def fml_abort(batch_id: str):
     """Abort a running FML batch."""
     try:
-        from financial_ML.applied import abort_batch
+        from references.financial_ml.applied import abort_batch
         ok = abort_batch(batch_id)
         return {"aborted": ok}
     except ImportError:
@@ -1232,7 +1244,7 @@ async def fml_progress(batch_id: str):
     """SSE stream for FML batch progress."""
     async def event_stream():
         try:
-            from financial_ML.applied import get_batch_progress
+            from references.financial_ml.applied import get_batch_progress
             import json
             while True:
                 progress = get_batch_progress(batch_id)
@@ -1270,7 +1282,7 @@ async def fml_history(page: int = 1, limit: int = 50):
 async def tts_chapters():
     """List available Test & Tune chapters."""
     try:
-        from testune_trade_sys.applied import get_chapters
+        from references.testune.applied import get_chapters
         return get_chapters()
     except ImportError:
         try:
@@ -1297,7 +1309,7 @@ async def tts_run(req: ChapterRunRequest):
     batch_id = str(uuid.uuid4())
 
     try:
-        from testune_trade_sys.applied import run_chapters_async
+        from references.testune.applied import run_chapters_async
         asyncio.create_task(run_chapters_async(
             batch_id, req.chapters,
             tickers=req.tickers,
@@ -1314,7 +1326,7 @@ async def tts_run(req: ChapterRunRequest):
 async def tts_abort(batch_id: str):
     """Abort a running TTS batch."""
     try:
-        from testune_trade_sys.applied import abort_batch
+        from references.testune.applied import abort_batch
         ok = abort_batch(batch_id)
         return {"aborted": ok}
     except ImportError:
@@ -1326,7 +1338,7 @@ async def tts_progress(batch_id: str):
     """SSE stream for TTS batch progress."""
     async def event_stream():
         try:
-            from testune_trade_sys.applied import get_batch_progress
+            from references.testune.applied import get_batch_progress
             import json
             while True:
                 progress = get_batch_progress(batch_id)

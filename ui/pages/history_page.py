@@ -48,7 +48,7 @@ def _get_db_service():
 
 
 def _get_minio():
-    from storage.minio_service import get_minio_service
+    from services.storage.minio_service import get_minio_service
     return get_minio_service()
 
 

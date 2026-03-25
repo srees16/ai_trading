@@ -1,7 +1,7 @@
-"""
+﻿"""
 Metrics calculation module.
 """
 
-from metrics.calculator import MetricsCalculator
+from services.metrics.calculator import MetricsCalculator
 
 __all__ = ['MetricsCalculator']

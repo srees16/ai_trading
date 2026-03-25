@@ -404,7 +404,7 @@ class GoogleSearchSentiment:
 
         Uses the same lazy-loaded singleton as ``SentimentAnalyzer``.
         """
-        from sentiment.analyzer import SentimentAnalyzer
+        from services.sentiment.analyzer import SentimentAnalyzer
         analyzer = SentimentAnalyzer()
 
         for sr in results:

@@ -63,6 +63,17 @@ class MetricsCalculator:
     def _fetch_metrics(self, ticker: str) -> Optional[StockMetrics]:
         """Actually fetch and compute metrics from yfinance (or Tijori-first for IND)."""
         try:
+            # Ensure Indian tickers carry the .NS suffix for yfinance
+            if not self._is_indian_ticker(ticker) and "." not in ticker:
+                from utils import yf_nse_symbol
+                ns_ticker = yf_nse_symbol(ticker)
+                # Quick probe — if .NS resolves, treat as Indian
+                try:
+                    probe = yf.Ticker(ns_ticker).fast_info
+                    if probe and getattr(probe, "timezone", None):
+                        ticker = ns_ticker
+                except Exception:
+                    pass
             stock = yf.Ticker(ticker)
             
             if self._is_indian_ticker(ticker):

@@ -37,7 +37,7 @@ def run_backup() -> dict:
         dict with 'succeeded', 'failed', 'skipped' counts and file list.
     """
     try:
-        from storage.minio_service import get_minio_service
+        from services.storage.minio_service import get_minio_service
     except ImportError:
         logger.warning("MinIO service unavailable — backup skipped")
         return {"succeeded": 0, "failed": 0, "skipped": 0, "error": "minio_service not importable"}

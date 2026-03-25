@@ -46,11 +46,11 @@ def _get_db_service():
 
 def _get_minio():
     """Lazy import of storage.minio_service."""
-    from storage.minio_service import get_minio_service
+    from services.storage.minio_service import get_minio_service
     return get_minio_service()
 
-# ── Path setup: allow imports from financial_ML/ ────────────────────────
-_FINANCIAL_ML_ROOT = Path(__file__).resolve().parent.parent.parent / "financial_ML"
+# ── Path setup: allow imports from references/financial_ml/ ────────────────────────
+_FINANCIAL_ML_ROOT = Path(__file__).resolve().parent.parent.parent / "references" / "financial_ml"
 if str(_FINANCIAL_ML_ROOT) not in sys.path:
     sys.path.insert(0, str(_FINANCIAL_ML_ROOT))
 

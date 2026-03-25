@@ -1,7 +1,7 @@
-"""
+﻿"""
 Sentiment analysis module.
 """
 
-from sentiment.analyzer import SentimentAnalyzer
+from services.sentiment.analyzer import SentimentAnalyzer
 
 __all__ = ['SentimentAnalyzer']
