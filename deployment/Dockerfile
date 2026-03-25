@@ -27,10 +27,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create data directory for SQLite files (Railway volume mount point)
+# Create data directory for SQLite files
 RUN mkdir -p /app/data
 
-# Expose FastAPI port (Railway sets $PORT dynamically)
+# Expose FastAPI port
 EXPOSE 9001
 
 # Health check against FastAPI

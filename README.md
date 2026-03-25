@@ -1,6 +1,6 @@
 # Centurion Capital LLC — Enterprise AI Trading Platform
 
-A Python-based enterprise trading platform combining multi-source news scraping, AI-powered sentiment analysis, fundamental & technical analysis, strategy backtesting, persistent data storage, live Indian market trading via Zerodha Kite Connect, and a RAG-powered document intelligence pipeline. Built with a **Next.js 14 frontend** (React, TanStack Query, Tailwind CSS) and a **FastAPI backend**, plus a Streamlit UI for legacy workflows. Backed by PostgreSQL/Neon persistence, MinIO/Cloudflare R2 object storage, Upstash Redis caching, ChromaDB vector search, and multi-provider LLM integration (Claude / OpenAI / Ollama). Deployable on Railway + Vercel with GitHub Actions CI/CD.
+A Python-based enterprise trading platform combining multi-source news scraping, AI-powered sentiment analysis, fundamental & technical analysis, strategy backtesting, persistent data storage, live Indian market trading via Zerodha Kite Connect, and a RAG-powered document intelligence pipeline. Built with a **Next.js 14 frontend** (React, TanStack Query, Tailwind CSS) and a **FastAPI backend**, plus a Streamlit UI for legacy workflows. Backed by PostgreSQL/Neon persistence, MinIO/Cloudflare R2 object storage, Upstash Redis caching, ChromaDB vector search, and multi-provider LLM integration (Claude / OpenAI / Ollama). Deployable on HF Spaces + Vercel with GitHub Actions CI/CD.
 
 ---
 
@@ -714,12 +714,11 @@ centurion_core/
 ├── setup_database.py             # Database schema initialisation
 ├── requirements.txt              # Python dependencies
 ├── sample_tickers.csv            # Example ticker list
-├── railway.toml                  # Railway deployment config (Dockerfile builder, health check)
 ├── .env.example                  # Complete environment variable reference
 │
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml            # CI/CD: Railway backend + Vercel frontend deployment
+│       └── deploy.yml            # CI/CD: HF Spaces backend + Vercel frontend deployment
 │
 ├── frontend/                     # Next.js 14 frontend (primary UI)
 │   ├── package.json              # Node.js dependencies
@@ -1344,7 +1343,7 @@ The platform supports deployment on free-tier cloud services:
 
 | Service | Role | Free Tier |
 |---------|------|-----------|
-| **Railway** | FastAPI backend + APScheduler | 500 hrs/mo, 1 GB RAM, persistent volume |
+| **HF Spaces** | FastAPI backend + APScheduler | 2 vCPU, 16 GB RAM, 50 GB disk |
 | **Vercel** | Next.js frontend | Unlimited static, 100 GB bandwidth |
 | **Neon** | PostgreSQL (serverless) | 0.5 GB storage, auto-suspend |
 | **Cloudflare R2** | Object storage (S3-compatible) | 10 GB, zero egress |
@@ -1355,12 +1354,11 @@ The platform supports deployment on free-tier cloud services:
 
 | File | Purpose |
 |------|---------|
-| `railway.toml` | Railway build config (Dockerfile builder, health check, restart policy) |
-| `deployment/Dockerfile` | Production container: Python 3.11-slim, FastAPI + Scheduler via `start.sh` |
+| `deployment/Dockerfile.hf` | Production container for HF Spaces: Python 3.11-slim, FastAPI + Scheduler |
 | `deployment/start.sh` | Dual-process entrypoint with graceful shutdown + backup-on-exit |
 | `deployment/docker-compose.yml` | Local Docker Compose (FastAPI + MinIO) |
 | `frontend/vercel.json` | Vercel deployment config with API rewrites |
-| `.github/workflows/deploy.yml` | CI/CD: lint → deploy backend (Railway) + frontend (Vercel) |
+| `.github/workflows/deploy.yml` | CI/CD: lint → deploy backend (HF Spaces) + frontend (Vercel) |
 | `.env.example` | Complete environment variable reference for all services |
 
 **Docker commands:**
