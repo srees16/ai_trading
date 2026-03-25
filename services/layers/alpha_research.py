@@ -49,11 +49,8 @@ class AlphaResearchService:
         from services.integrated_scorer import IntegratedScorer
 
         default_weights = weights or {
-            "core": 0.35,
-            "strategy": 0.25,
-            "ml_features": 0.15,
-            "robustness": 0.25,
-            "rag": 0.00,
+            "core": 0.45,
+            "strategy": 0.55,
         }
 
         scorer = IntegratedScorer(weights=default_weights)

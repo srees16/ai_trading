@@ -2,6 +2,6 @@
 Notification module.
 """
 
-from notifications.manager import NotificationManager
+from services.notifications.manager import NotificationManager
 
 __all__ = ['NotificationManager']

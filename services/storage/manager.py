@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 def _get_minio():
     """Lazy accessor for MinIOService singleton."""
     try:
-        from storage.minio_service import get_minio_service
+        from services.storage.minio_service import get_minio_service
         return get_minio_service()
     except Exception:
         return None

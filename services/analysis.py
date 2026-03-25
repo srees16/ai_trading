@@ -280,7 +280,7 @@ async def _execute_analysis(
     wsb_news = [n for n in analyzed_news if n.source == "WallStreetBets"]
     if wsb_news:
         try:
-            from notifications.manager import NotificationManager
+            from services.notifications.manager import NotificationManager
             sent = NotificationManager.send_wsb_email(analyzed_news, tickers)
             if sent:
                 logger.info("WSB email report sent (%d mentions)", len(wsb_news))
