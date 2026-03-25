@@ -298,7 +298,7 @@ class TradeMonitor:
         if not events:
             return
         try:
-            from notifications.manager import NotificationManager
+            from services.notifications.manager import NotificationManager
             nm = NotificationManager()
             for ev in events:
                 etype = ev.get("type", "")

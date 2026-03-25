@@ -131,7 +131,11 @@ class TimeSeriesStore:
             return self.query_ticks(symbol)
         # Live: use yfinance (lazy import)
         import yfinance as yf
-        ticker = yf.Ticker(symbol)
+        yf_sym = symbol
+        if "." not in symbol:
+            from utils import yf_nse_symbol
+            yf_sym = yf_nse_symbol(symbol)
+        ticker = yf.Ticker(yf_sym)
         hist = ticker.history(interval=interval, start=start, end=end)
         return hist
 

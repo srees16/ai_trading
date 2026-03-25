@@ -1,15 +1,15 @@
-"""
+﻿"""
 Auto-Order Execution Engine for Zerodha Kite Connect.
 
 Orchestrates the full pipeline:
 
-1. Download NSE universe  →  :mod:`kite_connect.nse.nse_universe`
-2. Screen & rank          →  :mod:`kite_connect.nse.screener`
-3. Risk-manage & size     →  :mod:`kite_connect.trading.risk_manager`
-4. Place orders via Kite  →  :mod:`kite_connect.trading.order_service`
-5. Register with monitor  →  :mod:`kite_connect.trading.trade_monitor`
+1. Download NSE universe  â†’  :mod:`kite_connect.nse.nse_universe`
+2. Screen & rank          â†’  :mod:`kite_connect.nse.screener`
+3. Risk-manage & size     â†’  :mod:`kite_connect.trading.risk_manager`
+4. Place orders via Kite  â†’  :mod:`kite_connect.trading.order_service`
+5. Register with monitor  â†’  :mod:`kite_connect.trading.trade_monitor`
 
-Signal→Executor bridge: accepts analysis verdicts to filter
+Signalâ†’Executor bridge: accepts analysis verdicts to filter
 execution to only high-conviction BUY / STRONG_BUY signals.
 
 Designed to be called from the Streamlit UI (sync) or from a
@@ -39,9 +39,9 @@ _BUY_TAGS = {"BUY", "STRONG_BUY"}
 _ORDER_DELAY_S = 0.15
 
 
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Execution result
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 @dataclass
 class OrderResult:
@@ -88,13 +88,13 @@ class ExecutionReport:
     order_results: List[OrderResult] = field(default_factory=list)
 
 
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Executor
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 class AutoExecutor:
     """
-    End-to-end execution engine: screen → signal-filter → risk-check → order.
+    End-to-end execution engine: screen â†’ signal-filter â†’ risk-check â†’ order.
 
     Parameters
     ----------
@@ -122,7 +122,7 @@ class AutoExecutor:
         self.auto_place = auto_place
         self._trade_monitor = trade_monitor
 
-    # ── Public API ─────────────────────────────────────────────
+    # â”€â”€ Public API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def run(
         self,
@@ -157,14 +157,14 @@ class AutoExecutor:
         _cb = progress_callback or (lambda m: None)
         report = ExecutionReport(timestamp=datetime.now().isoformat())
 
-        # ── Fast-path: use pre-screened data (skip re-download) ─
+        # â”€â”€ Fast-path: use pre-screened data (skip re-download) â”€
         if pre_screened_df is not None and not pre_screened_df.empty:
             screened_df = pre_screened_df
             report.universe_size = len(screened_df)
             report.screened_count = len(screened_df)
             _cb(f"Using pre-screened data: {len(screened_df)} stocks")
         else:
-            # ── 1.  Universe ───────────────────────────────────
+            # â”€â”€ 1.  Universe â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             if symbols is None:
                 _cb("Downloading NIFTY50 & NSE NEXT50")
                 symbols = get_nse_universe(self.kite)
@@ -174,7 +174,7 @@ class AutoExecutor:
             report.universe_size = len(symbols)
             _cb(f"Universe: {len(symbols)} symbols")
 
-            # ── 2.  Screen ─────────────────────────────────────
+            # â”€â”€ 2.  Screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             screened_df = self.screener.screen(symbols, progress_callback=_cb)
             report.screened_count = len(screened_df)
 
@@ -185,7 +185,7 @@ class AutoExecutor:
 
         report.screened_df = screened_df
 
-        # ── 2b. Signal→Executor bridge: strict BUY-only filter ─
+        # â”€â”€ 2b. Signalâ†’Executor bridge: strict BUY-only filter â”€
         # If no verdicts provided, auto-generate them via IntegratedScorer
         if signal_verdicts is None and not screened_df.empty:
             signal_verdicts = self._auto_evaluate_verdicts(screened_df, _cb)
@@ -204,21 +204,21 @@ class AutoExecutor:
                 f"{report.signal_filtered_count} non-BUY removed"
             )
             if screened_df.empty:
-                _cb("No stocks have BUY/STRONG_BUY signal — skipping execution")
+                _cb("No stocks have BUY/STRONG_BUY signal â€” skipping execution")
                 return report
 
-        # ── 3.  Enrich with live prices if Kite available ──────
+        # â”€â”€ 3.  Enrich with live prices if Kite available â”€â”€â”€â”€â”€â”€
         if self.kite is not None and not screened_df.empty:
             screened_df = self._enrich_with_ltp(screened_df, _cb)
             report.screened_df = screened_df
 
-        # ── 3b. Order book depth: filter illiquid stocks ───────
+        # â”€â”€ 3b. Order book depth: filter illiquid stocks â”€â”€â”€â”€â”€â”€â”€
         if self.kite is not None and not screened_df.empty:
             screened_df = self._filter_by_spread(screened_df, _cb)
             report.screened_df = screened_df
 
-        # ── 4.  Risk management / trade plans ──────────────────
-        _cb("Generating trade plans with risk management …")
+        # â”€â”€ 4.  Risk management / trade plans â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+        _cb("Generating trade plans with risk management â€¦")
         plans = self.risk_mgr.plan_trades(screened_df)
         report.trade_plans = plans
         report.plans_count = len(plans)
@@ -227,14 +227,14 @@ class AutoExecutor:
             _cb("No trade plans met the R:R threshold")
             return report
 
-        # ── 4b. Portfolio correlation check ────────────────────
+        # â”€â”€ 4b. Portfolio correlation check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         plans = self._filter_correlated(plans, _cb)
         report.trade_plans = plans
         report.plans_count = len(plans)
 
-        # ── 5.  Order placement ────────────────────────────────
+        # â”€â”€ 5.  Order placement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if self.auto_place and self.kite is not None:
-            _cb(f"Placing {len(plans)} orders via Kite …")
+            _cb(f"Placing {len(plans)} orders via Kite â€¦")
             report.order_results = self._place_orders(plans, _cb)
             report.orders_placed = sum(1 for r in report.order_results if r.success)
             report.orders_failed = sum(1 for r in report.order_results if not r.success)
@@ -246,13 +246,13 @@ class AutoExecutor:
             self._persist_orders(report.order_results, plans)
         else:
             _cb(
-                f"Dry run — {len(plans)} plans generated "
+                f"Dry run â€” {len(plans)} plans generated "
                 "(auto_place=False or no Kite session)"
             )
 
         return report
 
-    # ── Order persistence ──────────────────────────────────────
+    # â”€â”€ Order persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @staticmethod
     def _persist_orders(order_results: list, trade_plans: list) -> None:
@@ -263,7 +263,7 @@ class AutoExecutor:
             db.save_orders(order_results, trade_plans)
         except Exception as exc:
             logger.warning("Order persistence failed (non-fatal): %s", exc)
-    # ── Order book depth: illiquidity filter (#11) ─────────────
+    # â”€â”€ Order book depth: illiquidity filter (#11) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _filter_by_spread(self, screened_df: pd.DataFrame, _cb) -> pd.DataFrame:
         """Remove stocks with bid-ask spread > 0.5%. Reduce position for > 0.3%."""
@@ -284,10 +284,10 @@ class AutoExecutor:
                     best_ask = sell_depth[0].get("price", 0)
                     if best_bid > 0 and best_ask > 0:
                         spread_pct = (best_ask - best_bid) / best_bid
-                        if spread_pct > 0.01:  # > 1% spread — too illiquid
+                        if spread_pct > 0.01:  # > 1% spread â€” too illiquid
                             remove_syms.add(row["symbol"])
-                            _cb(f"  Removed {row['symbol']} — spread {spread_pct:.1%} > 1%")
-                        elif spread_pct > 0.005:  # > 0.5% — flag as illiquid
+                            _cb(f"  Removed {row['symbol']} â€” spread {spread_pct:.1%} > 1%")
+                        elif spread_pct > 0.005:  # > 0.5% â€” flag as illiquid
                             _cb(f"  Warning: {row['symbol']} spread {spread_pct:.2%}")
 
             if remove_syms:
@@ -299,7 +299,7 @@ class AutoExecutor:
 
         return screened_df
 
-    # ── Portfolio correlation check (#6) ───────────────────────
+    # â”€â”€ Portfolio correlation check (#6) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _filter_correlated(self, plans: List[TradePlan], _cb) -> List[TradePlan]:
         """Block trades if avg pairwise correlation with existing positions > 0.7."""
@@ -323,7 +323,7 @@ class AutoExecutor:
             proposed_syms = [p.symbol for p in plans]
             all_syms = list(set(held_syms + proposed_syms))
 
-            # Download 60-day close prices (Bhavcopy → yfinance)
+            # Download 60-day close prices (Bhavcopy â†’ yfinance)
             from utils import download_ind_ohlcv_batch
             ohlcv = download_ind_ohlcv_batch(all_syms, period="60d")
             if not ohlcv:
@@ -359,7 +359,7 @@ class AutoExecutor:
                 if corrs:
                     avg_corr = float(np.mean(corrs))
                     if avg_corr > 0.7:
-                        _cb(f"  Blocked {plan.symbol} — avg correlation {avg_corr:.2f} > 0.7 with portfolio")
+                        _cb(f"  Blocked {plan.symbol} â€” avg correlation {avg_corr:.2f} > 0.7 with portfolio")
                         continue
 
                 approved.append(plan)
@@ -372,7 +372,7 @@ class AutoExecutor:
         except Exception as exc:
             logger.warning("Correlation filter failed (non-fatal): %s", exc)
             return plans
-    # ── Live price enrichment ──────────────────────────────────
+    # â”€â”€ Live price enrichment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _enrich_with_ltp(
         self, screened_df: pd.DataFrame, _cb
@@ -395,10 +395,10 @@ class AutoExecutor:
             return df
         except Exception as exc:
             logger.warning("LTP enrichment failed, using screener close: %s", exc)
-            _cb("Live price fetch failed — using screener close prices")
+            _cb("Live price fetch failed â€” using screener close prices")
             return screened_df
 
-    # ── Auto-verdict via IntegratedScorer ─────────────────────
+    # â”€â”€ Auto-verdict via IntegratedScorer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @staticmethod
     def _auto_evaluate_verdicts(
@@ -407,7 +407,7 @@ class AutoExecutor:
         """Run IntegratedScorer on screened stocks to generate BUY/SELL verdicts.
 
         This ensures every auto-placed order passes through fundamental,
-        technical, macro, and robustness validation — not just the
+        technical, macro, and robustness validation â€” not just the
         technical screener.
         """
         try:
@@ -416,7 +416,7 @@ class AutoExecutor:
 
             symbols = screened_df["symbol"].tolist()
             ns_tickers = [f"{s}.NS" for s in symbols]
-            _cb(f"Running IntegratedScorer on {len(ns_tickers)} stocks …")
+            _cb(f"Running IntegratedScorer on {len(ns_tickers)} stocks â€¦")
 
             scorer = IntegratedScorer()
             end_dt = date.today()
@@ -442,14 +442,14 @@ class AutoExecutor:
             return signal_dict
         except Exception as exc:
             logger.warning("Auto-verdict failed (non-fatal): %s", exc)
-            _cb("IntegratedScorer unavailable — proceeding without verdict filter")
+            _cb("IntegratedScorer unavailable â€” proceeding without verdict filter")
             return {}
 
-    # ── Market hours check ───────────────────────────────────
+    # â”€â”€ Market hours check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @staticmethod
     def _is_nse_market_open() -> bool:
-        """Check if NSE is within trading hours (9:15 AM – 3:30 PM IST, weekdays)."""
+        """Check if NSE is within trading hours (9:15 AM â€“ 3:30 PM IST, weekdays)."""
         from datetime import timezone, timedelta
         _IST = timezone(timedelta(hours=5, minutes=30))
         now = datetime.now(_IST)
@@ -480,7 +480,7 @@ class AutoExecutor:
                 daily_move = abs(ltp - day_open) / day_open
                 if daily_move >= Config.CIRCUIT_BREAKER_PCT:
                     logger.warning(
-                        "%s: daily move %.1f%% >= %.0f%% circuit threshold — skipping",
+                        "%s: daily move %.1f%% >= %.0f%% circuit threshold â€” skipping",
                         symbol, daily_move * 100, Config.CIRCUIT_BREAKER_PCT * 100,
                     )
                     return True
@@ -498,7 +498,7 @@ class AutoExecutor:
             logger.debug("Circuit-breaker check failed for %s: %s", symbol, exc)
         return False
 
-    # ── Earnings blackout detection ────────────────────────────
+    # â”€â”€ Earnings blackout detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @staticmethod
     def _get_earnings_blackout_symbols(symbols: List[str]) -> set:
@@ -545,7 +545,7 @@ class AutoExecutor:
                         if window_start <= today <= window_end:
                             blackout.add(sym)
                             logger.info(
-                                "%s: earnings on %s — blackout active",
+                                "%s: earnings on %s â€” blackout active",
                                 sym, earnings_date,
                             )
                 except Exception:
@@ -555,7 +555,7 @@ class AutoExecutor:
 
         return blackout
 
-    # ── Order placement ────────────────────────────────────────
+    # â”€â”€ Order placement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _place_orders(
         self, plans: List[TradePlan], _cb
@@ -565,35 +565,35 @@ class AutoExecutor:
 
         results: List[OrderResult] = []
 
-        # ── L1 fix: session expiry fast-fail ───────────────────────
+        # â”€â”€ L1 fix: session expiry fast-fail â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         try:
             self.kite.profile()
         except Exception as exc:
-            _cb("Kite session expired — please re-authenticate via Fly Kite")
+            _cb("Kite session expired â€” please re-authenticate via Fly Kite")
             logger.error("Kite session check failed: %s", exc)
             for plan in plans:
                 results.append(OrderResult(
                     symbol=plan.symbol, side=plan.side,
                     quantity=plan.quantity, entry_price=plan.entry_price,
                     stop_loss=plan.stop_loss, target_price=plan.target_price,
-                    success=False, error="Kite session expired — re-authenticate",
+                    success=False, error="Kite session expired â€” re-authenticate",
                 ))
             return results
 
-        # ── Market hours guard ─────────────────────────────────────
+        # â”€â”€ Market hours guard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if not self._is_nse_market_open():
-            _cb("NSE market is closed — orders not placed")
+            _cb("NSE market is closed â€” orders not placed")
             logger.warning("Order placement blocked: NSE market is closed")
             for plan in plans:
                 results.append(OrderResult(
                     symbol=plan.symbol, side=plan.side,
                     quantity=plan.quantity, entry_price=plan.entry_price,
                     stop_loss=plan.stop_loss, target_price=plan.target_price,
-                    success=False, error="Market closed (NSE hours: 9:15 AM – 3:30 PM IST)",
+                    success=False, error="Market closed (NSE hours: 9:15 AM â€“ 3:30 PM IST)",
                 ))
             return results
 
-        # ── Duplicate check: skip symbols with open BUY orders ─────
+        # â”€â”€ Duplicate check: skip symbols with open BUY orders â”€â”€â”€â”€â”€
         existing_symbols: set = set()
         try:
             order_book = get_order_book(self.kite)
@@ -606,7 +606,7 @@ class AutoExecutor:
         except Exception:
             pass  # proceed without dedup if order book fails
 
-        # ── Monitor for post-trade SL/TP lifecycle (reuse existing) ─
+        # â”€â”€ Monitor for post-trade SL/TP lifecycle (reuse existing) â”€
         monitor = None
         if self._trade_monitor is not None:
             self._trade_monitor.kite = self.kite
@@ -614,7 +614,7 @@ class AutoExecutor:
         if monitor is None:
             monitor = TradeMonitor(self.kite)
 
-        # ── Pre-compute earnings blackout set ──────────────────────
+        # â”€â”€ Pre-compute earnings blackout set â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         earnings_blackout_syms = self._get_earnings_blackout_symbols(
             [p.symbol for p in plans]
         )
@@ -622,40 +622,40 @@ class AutoExecutor:
         for plan in plans:
             # Skip if order already exists for this symbol
             if plan.symbol in existing_symbols:
-                _cb(f"  Skipped {plan.symbol} — open order already exists")
+                _cb(f"  Skipped {plan.symbol} â€” open order already exists")
                 results.append(OrderResult(
                     symbol=plan.symbol, side=plan.side,
                     quantity=plan.quantity, entry_price=plan.entry_price,
                     stop_loss=plan.stop_loss, target_price=plan.target_price,
-                    success=False, error="Duplicate — open order exists",
+                    success=False, error="Duplicate â€” open order exists",
                 ))
                 continue
 
-            # ── Earnings blackout check ────────────────────────────
+            # â”€â”€ Earnings blackout check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             if plan.symbol in earnings_blackout_syms:
-                _cb(f"  Skipped {plan.symbol} — earnings blackout period")
+                _cb(f"  Skipped {plan.symbol} â€” earnings blackout period")
                 results.append(OrderResult(
                     symbol=plan.symbol, side=plan.side,
                     quantity=plan.quantity, entry_price=plan.entry_price,
                     stop_loss=plan.stop_loss, target_price=plan.target_price,
                     success=False,
-                    error="Earnings blackout — BUY suppressed near results",
+                    error="Earnings blackout â€” BUY suppressed near results",
                 ))
                 continue
 
-            # ── S8: Circuit-breaker check ──────────────────────────
+            # â”€â”€ S8: Circuit-breaker check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             if self._is_at_circuit_limit(plan.symbol):
-                _cb(f"  Skipped {plan.symbol} — at circuit limit")
+                _cb(f"  Skipped {plan.symbol} â€” at circuit limit")
                 results.append(OrderResult(
                     symbol=plan.symbol, side=plan.side,
                     quantity=plan.quantity, entry_price=plan.entry_price,
                     stop_loss=plan.stop_loss, target_price=plan.target_price,
                     success=False,
-                    error="Circuit limit hit — stock frozen",
+                    error="Circuit limit hit â€” stock frozen",
                 ))
                 continue
 
-            _cb(f"  Placing {plan.side} {plan.symbol} × {plan.quantity} …")
+            _cb(f"  Placing {plan.side} {plan.symbol} Ã— {plan.quantity} â€¦")
 
             # SELL exits use MARKET; BUY entries use LIMIT
             order_type = "MARKET" if plan.side == "SELL" else "LIMIT"
@@ -686,7 +686,7 @@ class AutoExecutor:
                 error=resp.get("error"),
             )
 
-            # Register BUY orders with TradeMonitor — SL/TP will be placed
+            # Register BUY orders with TradeMonitor â€” SL/TP will be placed
             # AFTER the entry order fills (polled by TradeMonitor).
             # SELL exits don't need SL/TP monitoring.
             if result.success and result.order_id:
@@ -702,7 +702,7 @@ class AutoExecutor:
                     ))
                 existing_symbols.add(plan.symbol)
 
-                # ── Persist to trade journal ──────────────────
+                # â”€â”€ Persist to trade journal â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
                 try:
                     self._journal_entry(plan, result)
                 except Exception as jexc:
@@ -722,7 +722,7 @@ class AutoExecutor:
 
         return results
 
-    # ── Trade journal persistence ────────────────────────────
+    # â”€â”€ Trade journal persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _journal_entry(self, plan, result):
         """Write a trade journal row for a successfully placed order."""
@@ -767,12 +767,12 @@ class AutoExecutor:
         except Exception as exc:
             logger.debug("Journal persistence skipped: %s", exc)
 
-    # ── Notification helpers ───────────────────────────────────
+    # â”€â”€ Notification helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @staticmethod
     def _notify_order(symbol: str, side: str, qty: int, price: float, order_id: str):
         try:
-            from notifications.manager import NotificationManager
+            from services.notifications.manager import NotificationManager
             NotificationManager().notify_order_placed(symbol, side, qty, price, order_id)
         except Exception:
             pass
@@ -780,12 +780,12 @@ class AutoExecutor:
     @staticmethod
     def _notify_order_failure(symbol: str, side: str, error: str):
         try:
-            from notifications.manager import NotificationManager
+            from services.notifications.manager import NotificationManager
             NotificationManager().notify_order_failed(symbol, side, error)
         except Exception:
             pass
 
-    # ── SELL pipeline ──────────────────────────────────────────
+    # â”€â”€ SELL pipeline â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def run_sell_pipeline(
         self,
@@ -809,14 +809,14 @@ class AutoExecutor:
         _cb = progress_callback or (lambda m: None)
 
         if self.kite is None:
-            _cb("Kite not authenticated — cannot place SELL orders")
+            _cb("Kite not authenticated â€” cannot place SELL orders")
             return []
 
         # Fetch current holdings
         from kite_connect.trading.order_service import get_holdings
         holdings = get_holdings(self.kite)
         if not holdings:
-            _cb("No holdings found — nothing to exit")
+            _cb("No holdings found â€” nothing to exit")
             return []
 
         sell_syms = [
@@ -830,5 +830,5 @@ class AutoExecutor:
             _cb("No SELL verdicts match current holdings")
             return []
 
-        _cb(f"Placing {len(plans)} SELL orders …")
+        _cb(f"Placing {len(plans)} SELL orders â€¦")
         return self._place_orders(plans, _cb)

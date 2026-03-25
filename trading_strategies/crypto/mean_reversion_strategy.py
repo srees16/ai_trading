@@ -99,7 +99,7 @@ from trading_strategies.statistical_arbitrage.edge_risk_kit import (
 
 # -- Storage services (optional -- graceful fallback) -----------------
 try:
-    from storage.minio_service import get_minio_service
+    from services.storage.minio_service import get_minio_service
     _MINIO_AVAILABLE = True
 except ImportError:
     _MINIO_AVAILABLE = False
