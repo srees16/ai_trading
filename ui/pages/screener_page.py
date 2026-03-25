@@ -205,7 +205,7 @@ def _auto_authenticate_and_place(verdicts, buy_verdicts, risk_cfg):
     manual TOTP entry.
     """
     try:
-        from notifications.manager import NotificationManager
+        from services.notifications.manager import NotificationManager
         nm = NotificationManager()
         syms = ", ".join(v.ticker.replace(".NS", "") for v in buy_verdicts[:5])
         nm.send_notification(
@@ -532,7 +532,7 @@ def _show_cached_results(risk_cfg, auto_place: bool):
 def _render_verdict_section(risk_cfg, auto_place: bool):
     """Render IntegratedScorer controls and results for screened stocks."""
     st.subheader("Integrated Verdict")
-    st.caption("Run the 5-layer IntegratedScorer on screened stocks to get BUY/SELL verdicts.")
+    st.caption("Run the IntegratedScorer on screened stocks to get BUY/SELL verdicts.")
 
     ns_tickers = st.session_state["screened_tickers_ns"]
 
@@ -542,9 +542,10 @@ def _render_verdict_section(risk_cfg, auto_place: bool):
     with col1:
         skip_options = st.multiselect(
             "Skip layers",
-            options=["core", "strategy", "ml_features", "robustness"],
-            default=[],
+            options=["core", "strategy", "ml_features"],
+            default=["ml_features"],
             key=f"{_PFX}skip_layers",
+            help="ML features skipped by default for IND (opt-in). Robustness is merged into strategy.",
         )
 
     with col2:
@@ -557,22 +558,21 @@ def _render_verdict_section(risk_cfg, auto_place: bool):
         )
 
     with st.expander("Layer weights", expanded=False):
-        w_col1, w_col2, w_col3, w_col4 = st.columns(4)
-        w_core = w_col1.slider("Core", 0, 100, 35, key=f"{_PFX}w_core")
-        w_strat = w_col2.slider("Strategy", 0, 100, 25, key=f"{_PFX}w_strat")
-        w_ml = w_col3.slider("ML Features", 0, 100, 15, key=f"{_PFX}w_ml")
-        w_robust = w_col4.slider("Robustness", 0, 100, 25, key=f"{_PFX}w_robust")
+        w_col1, w_col2, w_col3 = st.columns(3)
+        w_core = w_col1.slider("Core", 0, 100, 45, key=f"{_PFX}w_core")
+        w_strat = w_col2.slider("Strategy + Robustness", 0, 100, 55, key=f"{_PFX}w_strat")
+        w_ml = w_col3.slider("ML Features (opt-in)", 0, 100, 0, key=f"{_PFX}w_ml")
 
     if st.button("Run Verdict", type="primary", key=f"{_PFX}run_btn"):
-        total_w = w_core + w_strat + w_ml + w_robust
+        total_w = w_core + w_strat + w_ml
         if total_w == 0:
             total_w = 1
         weights = {
             "core": w_core / total_w,
             "strategy": w_strat / total_w,
-            "ml_features": w_ml / total_w,
-            "robustness": w_robust / total_w,
         }
+        if w_ml > 0:
+            weights["ml_features"] = w_ml / total_w
         _run_batched_verdict(ns_tickers, weights, skip_options, batch_size)
         st.rerun()
 

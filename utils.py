@@ -24,14 +24,22 @@ YF_NSE_SYMBOL_MAP = {
 def yf_nse_symbol(nse_symbol: str) -> str:
     """Convert an NSE trading symbol to its yfinance ticker (with .NS).
 
+    Idempotent — already-suffixed tickers (``.NS`` / ``.BO``) are
+    returned as-is (after applying any override mapping).
+
     Applies ``YF_NSE_SYMBOL_MAP`` overrides before appending ``.NS``.
 
     >>> yf_nse_symbol("TATAMOTORS")
     'TMCV.NS'
     >>> yf_nse_symbol("RELIANCE")
     'RELIANCE.NS'
+    >>> yf_nse_symbol("RELIANCE.NS")
+    'RELIANCE.NS'
     """
-    mapped = YF_NSE_SYMBOL_MAP.get(nse_symbol.upper(), nse_symbol)
+    upper = nse_symbol.upper()
+    # Strip existing exchange suffix before lookup
+    raw = upper.replace(".NS", "").replace(".BO", "")
+    mapped = YF_NSE_SYMBOL_MAP.get(raw, raw)
     return f"{mapped}.NS"
 
 

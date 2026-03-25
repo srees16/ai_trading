@@ -30,6 +30,14 @@ logger = logging.getLogger(__name__)
 # SLA threshold in milliseconds
 _DEFAULT_SLA_MS = 200.0
 
+# Per-label SLA overrides for batch/pipeline operations (ms)
+_LABEL_SLA_OVERRIDES: Dict[str, float] = {
+    "pipeline.scrape_news": 60_000.0,    # 60s — multi-source scraping
+    "pipeline.sentiment": 30_000.0,      # 30s — batch NLP
+    "pipeline.metrics": 30_000.0,        # 30s — yfinance batch
+    "pipeline.decisions": 10_000.0,      # 10s — signal generation
+}
+
 
 @dataclass
 class LatencyStats:
@@ -67,13 +75,14 @@ class LatencyTracker:
         self._record(label, elapsed_ms)
 
     def _record(self, label: str, elapsed_ms: float) -> None:
+        sla = _LABEL_SLA_OVERRIDES.get(label, self._sla_ms)
         with self._lock:
             self._samples[label].append(elapsed_ms)
-            if elapsed_ms > self._sla_ms:
+            if elapsed_ms > sla:
                 self._breaches[label] += 1
                 logger.warning(
                     "SLA breach: %s took %.2fms (limit: %.0fms)",
-                    label, elapsed_ms, self._sla_ms,
+                    label, elapsed_ms, sla,
                 )
 
     def get_stats(self, label: str) -> Optional[LatencyStats]:

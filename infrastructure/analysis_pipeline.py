@@ -163,6 +163,7 @@ class AnalysisPipeline:
     def _stage_raw_data(self, ctx: dict) -> dict:
         """Fetch raw OHLCV + fundamental + news data."""
         import yfinance as yf
+        from utils import yf_nse_symbol
 
         tickers = ctx["tickers"]
         date_range = ctx.get("date_range")
@@ -173,7 +174,10 @@ class AnalysisPipeline:
         ohlcv = {}
         for ticker in tickers:
             try:
-                hist = yf.Ticker(ticker).history(start=start, end=end, period="1y")
+                yf_sym = ticker
+                if "." not in ticker and ctx.get("market") == "IND":
+                    yf_sym = yf_nse_symbol(ticker)
+                hist = yf.Ticker(yf_sym).history(start=start, end=end, period="1y")
                 if not hist.empty:
                     ohlcv[ticker] = hist
             except Exception as exc:

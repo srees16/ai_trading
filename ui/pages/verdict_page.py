@@ -101,18 +101,18 @@ def _render_controls(market: str):
     with col3:
         skip_options = st.multiselect(
             "Skip layers",
-            options=["core", "strategy", "ml_features", "robustness"],
-            default=[],
+            options=["core", "strategy", "ml_features"],
+            default=["ml_features"] if market == "IND" else [],
             key=f"{_PFX}skip_layers",
+            help="ML features skipped by default for IND (opt-in). Robustness is merged into strategy.",
         )
 
     # Weight sliders in an expander
     with st.expander("Layer weights", expanded=False):
-        w_col1, w_col2, w_col3, w_col4 = st.columns(4)
-        w_core = w_col1.slider("Core", 0, 100, 35, key=f"{_PFX}w_core")
-        w_strat = w_col2.slider("Strategy", 0, 100, 25, key=f"{_PFX}w_strat")
-        w_ml = w_col3.slider("ML Features", 0, 100, 15, key=f"{_PFX}w_ml")
-        w_robust = w_col4.slider("Robustness", 0, 100, 25, key=f"{_PFX}w_robust")
+        w_col1, w_col2, w_col3 = st.columns(3)
+        w_core = w_col1.slider("Core", 0, 100, 45, key=f"{_PFX}w_core")
+        w_strat = w_col2.slider("Strategy + Robustness", 0, 100, 55, key=f"{_PFX}w_strat")
+        w_ml = w_col3.slider("ML Features (opt-in)", 0, 100, 0 if market == "IND" else 15, key=f"{_PFX}w_ml")
 
     # Batch size control (relevant when ticker count is large)
     batch_size = 20
@@ -138,15 +138,15 @@ def _render_controls(market: str):
         else:
             dr = (str(start_dt), str(end_dt))
 
-        total_w = w_core + w_strat + w_ml + w_robust
+        total_w = w_core + w_strat + w_ml
         if total_w == 0:
             total_w = 1
         weights = {
             "core": w_core / total_w,
             "strategy": w_strat / total_w,
-            "ml_features": w_ml / total_w,
-            "robustness": w_robust / total_w,
         }
+        if w_ml > 0:
+            weights["ml_features"] = w_ml / total_w
 
         _run_batched_analysis(tickers, market, dr, weights, skip_options, batch_size)
         st.rerun()
