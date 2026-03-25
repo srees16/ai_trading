@@ -39,6 +39,44 @@ from auth.shared_session import (
     verify_shared_token,
 )
 
+# ---------------------------------------------------------------------------
+# Sentry — error tracking + performance tracing
+# ---------------------------------------------------------------------------
+
+def _init_sentry() -> None:
+    """Initialise Sentry SDK if a DSN is configured."""
+    dsn = os.getenv("SENTRY_DSN", "")
+    if not dsn:
+        return
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.starlette import StarletteIntegration
+        from sentry_sdk.integrations.logging import LoggingIntegration
+
+        sentry_sdk.init(
+            dsn=dsn,
+            environment=os.getenv("SENTRY_ENVIRONMENT", "development"),
+            traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.2")),
+            send_default_pii=False,
+            integrations=[
+                FastApiIntegration(transaction_style="endpoint"),
+                StarletteIntegration(transaction_style="endpoint"),
+                LoggingIntegration(
+                    level=logging.INFO,        # capture breadcrumbs from INFO+
+                    event_level=logging.ERROR,  # send events for ERROR+
+                ),
+            ],
+        )
+        logging.getLogger(__name__).info("Sentry initialised (env=%s)",
+                                         os.getenv("SENTRY_ENVIRONMENT"))
+    except ImportError:
+        logging.getLogger(__name__).debug("sentry-sdk not installed — skipping")
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Sentry init failed: %s", exc)
+
+_init_sentry()
+
 logger = logging.getLogger(__name__)
 
 

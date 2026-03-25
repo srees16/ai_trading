@@ -84,6 +84,38 @@ class SectorRotation:
             return 0.92
         return 1.0
 
+    def to_dict(self) -> dict:
+        """Serialize for Redis/JSON cache."""
+        return {
+            "sectors": {
+                name: {
+                    "sector_name": sm.sector_name,
+                    "return_1m": sm.return_1m,
+                    "return_3m": sm.return_3m,
+                    "rank": sm.rank,
+                    "tier": sm.tier,
+                }
+                for name, sm in self.sectors.items()
+            },
+            "top_sectors": self.top_sectors,
+            "bottom_sectors": self.bottom_sectors,
+            "analysis_date": self.analysis_date,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "SectorRotation":
+        """Reconstruct from cached dict."""
+        sectors = {
+            name: SectorMomentum(**vals)
+            for name, vals in d.get("sectors", {}).items()
+        }
+        return cls(
+            sectors=sectors,
+            top_sectors=d.get("top_sectors", []),
+            bottom_sectors=d.get("bottom_sectors", []),
+            analysis_date=d.get("analysis_date", ""),
+        )
+
 
 def _compute_sector_rotation(
     sector_indices: Dict[str, List[str]],
@@ -202,13 +234,28 @@ def get_sector_rotation(
 ) -> SectorRotation:
     """Get cached sector rotation analysis.
 
-    If no data is available, attempts a fresh computation.
+    L1: in-memory singleton (sub-ms).
+    L2: CacheService / Redis (survives restarts).
+    Fallback: fresh computation via yfinance.
     """
     global _CACHE, _CACHE_TS
 
     now = datetime.now()
+    # L1: in-memory
     if _CACHE and _CACHE_TS and (now - _CACHE_TS) < _CACHE_TTL:
         return _CACHE
+
+    # L2: Redis
+    try:
+        from infrastructure.cache import cache as _redis_cache
+        redis_val = _redis_cache.get("sector:rotation")
+        if redis_val is not None:
+            rotation = SectorRotation.from_dict(redis_val)
+            _CACHE = rotation
+            _CACHE_TS = now
+            return rotation
+    except Exception:
+        pass
 
     if sector_indices is None:
         try:
@@ -221,6 +268,12 @@ def get_sector_rotation(
     if rotation.sectors:
         _CACHE = rotation
         _CACHE_TS = now
+        # Persist to L2
+        try:
+            from infrastructure.cache import cache as _redis_cache
+            _redis_cache.set("sector:rotation", rotation.to_dict(), ttl=int(_CACHE_TTL.total_seconds()))
+        except Exception:
+            pass
 
     return rotation
 

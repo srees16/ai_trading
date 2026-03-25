@@ -55,6 +55,15 @@ async def health_check():
         pass
     components["kite_session"] = kite_ok
 
+    # Cache backend
+    cache_info = {}
+    try:
+        from infrastructure.cache import cache
+        cache_info = cache.health_check()
+    except Exception:
+        cache_info = {"backend": "unknown", "healthy": False}
+    components["cache"] = cache_info.get("healthy", False)
+
     overall = "healthy" if db_ok else "degraded"
 
     return HealthResponse(
@@ -62,7 +71,7 @@ async def health_check():
         database=db_ok,
         version="1.0.0",
         timestamp=datetime.utcnow(),
-        components=components,
+        components={**components, "cache_detail": cache_info},
     )
 
 

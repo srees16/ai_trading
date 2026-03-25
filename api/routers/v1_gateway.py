@@ -435,11 +435,34 @@ async def backtest_run(req: BacktestRunRequest):
 
         # Extract flat metrics (result.metrics may be nested by ticker)
         metrics = result.metrics or {}
-        first_ticker = req.tickers[0] if req.tickers else ""
-        if first_ticker and first_ticker in metrics and isinstance(metrics[first_ticker], dict):
-            m = metrics[first_ticker]
+
+        # Detect per-ticker nesting: {"AAPL": {sharpe: ...}, "MSFT": {...}}
+        ticker_metrics = {}
+        flat_metrics = {}
+        for t in req.tickers:
+            if t in metrics and isinstance(metrics[t], dict):
+                ticker_metrics[t] = metrics[t]
+
+        if ticker_metrics:
+            # Aggregate across all tickers for top-level summary
+            agg_keys = ["total_return", "sharpe_ratio", "sortino_ratio",
+                        "max_drawdown", "total_trades", "win_rate", "final_value"]
+            n = len(ticker_metrics)
+            agg: dict = {}
+            for key in agg_keys:
+                vals = [float(tm.get(key, 0)) for tm in ticker_metrics.values()]
+                if key == "total_trades":
+                    agg[key] = int(sum(vals))
+                elif key == "max_drawdown":
+                    agg[key] = min(vals)          # worst drawdown
+                elif key == "final_value":
+                    agg[key] = sum(vals)           # total portfolio value
+                else:
+                    agg[key] = sum(vals) / n       # average
+            m = agg
         else:
             m = metrics
+            ticker_metrics = {}
 
         # Build equity_curve from portfolio DataFrame
         equity_curve = []
@@ -496,6 +519,18 @@ async def backtest_run(req: BacktestRunRequest):
             "signals": signals,
             "equity_curve": equity_curve,
             "metrics": metrics,
+            "per_ticker": {
+                t: {
+                    "total_return": float(tm.get("total_return", 0)),
+                    "sharpe_ratio": float(tm.get("sharpe_ratio", 0)),
+                    "sortino_ratio": float(tm.get("sortino_ratio", 0)),
+                    "max_drawdown": float(tm.get("max_drawdown", 0)),
+                    "total_trades": int(tm.get("total_trades", 0)),
+                    "win_rate": float(tm.get("win_rate", 0)),
+                    "final_value": float(tm.get("final_value", 0)),
+                }
+                for t, tm in ticker_metrics.items()
+            },
             "created_at": datetime.now().isoformat(),
         }
 
@@ -1541,8 +1576,8 @@ async def rag_query(
 
 # ─── Market Ticker Prices ────────────────────────────────────────────────
 
-_ticker_price_cache: Dict[str, Any] = {}   # cache_key -> response dict
-_ticker_cache_ts: Dict[str, float] = {}    # cache_key -> epoch timestamp
+_ticker_price_cache: Dict[str, Any] = {}   # L1 in-memory: cache_key -> response dict
+_ticker_cache_ts: Dict[str, float] = {}    # L1 in-memory: cache_key -> monotonic ts
 _TICKER_CACHE_TTL_OPEN = 10    # seconds – during market hours
 _TICKER_CACHE_TTL_CLOSED = 120 # seconds – after market close
 
@@ -1586,6 +1621,17 @@ async def market_ticker_prices(symbols: str, market: str = "US"):
         if cache_key in _ticker_price_cache and (now - _ticker_cache_ts.get(cache_key, 0)) < ttl:
             return _ticker_price_cache[cache_key]
 
+        # L2: Redis (cross-restart persistence)
+        try:
+            from infrastructure.cache import cache as _redis_cache
+            redis_val = _redis_cache.get(f"price:{cache_key}")
+            if redis_val is not None:
+                _ticker_price_cache[cache_key] = redis_val
+                _ticker_cache_ts[cache_key] = now
+                return redis_val
+        except Exception:
+            pass
+
         # For IND market, append .NS suffix for NSE (with override map)
         if market == "IND":
             from utils import yf_nse_symbol
@@ -1623,9 +1669,14 @@ async def market_ticker_prices(symbols: str, market: str = "US"):
         prices = await asyncio.to_thread(_fetch)
         result = {"is_market_open": is_open, "prices": prices}
 
-        # ── populate cache ──
+        # ── populate cache (L1 + L2) ──
         _ticker_price_cache[cache_key] = result
         _ticker_cache_ts[cache_key] = now
+        try:
+            from infrastructure.cache import cache as _redis_cache
+            _redis_cache.set(f"price:{cache_key}", result, ttl=ttl)
+        except Exception:
+            pass
 
         return result
     except Exception as e:

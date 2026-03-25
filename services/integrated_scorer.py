@@ -211,6 +211,8 @@ _TTS_APPLIED = Path(__file__).resolve().parent.parent / "testune_trade_sys" / "a
 
 # ---------------------------------------------------------------------------
 # Layer 1 cache — avoid recomputing core scores within a short window.
+# L1: in-memory dict for sub-ms hot path
+# L2: CacheService (Redis/Upstash) for cross-restart persistence
 # Key: (ticker, market)  →  (timestamp, result_dict)
 # ---------------------------------------------------------------------------
 _LAYER1_CACHE: Dict[tuple, tuple] = {}
@@ -219,19 +221,33 @@ _LAYER1_TTL = 900  # 15 minutes
 
 def _get_cached_core(ticker: str, market: str) -> Optional[Dict[str, Any]]:
     key = (ticker.upper(), market.upper())
+    # L1: in-memory
     entry = _LAYER1_CACHE.get(key)
-    if entry is None:
-        return None
-    ts, result = entry
-    if time.time() - ts > _LAYER1_TTL:
+    if entry is not None:
+        ts, result = entry
+        if time.time() - ts <= _LAYER1_TTL:
+            return result
         _LAYER1_CACHE.pop(key, None)
-        return None
-    return result
+    # L2: Redis (survives restarts)
+    try:
+        from infrastructure.cache import cache as _redis_cache
+        redis_val = _redis_cache.get(f"l1:{market.upper()}:{ticker.upper()}")
+        if redis_val is not None:
+            _LAYER1_CACHE[key] = (time.time(), redis_val)
+            return redis_val
+    except Exception:
+        pass
+    return None
 
 
 def _set_cached_core(ticker: str, market: str, result: Dict[str, Any]) -> None:
     key = (ticker.upper(), market.upper())
     _LAYER1_CACHE[key] = (time.time(), result)
+    try:
+        from infrastructure.cache import cache as _redis_cache
+        _redis_cache.set(f"l1:{market.upper()}:{ticker.upper()}", result, ttl=_LAYER1_TTL)
+    except Exception:
+        pass
 
 
 # ===================================================================
