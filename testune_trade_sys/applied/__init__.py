@@ -131,15 +131,19 @@ def _execute_chapter(
     # Manage sys.path so `from sample_data import ...` resolves to
     # testune_trade_sys/sample_data.py, and clean up any stale cached module.
     tts_dir = str(_APPLIED_DIR.parent)
-    path_inserted = tts_dir not in sys.path
-    if path_inserted:
-        sys.path.insert(0, tts_dir)
+    # Always ensure tts_dir is at the FRONT of sys.path so that
+    # `sample_data` resolves here, not to financial_ML/sample_data.
+    if tts_dir in sys.path:
+        sys.path.remove(tts_dir)
+    sys.path.insert(0, tts_dir)
+    path_inserted = True
 
     # Evict any previously cached sample_data and pre-import it fresh.
     # Then directly patch SYMBOLS / DEFAULT_START / DEFAULT_END on the
     # module object so chapter scripts' `from sample_data import SYMBOLS`
     # picks up the user's tickers regardless of env-var caching quirks.
-    sys.modules.pop("sample_data", None)
+    for _key in [k for k in sys.modules if k == "sample_data" or k.startswith("sample_data.")]:
+        sys.modules.pop(_key, None)
     import importlib
     _sd = importlib.import_module("sample_data")
     if tickers:

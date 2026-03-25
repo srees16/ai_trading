@@ -204,10 +204,17 @@ async def analysis_run(req: AnalysisRunRequest):
         news_items = await aggregator.fetch_news_for_tickers(req.tickers)
         analyzed = await asyncio.to_thread(analyzer.analyze_news_items, news_items)
 
+        # Indian tickers need .NS suffix for yfinance / metrics lookups
+        if req.market == "IND":
+            from utils import yf_nse_symbol
+            yf_tickers = {t: yf_nse_symbol(t) for t in req.tickers}
+        else:
+            yf_tickers = {t: t for t in req.tickers}
+
         metrics_map = {}
         for ticker in req.tickers:
             try:
-                m = await asyncio.to_thread(calculator.get_stock_metrics, ticker)
+                m = await asyncio.to_thread(calculator.get_stock_metrics, yf_tickers[ticker])
                 metrics_map[ticker] = m
             except Exception:
                 metrics_map[ticker] = None
@@ -788,10 +795,24 @@ async def kite_session_start():
         pass  # token invalid/expired, continue
 
     # Step 2: Try auto-login with Selenium + TOTP (with timeout)
-    # Skip on containerised environments (HF Spaces, Docker) where no browser
-    # is available — Selenium will always fail, wasting up to 90s.
+    # Skip Selenium on containerised environments (HF Spaces, Docker) where
+    # no browser is available — use HTTP-based login instead.
     _in_container = os.path.exists("/.dockerenv") or os.getenv("SPACE_ID")
-    if not _in_container:
+    if _in_container:
+        # Step 2a: HTTP-based login (no browser needed, ~3-5s)
+        logger.info("Container detected — using HTTP-based Kite login")
+        try:
+            from kite_connect.auth.kite_session import http_login_kite
+            kite = await asyncio.to_thread(http_login_kite)
+            if kite:
+                set_kite_session(kite)
+                profile = await asyncio.to_thread(kite.profile)
+                return {"success": True, "profile": profile}
+            logger.warning("HTTP-based Kite login returned None")
+        except Exception as e:
+            logger.warning("HTTP-based Kite login failed: %s", e)
+    else:
+        # Step 2b: Selenium + TOTP auto-login (local dev with browser)
         try:
             from kite_connect.auth.kite_session import create_kite_session
             loop = asyncio.get_event_loop()
@@ -807,8 +828,6 @@ async def kite_session_start():
             logger.warning("Kite auto-login timed out after 90s")
         except Exception as e:
             logger.warning("Kite auto-login failed: %s", e)
-    else:
-        logger.info("Container detected — skipping Selenium auto-login")
 
     # Step 3: Return structured response so frontend can prompt manual login
     from kite_connect.core.config import LOGIN_URL
@@ -1446,9 +1465,11 @@ async def rag_query(
 
         if not engine or not rag_enabled:
             try:
-                from rag_pipeline.llm import get_llm_response
-                response = await asyncio.to_thread(get_llm_response, q)
-                yield f"event: token\ndata: {json.dumps(response)}\n\n"
+                from rag_pipeline.llm.llm_service import create_llm_backend
+                llm = create_llm_backend()
+                tokens = llm.generate_stream(q, "")
+                for tok in tokens:
+                    yield f"event: token\ndata: {json.dumps(tok)}\n\n"
                 yield f"event: done\ndata: done\n\n"
             except Exception as e:
                 yield f"event: token\ndata: {json.dumps(f'Error: {e}')}\n\n"

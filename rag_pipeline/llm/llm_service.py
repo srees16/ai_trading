@@ -1043,6 +1043,17 @@ def create_llm_backend(config: Optional[RAGConfig] = None):
     config = config or RAGConfig()
     provider = config.llm_provider  # already lowered in config
 
+    # Auto-detect: if provider is default "ollama" but an API key for a
+    # cloud provider is available, promote it to primary automatically.
+    # This lets containerised deployments (HF Spaces) work without Ollama.
+    if provider == "ollama":
+        if config.claude_api_key:
+            provider = "claude"
+            logger.info("Auto-detected ANTHROPIC_API_KEY — using Claude as primary LLM")
+        elif config.openai_api_key:
+            provider = "openai"
+            logger.info("Auto-detected OPENAI_API_KEY — using OpenAI as primary LLM")
+
     # --- Claude ---
     if provider == "claude":
         if not config.claude_api_key:
@@ -1119,7 +1130,8 @@ class _FallbackChainBackend:
                     "%s returned error — falling back to %s",
                     self._primary_name, self._fallback_name,
                 )
-                return self._fallback.generate(query, context)
+                fallback_answer = self._fallback.generate(query, context)
+                return answer + "\n\n" + fallback_answer
             return answer
         except Exception as e:
             logger.error(
@@ -1132,6 +1144,15 @@ class _FallbackChainBackend:
     def _is_error_token(text: str) -> bool:
         """Return True if *text* looks like an LLM-backend error string."""
         return text.lstrip().startswith("\u26a0\ufe0f")
+
+    @staticmethod
+    def _is_user_actionable_error(text: str) -> bool:
+        """Errors the user must fix (billing, auth) — don't fall back."""
+        lower = text.lower()
+        return any(kw in lower for kw in (
+            "credit balance", "authentication failed",
+            "billing", "api_key", "api key",
+        ))
 
     def generate_stream(
         self, query: str, context: str
@@ -1156,17 +1177,15 @@ class _FallbackChainBackend:
                 yield from self._fallback.generate_stream(query, context)
                 return
 
-            # First token is an error — fall back
+            # First token is an error — show notification and fall back
             if self._is_error_token(first_token):
                 logger.warning(
                     "%s stream returned error — falling back to %s: %s",
                     self._primary_name, self._fallback_name,
                     first_token[:120],
                 )
-                yield (
-                    f"\u26a0\ufe0f *Claude LLM unavailable - "
-                    f"Ollama invoked as fallback*\n\n"
-                )
+                # Show the primary's error as a notification, then fall back
+                yield first_token + "\n\n"
                 yield from self._fallback.generate_stream(query, context)
                 return
 
@@ -1193,8 +1212,8 @@ class _FallbackChainBackend:
                 self._primary_name, e, self._fallback_name,
             )
             yield (
-                f"\u26a0\ufe0f *Claude LLM unavailable - "
-                f"Ollama invoked as fallback*\n\n"
+                f"\u26a0\ufe0f *{self._primary_name} unavailable — "
+                f"falling back to {self._fallback_name}*\n\n"
             )
             yield from self._fallback.generate_stream(query, context)
 
