@@ -8,6 +8,10 @@ All log records include:
   - ISO-8601 timestamp
   - structured key-value context
 
+Cloud sinks (opt-in via env vars):
+  - **Better Stack / Logtail**: set ``LOGTAIL_TOKEN`` to ship all logs
+    to Better Stack for search, dashboards, and alerting.
+
 Usage::
 
     from infrastructure.logging_config import get_logger
@@ -20,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import threading
 from datetime import datetime, timezone
@@ -98,6 +103,24 @@ def setup_logging(
             datefmt="%Y-%m-%d %H:%M:%S",
         ))
     root.handlers = [handler]
+
+    # ── Better Stack / Logtail (cloud log sink) ──────────────────────
+    logtail_token = os.getenv("LOGTAIL_TOKEN", "")
+    if logtail_token:
+        try:
+            from logtail import LogtailHandler
+
+            lt_handler = LogtailHandler(source_token=logtail_token)
+            lt_handler.setLevel(level)
+            # Logtail handler sends structured JSON natively — no custom
+            # formatter needed.  It captures record.msg, levelname, and
+            # any `extra` fields automatically.
+            root.addHandler(lt_handler)
+            root.info("Logtail (Better Stack) handler attached")
+        except ImportError:
+            root.debug("logtail-python not installed — cloud logging disabled")
+        except Exception as exc:
+            root.warning("Logtail handler init failed: %s", exc)
 
 
 def get_logger(name: str) -> logging.Logger:

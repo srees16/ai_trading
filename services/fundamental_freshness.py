@@ -52,14 +52,47 @@ class FreshnessAdjustment:
             "adjustment_score": round(self.adjustment_score, 4),
         }
 
+    @classmethod
+    def from_dict(cls, d: dict) -> "FreshnessAdjustment":
+        """Reconstruct from cached dict."""
+        return cls(
+            symbol=d.get("symbol", ""),
+            bulk_deal_alert=d.get("bulk_deal_alert", False),
+            bulk_deal_type=d.get("bulk_deal_type", ""),
+            promoter_pledge_change=d.get("promoter_pledge_change", 0.0),
+            mf_holding_change=d.get("mf_holding_change", 0.0),
+            institutional_change=d.get("institutional_change", 0.0),
+            dii_pct=d.get("dii_pct", 0.0),
+            fpi_pct=d.get("fpi_pct", 0.0),
+            adjustment_score=d.get("adjustment_score", 0.0),
+        )
+
 
 def get_freshness_adjustment(symbol: str) -> FreshnessAdjustment:
-    """Compute intra-quarter freshness adjustment for a symbol."""
+    """Compute intra-quarter freshness adjustment for a symbol.
+
+    L1: in-memory dict (sub-ms).
+    L2: CacheService / Redis (survives restarts, 12-hr TTL).
+    Fallback: fresh computation via NSE scraping.
+    """
     global _CACHE, _CACHE_TS
 
     now = datetime.utcnow()
+    # L1: in-memory
     if symbol in _CACHE and _CACHE_TS and now - _CACHE_TS < _CACHE_TTL:
         return _CACHE[symbol]
+
+    # L2: Redis
+    try:
+        from infrastructure.cache import cache as _redis_cache
+        redis_val = _redis_cache.get(f"fresh:{symbol}")
+        if redis_val is not None:
+            adj = FreshnessAdjustment.from_dict(redis_val)
+            _CACHE[symbol] = adj
+            _CACHE_TS = now
+            return adj
+    except Exception:
+        pass
 
     adj = FreshnessAdjustment(symbol=symbol)
     score = 0.0
@@ -105,6 +138,12 @@ def get_freshness_adjustment(symbol: str) -> FreshnessAdjustment:
 
     adj.adjustment_score = max(-0.5, min(0.5, score))
     _CACHE[symbol] = adj
+    # Persist to L2
+    try:
+        from infrastructure.cache import cache as _redis_cache
+        _redis_cache.set(f"fresh:{symbol}", adj.to_dict(), ttl=int(_CACHE_TTL.total_seconds()))
+    except Exception:
+        pass
     return adj
 
 
