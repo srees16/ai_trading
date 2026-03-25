@@ -16,6 +16,9 @@ import os
 import sys
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
+
 # Ensure project root is importable
 _ROOT = str(Path(__file__).resolve().parent.parent)
 if _ROOT not in sys.path:
@@ -60,7 +63,6 @@ def generate_ohlcv_bars(n_bars=2000, seed=42):
 
 def generate_returns(n=2000, n_assets=1, seed=42):
     """Generate synthetic daily returns. Returns Series for n_assets=1."""
-    import pandas as pd
     df = _generate_returns(DEFAULT_START, n=n, n_assets=max(n_assets, 2), seed=seed)
     if n_assets == 1:
         return pd.Series(df.iloc[:, 0].values, index=df.index[:n], name="returns")
