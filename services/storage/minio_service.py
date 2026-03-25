@@ -119,14 +119,26 @@ class MinIOService:
 
     @property
     def is_available(self) -> bool:
-        """Check if MinIO is reachable."""
+        """Check if object storage is reachable.
+
+        Cloudflare R2 API tokens are typically scoped to a single bucket
+        and do **not** have the ``ListAllMyBuckets`` (``s3:ListBucket`` at
+        account level) permission, so ``list_buckets()`` returns
+        ``AccessDenied``.  We fall back to ``bucket_exists()`` which only
+        needs bucket-scoped read permission.
+        """
         if not self.client:
             return False
         try:
             self.client.list_buckets()
             return True
         except Exception:
-            return False
+            # R2 denies list_buckets — try bucket-level check instead
+            try:
+                self.client.bucket_exists(self._config.bucket_name)
+                return True
+            except Exception:
+                return False
 
     def _ensure_bucket(self):
         """Create the bucket if it does not exist."""
