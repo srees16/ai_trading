@@ -22,6 +22,11 @@ def get_db_service():
     Returns None if the database is not configured.
     """
     try:
+        from config import Config
+        if not Config.is_database_configured():
+            logger.debug("Database not configured — skipping")
+            return None
+
         from database.service import get_database_service
         service = get_database_service()
         if service and service.is_available:

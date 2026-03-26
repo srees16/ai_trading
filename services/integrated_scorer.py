@@ -954,6 +954,9 @@ class IntegratedScorer:
 
     def __init__(self, weights: Optional[Dict[str, float]] = None):
         self.weights = dict(DEFAULT_WEIGHTS)
+        # Add RL layer weight when RL is enabled
+        if Config.RL_ENABLED and "rl_bot" not in self.weights:
+            self.weights["rl_bot"] = Config.RL_LAYER_WEIGHT
         if weights:
             self.weights.update(weights)
         # Normalise
@@ -1062,6 +1065,13 @@ class IntegratedScorer:
                     )
                 if "ml_features" not in skip:
                     futures["ml_features"] = pool.submit(_run_layer_ml, ticker, market)
+                # RL Bot layer (opt-in via Config.RL_ENABLED)
+                if "rl_bot" not in skip and Config.RL_ENABLED:
+                    try:
+                        from services.rl_bot.rl_signal_integrator import run_rl_layer
+                        futures["rl_bot"] = pool.submit(run_rl_layer, ticker, market)
+                    except ImportError:
+                        pass
 
                 for layer_name, fut in futures.items():
                     try:

@@ -63,6 +63,22 @@ class Config:
     ADX_TREND_THRESHOLD: float = 20.0 # ADX >= 20 → trending market
     OBV_SMA_PERIOD: int = 20          # On-Balance Volume smoothing
     VOLUME_SMA_PERIOD: int = 20       # Volume moving average for confirmation
+
+    # Advanced TA Layer (hybrid tradingview-ta + ta library)
+    TA_LOCAL_WEIGHT: float = 0.50      # Weight for local advanced indicators
+    TA_TV_WEIGHT: float = 0.30         # Weight for TradingView consensus
+    TA_XVAL_WEIGHT: float = 0.20       # Weight for cross-validation bonus
+    TA_SKIP_TRADINGVIEW: bool = False   # Skip TV API calls (offline mode)
+    SUPERTREND_PERIOD: int = 10
+    SUPERTREND_MULTIPLIER: float = 3.0
+    STOCH_RSI_PERIOD: int = 14
+    WILLIAMS_R_PERIOD: int = 14
+    CCI_PERIOD: int = 20
+    MFI_PERIOD: int = 14
+    ATR_PERIOD: int = 14
+    KELTNER_PERIOD: int = 20
+    KELTNER_ATR_MULT: float = 1.5
+    CMF_PERIOD: int = 20
     
     # =================================================================
     # Transaction Costs (round-trip, as fraction)
@@ -240,7 +256,20 @@ class Config:
     
     # Data retention settings
     DB_RETENTION_DAYS: int = int(os.getenv("CENTURION_DB_RETENTION_DAYS", "365"))
-    
+
+    # =================================================================
+    # RL Bot Configuration
+    # =================================================================
+    RL_ENABLED: bool = os.getenv("CENTURION_RL_ENABLED", "false").lower() == "true"
+    RL_ALGORITHM: str = os.getenv("CENTURION_RL_ALGORITHM", "PPO")  # DQN | PPO | A2C
+    RL_REWARD_TYPE: str = os.getenv("CENTURION_RL_REWARD_TYPE", "hybrid")
+    RL_TOTAL_TIMESTEPS: int = int(os.getenv("CENTURION_RL_TIMESTEPS", "50000"))
+    RL_LOOKBACK: int = int(os.getenv("CENTURION_RL_LOOKBACK", "60"))
+    RL_TRAIN_DAYS: int = int(os.getenv("CENTURION_RL_TRAIN_DAYS", "252"))
+    RL_TEST_DAYS: int = int(os.getenv("CENTURION_RL_TEST_DAYS", "63"))
+    RL_WALK_FORWARD_FOLDS: int = int(os.getenv("CENTURION_RL_FOLDS", "4"))
+    RL_LAYER_WEIGHT: float = float(os.getenv("CENTURION_RL_LAYER_WEIGHT", "0.15"))
+
     @classmethod
     def get_database_url(cls) -> str:
         """Get the database URL, building from components if not set directly."""
@@ -254,5 +283,18 @@ class Config:
     
     @classmethod
     def is_database_configured(cls) -> bool:
-        """Check if database is properly configured."""
-        return cls.DB_ENABLED and bool(cls.DB_PASSWORD or os.getenv("CENTURION_DATABASE_URL"))
+        """Check if database is properly configured.
+
+        A database connection URL (CENTURION_DATABASE_URL or DATABASE_URL)
+        or explicit DB_PASSWORD must be set.  When only a password is
+        provided without a URL, the code falls back to host/port
+        component-based connection which requires a reachable host.
+        """
+        if not cls.DB_ENABLED:
+            return False
+        has_url = bool(
+            os.getenv("CENTURION_DATABASE_URL")
+            or os.getenv("DATABASE_URL")
+        )
+        has_password = bool(cls.DB_PASSWORD)
+        return has_url or has_password
