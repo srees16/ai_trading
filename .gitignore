@@ -45,6 +45,7 @@ mywinenv/
 *.csv
 *.json
 !config.json
+!data/thematic_portfolio.json
 !sample_tickers.csv
 *.log
 logs/
