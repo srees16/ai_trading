@@ -1957,3 +1957,22 @@ async def rl_bot_list_uploads():
         })
 
     return {"files": files}
+
+
+@router.get("/rl-bot/portfolio-analysis")
+async def rl_bot_portfolio_analysis():
+    """
+    Analyze the Green Energy Theme portfolio and generate Nifty buy predictions.
+    Studies constituent stock selection patterns, factor characteristics, and
+    applies the learned model to the broader Nifty universe.
+    """
+    try:
+        from services.rl_bot.theme_analyzer import run_portfolio_analysis
+
+        result = run_portfolio_analysis()
+        return result
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error("Portfolio analysis error: %s", e)
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
