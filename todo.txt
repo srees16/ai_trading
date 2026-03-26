@@ -1,5 +1,8 @@
 refer for applicable improvements: https://github.com/paperswithbacktest/awesome-systematic-trading
 
+implement trading system compliant with systematic trading pdf in ingested docs
+also verify if monte carlo evaluation of trading system is implemented
+
 prompts:
 ~~~~
 you are the senior technical architect at THE most reputed quant trading firm in the world. However you are designing centurion_core for 1 or 2 retail traders, a trading platform that would automatically trigger buy/sell orders based on fundamental analysis, technical analysis, qualitative analysis, macro-economic head & tail winds and event-driven news updates. Considering these requirements, perform the below tasks:
