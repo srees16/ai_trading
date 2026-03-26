@@ -44,7 +44,7 @@ Write-Host "[3/7] Copying application files from GitHub $GITHUB_BRANCH..." -Fore
 robocopy $GITHUB_DIR $TEMP_DIR /S /XD `
     __pycache__ .git myenv node_modules .next frontend chroma_store `
     financial_ML\_cache financial_ML\_output `
-    ingest_docs rag_uploads bhavcopy_cache chroma_db event_logs `
+    ingest_docs rag_uploads bhavcopy_cache chroma_db event_logs rl_models `
     /XF .env .env.* *.pyc *.pdf *.sqlite3 *_original.png *_original.jpg _test_* _debug_* _compare_* | Out-Null
 
 # Step 5: Inject files not in GitHub (gitignored secrets + HF-specific files)
