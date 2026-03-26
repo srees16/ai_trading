@@ -45,5 +45,10 @@ itsdangerous
 apscheduler
 sentry-sdk[fastapi]
 logtail-python
+tradingview-ta
+ta
+gymnasium
+stable-baselines3
+shimmy
 # a2a-sdk[http-server]==0.3.20
 sensibull-quotes

@@ -120,6 +120,9 @@ class MetricsCalculator:
             # Calculate technicals
             technicals = self._calculate_technicals(hist)
             
+            # ── Advanced TA Layer (hybrid local + TradingView) ──
+            ta_fields = self._run_advanced_ta(ticker, hist)
+
             # Create metrics object
             metrics = StockMetrics(
                 ticker=ticker,
@@ -142,7 +145,8 @@ class MetricsCalculator:
                 bollinger_middle=technicals.get('bollinger_middle'),
                 bollinger_lower=technicals.get('bollinger_lower'),
                 max_drawdown=technicals.get('max_drawdown'),
-                current_price=technicals.get('current_price')
+                current_price=technicals.get('current_price'),
+                **ta_fields,
             )
             
             return metrics
@@ -606,6 +610,45 @@ class MetricsCalculator:
             return obv_latest, obv_sma
         except Exception:
             return None, None
+
+    def _run_advanced_ta(self, ticker: str, hist: pd.DataFrame) -> dict:
+        """Run the advanced TA layer and return fields for StockMetrics.
+
+        Returns a dict of keyword arguments that map directly to the
+        ``ta_*`` fields on ``StockMetrics``.  On failure, returns an
+        empty dict so construction still succeeds.
+        """
+        try:
+            from services.technical_analysis.aggregator import TechnicalAnalysisAggregator
+            agg = TechnicalAnalysisAggregator()
+            result = agg.analyze(
+                ticker, hist,
+                skip_tradingview=Config.TA_SKIP_TRADINGVIEW,
+            )
+            adv = result.advanced_indicators
+            return {
+                "ta_fused_score": result.fused_score,
+                "ta_local_score": result.local_score,
+                "ta_tv_score": result.tv_score if result.tv_available else None,
+                "ta_trend_score": result.trend_score,
+                "ta_momentum_score": result.momentum_score,
+                "ta_volatility_score": result.volatility_score,
+                "ta_volume_score": result.volume_score,
+                "ta_confidence": result.confidence,
+                "ta_indicator_count": result.indicator_count,
+                "ta_tv_available": result.tv_available,
+                "supertrend_direction": adv.supertrend_direction if adv else None,
+                "stoch_rsi_k": adv.stoch_rsi_k if adv else None,
+                "williams_r": adv.williams_r if adv else None,
+                "cci": adv.cci if adv else None,
+                "mfi": adv.mfi if adv else None,
+                "cmf": adv.cmf if adv else None,
+                "atr": adv.atr if adv else None,
+                "vwap": adv.vwap if adv else None,
+            }
+        except Exception as e:
+            logger.warning("Advanced TA layer failed for %s: %s", ticker, e)
+            return {}
 
     def _calculate_altman_z_score(self, stock: yf.Ticker, info: dict) -> Optional[float]:
         """
