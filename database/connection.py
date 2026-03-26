@@ -252,10 +252,10 @@ class DatabaseManager:
                 
         except OperationalError as e:
             result['error'] = f"Connection failed: {str(e)}"
-            logger.error(f"Database health check failed: {e}")
+            logger.warning(f"Database health check failed (connection refused): {e}")
         except Exception as e:
             result['error'] = str(e)
-            logger.error(f"Database health check error: {e}")
+            logger.warning(f"Database health check error: {e}")
         
         return result
     

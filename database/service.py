@@ -876,17 +876,26 @@ class DatabaseService:
 _service_instance = None
 
 
-def get_database_service() -> DatabaseService:
+def get_database_service() -> Optional[DatabaseService]:
     """
     Get the global DatabaseService instance.
-    
+
+    Returns None if the database is not configured (no credentials / URL).
+
     Usage:
         from database.service import get_database_service
-        
+
         db = get_database_service()
-        db.save_signals([...])
+        if db:
+            db.save_signals([...])
     """
     global _service_instance
     if _service_instance is None:
+        try:
+            from config import Config
+            if not Config.is_database_configured():
+                return None
+        except Exception:
+            pass
         _service_instance = DatabaseService()
     return _service_instance

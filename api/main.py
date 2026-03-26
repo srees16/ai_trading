@@ -110,14 +110,24 @@ async def lifespan(app: FastAPI):
     """
     logger.info("Centurion API starting up")
 
-    # Pre-warm database connection (optional, fast)
+    # ── Database startup diagnostics ────────────────────────
+    db_url_set = bool(os.getenv("CENTURION_DATABASE_URL") or os.getenv("DATABASE_URL"))
+    if not db_url_set:
+        logger.error(
+            "CENTURION_DATABASE_URL is NOT set — database will be unavailable. "
+            "Set it in HF Spaces Settings → Repository secrets."
+        )
+
     try:
         from api.dependencies import get_db_service
         db = get_db_service()
         if db:
-            logger.info("Database connection OK")
+            logger.info("Database connection OK (Neon)")
         else:
-            logger.warning("Database not available — DB-dependent endpoints will 503")
+            logger.warning(
+                "Database not available — DB-dependent endpoints will 503. "
+                "Ensure CENTURION_DATABASE_URL is set in environment/secrets."
+            )
     except Exception as exc:
         logger.warning("Database init skipped: %s", exc)
 

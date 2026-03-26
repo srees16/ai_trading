@@ -116,6 +116,26 @@ class StockMetrics:
     obv_sma: Optional[float] = None        # On-Balance Volume smoothed
     volume_sma_20: Optional[float] = None  # 20-day volume moving average
 
+    # Advanced TA Layer (hybrid local + TradingView)
+    ta_fused_score: Optional[float] = None       # -1 to +1 unified TA score
+    ta_local_score: Optional[float] = None       # Local indicators score
+    ta_tv_score: Optional[float] = None          # TradingView consensus score
+    ta_trend_score: Optional[float] = None       # Trend category score
+    ta_momentum_score: Optional[float] = None    # Momentum category score
+    ta_volatility_score: Optional[float] = None  # Volatility category score
+    ta_volume_score: Optional[float] = None      # Volume category score
+    ta_confidence: Optional[float] = None        # 0-1 data completeness
+    ta_indicator_count: Optional[int] = None     # Number of indicators computed
+    ta_tv_available: Optional[bool] = None       # Whether TV data was fetched
+    supertrend_direction: Optional[float] = None # +1 bullish, -1 bearish
+    stoch_rsi_k: Optional[float] = None          # 0-100
+    williams_r: Optional[float] = None           # -100 to 0
+    cci: Optional[float] = None                  # Commodity Channel Index
+    mfi: Optional[float] = None                  # Money Flow Index 0-100
+    cmf: Optional[float] = None                  # Chaikin Money Flow -1 to +1
+    atr: Optional[float] = None                  # Average True Range
+    vwap: Optional[float] = None                 # Volume Weighted Avg Price
+
     def __repr__(self) -> str:
         return (
             f"StockMetrics(ticker={self.ticker!r}, "
