@@ -307,11 +307,39 @@ class DecisionEngine:
         """
         Calculate technical score (-1 to 1).
         
-        Considers: RSI, MACD, Bollinger Bands, drawdown
+        Uses a two-tier approach:
+        1. Legacy 6 indicators (RSI, MACD, BB, ADX, OBV, drawdown) — baseline
+        2. Advanced TA layer fused score (17 indicators + TradingView) — if available
+        
+        The advanced layer replaces the legacy score when available,
+        with the legacy score used as a fallback.
         """
         if not metrics:
             return 0.0
         
+        # ── Check for advanced TA fused score ─────────────────
+        # If the advanced layer ran successfully, prefer its score
+        # since it already incorporates RSI, MACD, BB, ADX, OBV
+        # plus 11 additional indicators and TradingView consensus.
+        if metrics.ta_fused_score is not None and metrics.ta_confidence and metrics.ta_confidence > 0.3:
+            advanced_score = metrics.ta_fused_score
+            
+            # Still apply legacy ADX dampening for consistency
+            adx_dampening = 1.0
+            if metrics.adx is not None and metrics.adx < Config.ADX_TREND_THRESHOLD:
+                adx_dampening = 0.65  # Less aggressive dampening since advanced layer already accounts for trend
+            
+            # Legacy OBV divergence overlay (lightweight, always useful)
+            obv_adjustment = self._calculate_obv_adjustment(metrics, advanced_score)
+            
+            score = (advanced_score * adx_dampening) + obv_adjustment
+            return max(-1.0, min(1.0, score))
+        
+        # ── Fallback: Legacy 6-indicator scoring ──────────────
+        return self._calculate_legacy_technical_score(metrics)
+    
+    def _calculate_legacy_technical_score(self, metrics: StockMetrics) -> float:
+        """Legacy technical score using only the original 6 indicators."""
         score = 0.0
         count = 0
         
@@ -406,6 +434,23 @@ class DecisionEngine:
         
         # Clamp to [-1, 1]
         return max(-1.0, min(1.0, score))
+
+    @staticmethod
+    def _calculate_obv_adjustment(metrics: StockMetrics, directional_score: float) -> float:
+        """OBV volume confirmation/divergence overlay."""
+        if metrics.obv is None or metrics.obv_sma is None:
+            return 0.0
+        obv_rising = metrics.obv > metrics.obv_sma
+        bullish = directional_score > 0
+        if bullish and obv_rising:
+            return 0.15
+        elif bullish and not obv_rising:
+            return -0.15
+        elif not bullish and not obv_rising:
+            return -0.10
+        elif not bullish and obv_rising:
+            return 0.10
+        return 0.0
     
     def _score_to_decision(self, score: float) -> DecisionTag:
         """Convert combined score to decision tag.
@@ -490,6 +535,22 @@ class DecisionEngine:
                     reasons.append("Bullish MACD")
                 else:
                     reasons.append("Bearish MACD")
+
+            # Advanced TA layer summary
+            if metrics.ta_fused_score is not None:
+                ta_dir = "bullish" if metrics.ta_fused_score > 0.1 else (
+                    "bearish" if metrics.ta_fused_score < -0.1 else "neutral"
+                )
+                reasons.append(
+                    f"TA-Layer({ta_dir}, {metrics.ta_fused_score:+.2f}, "
+                    f"{metrics.ta_indicator_count or 0} ind, "
+                    f"conf={metrics.ta_confidence or 0:.0%})"
+                )
+                if metrics.supertrend_direction is not None:
+                    st = "↑" if metrics.supertrend_direction > 0 else "↓"
+                    reasons.append(f"Supertrend {st}")
+                if metrics.ta_tv_available:
+                    reasons.append(f"TV={metrics.ta_tv_score:+.2f}")
 
         # Macro
         if macro_score is not None:
