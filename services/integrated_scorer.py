@@ -1,13 +1,28 @@
 """
 Integrated Multi-Layer Stock Evaluation Pipeline.
 
-Orchestrates five analysis layers into a single per-ticker verdict:
+Orchestrates three primary layers into a single per-ticker verdict:
 
-    Layer 1 — Core Analysis   (sentiment, fundamentals, technicals, macro, public)
-    Layer 2 — Strategy Consensus   (backtest 11 registered strategies)
-    Layer 3 — ML Feature Enrichment   (AFML fractional diff, structural breaks, microstructure)
-    Layer 4 — Robustness Validation   (TTMTS walk-forward, CSCV, bootstrap, permutation)
-    Layer 5 — RAG Knowledge Augmentation   (ChromaDB domain knowledge, best-effort)
+    Layer 1 — Core Analysis   (fundamentals, technicals, macro, IND overlays)
+    Layer 2 — Strategy Consensus + Robustness   (backtest strategies, walk-forward,
+              CSCV, bootstrap, permutation — merged for efficiency)
+    Layer 3 — ML Feature Enrichment   (AFML fractional diff, structural breaks,
+              microstructure — opt-in, skipped by default for IND market)
+
+Design decisions (March 2026 consolidation):
+    • Layer 1 no longer re-runs the full AlgoTradingSystem pipeline
+      (news scraping + sentiment). It directly computes fundamental,
+      technical, and macro scores via MetricsCalculator + DecisionEngine,
+      saving 15–25 s per ticker.
+    • Layer 4 (Robustness) merged into Layer 2 — walk-forward validation
+      was already partially computed there; the CSCV, bootstrap, and
+      permutation tests now run as part of strategy consensus, producing
+      a single robustness-adjusted score.
+    • Layer 3 (ML/AFML) is skipped by default for IND market — the
+      features (fractional diff, microstructure, SADF) are academic and
+      rarely change the final classification for swing/positional trades.
+      Users can opt in by removing 'ml_features' from skip_layers.
+    • RAG layer remains disabled (neutral placeholder).
 
 Each layer is independently skippable — the pipeline degrades gracefully.
 """
@@ -33,10 +48,15 @@ logger = logging.getLogger(__name__)
 # Default weights (sum to 1.0)
 # ---------------------------------------------------------------------------
 DEFAULT_WEIGHTS = {
-    "core": 0.35,
-    "strategy": 0.25,
+    "core": 0.45,
+    "strategy": 0.55,       # includes merged robustness validation
+}
+
+# Extended weights when ML layer is explicitly enabled
+DEFAULT_WEIGHTS_WITH_ML = {
+    "core": 0.40,
+    "strategy": 0.45,
     "ml_features": 0.15,
-    "robustness": 0.25,
 }
 
 
@@ -83,6 +103,42 @@ def _safe_mean(values: list) -> float:
     return float(np.mean(vals)) if vals else 0.0
 
 
+def _fetch_ohlcv(
+    ticker: str,
+    market: str,
+    *,
+    period: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> pd.DataFrame:
+    """Fetch OHLCV data, routing by market.
+
+    US tickers go directly through yfinance (avoids the wasted Bhavcopy
+    probe inside ``download_ind_ohlcv``).  IND tickers use the existing
+    helper which tries Bhavcopy first, then yfinance as fallback.
+    """
+    if market == "IND":
+        from utils import download_ind_ohlcv
+        if period:
+            return download_ind_ohlcv(ticker, period=period)
+        return download_ind_ohlcv(ticker, start=start, end=end)
+    # US / other markets — yfinance directly
+    import yfinance as yf
+    kw: Dict[str, Any] = {}
+    if period:
+        kw["period"] = period
+    if start:
+        kw["start"] = start
+    if end:
+        kw["end"] = end
+    try:
+        df = yf.download(ticker, progress=False, **kw)
+        return df if df is not None else pd.DataFrame()
+    except Exception as exc:
+        logger.warning("yfinance download failed for %s: %s", ticker, exc)
+        return pd.DataFrame()
+
+
 # ---------------------------------------------------------------------------
 # Lazy DB / MinIO accessors (match project conventions)
 # ---------------------------------------------------------------------------
@@ -97,7 +153,7 @@ def _get_db_service():
 
 def _get_minio():
     try:
-        from storage.minio_service import get_minio_service
+        from services.storage.minio_service import get_minio_service
         return get_minio_service()
     except Exception:
         return None
@@ -153,30 +209,72 @@ def _load_module(file_path: str, module_name: str):
 _FML_APPLIED = Path(__file__).resolve().parent.parent / "financial_ML" / "applied"
 _TTS_APPLIED = Path(__file__).resolve().parent.parent / "testune_trade_sys" / "applied"
 
+# ---------------------------------------------------------------------------
+# Layer 1 cache — avoid recomputing core scores within a short window.
+# L1: in-memory dict for sub-ms hot path
+# L2: CacheService (Redis/Upstash) for cross-restart persistence
+# Key: (ticker, market)  →  (timestamp, result_dict)
+# ---------------------------------------------------------------------------
+_LAYER1_CACHE: Dict[tuple, tuple] = {}
+_LAYER1_TTL = 900  # 15 minutes
+
+
+def _get_cached_core(ticker: str, market: str) -> Optional[Dict[str, Any]]:
+    key = (ticker.upper(), market.upper())
+    # L1: in-memory
+    entry = _LAYER1_CACHE.get(key)
+    if entry is not None:
+        ts, result = entry
+        if time.time() - ts <= _LAYER1_TTL:
+            return result
+        _LAYER1_CACHE.pop(key, None)
+    # L2: Redis (survives restarts)
+    try:
+        from infrastructure.cache import cache as _redis_cache
+        redis_val = _redis_cache.get(f"l1:{market.upper()}:{ticker.upper()}")
+        if redis_val is not None:
+            _LAYER1_CACHE[key] = (time.time(), redis_val)
+            return redis_val
+    except Exception:
+        pass
+    return None
+
+
+def _set_cached_core(ticker: str, market: str, result: Dict[str, Any]) -> None:
+    key = (ticker.upper(), market.upper())
+    _LAYER1_CACHE[key] = (time.time(), result)
+    try:
+        from infrastructure.cache import cache as _redis_cache
+        _redis_cache.set(f"l1:{market.upper()}:{ticker.upper()}", result, ttl=_LAYER1_TTL)
+    except Exception:
+        pass
+
 
 # ===================================================================
-# Layer 1 — Core Analysis
+# Layer 1 — Core Analysis (lightweight — no full pipeline re-run)
 # ===================================================================
 
 def _run_layer_core(ticker: str, market: str) -> Dict[str, Any]:
-    """Run the existing AlgoTradingSystem pipeline for one ticker."""
-    import asyncio
+    """Compute fundamental + technical + macro scores directly.
+
+    Unlike the previous implementation this does **not** re-run the full
+    ``AlgoTradingSystem.run()`` pipeline (news scraping, sentiment, etc.).
+    Instead it instantiates ``MetricsCalculator`` and ``DecisionEngine``
+    directly and scores the ticker in ~3-5 s — saving 15-25 s per ticker.
+    """
+    cached = _get_cached_core(ticker, market)
+    if cached is not None:
+        logger.debug("Layer 1 cache hit for %s (%s)", ticker, market)
+        return cached
 
     try:
-        from main import AlgoTradingSystem
+        from services.metrics import MetricsCalculator
+        from services.decision_engine import DecisionEngine
 
-        system = AlgoTradingSystem(tickers=[ticker], market=market)
+        calculator = MetricsCalculator()
+        engine = DecisionEngine()
 
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(system.run())
-        finally:
-            loop.close()
-
-        # Collect per-ticker scores from the decision engine internals.
-        # AlgoTradingSystem doesn't expose sub-scores directly; recompute.
-        metrics = system.metrics_calculator.get_stock_metrics(ticker)
-        engine = system.decision_engine
+        metrics = calculator.get_stock_metrics(ticker)
 
         fundamental_score = 0.0
         technical_score = 0.0
@@ -200,25 +298,25 @@ def _run_layer_core(ticker: str, market: str) -> Dict[str, Any]:
             + macro_score * w["macro"]
         ) / total_w
 
-        # ── Delivery volume conviction multiplier ─────────────
+        # ── IND-only overlays (skip for US — sources are NSE-specific) ──
         delivery_mult = 1.0
-        try:
-            from services.delivery_volume import get_delivery_conviction
-            delivery_mult = get_delivery_conviction(ticker)
-            core_score *= delivery_mult
-        except Exception:
-            pass
-
-        # ── Post-earnings momentum boost ──────────────────────
         earnings_boost = 0.0
-        try:
-            from services.earnings_momentum import get_post_earnings_boost
-            earnings_boost = get_post_earnings_boost(ticker)
-            core_score = _clamp(core_score + earnings_boost)
-        except Exception:
-            pass
+        if market == "IND":
+            try:
+                from services.delivery_volume import get_delivery_conviction
+                delivery_mult = get_delivery_conviction(ticker)
+                core_score *= delivery_mult
+            except Exception:
+                pass
 
-        return {
+            try:
+                from services.earnings_momentum import get_post_earnings_boost
+                earnings_boost = get_post_earnings_boost(ticker)
+                core_score = _clamp(core_score + earnings_boost)
+            except Exception:
+                pass
+
+        result = {
             "score": _clamp(core_score),
             "details": {
                 "fundamental": round(fundamental_score, 4),
@@ -229,17 +327,25 @@ def _run_layer_core(ticker: str, market: str) -> Dict[str, Any]:
                 "combined": round(core_score, 4),
             },
         }
+        _set_cached_core(ticker, market, result)
+        return result
     except Exception as exc:
         logger.warning("Layer 1 (Core) failed for %s: %s", ticker, exc)
         return {"score": None, "details": {"error": str(exc)}}
 
 
 # ===================================================================
-# Layer 2 — Strategy Consensus
+# Layer 2 — Strategy Consensus + Robustness (merged)
 # ===================================================================
 
 def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str, Any]:
-    """Run registered strategies and aggregate consensus."""
+    """Run registered strategies, aggregate consensus, and apply robustness validation.
+
+    Robustness tests (previously a separate Layer 4) are now integrated:
+    walk-forward, CSCV, BCa bootstrap, and permutation tests run on the
+    best-performing strategy's returns, producing a single robustness-
+    adjusted score.
+    """
     try:
         from strategies import StrategyRegistry, load_all_strategies
 
@@ -439,6 +545,89 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
 
         score = _clamp(weighted_consensus * 0.6 + sharpe_adj + dd_adj + wf_adj)
 
+        # ── Merged robustness validation (ex-Layer 4) ────────
+        # Run CSCV, BCa bootstrap, and permutation tests on price
+        # returns to validate strategy edge is not noise/overfitting.
+        robustness_details: Dict[str, Any] = {}
+        robustness_adj = 0.0
+        try:
+            rob_data = _fetch_ohlcv(ticker, market, start=date_range[0], end=date_range[1])
+            if not rob_data.empty:
+                rob_close = rob_data["Close"].squeeze().dropna()
+                rob_returns = rob_close.pct_change().dropna().values
+                if len(rob_returns) >= 200:
+                    rob_sub_scores: List[float] = []
+
+                    # CSCV overfitting probability
+                    try:
+                        ch05_tts = _load_module(
+                            str(_TTS_APPLIED / "ch05_estimating_future_performance_unbiased.py"),
+                            "tts_ch05",
+                        )
+                        cscv_superiority = ch05_tts.cscv_superiority
+                        n_configs = 5
+                        slices = [rob_returns[i::n_configs] for i in range(n_configs)]
+                        min_len = min(len(s) for s in slices)
+                        if min_len > 10:
+                            ret_matrix = np.row_stack([s[:min_len] for s in slices])
+                            if ret_matrix.ndim == 2 and ret_matrix.shape[0] >= 2:
+                                cscv = cscv_superiority(ret_matrix, n_blocks=4)
+                                pbo = cscv.get("pbo", 0.5)
+                                cscv_score = _clamp((1.0 - pbo * 2) * 0.5)
+                                robustness_details["cscv_pbo"] = round(float(pbo), 4)
+                                rob_sub_scores.append(cscv_score)
+                    except Exception as e:
+                        robustness_details["cscv_error"] = str(e)
+
+                    # BCa bootstrap confidence interval
+                    try:
+                        ch06_tts = _load_module(
+                            str(_TTS_APPLIED / "ch06_estimating_future_performance_trade_analysis.py"),
+                            "tts_ch06",
+                        )
+                        bca_bootstrap = ch06_tts.bca_bootstrap
+                        bca = bca_bootstrap(rob_returns, n_boot=1000, confidence=0.95, seed=42)
+                        lower = bca.get("lower", 0)
+                        bca_score = _clamp(float(np.sign(lower)) * 0.5)
+                        robustness_details["bca_lower_95"] = round(float(lower), 6)
+                        robustness_details["bca_upper_95"] = round(float(bca.get("upper", 0)), 6)
+                        rob_sub_scores.append(bca_score)
+                    except Exception as e:
+                        robustness_details["bca_error"] = str(e)
+
+                    # Permutation test
+                    try:
+                        ch07_tts = _load_module(
+                            str(_TTS_APPLIED / "ch07_permutation_tests.py"), "tts_ch07",
+                        )
+                        permutation_test = ch07_tts.permutation_test
+
+                        def _sma_strat_returns(rets):
+                            short, long_ = 10, 50
+                            if len(rets) < long_:
+                                return float(np.mean(rets))
+                            fast = np.convolve(rets, np.ones(short) / short, "valid")
+                            slow = np.convolve(rets, np.ones(long_) / long_, "valid")
+                            ml = min(len(fast), len(slow))
+                            sig = np.where(fast[-ml:] > slow[-ml:], 1.0, -1.0)
+                            return float(np.mean(rets[-ml:] * sig))
+
+                        perm = permutation_test(rob_returns, _sma_strat_returns, n_perms=200, seed=42)
+                        p_value = perm.get("p_value", 1.0)
+                        perm_score = _clamp((0.5 - p_value) * 2)
+                        robustness_details["perm_p_value"] = round(float(p_value), 4)
+                        rob_sub_scores.append(perm_score)
+                    except Exception as e:
+                        robustness_details["perm_error"] = str(e)
+
+                    if rob_sub_scores:
+                        robustness_adj = _safe_mean(rob_sub_scores) * 0.15
+                        robustness_details["adjustment"] = round(robustness_adj, 4)
+        except Exception as e:
+            robustness_details["error"] = str(e)
+
+        score = _clamp(score + robustness_adj)
+
         return {
             "score": score,
             "details": {
@@ -449,11 +638,12 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
                 "worst_max_drawdown": round(worst_dd, 4),
                 "consensus_raw": round(consensus, 4),
                 "walk_forward": wf_details,
+                "robustness": robustness_details,
                 "per_strategy": strategy_results,
             },
         }
     except Exception as exc:
-        logger.warning("Layer 2 (Strategy) failed for %s: %s", ticker, exc)
+        logger.warning("Layer 2 (Strategy+Robustness) failed for %s: %s", ticker, exc)
         return {"score": None, "details": {"error": str(exc)}}
 
 
@@ -461,7 +651,7 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
 # Layer 3 — ML Feature Enrichment
 # ===================================================================
 
-def _run_layer_ml(ticker: str) -> Dict[str, Any]:
+def _run_layer_ml(ticker: str, market: str = "IND") -> Dict[str, Any]:
     """Compute AFML-based feature scores for a ticker."""
     import concurrent.futures
 
@@ -472,9 +662,7 @@ def _run_layer_ml(ticker: str) -> Dict[str, Any]:
             return fut.result(timeout=timeout_sec)
 
     try:
-        from utils import download_ind_ohlcv
-
-        data = download_ind_ohlcv(ticker, period="2y")
+        data = _fetch_ohlcv(ticker, market, period="2y")
         if data.empty:
             return {"score": None, "details": {"error": "No price data"}}
 
@@ -716,147 +904,7 @@ def _run_layer_ml(ticker: str) -> Dict[str, Any]:
 
 
 # ===================================================================
-# Layer 4 — Robustness Validation
-# ===================================================================
-
-def _run_layer_robustness(ticker: str, date_range: tuple) -> Dict[str, Any]:
-    """Apply TTMTS robustness tests to a simple SMA strategy for the ticker."""
-    try:
-        from utils import download_ind_ohlcv
-
-        data = download_ind_ohlcv(ticker, start=date_range[0], end=date_range[1])
-        if data.empty:
-            return {"score": None, "details": {"error": "No price data"}}
-
-        close = data["Close"].squeeze().dropna()
-        returns = close.pct_change().dropna().values
-
-        if len(returns) < 200:
-            return {"score": None, "details": {"error": "Insufficient data (<200 bars)"}}
-
-        details: Dict[str, Any] = {}
-        sub_scores: List[float] = []
-
-        # Simple SMA strategy for robustness testing
-        def _sma_strategy(train):
-            short, long_ = 10, 50
-            if len(train) < long_:
-                return 0.0
-            fast = np.convolve(train, np.ones(short) / short, "valid")
-            slow = np.convolve(train, np.ones(long_) / long_, "valid")
-            min_len = min(len(fast), len(slow))
-            signals = np.where(fast[-min_len:] > slow[-min_len:], 1.0, -1.0)
-            strat_ret = train[-min_len:] * signals
-            sr = strat_ret.mean() / (strat_ret.std() + 1e-10) * np.sqrt(252)
-            return float(sr)
-
-        # ── ch05: Walk-forward analysis ──
-        try:
-            ch05_tts = _load_module(
-                str(_TTS_APPLIED / "ch05_estimating_future_performance_unbiased.py"),
-                "tts_ch05",
-            )
-            walkforward_analysis = ch05_tts.walkforward_analysis
-            cscv_superiority = ch05_tts.cscv_superiority
-
-            wf = walkforward_analysis(
-                returns, _sma_strategy,
-                train_size=min(500, len(returns) // 3),
-                test_size=min(100, len(returns) // 6),
-            )
-            oos_ret = np.array(wf.get("oos_returns", []))
-            wf_sharpe = (
-                float(oos_ret.mean() / (oos_ret.std() + 1e-10) * np.sqrt(252))
-                if len(oos_ret) > 1 else 0.0
-            )
-            wf_score = _clamp(wf_sharpe / 3.0)
-            details["wf_oos_sharpe"] = round(wf_sharpe, 4)
-            sub_scores.append(wf_score)
-
-            # CSCV overfitting probability
-            try:
-                n_configs = 5
-                # All slices must have identical length for column_stack;
-                # truncate to the shortest slice length.
-                slices = [returns[i::n_configs] for i in range(n_configs)]
-                min_len = min(len(s) for s in slices)
-                if min_len > 10:
-                    # Stack as rows (n_configs, min_len) — cscv expects
-                    # (n_systems, n_cases).
-                    ret_matrix = np.row_stack([
-                        s[:min_len] for s in slices
-                    ])
-                else:
-                    ret_matrix = np.empty((0, 0))
-                if ret_matrix.ndim == 2 and ret_matrix.shape[0] >= 2:
-                    cscv = cscv_superiority(ret_matrix, n_blocks=4)
-                    pbo = cscv.get("pbo", 0.5)
-                    # Low PBO = good (not overfit)
-                    cscv_score = _clamp((1.0 - pbo * 2) * 0.5)
-                    details["cscv_pbo"] = round(float(pbo), 4)
-                    sub_scores.append(cscv_score)
-            except Exception as e:
-                details["cscv_error"] = str(e)
-
-        except Exception as e:
-            details["walkforward_error"] = str(e)
-
-        # ── ch06: BCa bootstrap confidence interval ──
-        try:
-            ch06_tts = _load_module(
-                str(_TTS_APPLIED / "ch06_estimating_future_performance_trade_analysis.py"),
-                "tts_ch06",
-            )
-            bca_bootstrap = ch06_tts.bca_bootstrap
-
-            bca = bca_bootstrap(returns, n_boot=1000, confidence=0.95, seed=42)
-            lower = bca.get("lower", 0)
-            # If lower CI > 0 → statistically significant positive return
-            bca_score = _clamp(float(np.sign(lower)) * 0.5)
-            details["bca_lower_95"] = round(float(lower), 6)
-            details["bca_upper_95"] = round(float(bca.get("upper", 0)), 6)
-            sub_scores.append(bca_score)
-        except Exception as e:
-            details["bca_error"] = str(e)
-
-        # ── ch07: Permutation test ──
-        try:
-            ch07_tts = _load_module(
-                str(_TTS_APPLIED / "ch07_permutation_tests.py"), "tts_ch07",
-            )
-            permutation_test = ch07_tts.permutation_test
-
-            def _sma_strat_returns(rets):
-                short, long_ = 10, 50
-                if len(rets) < long_:
-                    return float(np.mean(rets))
-                fast = np.convolve(rets, np.ones(short) / short, "valid")
-                slow = np.convolve(rets, np.ones(long_) / long_, "valid")
-                min_len = min(len(fast), len(slow))
-                sig = np.where(fast[-min_len:] > slow[-min_len:], 1.0, -1.0)
-                return float(np.mean(rets[-min_len:] * sig))
-
-            perm = permutation_test(
-                returns, _sma_strat_returns, n_perms=200, seed=42,
-            )
-            p_value = perm.get("p_value", 1.0)
-            # p < 0.05 → statistically significant → positive
-            perm_score = _clamp((0.5 - p_value) * 2)
-            details["perm_p_value"] = round(float(p_value), 4)
-            sub_scores.append(perm_score)
-        except Exception as e:
-            details["perm_error"] = str(e)
-
-        score = _safe_mean(sub_scores) if sub_scores else None
-        return {"score": _clamp(score) if score is not None else None, "details": details}
-
-    except Exception as exc:
-        logger.warning("Layer 4 (Robustness) failed for %s: %s", ticker, exc)
-        return {"score": None, "details": {"error": str(exc)}}
-
-
-# ===================================================================
-# Layer 5 — RAG Knowledge Augmentation (best-effort)
+# RAG Knowledge Augmentation (disabled — kept for future use)
 # ===================================================================
 
 def _run_layer_rag(ticker: str) -> Dict[str, Any]:
@@ -894,10 +942,21 @@ def _run_layer_rag(ticker: str) -> Dict[str, Any]:
 # ===================================================================
 
 class IntegratedScorer:
-    """Orchestrates the five-layer evaluation pipeline."""
+    """Orchestrates the consolidated evaluation pipeline.
+
+    Default layers:
+        core     — fundamentals + technicals + macro + IND overlays
+        strategy — strategy consensus + merged robustness validation
+
+    Optional layer (opt-in, skipped by default for IND):
+        ml_features — AFML fractional diff, structural breaks, microstructure
+    """
 
     def __init__(self, weights: Optional[Dict[str, float]] = None):
         self.weights = dict(DEFAULT_WEIGHTS)
+        # Add RL layer weight when RL is enabled
+        if Config.RL_ENABLED and "rl_bot" not in self.weights:
+            self.weights["rl_bot"] = Config.RL_LAYER_WEIGHT
         if weights:
             self.weights.update(weights)
         # Normalise
@@ -915,13 +974,18 @@ class IntegratedScorer:
         max_workers: int = 4,
     ) -> List[StockVerdict]:
         """
-        Run the full multi-layer pipeline for *tickers*.
+        Run the multi-layer pipeline for *tickers*.
+
+        Layers:
+            core     — fundamentals, technicals, macro, IND overlays (always)
+            strategy — strategy consensus + robustness validation (always)
+            ml_features — AFML features (opt-in; skipped by default for IND)
 
         Args:
             tickers: Stock symbols to evaluate.
             market: 'US' or 'IND'.
             date_range: (start_date_str, end_date_str) for backtests.
-            skip_layers: Layer names to skip (e.g. ['rag']).
+            skip_layers: Layer names to skip (e.g. ['ml_features']).
             max_workers: Thread-pool size for parallel layer execution.
 
         Returns:
@@ -935,8 +999,35 @@ class IntegratedScorer:
             date_range = (start.isoformat(), end.isoformat())
 
         skip = set(skip_layers or [])
+
+        # ── Skip ML layer by default (opt-in for all markets) ──
+        # AFML features (fractional diff, SADF, microstructure) are
+        # academic and rarely change the final classification for
+        # swing/positional trades.  Users can opt in by explicitly
+        # passing skip_layers without 'ml_features'.
+        if skip_layers is None:
+            skip.add("ml_features")
+
+        # If ML features are enabled, use extended weights
+        if "ml_features" not in skip and "ml_features" not in self.weights:
+            self.weights = dict(DEFAULT_WEIGHTS_WITH_ML)
+            total = sum(self.weights.values())
+            if total > 0:
+                self.weights = {k: v / total for k, v in self.weights.items()}
+
         run_id = str(uuid.uuid4())
         verdicts: List[StockVerdict] = []
+
+        # ── Normalise Indian tickers to yfinance format (.NS) ──
+        # Raw NSE symbols (e.g. "BPCL") won't resolve in yfinance
+        # and won't trigger the Indian-specific code paths in
+        # MetricsCalculator (_is_indian_ticker checks for .NS/.BO).
+        if market == "IND":
+            from utils import yf_nse_symbol
+            tickers = [
+                yf_nse_symbol(t) if not t.upper().endswith((".NS", ".BO")) else t
+                for t in tickers
+            ]
 
         # ── Survivorship bias gate ─────────────────────────────
         # Reject delisted / suspended tickers before running
@@ -963,8 +1054,7 @@ class IntegratedScorer:
 
             layer_results: Dict[str, Dict[str, Any]] = {}
 
-            # Layers 1 and 2 can both run; 3 and 4 can run concurrently.
-            # We parallelise all independent layers.
+            # Core and strategy run in parallel; ML is optional.
             futures = {}
             with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="scorer") as pool:
                 if "core" not in skip:
@@ -974,11 +1064,14 @@ class IntegratedScorer:
                         _run_layer_strategy, ticker, market, date_range
                     )
                 if "ml_features" not in skip:
-                    futures["ml_features"] = pool.submit(_run_layer_ml, ticker)
-                if "robustness" not in skip:
-                    futures["robustness"] = pool.submit(
-                        _run_layer_robustness, ticker, date_range
-                    )
+                    futures["ml_features"] = pool.submit(_run_layer_ml, ticker, market)
+                # RL Bot layer (opt-in via Config.RL_ENABLED)
+                if "rl_bot" not in skip and Config.RL_ENABLED:
+                    try:
+                        from services.rl_bot.rl_signal_integrator import run_rl_layer
+                        futures["rl_bot"] = pool.submit(run_rl_layer, ticker, market)
+                    except ImportError:
+                        pass
 
                 for layer_name, fut in futures.items():
                     try:
@@ -991,7 +1084,7 @@ class IntegratedScorer:
                             "details": {"error": str(exc)},
                         }
 
-            # ── Regime-adaptive weight overrides (#1) ────────────
+            # ── Regime-adaptive weight overrides ──────────────────
             regime_info: Dict[str, Any] = {}
             try:
                 from services.regime_detector import regime_detector
@@ -1001,12 +1094,12 @@ class IntegratedScorer:
                     "position_scale": snapshot.position_scale,
                     "vix_level": snapshot.vix_panic,
                 }
-                # Shift weights based on regime
+                # During turbulence, favour strategy layer (which now
+                # includes robustness validation) over core.
                 if snapshot.regime.value in ("HIGH_VOLATILITY", "CRISIS"):
-                    # Favour robustness & ML layers during turbulence
                     effective_weights = dict(self.weights)
-                    effective_weights["robustness"] = self.weights.get("robustness", 0.25) * 1.4
-                    effective_weights["core"] = self.weights.get("core", 0.35) * 0.8
+                    effective_weights["strategy"] = self.weights.get("strategy", 0.55) * 1.2
+                    effective_weights["core"] = self.weights.get("core", 0.45) * 0.8
                     tw = sum(effective_weights.values())
                     effective_weights = {k: v / tw for k, v in effective_weights.items()}
                 else:

@@ -291,7 +291,7 @@ class PriceAlertEngine:
 
         # Fire desktop notification (best-effort)
         try:
-            from notifications.manager import NotificationManager
+            from services.notifications.manager import NotificationManager
             nm = NotificationManager()
             nm.send_notification(
                 title=f"Price Alert: {alert.symbol}",

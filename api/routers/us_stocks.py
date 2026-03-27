@@ -56,9 +56,9 @@ async def run_analysis(request: AnalysisRequest):
     try:
         from main import AlgoTradingSystem
         from scrapers.us_aggregator import USNewsAggregator
-        from sentiment import SentimentAnalyzer
-        from metrics import MetricsCalculator
-        from decision_engine import DecisionEngine
+        from services.sentiment import SentimentAnalyzer
+        from services.metrics import MetricsCalculator
+        from services.decision_engine import DecisionEngine
         from models import TradingSignal
 
         system = AlgoTradingSystem(tickers=request.tickers)
@@ -174,7 +174,7 @@ async def scrape_news(request: ScrapeNewsRequest):
 async def analyse_sentiment(request: SentimentRequest):
     """Run sentiment analysis on arbitrary text snippets."""
     try:
-        from sentiment import SentimentAnalyzer
+        from services.sentiment import SentimentAnalyzer
 
         analyzer = SentimentAnalyzer()
         results = []
@@ -207,7 +207,7 @@ async def analyse_sentiment(request: SentimentRequest):
 async def calculate_metrics(request: MetricsRequest):
     """Calculate fundamental and technical metrics for the given tickers."""
     try:
-        from metrics import MetricsCalculator
+        from services.metrics import MetricsCalculator
 
         calc = MetricsCalculator()
         calc.prefetch_metrics(request.tickers)
@@ -259,8 +259,8 @@ async def calculate_metrics(request: MetricsRequest):
 async def generate_decision(request: DecisionRequest):
     """Generate a BUY/SELL/HOLD decision from news + metrics."""
     try:
-        from decision_engine import DecisionEngine
-        from metrics import MetricsCalculator
+        from services.decision_engine import DecisionEngine
+        from services.metrics import MetricsCalculator
         from models import NewsItem, SentimentLabel, NewsCategory
 
         news = NewsItem(

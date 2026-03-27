@@ -1,5 +1,5 @@
-"""
-Background Scheduler for Centurion Core — IND Stocks Pipeline.
+﻿"""
+Background Scheduler for Centurion Core â€” IND Stocks Pipeline.
 
 Runs screening and scoring pipelines at configurable times during
 market hours without requiring the Streamlit UI to be open.
@@ -35,19 +35,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger("centurion.scheduler")
 
-# ── Constants ──────────────────────────────────────────────────
+# â”€â”€ Constants â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _IST = timezone(timedelta(hours=5, minutes=30))
 _DB_PATH = Path(__file__).parent / "data" / "scheduler_cache.sqlite3"
 
-# ── Ensure project root is on sys.path ─────────────────────────
+# â”€â”€ Ensure project root is on sys.path â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _ROOT = str(Path(__file__).parent)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
 
-# ═══════════════════════════════════════════════════════════════
-# Cache layer (SQLite — lightweight, no external DB dependency)
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# Cache layer (SQLite â€” lightweight, no external DB dependency)
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _init_cache_db():
     """Create the scheduler cache table if it doesn't exist."""
@@ -120,9 +120,9 @@ def get_latest_run(run_type: Optional[str] = None) -> Optional[dict]:
     return dict(row)
 
 
-# ═══════════════════════════════════════════════════════════════
-# Pipeline runner (headless — no Streamlit, no Kite orders)
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# Pipeline runner (headless â€” no Streamlit, no Kite orders)
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def run_pipeline(run_type: str = "pre_market"):
     """Execute the full screening + scoring pipeline headless.
@@ -209,7 +209,7 @@ def run_pipeline(run_type: str = "pre_market"):
 def _notify_signals(buy_verdicts: list, sell_verdicts: list):
     """Send desktop notification for discovered signals."""
     try:
-        from notifications.manager import NotificationManager
+        from services.notifications.manager import NotificationManager
         nm = NotificationManager()
 
         parts = []
@@ -221,7 +221,7 @@ def _notify_signals(buy_verdicts: list, sell_verdicts: list):
             parts.append(f"{len(sell_verdicts)} SELL: {syms}")
 
         nm.send_notification(
-            title="Centurion — Signals Detected",
+            title="Centurion â€” Signals Detected",
             message=" | ".join(parts),
             duration=15,
         )
@@ -307,7 +307,7 @@ def _auto_place_orders(verdicts: list, screened_df):
     When ``PAPER_TRADE_MODE=true`` (env var or Config), orders are
     routed to the PaperTrader instead of Kite live.
     """
-    # ── Paper-trade mode check ─────────────────────────────────
+    # â”€â”€ Paper-trade mode check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     paper_mode = os.environ.get("PAPER_TRADE_MODE", "").lower() in ("true", "1", "yes")
     if not paper_mode:
         try:
@@ -322,14 +322,14 @@ def _auto_place_orders(verdicts: list, screened_df):
 
     try:
         from kite_connect.auth.kite_session import create_kite_session
-        logger.info("Auto-authenticating Kite for STRONG_BUY order placement…")
+        logger.info("Auto-authenticating Kite for STRONG_BUY order placementâ€¦")
         kite = create_kite_session()
     except Exception as exc:
-        logger.error("Kite auto-auth failed: %s — orders skipped", exc)
+        logger.error("Kite auto-auth failed: %s â€” orders skipped", exc)
         try:
-            from notifications.manager import NotificationManager
+            from services.notifications.manager import NotificationManager
             NotificationManager().send_notification(
-                "Centurion — Auth Failed",
+                "Centurion â€” Auth Failed",
                 f"Could not auto-authenticate Kite: {exc}",
             )
         except Exception:
@@ -337,7 +337,7 @@ def _auto_place_orders(verdicts: list, screened_df):
         return
 
     if kite is None:
-        logger.warning("Kite session is None — orders skipped")
+        logger.warning("Kite session is None â€” orders skipped")
         return
 
     try:
@@ -376,9 +376,9 @@ def _auto_place_orders(verdicts: list, screened_df):
         logger.exception("Auto-order placement failed: %s", exc)
 
 
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Walk-Forward Audit (weekly)
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def run_walk_forward_audit():
     """Run walk-forward validation on all registered strategies.
@@ -418,13 +418,13 @@ def run_walk_forward_audit():
                 if summary.degradation_ratio < 0.5 and summary.total_folds > 0:
                     overfit_strategies.append(name)
                     logger.warning(
-                        "OVERFIT: %s — degradation=%.2f (OOS Sharpe=%.2f, IS=%.2f)",
+                        "OVERFIT: %s â€” degradation=%.2f (OOS Sharpe=%.2f, IS=%.2f)",
                         name, summary.degradation_ratio,
                         summary.avg_oos_sharpe, summary.avg_is_sharpe,
                     )
                 else:
                     logger.info(
-                        "OK: %s — degradation=%.2f, OOS Sharpe=%.2f",
+                        "OK: %s â€” degradation=%.2f, OOS Sharpe=%.2f",
                         name, summary.degradation_ratio, summary.avg_oos_sharpe,
                     )
             except Exception as exc:
@@ -446,9 +446,9 @@ def run_walk_forward_audit():
 
         if overfit_strategies:
             try:
-                from notifications.manager import NotificationManager
+                from services.notifications.manager import NotificationManager
                 NotificationManager().send_notification(
-                    "Centurion — Overfit Alert",
+                    "Centurion â€” Overfit Alert",
                     f"{len(overfit_strategies)} strategies flagged: "
                     f"{', '.join(overfit_strategies[:5])}",
                     duration=20,
@@ -466,19 +466,19 @@ def run_walk_forward_audit():
         _save_run("walk_forward", {"status": f"error: {exc}"})
 
 
-# ═══════════════════════════════════════════════════════════════
-# Unified Backtest ↔ Paper ↔ Live Reconciliation
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+# Unified Backtest â†” Paper â†” Live Reconciliation
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _run_paper_live_reconciliation():
-    """Unified 3-leg parity check: backtest ↔ paper ↔ live.
+    """Unified 3-leg parity check: backtest â†” paper â†” live.
 
     Runs weekly (Saturday 7 AM IST) and compares:
-      Leg 1 — Paper vs Live: symbol-level P&L drift for common trades
-      Leg 2 — Backtest vs Live: per-strategy aggregate metrics
-              (win-rate, avg return, Sharpe) — surfaces when live
+      Leg 1 â€” Paper vs Live: symbol-level P&L drift for common trades
+      Leg 2 â€” Backtest vs Live: per-strategy aggregate metrics
+              (win-rate, avg return, Sharpe) â€” surfaces when live
               execution degrades vs backtest expectations
-      Leg 3 — Backtest vs Paper: same comparison but for simulated fills
+      Leg 3 â€” Backtest vs Paper: same comparison but for simulated fills
 
     All discrepancies > 1 % (P&L) or > 0.3 (Sharpe drift) are logged
     and trigger desktop notifications.
@@ -486,37 +486,37 @@ def _run_paper_live_reconciliation():
     logger.info("=== Unified Reconciliation started ===")
     report: dict = {"status": "success"}
 
-    # ──────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # Load data sources
-    # ──────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     paper_trades = _load_paper_trades()
     live_trades, live_by_strategy = _load_live_journal()
     backtest_by_strategy = _load_backtest_summaries()
 
-    # ──────────────────────────────────────────────────────────
-    # Leg 1 — Paper ↔ Live (symbol-level)
-    # ──────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Leg 1 â€” Paper â†” Live (symbol-level)
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     leg1 = _reconcile_paper_vs_live(paper_trades, live_trades)
     report["paper_vs_live"] = leg1
 
-    # ──────────────────────────────────────────────────────────
-    # Leg 2 — Backtest ↔ Live (strategy-level)
-    # ──────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Leg 2 â€” Backtest â†” Live (strategy-level)
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     leg2 = _reconcile_backtest_vs_execution(backtest_by_strategy, live_by_strategy, "live")
     report["backtest_vs_live"] = leg2
 
-    # ──────────────────────────────────────────────────────────
-    # Leg 3 — Backtest ↔ Paper (strategy-level)
-    # ──────────────────────────────────────────────────────────
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Leg 3 â€” Backtest â†” Paper (strategy-level)
+    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     paper_by_strategy = _group_by_strategy_paper(paper_trades)
     leg3 = _reconcile_backtest_vs_execution(backtest_by_strategy, paper_by_strategy, "paper")
     report["backtest_vs_paper"] = leg3
 
     _save_run("reconciliation", report)
 
-    # ── Alert on discrepancies ──
+    # â”€â”€ Alert on discrepancies â”€â”€
     all_issues: List[str] = []
-    for leg_name, leg_data in [("Paper↔Live", leg1), ("BT↔Live", leg2), ("BT↔Paper", leg3)]:
+    for leg_name, leg_data in [("Paperâ†”Live", leg1), ("BTâ†”Live", leg2), ("BTâ†”Paper", leg3)]:
         discs = leg_data.get("discrepancies", [])
         if discs:
             all_issues.append(f"{leg_name}: {len(discs)}")
@@ -525,24 +525,24 @@ def _run_paper_live_reconciliation():
         summary = ", ".join(all_issues)
         logger.warning("Reconciliation: %s", summary)
         try:
-            from notifications.manager import NotificationManager
+            from services.notifications.manager import NotificationManager
             NotificationManager().send_notification(
-                "Centurion — Reconciliation Alert",
+                "Centurion â€” Reconciliation Alert",
                 f"Parity issues: {summary}",
                 duration=15,
             )
         except Exception:
             pass
     else:
-        logger.info("Reconciliation: all 3 legs clean — no significant drift")
+        logger.info("Reconciliation: all 3 legs clean â€” no significant drift")
 
     logger.info("=== Unified Reconciliation complete ===")
 
 
-# ── Reconciliation helpers ─────────────────────────────────────
+# â”€â”€ Reconciliation helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _load_paper_trades() -> dict:
-    """Load closed paper trades from SQLite → {symbol: {...}}."""
+    """Load closed paper trades from SQLite â†’ {symbol: {...}}."""
     try:
         import sqlite3
         from pathlib import Path
@@ -571,7 +571,7 @@ def _load_paper_trades() -> dict:
 
 
 def _load_live_journal() -> tuple:
-    """Load closed live journal trades → (by_symbol, by_strategy).
+    """Load closed live journal trades â†’ (by_symbol, by_strategy).
 
     Returns:
         Tuple of (
@@ -621,7 +621,7 @@ def _load_live_journal() -> tuple:
 
 
 def _load_backtest_summaries() -> dict:
-    """Load per-strategy backtest aggregate metrics → {strategy_name: {...}}.
+    """Load per-strategy backtest aggregate metrics â†’ {strategy_name: {...}}.
 
     Pulls from BacktestResult or StrategyPerformanceSummary.
     """
@@ -690,7 +690,7 @@ def _group_by_strategy_paper(paper_trades: dict) -> dict:
 
 
 def _reconcile_paper_vs_live(paper: dict, live: dict) -> dict:
-    """Leg 1: symbol-level paper ↔ live P&L comparison."""
+    """Leg 1: symbol-level paper â†” live P&L comparison."""
     common = set(paper.keys()) & set(live.keys())
     discrepancies = []
     slippage_diffs = []
@@ -741,7 +741,7 @@ def _reconcile_backtest_vs_execution(
     exec_strategies: dict,
     exec_label: str,
 ) -> dict:
-    """Leg 2/3: backtest ↔ live/paper per-strategy metric comparison.
+    """Leg 2/3: backtest â†” live/paper per-strategy metric comparison.
 
     Compares avg_return, win_rate, and Sharpe between backtest
     expectations and actual execution results.
@@ -805,9 +805,9 @@ def _reconcile_backtest_vs_execution(
     }
 
 
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Utility jobs (backup, pre-warming)
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _pre_market_with_warmup():
     """Pre-warm DB connection (wakes Neon auto-suspend) then run pipeline."""
@@ -829,20 +829,20 @@ def _run_nightly_backup():
         logger.error("Nightly backup failed: %s", e)
 
 
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Scheduler setup
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def start_scheduler():
     """Start the APScheduler background scheduler with IST-aware jobs.
 
     Jobs
     ----
-    1. **pre_market_scan** — 9:20 AM IST, Mon-Fri
+    1. **pre_market_scan** â€” 9:20 AM IST, Mon-Fri
        Full pipeline run before market opens (NSE opens 9:15).
-    2. **intraday_rescan** — every 2 hours (10:30, 12:30, 14:30) Mon-Fri
+    2. **intraday_rescan** â€” every 2 hours (10:30, 12:30, 14:30) Mon-Fri
        Lighter re-scan for intraday momentum shifts.
-    3. **walk_forward_audit** — Saturday 6:00 AM IST
+    3. **walk_forward_audit** â€” Saturday 6:00 AM IST
        Weekly walk-forward validation of registered strategies.
     """
     try:
@@ -870,7 +870,7 @@ def start_scheduler():
         misfire_grace_time=600,
     )
 
-    # Job 2: Intraday re-scan every 2 hours during 10:30–14:30 IST
+    # Job 2: Intraday re-scan every 2 hours during 10:30â€“14:30 IST
     scheduler.add_job(
         run_pipeline,
         CronTrigger(hour="10,12,14", minute=30, day_of_week="mon-fri", timezone="Asia/Kolkata"),
@@ -880,7 +880,7 @@ def start_scheduler():
         misfire_grace_time=600,
     )
 
-    # Job 3: Weekly walk-forward strategy audit — Saturday 6 AM IST
+    # Job 3: Weekly walk-forward strategy audit â€” Saturday 6 AM IST
     scheduler.add_job(
         run_walk_forward_audit,
         CronTrigger(hour=6, minute=0, day_of_week="sat", timezone="Asia/Kolkata"),
@@ -889,7 +889,7 @@ def start_scheduler():
         misfire_grace_time=3600,
     )
 
-    # Job 4: Weekly paper vs live reconciliation — Saturday 7 AM IST
+    # Job 4: Weekly paper vs live reconciliation â€” Saturday 7 AM IST
     scheduler.add_job(
         _run_paper_live_reconciliation,
         CronTrigger(hour=7, minute=0, day_of_week="sat", timezone="Asia/Kolkata"),
@@ -898,7 +898,7 @@ def start_scheduler():
         misfire_grace_time=3600,
     )
 
-    # Job 5: Nightly SQLite backup to R2 — 23:00 IST daily
+    # Job 5: Nightly SQLite backup to R2 â€” 23:00 IST daily
     scheduler.add_job(
         _run_nightly_backup,
         CronTrigger(hour=23, minute=0, timezone="Asia/Kolkata"),
@@ -907,7 +907,7 @@ def start_scheduler():
         misfire_grace_time=3600,
     )
 
-    logger.info("Scheduler started — press Ctrl+C to stop")
+    logger.info("Scheduler started â€” press Ctrl+C to stop")
     logger.info("  Pre-market scan : 09:20 IST, Mon-Fri")
     logger.info("  Intraday re-scan: 10:30, 12:30, 14:30 IST, Mon-Fri")
     logger.info("  Walk-forward    : 06:00 IST, Saturday")
@@ -920,14 +920,14 @@ def start_scheduler():
         logger.info("Scheduler stopped")
 
 
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # CLI entry point
-# ═══════════════════════════════════════════════════════════════
+# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Centurion Core — Pipeline Scheduler")
+    parser = argparse.ArgumentParser(description="Centurion Core â€” Pipeline Scheduler")
     parser.add_argument(
         "--once", action="store_true",
         help="Run the pipeline once immediately (no scheduling)",

@@ -231,7 +231,7 @@ def _send_order_email(symbol, exchange, side, quantity, price, order_id,
         _root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         if _root not in sys.path:
             sys.path.insert(0, _root)
-        from notifications.manager import NotificationManager
+        from services.notifications.manager import NotificationManager
         NotificationManager().email_order_confirmation(
             symbol=symbol, side=side, quantity=quantity,
             entry_price=price, fill_price=price,

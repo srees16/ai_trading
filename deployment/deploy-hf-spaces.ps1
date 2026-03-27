@@ -6,6 +6,7 @@
 #   2. huggingface-cli login (paste your HF token)
 #   3. Fill in your HF username below
 #   4. auth/credentials.yaml must exist locally (it's in .gitignore on GitHub)
+#   5. .env file at project root with all secrets (CENTURION_DATABASE_URL, etc.)
 
 $HF_USERNAME = "srees16"
 $SPACE_NAME  = "centurion-core"
@@ -43,7 +44,7 @@ Write-Host "[3/7] Copying application files from GitHub $GITHUB_BRANCH..." -Fore
 robocopy $GITHUB_DIR $TEMP_DIR /S /XD `
     __pycache__ .git myenv node_modules .next frontend chroma_store `
     financial_ML\_cache financial_ML\_output `
-    ingest_docs rag_uploads bhavcopy_cache chroma_db event_logs `
+    ingest_docs rag_uploads bhavcopy_cache chroma_db event_logs rl_models `
     /XF .env .env.* *.pyc *.pdf *.sqlite3 *_original.png *_original.jpg _test_* _debug_* _compare_* | Out-Null
 
 # Step 5: Inject files not in GitHub (gitignored secrets + HF-specific files)
@@ -107,14 +108,73 @@ Write-Host "`n[7/7] Deployment initiated!" -ForegroundColor Green
 Write-Host "  Source:    $GITHUB_REPO @ $GITHUB_BRANCH" -ForegroundColor Cyan
 Write-Host "  Space URL: https://huggingface.co/spaces/$HF_USERNAME/$SPACE_NAME" -ForegroundColor Cyan
 Write-Host "  API URL:   https://$HF_USERNAME-$SPACE_NAME.hf.space" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "NEXT: Set secrets in HF Spaces Settings > Repository secrets:" -ForegroundColor Yellow
-Write-Host "  CENTURION_DATABASE_URL, ANTHROPIC_API_KEY,"
-Write-Host "  ZERODHA_API_KEY, ZERODHA_API_SECRET, ZERODHA_USER_ID, ZERODHA_PASSWORD, ZERODHA_TOTP_SECRET,"
-Write-Host "  MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_SECURE=true, MINIO_BUCKET=centurion-backtests, MINIO_ENABLED=true,"
-Write-Host "  CENTURION_DEFAULT_ADMIN_PASSWORD, CENTURION_DEFAULT_ANALYST_PASSWORD,"
-Write-Host "  CENTURION_ALLOWED_ORIGINS=https://centurion-core-fe.vercel.app,"
-Write-Host "  CENTURION_RAG_LLM_PROVIDER=claude"
+
+# Step 8: Sync secrets from local .env to HF Spaces via huggingface_hub API
+Write-Host "`n[8/8] Syncing secrets from .env to HF Spaces..." -ForegroundColor Yellow
+
+$ENV_FILE = Join-Path $PROJECT_ROOT ".env"
+if (Test-Path $ENV_FILE) {
+    # Secrets that must be set on HF Spaces for the app to function
+    $REQUIRED_SECRETS = @(
+        "CENTURION_DATABASE_URL",
+        "DATABASE_URL",
+        "ANTHROPIC_API_KEY",
+        "SENTRY_DSN",
+        "LOGTAIL_TOKEN",
+        "MINIO_ENDPOINT",
+        "MINIO_ACCESS_KEY",
+        "MINIO_SECRET_KEY",
+        "MINIO_SECURE",
+        "MINIO_BUCKET",
+        "MINIO_ENABLED",
+        "CENTURION_DEFAULT_ADMIN_PASSWORD",
+        "CENTURION_DEFAULT_ANALYST_PASSWORD",
+        "CENTURION_ALLOWED_ORIGINS",
+        "CENTURION_RAG_LLM_PROVIDER",
+        "CENTURION_DB_ENABLED",
+        "CENTURION_REDIS_URL",
+        "UPSTASH_REDIS_REST_URL",
+        "UPSTASH_REDIS_REST_TOKEN"
+    )
+
+    $envVars = @{}
+    Get-Content $ENV_FILE | ForEach-Object {
+        $line = $_.Trim()
+        if ($line -and -not $line.StartsWith("#") -and $line.Contains("=")) {
+            $eqIdx = $line.IndexOf("=")
+            $key = $line.Substring(0, $eqIdx).Trim()
+            $val = $line.Substring($eqIdx + 1).Trim().Trim('"').Trim("'")
+            $envVars[$key] = $val
+        }
+    }
+
+    $syncCount = 0
+    foreach ($secret in $REQUIRED_SECRETS) {
+        if ($envVars.ContainsKey($secret) -and $envVars[$secret]) {
+            $val = $envVars[$secret]
+            # Use huggingface_hub Python API to set secrets (CLI doesn't support it directly)
+            python -c "
+from huggingface_hub import add_space_secret
+try:
+    add_space_secret('$HF_USERNAME/$SPACE_NAME', '$secret', '$val')
+    print(f'  Set {\"$secret\"} OK')
+except Exception as e:
+    print(f'  WARN: Failed to set {\"$secret\"}: {e}')
+"
+            $syncCount++
+        }
+    }
+    Write-Host "  Synced $syncCount secrets to HF Spaces" -ForegroundColor Green
+} else {
+    Write-Host "  WARNING: .env file not found at $ENV_FILE" -ForegroundColor Red
+    Write-Host "  Secrets must be set manually in HF Spaces Settings > Repository secrets:" -ForegroundColor Yellow
+    Write-Host "  CENTURION_DATABASE_URL, ANTHROPIC_API_KEY,"
+    Write-Host "  ZERODHA_API_KEY, ZERODHA_API_SECRET, ZERODHA_USER_ID, ZERODHA_PASSWORD, ZERODHA_TOTP_SECRET,"
+    Write-Host "  MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, MINIO_SECURE=true, MINIO_BUCKET=centurion-backtests, MINIO_ENABLED=true,"
+    Write-Host "  CENTURION_DEFAULT_ADMIN_PASSWORD, CENTURION_DEFAULT_ANALYST_PASSWORD,"
+    Write-Host "  CENTURION_ALLOWED_ORIGINS=https://centurion-core-fe.vercel.app,"
+    Write-Host "  CENTURION_RAG_LLM_PROVIDER=claude"
+}
 
 # Cleanup temp dirs
 Remove-Item -Recurse -Force $TEMP_DIR 2>$null

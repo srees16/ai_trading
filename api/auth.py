@@ -76,6 +76,12 @@ def _load_credentials_from_yaml() -> Dict:
 _CACHED_CREDENTIALS: Optional[Dict] = None
 
 
+def invalidate_credentials_cache() -> None:
+    """Clear cached credentials so the next auth call re-reads from YAML."""
+    global _CACHED_CREDENTIALS
+    _CACHED_CREDENTIALS = None
+
+
 def _get_credentials() -> Dict:
     global _CACHED_CREDENTIALS
     if _CACHED_CREDENTIALS is None:

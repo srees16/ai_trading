@@ -23,7 +23,11 @@ logger = logging.getLogger(__name__)
 def _get_stock_name(ticker: str) -> str:
     """Look up the company name for a ticker symbol via yfinance (cached 24h)."""
     try:
-        info = yf.Ticker(ticker).info
+        yf_sym = ticker
+        if "." not in ticker:
+            from utils import yf_nse_symbol
+            yf_sym = yf_nse_symbol(ticker)
+        info = yf.Ticker(yf_sym).info
         return info.get("shortName") or info.get("longName") or ticker
     except Exception:
         logger.debug(f"Could not fetch stock name for {ticker}")

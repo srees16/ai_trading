@@ -27,7 +27,7 @@ class DatabaseConfig:
     """
     
     def __init__(self):
-        # Direct connection URL takes priority (Neon, Railway, etc.)
+        # Direct connection URL takes priority (Neon, etc.)
         self.database_url = os.getenv('CENTURION_DATABASE_URL', os.getenv('DATABASE_URL', ''))
         
         # Component-based config (fallback)
@@ -252,10 +252,10 @@ class DatabaseManager:
                 
         except OperationalError as e:
             result['error'] = f"Connection failed: {str(e)}"
-            logger.error(f"Database health check failed: {e}")
+            logger.warning(f"Database health check failed (connection refused): {e}")
         except Exception as e:
             result['error'] = str(e)
-            logger.error(f"Database health check error: {e}")
+            logger.warning(f"Database health check error: {e}")
         
         return result
     

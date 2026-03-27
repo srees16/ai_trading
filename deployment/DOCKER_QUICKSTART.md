@@ -40,14 +40,13 @@ docker logs -f algo-trading-system
 
 ## Deploy to Cloud
 
-### Railway (Recommended)
+### HF Spaces (Production)
 ```bash
-# Install Railway CLI, then:
-railway login
-railway link
-railway up
+# Deploy via GitHub Actions CI/CD (auto-deploys on push to main)
+# Or manually:
+.\deployment\deploy-hf-spaces.ps1
 ```
-See `railway.toml` for configuration. Environment variables are managed via the Railway dashboard.
+Secrets are managed in HF Space Settings → Repository secrets.
 
 ### Azure
 ```powershell

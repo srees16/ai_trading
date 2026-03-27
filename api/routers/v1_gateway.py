@@ -8,6 +8,7 @@ FML, TTS chapters) is stubbed with minimal implementations.
 
 import asyncio
 import logging
+import math
 import os
 from typing import Any, Dict, List, Optional
 
@@ -22,13 +23,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["API v1"])
 
 
+def _sanitize_floats(obj):
+    """Replace inf/nan floats with None so JSON serialization doesn't fail."""
+    if isinstance(obj, float):
+        return None if math.isinf(obj) or math.isnan(obj) else obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_floats(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_floats(v) for v in obj]
+    return obj
+
+
 def _metrics_to_dict(m) -> dict:
     """Convert a StockMetrics dataclass to a JSON-safe dict."""
     from dataclasses import asdict
     d = asdict(m)
     if d.get("timestamp"):
         d["timestamp"] = d["timestamp"].isoformat() if hasattr(d["timestamp"], "isoformat") else str(d["timestamp"])
-    return d
+    return _sanitize_floats(d)
 
 
 # ─── Request / Response Models ──────────────────────────────────────────
@@ -178,6 +190,10 @@ async def api_change_password(req: ChangePasswordRequest, request: Request):
     with open(CREDENTIALS_YAML, "w") as fh:
         yaml.dump(creds, fh, default_flow_style=False)
 
+    # Invalidate the in-memory credential cache so login uses the new hash
+    from api.auth import invalidate_credentials_cache
+    invalidate_credentials_cache()
+
     return {"ok": True}
 
 
@@ -192,9 +208,9 @@ async def analysis_run(req: AnalysisRunRequest):
         else:
             from scrapers.ind_aggregator import IndianNewsAggregator as USNewsAggregator
 
-        from sentiment import SentimentAnalyzer
-        from metrics import MetricsCalculator
-        from decision_engine import DecisionEngine
+        from services.sentiment import SentimentAnalyzer
+        from services.metrics import MetricsCalculator
+        from services.decision_engine import DecisionEngine
 
         aggregator = USNewsAggregator()
         analyzer = SentimentAnalyzer()
@@ -266,7 +282,7 @@ async def analysis_run(req: AnalysisRunRequest):
             except Exception as e:
                 logger.warning("Failed to save analysis run: %s", e)
 
-        return {"run_id": run_id, "signals": signals, "summary": summary}
+        return _sanitize_floats({"run_id": run_id, "signals": signals, "summary": summary})
     except Exception as e:
         logger.error("Analysis error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -288,7 +304,7 @@ async def analysis_latest(market: str = "US"):
 @router.get("/analysis/metrics")
 async def analysis_metrics(tickers: str, market: str = "US"):
     """Get stock metrics for given tickers."""
-    from metrics import MetricsCalculator
+    from services.metrics import MetricsCalculator
     calc = MetricsCalculator()
     results = []
     for ticker in tickers.split(","):
@@ -392,6 +408,16 @@ async def backtest_run(req: BacktestRunRequest):
     from trading_strategies import get_strategy
 
     try:
+        # ── Normalise Indian tickers to yfinance format (.NS) ──
+        # Raw NSE symbols (e.g. "SBIN", "MARUTI") fail on Yahoo Finance
+        # without the .NS suffix.  US tickers are left untouched.
+        if req.market == "IND":
+            from utils import yf_nse_symbol
+            req.tickers = [
+                yf_nse_symbol(t) if not t.upper().endswith((".NS", ".BO")) else t
+                for t in req.tickers
+            ]
+
         strategy_cls = get_strategy(req.strategy_id)
         if strategy_cls is None:
             raise HTTPException(status_code=404, detail=f"Strategy '{req.strategy_id}' not found")
@@ -423,11 +449,34 @@ async def backtest_run(req: BacktestRunRequest):
 
         # Extract flat metrics (result.metrics may be nested by ticker)
         metrics = result.metrics or {}
-        first_ticker = req.tickers[0] if req.tickers else ""
-        if first_ticker and first_ticker in metrics and isinstance(metrics[first_ticker], dict):
-            m = metrics[first_ticker]
+
+        # Detect per-ticker nesting: {"AAPL": {sharpe: ...}, "MSFT": {...}}
+        ticker_metrics = {}
+        flat_metrics = {}
+        for t in req.tickers:
+            if t in metrics and isinstance(metrics[t], dict):
+                ticker_metrics[t] = metrics[t]
+
+        if ticker_metrics:
+            # Aggregate across all tickers for top-level summary
+            agg_keys = ["total_return", "sharpe_ratio", "sortino_ratio",
+                        "max_drawdown", "total_trades", "win_rate", "final_value"]
+            n = len(ticker_metrics)
+            agg: dict = {}
+            for key in agg_keys:
+                vals = [float(tm.get(key, 0)) for tm in ticker_metrics.values()]
+                if key == "total_trades":
+                    agg[key] = int(sum(vals))
+                elif key == "max_drawdown":
+                    agg[key] = min(vals)          # worst drawdown
+                elif key == "final_value":
+                    agg[key] = sum(vals)           # total portfolio value
+                else:
+                    agg[key] = sum(vals) / n       # average
+            m = agg
         else:
             m = metrics
+            ticker_metrics = {}
 
         # Build equity_curve from portfolio DataFrame
         equity_curve = []
@@ -484,6 +533,18 @@ async def backtest_run(req: BacktestRunRequest):
             "signals": signals,
             "equity_curve": equity_curve,
             "metrics": metrics,
+            "per_ticker": {
+                t: {
+                    "total_return": float(tm.get("total_return", 0)),
+                    "sharpe_ratio": float(tm.get("sharpe_ratio", 0)),
+                    "sortino_ratio": float(tm.get("sortino_ratio", 0)),
+                    "max_drawdown": float(tm.get("max_drawdown", 0)),
+                    "total_trades": int(tm.get("total_trades", 0)),
+                    "win_rate": float(tm.get("win_rate", 0)),
+                    "final_value": float(tm.get("final_value", 0)),
+                }
+                for t, tm in ticker_metrics.items()
+            },
             "created_at": datetime.now().isoformat(),
         }
 
@@ -535,10 +596,10 @@ async def verdict_run(req: VerdictRunRequest):
                     date_range=date_range,
                     skip_layers=req.skip_layers,
                 ),
-                timeout=300,  # 5-minute hard cap
+                timeout=540,  # 9-minute hard cap
             )
         except asyncio.TimeoutError:
-            raise HTTPException(status_code=504, detail="Verdict timed out after 5 minutes")
+            raise HTTPException(status_code=504, detail="Verdict timed out after 9 minutes")
 
         results = []
         for v in verdicts:
@@ -548,6 +609,7 @@ async def verdict_run(req: VerdictRunRequest):
                 "core_score": ls.get("core", 0) or 0,
                 "strategy_score": ls.get("strategy", 0) or 0,
                 "ml_score": ls.get("ml_features", 0) or 0,
+                "rl_score": ls.get("rl_bot", 0) or 0,
                 "robustness_score": ls.get("robustness", 0) or 0,
                 "weighted_score": v.final_score,
                 "verdict": v.classification,
@@ -1174,7 +1236,7 @@ async def dw_place_order(req: OrderRequest):
 async def fml_chapters():
     """List available Financial ML chapters."""
     try:
-        from financial_ML.applied import get_chapters
+        from references.financial_ml.applied import get_chapters
         return get_chapters()
     except ImportError:
         # Fallback: scan the readings directory for chapter files
@@ -1203,7 +1265,7 @@ async def fml_run(req: ChapterRunRequest):
 
     # Start async execution
     try:
-        from financial_ML.applied import run_chapters_async
+        from references.financial_ml.applied import run_chapters_async
         asyncio.create_task(run_chapters_async(
             batch_id, req.chapters,
             tickers=req.tickers,
@@ -1220,7 +1282,7 @@ async def fml_run(req: ChapterRunRequest):
 async def fml_abort(batch_id: str):
     """Abort a running FML batch."""
     try:
-        from financial_ML.applied import abort_batch
+        from references.financial_ml.applied import abort_batch
         ok = abort_batch(batch_id)
         return {"aborted": ok}
     except ImportError:
@@ -1232,7 +1294,7 @@ async def fml_progress(batch_id: str):
     """SSE stream for FML batch progress."""
     async def event_stream():
         try:
-            from financial_ML.applied import get_batch_progress
+            from references.financial_ml.applied import get_batch_progress
             import json
             while True:
                 progress = get_batch_progress(batch_id)
@@ -1270,7 +1332,7 @@ async def fml_history(page: int = 1, limit: int = 50):
 async def tts_chapters():
     """List available Test & Tune chapters."""
     try:
-        from testune_trade_sys.applied import get_chapters
+        from references.testune.applied import get_chapters
         return get_chapters()
     except ImportError:
         try:
@@ -1297,7 +1359,7 @@ async def tts_run(req: ChapterRunRequest):
     batch_id = str(uuid.uuid4())
 
     try:
-        from testune_trade_sys.applied import run_chapters_async
+        from references.testune.applied import run_chapters_async
         asyncio.create_task(run_chapters_async(
             batch_id, req.chapters,
             tickers=req.tickers,
@@ -1314,7 +1376,7 @@ async def tts_run(req: ChapterRunRequest):
 async def tts_abort(batch_id: str):
     """Abort a running TTS batch."""
     try:
-        from testune_trade_sys.applied import abort_batch
+        from references.testune.applied import abort_batch
         ok = abort_batch(batch_id)
         return {"aborted": ok}
     except ImportError:
@@ -1326,7 +1388,7 @@ async def tts_progress(batch_id: str):
     """SSE stream for TTS batch progress."""
     async def event_stream():
         try:
-            from testune_trade_sys.applied import get_batch_progress
+            from references.testune.applied import get_batch_progress
             import json
             while True:
                 progress = get_batch_progress(batch_id)
@@ -1529,8 +1591,8 @@ async def rag_query(
 
 # ─── Market Ticker Prices ────────────────────────────────────────────────
 
-_ticker_price_cache: Dict[str, Any] = {}   # cache_key -> response dict
-_ticker_cache_ts: Dict[str, float] = {}    # cache_key -> epoch timestamp
+_ticker_price_cache: Dict[str, Any] = {}   # L1 in-memory: cache_key -> response dict
+_ticker_cache_ts: Dict[str, float] = {}    # L1 in-memory: cache_key -> monotonic ts
 _TICKER_CACHE_TTL_OPEN = 10    # seconds – during market hours
 _TICKER_CACHE_TTL_CLOSED = 120 # seconds – after market close
 
@@ -1574,6 +1636,17 @@ async def market_ticker_prices(symbols: str, market: str = "US"):
         if cache_key in _ticker_price_cache and (now - _ticker_cache_ts.get(cache_key, 0)) < ttl:
             return _ticker_price_cache[cache_key]
 
+        # L2: Redis (cross-restart persistence)
+        try:
+            from infrastructure.cache import cache as _redis_cache
+            redis_val = _redis_cache.get(f"price:{cache_key}")
+            if redis_val is not None:
+                _ticker_price_cache[cache_key] = redis_val
+                _ticker_cache_ts[cache_key] = now
+                return redis_val
+        except Exception:
+            pass
+
         # For IND market, append .NS suffix for NSE (with override map)
         if market == "IND":
             from utils import yf_nse_symbol
@@ -1611,9 +1684,14 @@ async def market_ticker_prices(symbols: str, market: str = "US"):
         prices = await asyncio.to_thread(_fetch)
         result = {"is_market_open": is_open, "prices": prices}
 
-        # ── populate cache ──
+        # ── populate cache (L1 + L2) ──
         _ticker_price_cache[cache_key] = result
         _ticker_cache_ts[cache_key] = now
+        try:
+            from infrastructure.cache import cache as _redis_cache
+            _redis_cache.set(f"price:{cache_key}", result, ttl=ttl)
+        except Exception:
+            pass
 
         return result
     except Exception as e:
@@ -1622,3 +1700,289 @@ async def market_ticker_prices(symbols: str, market: str = "US"):
         if cache_key in _ticker_price_cache:
             return _ticker_price_cache[cache_key]
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── RL Bot ─────────────────────────────────────────────────────────────
+
+
+class RLTrainRequest(BaseModel):
+    tickers: List[str]
+    algorithm: str = "PPO"
+    reward_type: str = "hybrid"
+    total_timesteps: int = 50000
+    lookback: int = 60
+    train_days: int = 252
+    test_days: int = 63
+    folds: int = 4
+    initial_capital: float = 100000
+
+
+class RLEvalRequest(BaseModel):
+    ticker: str
+    algorithm: str = "PPO"
+    eval_days: int = 252
+
+
+class RLSignalRequest(BaseModel):
+    ticker: str
+    algorithm: str = "PPO"
+
+
+@router.post("/rl-bot/train")
+async def rl_bot_train(req: RLTrainRequest):
+    """Train RL agents for given tickers."""
+    try:
+        from services.rl_bot.train_rl_agent import train_multi_ticker, TrainConfig
+
+        cfg = TrainConfig(
+            algorithm=req.algorithm,
+            total_timesteps=req.total_timesteps,
+            reward_type=req.reward_type,
+            lookback=req.lookback,
+            train_days=req.train_days,
+            test_days=req.test_days,
+            total_folds=req.folds,
+            initial_capital=req.initial_capital,
+        )
+
+        results = await asyncio.to_thread(train_multi_ticker, req.tickers, cfg)
+
+        out = {}
+        for ticker, r in results.items():
+            out[ticker] = {
+                "algorithm": r.algorithm,
+                "model_path": r.model_path,
+                "avg_test_return": round(r.avg_test_return, 2),
+                "avg_test_sharpe": round(r.avg_test_sharpe, 2),
+                "avg_test_drawdown": round(r.avg_test_drawdown, 2),
+                "folds": [
+                    {
+                        "fold": f.fold,
+                        "train_period": f"{f.train_start} → {f.train_end}",
+                        "test_period": f"{f.test_start} → {f.test_end}",
+                        "return_pct": round(f.test_return_pct, 2),
+                        "sharpe": round(f.test_sharpe, 2),
+                        "max_dd_pct": round(f.test_max_drawdown_pct, 2),
+                        "trades": f.test_n_trades,
+                        "win_rate": round(f.test_win_rate * 100, 1),
+                    }
+                    for f in r.folds
+                ],
+            }
+
+        return {"results": out}
+    except Exception as e:
+        logger.error("RL train error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/rl-bot/evaluate")
+async def rl_bot_evaluate(req: RLEvalRequest):
+    """Evaluate a trained RL agent on recent data."""
+    try:
+        from pathlib import Path
+
+        safe_ticker = req.ticker.replace(".", "_").replace(":", "_")
+        model_dir = Path("data") / "rl_models"
+        model_path = str(model_dir / f"{safe_ticker}_{req.algorithm.lower()}")
+
+        # Check model exists
+        if not (model_dir / f"{safe_ticker}_{req.algorithm.lower()}.zip").exists():
+            raise HTTPException(
+                status_code=404,
+                detail=f"No trained model found for {req.ticker} ({req.algorithm}). Train first.",
+            )
+
+        from services.rl_bot.evaluate_agent import evaluate_agent
+        from dataclasses import asdict
+
+        metrics, signals, trades = await asyncio.to_thread(
+            evaluate_agent,
+            req.ticker,
+            model_path,
+            req.algorithm,
+            eval_days=req.eval_days,
+        )
+
+        return _sanitize_floats({
+            "metrics": asdict(metrics),
+            "signals": [
+                {"date": s.date, "action": s.action, "confidence": round(s.confidence, 3)}
+                for s in signals[-30:]
+            ],
+            "trades": trades[-50:],
+        })
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("RL evaluate error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/rl-bot/signal")
+async def rl_bot_signal(req: RLSignalRequest):
+    """Get latest RL signal for a ticker."""
+    try:
+        from pathlib import Path
+        from services.rl_bot.evaluate_agent import get_latest_signal
+
+        safe_ticker = req.ticker.replace(".", "_").replace(":", "_")
+        model_dir = Path("data") / "rl_models"
+        model_path = str(model_dir / f"{safe_ticker}_{req.algorithm.lower()}")
+
+        if not (model_dir / f"{safe_ticker}_{req.algorithm.lower()}.zip").exists():
+            return {"action": "HOLD", "confidence": 0.0, "status": "no_model"}
+
+        signal = await asyncio.to_thread(
+            get_latest_signal, req.ticker, model_path, req.algorithm,
+        )
+
+        return {
+            "ticker": signal.ticker,
+            "date": signal.date,
+            "action": signal.action,
+            "confidence": round(signal.confidence, 3),
+            "portfolio_value": signal.portfolio_value,
+            "position": signal.position,
+        }
+    except Exception as e:
+        logger.error("RL signal error: %s", e)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/rl-bot/models")
+async def rl_bot_models():
+    """List all trained RL models."""
+    from pathlib import Path
+
+    model_dir = Path("data") / "rl_models"
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    models = []
+    for f in model_dir.glob("*.zip"):
+        parts = f.stem.rsplit("_", 1)
+        ticker = parts[0].replace("_", ".") if len(parts) == 2 else f.stem
+        algo = parts[1].upper() if len(parts) == 2 else "UNKNOWN"
+        models.append({
+            "ticker": ticker,
+            "algorithm": algo,
+            "filename": f.name,
+            "size_kb": round(f.stat().st_size / 1024, 1),
+        })
+
+    return {"models": models}
+
+
+@router.post("/rl-bot/upload-data")
+async def rl_bot_upload_data(file: UploadFile = File(...)):
+    """Upload a CSV file with OHLCV data for RL training.
+
+    Expected columns: Date, Open, High, Low, Close, Volume
+    Optional: Ticker column for multi-stock files.
+    """
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files are accepted")
+
+    import pandas as pd
+    from io import StringIO
+    from pathlib import Path
+
+    upload_dir = Path("data") / "rl_uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        content = await file.read()
+        text = content.decode("utf-8")
+        df = pd.read_csv(StringIO(text))
+
+        # Normalize column names
+        col_map = {}
+        for col in df.columns:
+            low = col.strip().lower()
+            if low in ("date", "datetime", "timestamp"):
+                col_map[col] = "Date"
+            elif low in ("open", "o"):
+                col_map[col] = "Open"
+            elif low in ("high", "h"):
+                col_map[col] = "High"
+            elif low in ("low", "l"):
+                col_map[col] = "Low"
+            elif low in ("close", "c", "adj close", "adj_close"):
+                col_map[col] = "Close"
+            elif low in ("volume", "vol", "v"):
+                col_map[col] = "Volume"
+            elif low in ("ticker", "symbol"):
+                col_map[col] = "Ticker"
+        df.rename(columns=col_map, inplace=True)
+
+        required = {"Open", "High", "Low", "Close", "Volume"}
+        missing = required - set(df.columns)
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing required columns: {', '.join(missing)}. "
+                       f"Found: {', '.join(df.columns.tolist())}",
+            )
+
+        # Detect tickers in file
+        tickers = []
+        if "Ticker" in df.columns:
+            tickers = df["Ticker"].dropna().unique().tolist()
+
+        # Save the file
+        safe_name = file.filename.replace(" ", "_").replace("/", "_").replace("\\", "_")
+        save_path = upload_dir / safe_name
+        df.to_csv(save_path, index=False)
+
+        return {
+            "filename": safe_name,
+            "rows": len(df),
+            "columns": df.columns.tolist(),
+            "tickers": tickers[:50],
+            "date_range": {
+                "start": str(df["Date"].iloc[0]) if "Date" in df.columns else None,
+                "end": str(df["Date"].iloc[-1]) if "Date" in df.columns else None,
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("RL upload error: %s", e)
+        raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {e}")
+
+
+@router.get("/rl-bot/uploads")
+async def rl_bot_list_uploads():
+    """List uploaded CSV data files."""
+    from pathlib import Path
+
+    upload_dir = Path("data") / "rl_uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    files = []
+    for f in sorted(upload_dir.glob("*.csv"), key=lambda p: p.stat().st_mtime, reverse=True):
+        files.append({
+            "filename": f.name,
+            "size_kb": round(f.stat().st_size / 1024, 1),
+        })
+
+    return {"files": files}
+
+
+@router.get("/rl-bot/portfolio-analysis")
+async def rl_bot_portfolio_analysis():
+    """
+    Analyze the Green Energy Theme portfolio and generate Nifty buy predictions.
+    Studies constituent stock selection patterns, factor characteristics, and
+    applies the learned model to the broader Nifty universe.
+    """
+    try:
+        from services.rl_bot.theme_analyzer import run_portfolio_analysis
+
+        result = run_portfolio_analysis()
+        return result
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error("Portfolio analysis error: %s", e)
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
