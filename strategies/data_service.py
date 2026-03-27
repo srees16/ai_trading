@@ -230,6 +230,35 @@ class DataService:
         
         if 'Volume' in df.columns:
             df['Volume'] = pd.to_numeric(df['Volume'], errors='coerce').fillna(0).astype(int)
+
+        # ── OHLCV consistency validation ──
+        # Fix rows where High < Low (data corruption)
+        if {'Open', 'High', 'Low', 'Close'}.issubset(df.columns):
+            bad_hl = df['High'] < df['Low']
+            if bad_hl.any():
+                logger.warning("OHLCV: %d rows with High < Low — swapping", bad_hl.sum())
+                df.loc[bad_hl, ['High', 'Low']] = df.loc[bad_hl, ['Low', 'High']].values
+
+            # Clamp High to be >= max(Open, Close) and Low <= min(Open, Close)
+            oc_max = df[['Open', 'Close']].max(axis=1)
+            oc_min = df[['Open', 'Close']].min(axis=1)
+            df['High'] = df['High'].clip(lower=oc_max)
+            df['Low'] = df['Low'].clip(upper=oc_min)
+
+            # Drop rows where any OHLC value is zero or negative (bad data)
+            invalid_price = (df[['Open', 'High', 'Low', 'Close']] <= 0).any(axis=1)
+            if invalid_price.any():
+                logger.warning("OHLCV: dropping %d rows with zero/negative prices", invalid_price.sum())
+                df = df[~invalid_price]
+
+        # Deduplicate index (can occur when merging yfinance + Bhavcopy)
+        if df.index.duplicated().any():
+            logger.warning("OHLCV: dropping %d duplicate index rows", df.index.duplicated().sum())
+            df = df[~df.index.duplicated(keep='last')]
+
+        # Normalize timezone to tz-naive (IST dates only, avoids merge misalignment)
+        if df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
         
         return df
     

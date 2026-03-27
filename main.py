@@ -163,6 +163,28 @@ class AlgoTradingSystem:
         
         logger.info(f"Generated {len(signals)} trading signals")
         
+        # Step 6: Carver vol-targeted enrichment (US stocks only)
+        carver_plans = []
+        if self.market == "US":
+            try:
+                from config import Config
+                if getattr(Config, "CARVER_US_ENABLED", False):
+                    logger.info("Step 6: Running Carver US pipeline for vol-targeted sizing")
+                    from services.us_carver_pipeline import run_us_carver_pipeline
+                    carver_result = run_us_carver_pipeline(self.tickers)
+                    carver_plans = carver_result.trade_plans
+                    logger.info(
+                        "Carver US: %d trade plans from %d symbols (IDM=%.2f)",
+                        len(carver_plans), carver_result.symbols_processed, carver_result.idm,
+                    )
+                    event_bus.emit(
+                        "pipeline.carver_us_done",
+                        payload={"plans": len(carver_plans), "idm": carver_result.idm},
+                        source="main",
+                    )
+            except Exception as exc:
+                logger.debug("Carver US enrichment skipped: %s", exc)
+
         # Step 7: Save results
         logger.info("Step 7: Saving results to file")
         self.storage_manager.save_signals(signals, append=Config.APPEND_MODE)

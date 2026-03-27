@@ -295,10 +295,65 @@ class DecisionEngine:
             elif metrics.altman_z_score < 1.81:
                 score -= 0.5   # High distress / bankruptcy risk
             count += 1
+
+        # PE Ratio (IND context: < 15 cheap, 15-25 fair, > 40 expensive)
+        if getattr(metrics, 'pe_ratio', None) is not None:
+            if 0 < metrics.pe_ratio < 15:
+                score += 0.3
+            elif metrics.pe_ratio <= 25:
+                score += 0.1
+            elif metrics.pe_ratio > 40:
+                score -= 0.3
+            elif metrics.pe_ratio < 0:
+                score -= 0.4  # negative PE = loss-making
+            count += 1
+
+        # Debt-to-Equity (lower is better; < 0.5 good, > 2 risky)
+        if getattr(metrics, 'debt_to_equity', None) is not None:
+            if metrics.debt_to_equity < 0.3:
+                score += 0.3
+            elif metrics.debt_to_equity < 1.0:
+                score += 0.1
+            elif metrics.debt_to_equity > 2.0:
+                score -= 0.4
+            count += 1
+
+        # Earnings Growth YoY (> 15% strong, negative is weak)
+        if getattr(metrics, 'earnings_growth', None) is not None:
+            if metrics.earnings_growth > 25:
+                score += 0.4
+            elif metrics.earnings_growth > 15:
+                score += 0.2
+            elif metrics.earnings_growth < -10:
+                score -= 0.3
+            count += 1
+
+        # Promoter holding (IND-critical: > 50% strong, < 25% weak)
+        if getattr(metrics, 'promoter_holding_pct', None) is not None:
+            if metrics.promoter_holding_pct > 60:
+                score += 0.2
+            elif metrics.promoter_holding_pct < 25:
+                score -= 0.3  # low promoter = governance risk
+            count += 1
+
+        # Promoter pledge (IND-critical: > 30% is red flag)
+        if getattr(metrics, 'promoter_pledge_pct', None) is not None:
+            if metrics.promoter_pledge_pct > 50:
+                score -= 0.5  # extreme pledge risk
+            elif metrics.promoter_pledge_pct > 30:
+                score -= 0.3
+            elif metrics.promoter_pledge_pct > 10:
+                score -= 0.1
+            count += 1
         
-        # Average the score
-        if count > 0:
+        # Average the score — require minimum 4 components to avoid
+        # inflated scores from sparse data (survivorship bias fix)
+        _MIN_FUNDAMENTAL_COMPONENTS = 4
+        if count >= _MIN_FUNDAMENTAL_COMPONENTS:
             score = score / count
+        elif count > 0:
+            # Penalize sparse data: normalize by floor, not actual count
+            score = score / _MIN_FUNDAMENTAL_COMPONENTS
         
         # Clamp to [-1, 1]
         return max(-1.0, min(1.0, score))

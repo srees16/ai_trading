@@ -157,6 +157,21 @@ def _is_indian_ticker(ticker: str) -> bool:
     return ticker.upper().endswith(_IND_SUFFIXES)
 
 
+def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
+    """Deduplicate index, enforce canonical column names, sort by date."""
+    if df.empty:
+        return df
+    # Flatten MultiIndex columns from yfinance batch downloads
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    # Deduplicate on index (keep first occurrence)
+    if df.index.duplicated().any():
+        df = df[~df.index.duplicated(keep="first")]
+    # Sort chronologically
+    df = df.sort_index()
+    return df
+
+
 def download_ind_ohlcv(
     ticker: str,
     *,
@@ -189,12 +204,59 @@ def download_ind_ohlcv(
     if is_ind:
         df = _try_bhavcopy(ticker, period=period, start=start, end=end)
         if df is not None and not df.empty:
-            return df
+            return _normalize_ohlcv(df)
 
     # yfinance fallback
     df = _try_yfinance(ticker, period=period, start=start, end=end)
     if df is not None and not df.empty:
-        return df
+        return _normalize_ohlcv(df)
+
+    return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
+
+
+def download_us_ohlcv(
+    ticker: str,
+    *,
+    period: str = "1y",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> pd.DataFrame:
+    """Download OHLCV for a US stock via yfinance (no .NS suffix).
+
+    Parameters
+    ----------
+    ticker : str
+        US ticker symbol (e.g. ``"AAPL"``, ``"MSFT"``).
+    period : str
+        yfinance period string (``"1y"``, ``"6mo"``, etc.).
+    start, end : str | None
+        ISO date strings.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: Open, High, Low, Close, Volume.
+    """
+    import yfinance as yf
+
+    # US tickers: use as-is (no .NS suffix)
+    sym = ticker.replace(".NS", "").replace(".BO", "")
+
+    for attempt in range(2):
+        try:
+            df = yf.download(sym, period=period, start=start, end=end,
+                             progress=False, auto_adjust=True)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            if df is not None and not df.empty:
+                return _normalize_ohlcv(df)
+        except Exception as exc:
+            exc_str = str(exc)
+            if attempt == 0 and ("401" in exc_str or "Invalid Crumb" in exc_str):
+                _clear_yfinance_crumb_cache()
+                continue
+            logger.debug("yfinance US failed for %s: %s", ticker, exc)
+            break
 
     return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
 
@@ -249,6 +311,10 @@ def download_ind_ohlcv_batch(
                     results[t] = df
             except Exception:
                 pass
+
+    # Normalize all DataFrames: dedup index, flatten columns, sort
+    for t in list(results):
+        results[t] = _normalize_ohlcv(results[t])
 
     return results
 

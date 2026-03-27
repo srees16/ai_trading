@@ -99,6 +99,17 @@ class StockMetrics:
     altman_z_score: Optional[float] = None
     beneish_m_score: Optional[float] = None
     piotroski_f_score: Optional[int] = None
+
+    # IND-specific Fundamentals
+    pe_ratio: Optional[float] = None           # Trailing PE
+    debt_to_equity: Optional[float] = None     # D/E ratio
+    revenue_growth: Optional[float] = None     # YoY revenue growth %
+    earnings_growth: Optional[float] = None    # YoY earnings growth %
+    promoter_holding_pct: Optional[float] = None   # Promoter shareholding %
+    promoter_pledge_pct: Optional[float] = None    # Pledged % of promoter holding
+    mutual_fund_holding_pct: Optional[float] = None  # MF ownership %
+    dii_holding_pct: Optional[float] = None    # DII (incl MF) ownership %
+    fii_holding_pct: Optional[float] = None    # FII ownership %
     
     # Technicals
     rsi: Optional[float] = None

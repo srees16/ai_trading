@@ -118,9 +118,54 @@ class AutoExecutor:
     ):
         self.kite = kite
         self.screener = NSEScreener(screener_cfg)
-        self.risk_mgr = RiskManager(risk_cfg, kite=kite)
         self.auto_place = auto_place
         self._trade_monitor = trade_monitor
+
+        # Carver framework: create VolatilityTarget and inject into RiskManager
+        self._vol_target = None
+        self._carver_enabled = False
+        try:
+            from config import Config
+            if getattr(Config, "CARVER_ENABLED", False):
+                from services.volatility_target import VolatilityTarget, VolatilityTargetConfig
+                vt_cfg = VolatilityTargetConfig(
+                    initial_capital=getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000.0),
+                    annual_vol_target_pct=getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.20),
+                    max_leverage_factor=getattr(Config, "CARVER_MAX_LEVERAGE", 1.0),
+                )
+                self._vol_target = VolatilityTarget(vt_cfg)
+                self._carver_enabled = True
+
+                # Restore persisted capital state (peak equity + cumulative P&L)
+                try:
+                    import json as _json
+                    import os as _os
+                    _state_path = _os.path.join(
+                        _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
+                        "data", "portfolio_state.json",
+                    )
+                    if _os.path.exists(_state_path):
+                        with open(_state_path) as _f:
+                            _state = _json.load(_f)
+                        cum_pnl = _state.get("cumulative_realized_pnl", 0.0)
+                        if cum_pnl != 0:
+                            self._vol_target.add_realized(cum_pnl)
+                        Config._CUMULATIVE_REALIZED_PNL = cum_pnl
+                        Config._PEAK_EQUITY = _state.get("peak_equity", vt_cfg.initial_capital)
+                        logger.info("Restored portfolio state: cum_pnl=%.0f, peak=%.0f",
+                                    cum_pnl, Config._PEAK_EQUITY)
+                except Exception:
+                    pass  # No persisted state yet
+
+                logger.info("Carver framework enabled: vol_target=%.0f%%, capital=%.0f",
+                            vt_cfg.annual_vol_target_pct * 100, self._vol_target.current_capital)
+        except Exception as exc:
+            logger.debug("Carver framework not available: %s", exc)
+
+        self.risk_mgr = RiskManager(
+            risk_cfg, kite=kite,
+            volatility_target=self._vol_target,
+        )
 
     # â”€â”€ Public API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -217,9 +262,50 @@ class AutoExecutor:
             screened_df = self._filter_by_spread(screened_df, _cb)
             report.screened_df = screened_df
 
+
+        # -- 3c. P1 fix: Portfolio drawdown halt ---------------
+        try:
+            from services.portfolio_vol_monitor import assess_portfolio_risk
+            from kite_connect.trading.order_service import get_holdings
+            from config import Config
+            if self.kite is not None:
+                holdings = get_holdings(self.kite)
+                held = [h for h in holdings if int(h.get("quantity", 0)) > 0]
+                if held:
+                    pos_values = {
+                        h["tradingsymbol"]: float(h.get("last_price", 0)) * int(h.get("quantity", 0))
+                        for h in held if h.get("last_price")
+                    }
+                    inst_vols = {s: 0.02 for s in pos_values}  # conservative 2% default
+                    total_cap = getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000)
+                    peak_eq = getattr(Config, "_PEAK_EQUITY", None)
+                    snap = assess_portfolio_risk(
+                        pos_values, inst_vols,
+                        target_annual_vol_pct=getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.20),
+                        total_capital=total_cap,
+                        peak_equity=peak_eq,
+                    )
+                    if snap.risk_level.value == 'HALTED':
+                        _cb(f'PORTFOLIO HALT: drawdown {snap.drawdown_pct:.1f}% exceeds limit - no new trades')
+                        logger.warning('Portfolio DD halt triggered (%.1f%%) - blocking all new orders', snap.drawdown_pct)
+                        return report
+                    if snap.scale_factor < 1.0:
+                        report._dd_scale = snap.scale_factor
+                        _cb(f'Portfolio risk: scale factor {snap.scale_factor:.2f} applied (DD warning)')
+        except Exception as exc:
+            logger.debug('Portfolio DD check failed (non-fatal): %s', exc)
+
         # â”€â”€ 4.  Risk management / trade plans â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         _cb("Generating trade plans with risk management â€¦")
-        plans = self.risk_mgr.plan_trades(screened_df)
+        plans = self._generate_trade_plans(screened_df, _cb)
+
+        # P1 fix: Apply portfolio DD scale_factor to position quantities
+        dd_scale = getattr(report, '_dd_scale', 1.0)
+        if dd_scale < 1.0 and plans:
+            for plan in plans:
+                plan.quantity = max(1, int(plan.quantity * dd_scale))
+            _cb(f"DD scale {dd_scale:.2f} applied to {len(plans)} plans")
+
         report.trade_plans = plans
         report.plans_count = len(plans)
 
@@ -259,6 +345,143 @@ class AutoExecutor:
             )
 
         return report
+
+    # -- Carver-aware trade plan generation ------------------------------
+
+    def _generate_trade_plans(
+        self, screened_df: pd.DataFrame, _cb,
+    ) -> List[TradePlan]:
+        """Generate trade plans using Carver pipeline when enabled, else legacy.
+
+        When CARVER_ENABLED=True:
+          1. Compute OHLCV volatilities for screened stocks
+          2. Run EWMAC forecasts + screener forecast
+          3. Combine forecasts with FDM
+          4. Apply cost speed limit filter
+          5. Compute Carver position sizes and generate plans via plan_trades_carver()
+
+        Falls back to legacy plan_trades() if anything fails.
+        """
+        if not self._carver_enabled or self._vol_target is None:
+            return self.risk_mgr.plan_trades(screened_df)
+
+        try:
+            _cb("Carver pipeline: computing volatilities & forecasts …")
+            from services.instrument_volatility import compute_volatilities_batch
+            from strategies.ewmac import compute_ewmac_batch
+            from strategies.carry_rule import compute_carry_batch
+            from services.forecast_scalar import screener_to_forecast
+            from services.forecast_combiner import combine_forecasts_batch
+            from services.cost_speed_limit import filter_by_cost
+            from services.instrument_weights import compute_handcrafted_weights, get_default_idm
+            from config import Config
+            from utils import download_ind_ohlcv
+
+            symbols = screened_df["symbol"].tolist()
+
+            # Step 1: Fetch OHLCV for vol + EWMAC computation
+            ohlcv_cache = {}
+            for sym in symbols:
+                try:
+                    df = download_ind_ohlcv(sym, period="6mo")
+                    if df is not None and len(df) >= 64:
+                        ohlcv_cache[sym] = df
+                except Exception:
+                    pass
+
+            if not ohlcv_cache:
+                logger.warning("Carver: no OHLCV data — falling back to legacy")
+                return self.risk_mgr.plan_trades(screened_df)
+
+            # Step 2: Volatilities
+            vol_data = compute_volatilities_batch(ohlcv_cache)
+            instrument_vols = {s: v["instrument_value_vol"] for s, v in vol_data.items()}
+
+            # Step 3: EWMAC forecasts
+            ewmac_batch = compute_ewmac_batch(ohlcv_cache)
+
+            # Step 3b: Carry forecasts (dividend yield - funding cost)
+            try:
+                carry_batch = compute_carry_batch(ohlcv_cache)
+                _cb(f"Carver: carry forecasts for {len(carry_batch)}/{len(ohlcv_cache)} symbols")
+            except Exception as exc:
+                carry_batch = {}
+                logger.debug("Carry forecast computation failed (non-fatal): %s", exc)
+
+            # Step 4: Build per-symbol forecast dicts
+            all_forecasts = {}
+            score_col = "score"
+            for sym in ohlcv_cache:
+                fc = {}
+                if sym in ewmac_batch:
+                    for ef in ewmac_batch[sym]:
+                        fc[f"ewmac_{ef.fast}_{ef.slow}"] = ef.forecast
+                # Add carry forecast
+                if sym in carry_batch:
+                    fc["carry"] = carry_batch[sym].forecast
+                # Add screener score as a forecast
+                row_match = screened_df[screened_df["symbol"] == sym]
+                if not row_match.empty and score_col in row_match.columns:
+                    sc = float(row_match.iloc[0][score_col])
+                    fc["screener"] = screener_to_forecast(sc)
+                if fc:
+                    all_forecasts[sym] = fc
+
+            if not all_forecasts:
+                logger.warning("Carver: no forecasts generated — falling back to legacy")
+                return self.risk_mgr.plan_trades(screened_df)
+
+            # Step 5: Combine forecasts
+            combined = combine_forecasts_batch(all_forecasts)
+            combined_values = {s: cf.combined_forecast for s, cf in combined.items()}
+
+            # Step 6: Cost speed limit
+            vol_target_pct = getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.20)
+            combined_values = filter_by_cost(combined_values, vol_target_pct)
+
+            if not combined_values:
+                logger.info("Carver: all symbols filtered by cost — falling back to legacy")
+                return self.risk_mgr.plan_trades(screened_df)
+
+            # Step 6b: P1 fix — Earnings blackout filter
+            # Suppress forecasts for stocks within ±2 days of earnings date
+            try:
+                blackout_syms = self._get_earnings_blackout_symbols(list(combined_values.keys()))
+                if blackout_syms:
+                    for sym in blackout_syms:
+                        combined_values.pop(sym, None)
+                    _cb(f"Earnings blackout: {len(blackout_syms)} symbols suppressed — {', '.join(blackout_syms)}")
+            except Exception:
+                pass  # Earnings data unavailable — proceed without filter
+
+            if not combined_values:
+                logger.info("Carver: all symbols in earnings blackout — falling back to legacy")
+                return self.risk_mgr.plan_trades(screened_df)
+
+            # Step 7: Instrument weights + IDM
+            active = [s for s in combined_values if combined_values[s] > 0]
+            sector_map = getattr(Config, "NSE_SECTOR_MAP", {})
+            weights = compute_handcrafted_weights(active, sector_map)
+            idm = get_default_idm(len(active))
+
+            _cb(f"Carver pipeline: {len(combined_values)} forecasts, IDM={idm:.2f}")
+
+            # Step 8: Generate Carver trade plans
+            plans = self.risk_mgr.plan_trades_carver(
+                screened_df=screened_df,
+                combined_forecasts=combined_values,
+                instrument_vols=instrument_vols,
+                instrument_weights=weights,
+                idm=idm,
+            )
+
+            _cb(f"Carver pipeline: {len(plans)} trade plans generated")
+            return plans
+
+        except Exception as exc:
+            logger.warning("Carver pipeline failed — falling back to legacy: %s", exc)
+            _cb("Carver pipeline error — using legacy risk management")
+            return self.risk_mgr.plan_trades(screened_df)
 
     # -- Gap 6: Multi-timeframe entry confirmation -----------------------
 
@@ -393,13 +616,14 @@ class AutoExecutor:
     # â”€â”€ Order book depth: illiquidity filter (#11) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _filter_by_spread(self, screened_df: pd.DataFrame, _cb) -> pd.DataFrame:
-        """Remove stocks with bid-ask spread > 0.5%. Reduce position for > 0.3%."""
+        """Remove stocks with bid-ask spread > 0.5%. Reduce position for 0.3-0.5%."""
         try:
             symbols = screened_df["symbol"].tolist()
             instrument_keys = [f"NSE:{s}" for s in symbols]
             quote_data = self.kite.quote(instrument_keys)
 
             remove_syms = set()
+            reduce_syms = {}  # {symbol: scale_factor}
             for idx, row in screened_df.iterrows():
                 key = f"NSE:{row['symbol']}"
                 depth = quote_data.get(key, {}).get("depth", {})
@@ -411,15 +635,27 @@ class AutoExecutor:
                     best_ask = sell_depth[0].get("price", 0)
                     if best_bid > 0 and best_ask > 0:
                         spread_pct = (best_ask - best_bid) / best_bid
-                        if spread_pct > 0.01:  # > 1% spread â€” too illiquid
+                        if spread_pct > 0.005:  # > 0.5% spread - too illiquid, remove
                             remove_syms.add(row["symbol"])
-                            _cb(f"  Removed {row['symbol']} â€” spread {spread_pct:.1%} > 1%")
-                        elif spread_pct > 0.005:  # > 0.5% â€” flag as illiquid
-                            _cb(f"  Warning: {row['symbol']} spread {spread_pct:.2%}")
+                            _cb(f"  Removed {row['symbol']} - spread {spread_pct:.2%} > 0.5%")
+                        elif spread_pct > 0.003:  # 0.3-0.5% - reduce position by 50%
+                            reduce_syms[row["symbol"]] = 0.5
+                            _cb(f"  Reduce {row['symbol']} - spread {spread_pct:.2%} (position halved)")
 
             if remove_syms:
                 screened_df = screened_df[~screened_df["symbol"].isin(remove_syms)]
                 _cb(f"Depth filter removed {len(remove_syms)} illiquid stocks")
+
+            # Tag reduced-position symbols for downstream sizing
+            if reduce_syms:
+                screened_df = screened_df.copy()
+                screened_df["spread_scale"] = screened_df["symbol"].map(
+                    lambda s: reduce_syms.get(s, 1.0)
+                )
+                _cb(f"Depth filter: {len(reduce_syms)} stocks position-reduced by 50%")
+            elif "spread_scale" not in screened_df.columns:
+                screened_df = screened_df.copy()
+                screened_df["spread_scale"] = 1.0
 
         except Exception as exc:
             logger.warning("Depth filter failed (non-fatal): %s", exc)

@@ -34,8 +34,9 @@ class RiskConfig:
     total_capital: float = 500_000.0      # Total trading capital (₹)
     risk_per_trade_pct: float = 0.02      # Max 2 % of capital per trade
     max_open_trades: int = 6              # Concentrated portfolio — higher conviction
-    sl_method: str = "tighter"            # "ma50", "swing_low", "tighter"
+    sl_method: str = "tighter"            # "ma50", "swing_low", "atr", "tighter"
     swing_lookback: int = 10              # Days for swing-low computation
+    atr_multiplier: float = 2.0           # ATR × multiplier for ATR-based SL
     min_rr_ratio: float = 2.5            # Higher R:R for fewer, better trades
     use_kelly_sizing: bool = True         # Scale risk by signal confidence (half-Kelly)
     kelly_floor_pct: float = 0.01         # Minimum risk (1%) for low-confidence
@@ -43,12 +44,15 @@ class RiskConfig:
     sl_min_pct: float = 0.05              # SL at least 5 % below entry
     sl_max_pct: float = 0.08              # SL at most 8 % below entry
     # R1: Sector concentration limits
-    max_sector_exposure_pct: float = 0.40 # Max 40% capital in one sector
+    max_sector_exposure_pct: float = 0.30 # Max 30% capital in one sector (aligned with RiskEngine)
     max_trades_per_sector: int = 3        # Max 3 open trades per sector
     # R3: Trailing stop-loss
     trailing_sl_enabled: bool = True      # Enable trailing stop once profit > threshold
     trailing_sl_activation_pct: float = 0.05  # Activate trailing SL after 5% profit
     trailing_sl_distance_pct: float = 0.03    # Trail SL 3% below current price
+    # P7: Swing exit timing
+    swing_max_hold_days: int = 10         # Force exit after 10 trading days (swing)
+    positional_max_hold_days: int = 30    # Force exit after 30 trading days (positional)
     # R4: Market regime (VIX / ADX) scaling
     vix_caution_threshold: float = 20.0   # VIX > 20 → scale position to vix_caution_scale
     vix_panic_threshold: float = 25.0     # VIX > 25 → block all new BUY orders
@@ -98,14 +102,29 @@ class TradePlan:
 class RiskManager:
     """Converts a screened-stock DataFrame into a list of *TradePlan* objects."""
 
-    def __init__(self, config: RiskConfig | None = None, kite=None):
+    def __init__(
+        self,
+        config: RiskConfig | None = None,
+        kite=None,
+        max_deployment_cap: float = 0,
+        volatility_target=None,
+    ):
         self.cfg = config or RiskConfig()
         self.kite = kite
+        self._max_deployment_cap = max_deployment_cap  # 0 = no cap
+        self._vol_target = volatility_target  # Carver VolatilityTarget instance
 
     def _available_capital(self) -> float:
-        """Return capital remaining after deducting open positions."""
+        """Return capital remaining after deducting open positions.
+
+        Respects max_deployment_cap from RiskEngine when set.
+        """
+        capital_ceiling = self.cfg.total_capital
+        if self._max_deployment_cap > 0:
+            capital_ceiling = min(capital_ceiling, self._max_deployment_cap)
+
         if self.kite is None:
-            return self.cfg.total_capital
+            return capital_ceiling
         try:
             from kite_connect.trading.order_service import get_positions
             positions = get_positions(self.kite)
@@ -114,13 +133,13 @@ class RiskManager:
                 for p in positions.get("net", [])
                 if float(p.get("quantity", 0)) != 0
             )
-            available = max(0, self.cfg.total_capital - deployed)
-            logger.info("Capital: %.0f total, %.0f deployed, %.0f available",
-                        self.cfg.total_capital, deployed, available)
+            available = max(0, capital_ceiling - deployed)
+            logger.info("Capital: %.0f ceiling (%.0f total), %.0f deployed, %.0f available",
+                        capital_ceiling, self.cfg.total_capital, deployed, available)
             return available
         except Exception as exc:
             logger.warning("Could not fetch positions for capital calc: %s", exc)
-            return self.cfg.total_capital
+            return capital_ceiling
 
     def plan_trades(
         self,
@@ -208,6 +227,108 @@ class RiskManager:
         logger.info("Generated %d trade plans (top-%d)", len(plans), limit)
         return plans
 
+    def plan_trades_carver(
+        self,
+        screened_df: pd.DataFrame,
+        combined_forecasts: Dict[str, float],
+        instrument_vols: Dict[str, float],
+        instrument_weights: Optional[Dict[str, float]] = None,
+        idm: float = 1.6,
+        max_trades: Optional[int] = None,
+    ) -> List[TradePlan]:
+        """Carver-framework trade planner using combined forecasts and vol-targeting.
+
+        Uses volatility-targeted continuous position sizing instead of Kelly.
+        Falls back to legacy plan_trades() if Carver components unavailable.
+
+        Parameters
+        ----------
+        screened_df : pd.DataFrame
+            Output of NSEScreener.screen().
+        combined_forecasts : dict[str, float]
+            {symbol: combined_forecast} from forecast_combiner.
+        instrument_vols : dict[str, float]
+            {symbol: instrument_value_volatility} from instrument_volatility.
+        instrument_weights : dict[str, float] | None
+            Handcrafted instrument weights.
+        idm : float
+            Instrument Diversification Multiplier.
+        max_trades : int | None
+            Override for max_open_trades.
+
+        Returns
+        -------
+        list[TradePlan]
+        """
+        if screened_df.empty or not combined_forecasts:
+            return self.plan_trades(screened_df, max_trades)
+
+        if self._vol_target is None:
+            logger.warning("VolatilityTarget not set — falling back to legacy plan_trades")
+            return self.plan_trades(screened_df, max_trades)
+
+        limit = max_trades or self.cfg.max_open_trades
+        available = self._available_capital()
+        plans: List[TradePlan] = []
+        sector_trade_count: Dict[str, int] = {}
+        sector_capital: Dict[str, float] = {}
+
+        regime_scale = self._get_regime_scale()
+        if regime_scale <= 0:
+            logger.warning("VIX panic regime — no new BUY orders generated")
+            return []
+
+        # Sort by absolute forecast strength (strongest conviction first)
+        df_sorted = screened_df.copy()
+        df_sorted["_abs_forecast"] = df_sorted["symbol"].map(
+            lambda s: abs(combined_forecasts.get(s, 0))
+        )
+        df_sorted = df_sorted.sort_values("_abs_forecast", ascending=False)
+
+        for _, row in df_sorted.head(limit).iterrows():
+            if available <= 0:
+                break
+
+            sym = row.get("symbol", "")
+            forecast = combined_forecasts.get(sym)
+            vol = instrument_vols.get(sym)
+            if forecast is None or vol is None or vol <= 0:
+                continue
+
+            # Only take positive-forecast trades (long-only for NSE)
+            if forecast <= 0:
+                continue
+
+            sector = str(row.get("sector_name", "")).strip() or "Unknown"
+            if sector_trade_count.get(sector, 0) >= self.cfg.max_trades_per_sector:
+                continue
+            sector_cap = sector_capital.get(sector, 0.0)
+            if sector_cap >= self.cfg.total_capital * self.cfg.max_sector_exposure_pct:
+                continue
+
+            weight = (instrument_weights or {}).get(sym, 0.10)
+            # P1-6: Apply spread-based position reduction
+            spread_scale = float(row.get("spread_scale", 1.0)) if "spread_scale" in row.index else 1.0
+            plan = self._build_plan(
+                row, available, regime_scale,
+                carver_forecast=forecast,
+                instrument_value_vol=vol,
+                instrument_weight=weight,
+                idm=idm,
+            )
+            if plan is not None:
+                # P1-6: Apply spread-based position reduction
+                if spread_scale < 1.0 and plan.quantity > 0:
+                    plan.quantity = max(1, int(plan.quantity * spread_scale))
+                plans.append(plan)
+                allocated = plan.quantity * plan.entry_price
+                available -= allocated
+                sector_trade_count[sector] = sector_trade_count.get(sector, 0) + 1
+                sector_capital[sector] = sector_cap + allocated
+
+        logger.info("Generated %d Carver trade plans (top-%d)", len(plans), limit)
+        return plans
+
     # ── Internal ───────────────────────────────────────────────
 
     def _get_regime_scale(self) -> float:
@@ -234,34 +355,68 @@ class RiskManager:
             logger.debug("VIX regime check failed: %s", exc)
 
         try:
-            # ADX: if screened data has adx column, use the median
-            # Otherwise skip (ADX is per-stock, so we use portfolio median)
-            pass  # ADX is applied per-stock in _build_plan if available
-        except Exception:
-            pass
+            # ADX: fetch Nifty 50 ADX as market-wide trend proxy
+            import yfinance as yf
+            nifty = yf.download("^NSEI", period="2mo", progress=False, auto_adjust=True)
+            if isinstance(nifty.columns, pd.MultiIndex):
+                nifty.columns = nifty.columns.get_level_values(0)
+            if nifty is not None and len(nifty) > 28:
+                from kite_connect.nse.screener import _adx
+                market_adx = _adx(nifty)
+                if market_adx is not None and market_adx < self.cfg.adx_choppy_threshold:
+                    scale = min(scale, self.cfg.adx_choppy_scale)
+                    logger.info("Market ADX=%.1f < %.0f (choppy) — scaling to %.0f%%",
+                                market_adx, self.cfg.adx_choppy_threshold, scale * 100)
+        except Exception as exc:
+            logger.debug("ADX regime check failed: %s", exc)
 
         return scale
 
-    def _build_plan(self, row: pd.Series, available_capital: float, regime_scale: float = 1.0) -> Optional[TradePlan]:
+    def _build_plan(
+        self,
+        row: pd.Series,
+        available_capital: float,
+        regime_scale: float = 1.0,
+        carver_forecast: Optional[float] = None,
+        instrument_value_vol: Optional[float] = None,
+        instrument_weight: float = 0.10,
+        idm: float = 1.6,
+    ) -> Optional[TradePlan]:
         entry = float(row["close"])
         ma50 = float(row.get("ma_50", 0))
         support = float(row.get("support", 0))
         resistance = float(row.get("resistance", 0))
         score = float(row.get("score", 0))
+        atr = float(row.get("atr", 0))
 
         # ── Stop-loss ──────────────────────────────────────────
         sl_ma50 = ma50 if ma50 > 0 else entry * 0.95
         sl_swing = support if support > 0 else entry * 0.95
+        sl_atr = (entry - atr * self.cfg.atr_multiplier) if atr > 0 else entry * 0.95
 
         if self.cfg.sl_method == "ma50":
             sl = sl_ma50
         elif self.cfg.sl_method == "swing_low":
             sl = sl_swing
-        else:  # "tighter" — whichever is closer to entry (smaller loss)
-            sl = max(sl_ma50, sl_swing)
+        elif self.cfg.sl_method == "atr":
+            sl = sl_atr
+        else:  # "tighter" — whichever is closest to entry (smallest loss)
+            candidates = [sl_ma50, sl_swing]
+            if atr > 0:
+                candidates.append(sl_atr)
+            sl = max(candidates)
 
         # Clamp SL to [sl_min_pct, sl_max_pct] below entry
-        sl_floor = entry * (1 - self.cfg.sl_max_pct)   # farthest allowed
+        # P0 fix: Add overnight gap buffer — NSE has 16h overnight exposure
+        # (close 3:30 PM → open 9:15 AM), during which RBI policy, global
+        # news, FII flows can gap stocks 3-8%.  Buffer = 1.5 × daily_vol.
+        gap_buffer_pct = 0.0
+        if atr > 0 and entry > 0:
+            daily_vol_pct = atr / entry  # ATR as fraction of price
+            gap_buffer_pct = 1.5 * daily_vol_pct  # 1.5σ gap buffer
+            gap_buffer_pct = min(gap_buffer_pct, 0.04)  # cap at 4% extra
+
+        sl_floor = entry * (1 - self.cfg.sl_max_pct - gap_buffer_pct)   # farthest allowed (with gap buffer)
         sl_ceil  = entry * (1 - self.cfg.sl_min_pct)   # closest allowed
         if sl >= entry or sl > sl_ceil:
             sl = sl_ceil
@@ -281,7 +436,51 @@ class RiskManager:
         if rr_ratio < self.cfg.min_rr_ratio:
             return None
 
-        # ── Position sizing (Kelly-scaled or fixed risk) ───────
+        # ── Position sizing (Carver vol-target or Kelly-scaled) ───
+        # Carver path: uses combined forecast + vol target when available
+        if (
+            carver_forecast is not None
+            and instrument_value_vol is not None
+            and instrument_value_vol > 0
+            and self._vol_target is not None
+        ):
+            from services.position_sizer import compute_position_size
+            daily_cash_vol = self._vol_target.daily_cash_vol_target
+            capital = self._vol_target.current_capital
+            ps = compute_position_size(
+                symbol=row.get("symbol", ""),
+                combined_forecast=carver_forecast,
+                instrument_value_vol=instrument_value_vol,
+                daily_cash_vol_target=daily_cash_vol,
+                price=entry,
+                capital=capital,
+                instrument_weight=instrument_weight,
+                idm=idm,
+            )
+            qty = ps.target_quantity
+            # Apply regime scaling as a dampener
+            qty = max(0, int(qty * regime_scale))
+            # Cap by available capital
+            max_qty_cap = math.floor(available_capital / entry) if entry > 0 else 0
+            qty = min(qty, max_qty_cap)
+            if qty <= 0:
+                return None
+            risk_amount = qty * risk_per_share
+            reward_amount = qty * reward_per_share
+            return TradePlan(
+                symbol=row["symbol"],
+                side="BUY",
+                entry_price=entry,
+                stop_loss=sl,
+                target_price=target,
+                quantity=qty,
+                risk_amount=risk_amount,
+                reward_amount=reward_amount,
+                rr_ratio=rr_ratio,
+                score=score,
+            )
+
+        # Legacy path: Half-Kelly sizing (fallback when Carver modules unavailable)
         if self.cfg.use_kelly_sizing:
             # Half-Kelly: scale risk_pct by confidence (score 0-1)
             # score from screener is typically 0-100, normalize
@@ -296,6 +495,11 @@ class RiskManager:
 
         # R4: Apply VIX/ADX regime scaling to position size
         effective_risk_pct *= regime_scale
+
+        # Per-stock ADX scaling: halve size in choppy individual stocks
+        stock_adx = float(row.get("adx", 0))
+        if 0 < stock_adx < self.cfg.adx_choppy_threshold:
+            effective_risk_pct *= self.cfg.adx_choppy_scale
 
         # GAP 8: Dynamic slippage buffer — adapt to market conditions
         slippage_pct = self._estimate_slippage(row)
@@ -437,3 +641,85 @@ class RiskManager:
 
         # Tier 3: Static fallback
         return self.cfg.slippage_buffer_pct
+
+    # ── P7: Time-based swing / positional exit review ──────────
+
+    def review_hold_exits(
+        self,
+        holdings: List[dict],
+        trade_horizon: str = "swing",
+    ) -> List[TradePlan]:
+        """Flag positions that exceed the max hold period for forced exit.
+
+        Parameters
+        ----------
+        holdings : list[dict]
+            Kite holdings response.  Each dict should include
+            ``tradingsymbol``, ``quantity``, ``average_price``,
+            ``last_price``, and ``order_timestamp`` (or ``product``
+            for inference).
+        trade_horizon : str
+            ``"swing"`` (3-10 day) or ``"positional"`` (2-6 week).
+
+        Returns
+        -------
+        list[TradePlan]
+            SELL plans for positions that have exceeded the hold window.
+        """
+        from datetime import datetime, timedelta
+
+        max_days = (
+            self.cfg.swing_max_hold_days
+            if trade_horizon == "swing"
+            else self.cfg.positional_max_hold_days
+        )
+
+        plans: List[TradePlan] = []
+        now = datetime.utcnow()
+
+        for h in holdings:
+            sym = h.get("tradingsymbol", "")
+            qty = int(h.get("quantity", 0))
+            if qty <= 0:
+                continue
+
+            # Determine entry date from order timestamp or t1_quantity
+            order_ts = h.get("order_timestamp") or h.get("opening_date")
+            if not order_ts:
+                continue  # can't determine age without timestamp
+
+            if isinstance(order_ts, str):
+                try:
+                    entry_date = datetime.fromisoformat(order_ts)
+                except (ValueError, TypeError):
+                    continue
+            elif isinstance(order_ts, datetime):
+                entry_date = order_ts
+            else:
+                continue
+
+            hold_days = (now - entry_date).days
+            if hold_days <= max_days:
+                continue
+
+            avg_price = float(h.get("average_price", 0))
+            ltp = float(h.get("last_price", avg_price))
+
+            plans.append(TradePlan(
+                symbol=sym,
+                side="SELL",
+                entry_price=ltp,
+                stop_loss=0.0,
+                target_price=0.0,
+                quantity=qty,
+                risk_amount=0.0,
+                reward_amount=0.0,
+                rr_ratio=0.0,
+                score=0.0,
+            ))
+            logger.info(
+                "P7 hold-period exit: %s held %d days (max %d for %s) — recommending SELL × %d",
+                sym, hold_days, max_days, trade_horizon, qty,
+            )
+
+        return plans

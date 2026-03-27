@@ -117,7 +117,22 @@ async def run_screen(req: PipelineRequest):
         plans = []
         if not screened_df.empty:
             kite = get_kite_session()
-            rm = RiskManager(kite=kite)
+
+            # Carver-aware: use VolatilityTarget when enabled
+            vol_target = None
+            try:
+                from config import Config
+                if getattr(Config, "CARVER_ENABLED", False):
+                    from services.volatility_target import VolatilityTarget, VolatilityTargetConfig
+                    vt_cfg = VolatilityTargetConfig(
+                        initial_capital=getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000.0),
+                        annual_vol_target_pct=getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.20),
+                    )
+                    vol_target = VolatilityTarget(vt_cfg)
+            except Exception:
+                pass
+
+            rm = RiskManager(kite=kite, volatility_target=vol_target)
             plans = rm.plan_trades(screened_df)
 
         return PipelineResponse(
@@ -252,3 +267,107 @@ async def get_latest_run(run_type: Optional[str] = None):
     except Exception as exc:
         logger.debug("Latest run fetch failed: %s", exc)
         return LatestRunResponse()
+
+
+@router.get("/carver/status")
+async def carver_status():
+    """Return Carver framework configuration and wiring status."""
+    try:
+        from config import Config
+        enabled = getattr(Config, "CARVER_ENABLED", False)
+        return {
+            "carver_enabled": enabled,
+            "annual_vol_target": getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.20),
+            "initial_capital": getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000.0),
+            "default_idm": getattr(Config, "CARVER_DEFAULT_IDM", 1.6),
+            "max_leverage": getattr(Config, "CARVER_MAX_LEVERAGE", 1.0),
+            "inertia_threshold": getattr(Config, "CARVER_INERTIA_THRESHOLD", 0.10),
+            "cost_speed_limit_factor": getattr(Config, "CARVER_COST_SPEED_LIMIT", 3.0),
+            "trade_horizon": getattr(Config, "CARVER_TRADE_HORIZON", "swing"),
+            "modules_available": _check_carver_modules(),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/carver/efficiency")
+async def carver_efficiency_report(symbols: Optional[List[str]] = None):
+    """Run the Carver calibration backtest and return the efficiency report.
+
+    This computes before vs after metrics showing the impact of the
+    Carver Systematic Trading framework redesign.
+    """
+    try:
+        from services.carver_calibration import CarverCalibrator, generate_efficiency_report
+        from config import Config
+        from utils import download_ind_ohlcv
+        from kite_connect.nse.nse_universe import get_nse_universe
+
+        tickers = symbols or get_nse_universe()[:20]  # Default: top 20
+
+        # Fetch OHLCV data
+        ohlcv_cache = {}
+        for sym in tickers:
+            try:
+                df = download_ind_ohlcv(sym, period="1y")
+                if df is not None and len(df) >= 120:
+                    ohlcv_cache[sym] = df
+            except Exception:
+                pass
+
+        if not ohlcv_cache:
+            raise HTTPException(status_code=400, detail="No OHLCV data available for calibration")
+
+        calibrator = CarverCalibrator(
+            annual_vol_target=getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.20),
+            initial_capital=getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000.0),
+        )
+        report = calibrator.run_expanding_backtest(ohlcv_cache)
+        text_report = generate_efficiency_report(report)
+
+        return {
+            "report_text": text_report,
+            "backtest_sharpe": report.backtest_sharpe,
+            "backtest_sortino": report.backtest_sortino,
+            "backtest_max_drawdown_pct": report.backtest_max_drawdown_pct,
+            "backtest_annual_return_pct": report.backtest_annual_return_pct,
+            "n_symbols": report.n_symbols,
+            "n_days": report.n_days,
+            "ewmac_scalars": report.ewmac_scalars,
+            "calibrated_fdm": report.calibrated_fdm,
+            "calibrated_idm": report.calibrated_idm,
+            "before_metrics": report.before_metrics,
+            "after_metrics": report.after_metrics,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Carver efficiency report failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+def _check_carver_modules() -> Dict[str, bool]:
+    """Check which Carver modules are importable."""
+    modules = {
+        "instrument_volatility": "services.instrument_volatility",
+        "volatility_target": "services.volatility_target",
+        "forecast_scalar": "services.forecast_scalar",
+        "forecast_combiner": "services.forecast_combiner",
+        "position_sizer": "services.position_sizer",
+        "instrument_weights": "services.instrument_weights",
+        "ewmac": "strategies.ewmac",
+        "carry_rule": "strategies.carry_rule",
+        "vol_trailing_stop": "services.vol_trailing_stop",
+        "cost_speed_limit": "services.cost_speed_limit",
+        "portfolio_vol_monitor": "services.portfolio_vol_monitor",
+        "carver_calibration": "services.carver_calibration",
+        "carver_pipeline": "services.carver_pipeline",
+    }
+    result = {}
+    for name, mod_path in modules.items():
+        try:
+            __import__(mod_path)
+            result[name] = True
+        except ImportError:
+            result[name] = False
+    return result

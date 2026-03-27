@@ -327,8 +327,77 @@ def _paper_trade_orders(verdicts: list, screened_df):
         if buy_df.empty:
             return
 
-        rm = RiskManager(RiskConfig())
-        plans = rm.plan_trades(buy_df)
+        # Carver-aware: create VolatilityTarget and use plan_trades_carver when enabled
+        vol_target = None
+        carver_enabled = False
+        try:
+            from config import Config
+            if getattr(Config, "CARVER_ENABLED", False):
+                from services.volatility_target import VolatilityTarget, VolatilityTargetConfig
+                vt_cfg = VolatilityTargetConfig(
+                    initial_capital=getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000.0),
+                    annual_vol_target_pct=getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.20),
+                )
+                vol_target = VolatilityTarget(vt_cfg)
+                carver_enabled = True
+        except Exception:
+            pass
+
+        rm = RiskManager(RiskConfig(), volatility_target=vol_target)
+
+        if carver_enabled and vol_target is not None:
+            try:
+                from services.instrument_volatility import compute_volatilities_batch
+                from strategies.ewmac import compute_ewmac_batch
+                from services.forecast_scalar import screener_to_forecast
+                from services.forecast_combiner import combine_forecasts_batch
+                from services.cost_speed_limit import filter_by_cost
+                from services.instrument_weights import compute_handcrafted_weights, get_default_idm
+                from utils import download_ind_ohlcv
+
+                ohlcv_cache = {}
+                for sym in buy_symbols:
+                    try:
+                        df = download_ind_ohlcv(sym, period="6mo")
+                        if df is not None and len(df) >= 64:
+                            ohlcv_cache[sym] = df
+                    except Exception:
+                        pass
+
+                if ohlcv_cache:
+                    vol_data = compute_volatilities_batch(ohlcv_cache)
+                    instrument_vols = {s: v["instrument_value_vol"] for s, v in vol_data.items()}
+                    ewmac_batch = compute_ewmac_batch(ohlcv_cache)
+                    all_forecasts = {}
+                    for sym in ohlcv_cache:
+                        fc = {}
+                        if sym in ewmac_batch:
+                            for ef in ewmac_batch[sym]:
+                                fc[f"ewmac_{ef.fast}_{ef.slow}"] = ef.forecast
+                        row_m = buy_df[buy_df["symbol"] == sym]
+                        if not row_m.empty and "score" in row_m.columns:
+                            fc["screener"] = screener_to_forecast(float(row_m.iloc[0]["score"]))
+                        if fc:
+                            all_forecasts[sym] = fc
+
+                    if all_forecasts:
+                        combined = combine_forecasts_batch(all_forecasts)
+                        cv = {s: cf.combined_forecast for s, cf in combined.items()}
+                        cv = filter_by_cost(cv, getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.20))
+                        active = [s for s in cv if cv[s] > 0]
+                        weights = compute_handcrafted_weights(active, getattr(Config, "NSE_SECTOR_MAP", {}))
+                        idm = get_default_idm(len(active))
+                        plans = rm.plan_trades_carver(buy_df, cv, instrument_vols, weights, idm)
+                        logger.info("Paper trade: Carver generated %d plans", len(plans))
+                    else:
+                        plans = rm.plan_trades(buy_df)
+                else:
+                    plans = rm.plan_trades(buy_df)
+            except Exception as exc:
+                logger.warning("Carver paper trade failed, using legacy: %s", exc)
+                plans = rm.plan_trades(buy_df)
+        else:
+            plans = rm.plan_trades(buy_df)
         if not plans:
             logger.info("Paper trade: no plans met R:R threshold")
             return
@@ -887,13 +956,88 @@ def _reconcile_backtest_vs_execution(
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _pre_market_with_warmup():
-    """Pre-warm DB connection (wakes Neon auto-suspend) then run pipeline."""
+    """Pre-warm DB, restore portfolio state, then run pipeline."""
     try:
         from database.connection import DatabaseManager
         DatabaseManager().pre_warm()
     except Exception as e:
         logger.warning("DB pre-warm failed (non-fatal): %s", e)
+
+    # SOD: restore portfolio state so DD calculations use persisted peak/P&L
+    _restore_portfolio_state()
+
     run_pipeline("pre_market")
+
+
+def _restore_portfolio_state():
+    """Reload cumulative P&L and peak equity from portfolio_state.json.
+
+    Called at start-of-day so the DD halt / graduated scaling logic
+    uses the correct baseline rather than resetting to zero.
+    """
+    state_path = Path(__file__).parent / "data" / "portfolio_state.json"
+    if not state_path.exists():
+        return
+    try:
+        from config import Config
+        with open(state_path, "r") as f:
+            state = json.load(f)
+        cum_pnl = state.get("cumulative_realized_pnl", 0.0)
+        peak = state.get("peak_equity", getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000))
+        Config._CUMULATIVE_REALIZED_PNL = cum_pnl
+        Config._PEAK_EQUITY = peak
+        logger.info(
+            "SOD state restored: cum_pnl=%.0f, peak_equity=%.0f",
+            cum_pnl, peak,
+        )
+    except Exception as e:
+        logger.warning("Portfolio state restore failed (non-fatal): %s", e)
+
+
+def _run_trade_monitor_poll():
+    """Poll TradeMonitor for SL/TP fills, trailing-SL updates, and time exits.
+
+    Runs every 3 min during market hours. Creates a fresh TradeMonitor
+    that auto-restores active trades from its SQLite crash-recovery DB,
+    then calls poll() which handles:
+      - Entry fill detection & SL/TP placement
+      - SL/TP fill detection & orphan cancellation
+      - Vol-based trailing-SL ratcheting
+      - Time-based forced exits (swing 10d / positional 30d)
+      - Partial fill acceptance (stale entries >2 hr)
+      - Capital rollup & peak equity persistence
+    """
+    try:
+        from kite_connect.auth.kite_session import create_kite_session
+        kite = create_kite_session()
+        if kite is None:
+            logger.debug("TradeMonitor poll skipped — no Kite session")
+            return
+    except Exception as exc:
+        logger.debug("TradeMonitor poll skipped — Kite auth failed: %s", exc)
+        return
+
+    try:
+        from kite_connect.trading.trade_monitor import TradeMonitor
+        from kite_connect.trading.risk_manager import RiskConfig
+
+        monitor = TradeMonitor(kite=kite, risk_config=RiskConfig())
+        active_count = len(monitor.active_trades)
+        if active_count == 0:
+            logger.debug("TradeMonitor poll: no active trades")
+            return
+
+        events = monitor.poll()
+        if events:
+            logger.info(
+                "TradeMonitor poll: %d events from %d active trades — %s",
+                len(events), active_count,
+                ", ".join(e.get("type", "?") for e in events),
+            )
+        else:
+            logger.debug("TradeMonitor poll: %d active trades, no events", active_count)
+    except Exception as exc:
+        logger.exception("TradeMonitor poll failed: %s", exc)
 
 
 def _run_nightly_backup():
@@ -993,9 +1137,20 @@ def start_scheduler():
         misfire_grace_time=300,
     )
 
+    # Job 7: Trade Monitor — poll every 3 min during market hours
+    # Manages SL/TP lifecycle, trailing-SL, time exits, capital rollup
+    scheduler.add_job(
+        _run_trade_monitor_poll,
+        CronTrigger(hour="9-15", minute="*/3", day_of_week="mon-fri", timezone="Asia/Kolkata"),
+        id="trade_monitor_poll",
+        name="Trade Monitor Poll",
+        misfire_grace_time=120,
+    )
+
     logger.info("Scheduler started â€” press Ctrl+C to stop")
     logger.info("  Pre-market scan : 09:20 IST, Mon-Fri")
     logger.info("  Intraday re-scan: 10:30, 12:30, 14:30 IST, Mon-Fri")
+    logger.info("  Trade monitor   : every 3 min, 09:00-15:59 IST, Mon-Fri")
     logger.info("  Walk-forward    : 06:00 IST, Saturday")
     logger.info("  Reconciliation  : 07:00 IST, Saturday")
     logger.info("  Nightly backup  : 23:00 IST, daily")

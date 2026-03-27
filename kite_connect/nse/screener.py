@@ -105,6 +105,7 @@ class ScreenedStock:
     support: float = 0.0
     resistance: float = 0.0
     adx: float = 0.0
+    atr: float = 0.0              # Average True Range (14-period)
     volume_ratio: float = 1.0     # current vol / 20-day avg vol
     relative_strength: float = 0.0  # stock return minus NIFTY return (1m)
 
@@ -132,6 +133,7 @@ class ScreenedStock:
             "support": round(self.support, 2),
             "resistance": round(self.resistance, 2),
             "adx": round(self.adx, 2),
+            "atr": round(self.atr, 2),
             "volume_ratio": round(self.volume_ratio, 2),
             "rel_strength": round(self.relative_strength, 4),
             "score": round(self.score, 2),
@@ -254,6 +256,20 @@ def _adx(df: pd.DataFrame, period: int = 14) -> float:
     dx = (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan) * 100
     adx_val = dx.ewm(alpha=1 / period, min_periods=period).mean()
     last = adx_val.iloc[-1]
+    return float(last) if np.isfinite(last) else 0.0
+
+
+def _atr(df: pd.DataFrame, period: int = 14) -> float:
+    """Compute the latest Average True Range value."""
+    high = df["High"]
+    low = df["Low"]
+    close = df["Close"]
+    tr1 = high - low
+    tr2 = (high - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
+    true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    atr_series = true_range.ewm(alpha=1 / period, min_periods=period).mean()
+    last = atr_series.iloc[-1]
     return float(last) if np.isfinite(last) else 0.0
 
 
@@ -519,6 +535,13 @@ class NSEScreener:
 
         logger.info("Downloaded data for %d / %d symbols via yfinance", len(cache), len(symbols))
 
+        # ── Deduplicate OHLCV indices ─────────────────────────
+        for sym in list(cache):
+            df = cache[sym]
+            if df.index.duplicated().any():
+                cache[sym] = df[~df.index.duplicated(keep="first")]
+            cache[sym] = cache[sym].sort_index()
+
         # ── Bhavcopy fallback for missed symbols ──────────────
         missed = [s for s in symbols if s not in cache]
         if missed:
@@ -722,6 +745,9 @@ class NSEScreener:
         # ADX (trend strength)
         stock.adx = _adx(df) if len(df) > 28 else 0.0
 
+        # ATR (volatility-based stop-loss reference)
+        stock.atr = _atr(df) if len(df) > 14 else 0.0
+
         # Volume ratio (today’s volume vs 20-day average)
         if "Volume" in df.columns and len(df) >= 20:
             avg_vol = float(df["Volume"].tail(20).mean())
@@ -818,5 +844,14 @@ class NSEScreener:
                 score += get_sector_score_adjustment(stock.sector_name)
             except Exception:
                 pass
+
+        # ── Circuit limit penalty — stock at/near circuit can't be traded ──
+        if stock.close > 0 and hasattr(stock, 'open') and stock.open > 0:
+            daily_chg_pct = abs((stock.close - stock.open) / stock.open * 100)
+            for band in (5.0, 10.0, 20.0):
+                if abs(daily_chg_pct - band) < 0.5:
+                    score -= 30  # heavy penalty — order unlikely to fill
+                    stock.at_circuit = True
+                    break
 
         stock.score = min(100, max(0, score))
