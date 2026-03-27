@@ -293,15 +293,49 @@ def _try_yfinance(
     start: Optional[str] = None,
     end: Optional[str] = None,
 ) -> Optional[pd.DataFrame]:
-    """Attempt to fetch OHLCV from yfinance."""
+    """Attempt to fetch OHLCV from yfinance with retry on crumb/auth errors."""
+    import yfinance as yf
+    ns = ticker if "." in ticker else f"{ticker}.NS"
+
+    for attempt in range(2):
+        try:
+            df = yf.download(ns, period=period, start=start, end=end,
+                             progress=False, auto_adjust=True)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            return df if not df.empty else None
+        except Exception as exc:
+            exc_str = str(exc)
+            # Retry once on 401 Invalid Crumb — clear yfinance cookie cache
+            if attempt == 0 and ("401" in exc_str or "Invalid Crumb" in exc_str):
+                logger.info("yfinance crumb expired for %s — clearing cache and retrying", ticker)
+                _clear_yfinance_crumb_cache()
+                continue
+            logger.debug("yfinance failed for %s: %s", ticker, exc)
+            return None
+    return None
+
+
+def _clear_yfinance_crumb_cache():
+    """Clear yfinance's internal crumb/cookie cache to force re-authentication."""
     try:
         import yfinance as yf
-        ns = ticker if "." in ticker else f"{ticker}.NS"
-        df = yf.download(ns, period=period, start=start, end=end,
-                         progress=False, auto_adjust=True)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = df.columns.get_level_values(0)
-        return df if not df.empty else None
-    except Exception as exc:
-        logger.debug("yfinance failed for %s: %s", ticker, exc)
-        return None
+        # yfinance ≥0.2.31 stores crumbs in a module-level cache
+        if hasattr(yf, 'utils') and hasattr(yf.utils, 'get_all_by_isin'):
+            pass  # older version, no cache to clear
+        # Clear the session-level cookie jar used by yfinance
+        if hasattr(yf, 'cache') and hasattr(yf.cache, 'get'):
+            yf.cache.clear()
+        # More reliable: clear the shared session's cookies
+        if hasattr(yf, 'shared') and hasattr(yf.shared, '_requests_session'):
+            s = yf.shared._requests_session
+            if s and hasattr(s, 'cookies'):
+                s.cookies.clear()
+        # yfinance ≥0.2.36 — reset the crumb/cookie singleton
+        if hasattr(yf, 'data') and hasattr(yf.data, 'YfData'):
+            if hasattr(yf.data.YfData, '_crumb'):
+                yf.data.YfData._crumb = None
+            if hasattr(yf.data.YfData, '_cookie'):
+                yf.data.YfData._cookie = None
+    except Exception:
+        pass  # best-effort cleanup

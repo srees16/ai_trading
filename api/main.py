@@ -43,6 +43,26 @@ from auth.shared_session import (
 # Sentry — error tracking + performance tracing
 # ---------------------------------------------------------------------------
 
+# Noise patterns from yfinance that should NOT create Sentry events.
+_SENTRY_DROP_PATTERNS = (
+    "Failed download",
+    "possibly delisted",
+    "No data found",
+    "Invalid Crumb",
+)
+
+
+def _sentry_before_send(event, hint):
+    """Drop noisy yfinance / ticker-not-found events from Sentry."""
+    message = (event.get("logentry") or {}).get("message", "")
+    if not message:
+        message = event.get("message", "")
+    for pattern in _SENTRY_DROP_PATTERNS:
+        if pattern in message:
+            return None  # drop the event
+    return event
+
+
 def _init_sentry() -> None:
     """Initialise Sentry SDK if a DSN is configured."""
     dsn = os.getenv("SENTRY_DSN", "")
@@ -67,7 +87,16 @@ def _init_sentry() -> None:
                     event_level=logging.ERROR,  # send events for ERROR+
                 ),
             ],
+            before_send=_sentry_before_send,
         )
+
+        # Suppress yfinance & peewee loggers from creating Sentry events.
+        # yfinance logs "1 Failed download" / "possibly delisted" at ERROR
+        # level internally — these are expected for Indian tickers and
+        # should not pollute Sentry.
+        for noisy_logger in ("yfinance", "peewee"):
+            logging.getLogger(noisy_logger).setLevel(logging.CRITICAL)
+
         logging.getLogger(__name__).info("Sentry initialised (env=%s)",
                                          os.getenv("SENTRY_ENVIRONMENT"))
     except ImportError:
@@ -113,7 +142,7 @@ async def lifespan(app: FastAPI):
     # ── Database startup diagnostics ────────────────────────
     db_url_set = bool(os.getenv("CENTURION_DATABASE_URL") or os.getenv("DATABASE_URL"))
     if not db_url_set:
-        logger.error(
+        logger.warning(
             "CENTURION_DATABASE_URL is NOT set — database will be unavailable. "
             "Set it in HF Spaces Settings → Repository secrets."
         )

@@ -160,41 +160,56 @@ class DataService:
         end_date: str,
         interval: str
     ) -> pd.DataFrame:
-        """Fetch data from Yahoo Finance."""
+        """Fetch data from Yahoo Finance with retry on crumb/auth errors."""
         if not self._yf_available:
             raise ImportError("yfinance is required for data fetching")
 
         # Ensure Indian tickers have .NS suffix for yfinance
         ticker = self._ensure_exchange_suffix(ticker)
 
-        try:
-            df = yf.download(
-                ticker,
-                start=start_date,
-                end=end_date,
-                interval=interval,
-                progress=False,
-                auto_adjust=True
-            )
+        last_exc = None
+        for attempt in range(2):
+            try:
+                df = yf.download(
+                    ticker,
+                    start=start_date,
+                    end=end_date,
+                    interval=interval,
+                    progress=False,
+                    auto_adjust=True
+                )
+                
+                # Handle MultiIndex columns from newer yfinance versions
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.droplevel(1)
+                
+                # Ensure we have required columns
+                required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+                for col in required_cols:
+                    if col not in df.columns:
+                        df[col] = np.nan
+                
+                # Clean data
+                df = self._clean_ohlcv(df)
+                
+                return df
             
-            # Handle MultiIndex columns from newer yfinance versions
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.droplevel(1)
-            
-            # Ensure we have required columns
-            required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
-            for col in required_cols:
-                if col not in df.columns:
-                    df[col] = np.nan
-            
-            # Clean data
-            df = self._clean_ohlcv(df)
-            
-            return df
-        
-        except Exception as e:
-            logger.error(f"Error fetching {ticker}: {e}")
-            raise ValueError(f"Failed to fetch data for {ticker}: {e}")
+            except Exception as e:
+                last_exc = e
+                exc_str = str(e)
+                # Retry once on 401 Invalid Crumb — clear yfinance cookie cache
+                if attempt == 0 and ("401" in exc_str or "Invalid Crumb" in exc_str):
+                    logger.info("yfinance crumb expired for %s — retrying", ticker)
+                    try:
+                        from utils import _clear_yfinance_crumb_cache
+                        _clear_yfinance_crumb_cache()
+                    except ImportError:
+                        pass
+                    continue
+                break
+
+        logger.warning("Failed to fetch %s from yfinance: %s", ticker, last_exc)
+        raise ValueError(f"Failed to fetch data for {ticker}: {last_exc}")
     
     def _clean_ohlcv(self, df: pd.DataFrame) -> pd.DataFrame:
         """Clean and validate OHLCV data."""
