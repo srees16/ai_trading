@@ -15,13 +15,19 @@ and a degradation ratio (OOS / IS) to detect overfitting.
 
 import logging
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import json
 import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# Persist winning params so the live pipeline loads the latest optimals
+_WF_PARAMS_DIR = Path("data") / "wf_params"
+_WF_PARAMS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @dataclass
@@ -275,3 +281,96 @@ def walk_forward_validate(
         avg_oos_return=float(np.mean(oos_returns)),
         total_folds=len(folds),
     )
+
+
+# ── Gap 5: Optimal parameter persistence & loading ──────────────────
+
+def save_optimal_params(summary: WalkForwardSummary) -> None:
+    """Persist the best walk-forward params for a given strategy + ticker.
+
+    Only saves if the strategy passed the overfitting check
+    (degradation_ratio >= 0.5) and has valid folds.
+    The live screener / auto-executor can load these via
+    ``load_optimal_params()`` to use the latest re-optimized settings.
+    """
+    if not summary.folds or summary.degradation_ratio < 0.5:
+        logger.info(
+            "Skipping param save for %s on %s — overfit (deg=%.2f)",
+            summary.strategy_name, summary.ticker, summary.degradation_ratio,
+        )
+        return
+
+    # Pick the params from the fold with the best OOS Sharpe
+    best_fold = max(summary.folds, key=lambda f: f.out_of_sample_sharpe)
+    if not best_fold.best_params:
+        return
+
+    record = {
+        "strategy": summary.strategy_name,
+        "ticker": summary.ticker,
+        "params": best_fold.best_params,
+        "oos_sharpe": round(best_fold.out_of_sample_sharpe, 4),
+        "oos_return_pct": round(best_fold.out_of_sample_return * 100, 2),
+        "degradation_ratio": round(summary.degradation_ratio, 4),
+        "avg_oos_sharpe": round(summary.avg_oos_sharpe, 4),
+        "updated_at": datetime.now().isoformat(),
+    }
+
+    safe_name = summary.strategy_name.replace(" ", "_").replace("/", "_")
+    safe_ticker = summary.ticker.replace(".", "_")
+    path = _WF_PARAMS_DIR / f"{safe_name}_{safe_ticker}.json"
+    path.write_text(json.dumps(record, indent=2))
+    logger.info(
+        "Saved optimal params for %s on %s: %s (OOS Sharpe=%.2f)",
+        summary.strategy_name, summary.ticker,
+        best_fold.best_params, best_fold.out_of_sample_sharpe,
+    )
+
+
+def load_optimal_params(strategy_name: str, ticker: str) -> Optional[Dict[str, Any]]:
+    """Load the most recently saved walk-forward optimal params.
+
+    Returns the param dict if found and still fresh (< 14 days old),
+    otherwise None (caller should use default params).
+    """
+    safe_name = strategy_name.lower().replace(" ", "_").replace("/", "_")
+    safe_ticker = ticker.replace(".", "_")
+    path = _WF_PARAMS_DIR / f"{safe_name}_{safe_ticker}.json"
+
+    if not path.exists():
+        return None
+
+    try:
+        record = json.loads(path.read_text())
+        updated_at = datetime.fromisoformat(record["updated_at"])
+        age_days = (datetime.now() - updated_at).days
+        if age_days > 14:
+            logger.info(
+                "Optimal params for %s on %s are %d days old — stale, skipping",
+                strategy_name, ticker, age_days,
+            )
+            return None
+        logger.info(
+            "Loaded optimal params for %s on %s: %s (age=%dd)",
+            strategy_name, ticker, record["params"], age_days,
+        )
+        return record["params"]
+    except Exception as exc:
+        logger.warning("Failed to load WF params from %s: %s", path, exc)
+        return None
+
+
+def load_all_optimal_params() -> Dict[str, Dict[str, Any]]:
+    """Load all saved optimal params, keyed by 'strategy::ticker'.
+
+    Useful for bulk inspection or the scheduler audit.
+    """
+    results = {}
+    for path in _WF_PARAMS_DIR.glob("*.json"):
+        try:
+            record = json.loads(path.read_text())
+            key = f"{record['strategy']}::{record['ticker']}"
+            results[key] = record
+        except Exception:
+            continue
+    return results

@@ -42,21 +42,24 @@ MODEL_DIR.mkdir(parents=True, exist_ok=True)
 class TrainConfig:
     """Training hyperparameters."""
     algorithm: str = "PPO"                # DQN | PPO | A2C
-    total_timesteps: int = 50_000         # Training steps per fold
+    total_timesteps: int = 500_000        # Training steps per fold (500K for efficiency)
     learning_rate: float = 3e-4
-    batch_size: int = 64                  # DQN batch size
+    lr_schedule: str = "cosine"           # "constant" | "cosine" | "linear"
+    batch_size: int = 128                 # DQN batch size (larger for stability)
     gamma: float = 0.99                   # Discount factor
-    buffer_size: int = 50_000             # DQN replay buffer
-    exploration_fraction: float = 0.2     # DQN epsilon schedule
-    n_steps: int = 2048                   # PPO/A2C steps per update
-    ent_coef: float = 0.01               # Entropy bonus (exploration)
+    buffer_size: int = 100_000            # DQN replay buffer
+    exploration_fraction: float = 0.15    # DQN epsilon schedule (shorter exploration)
+    n_steps: int = 4096                   # PPO/A2C steps per update (larger batches)
+    ent_coef: float = 0.005              # Lower entropy for exploitation focus
     reward_type: str = "hybrid"           # pnl | sharpe | hybrid
     initial_capital: float = 100_000
     lookback: int = 60
     # Walk-forward
-    train_days: int = 252                 # 1 year train
+    train_days: int = 504                 # 2 years train (more data for 500K steps)
     test_days: int = 63                   # 1 quarter test
-    total_folds: int = 4                  # Number of walk-forward folds
+    total_folds: int = 6                  # More folds for robust validation
+    # Network architecture
+    net_arch: List[int] = field(default_factory=lambda: [256, 256])  # Wider policy net
     # Multi-stock
     tickers: List[str] = field(default_factory=lambda: ["RELIANCE.NS"])
 
@@ -311,12 +314,22 @@ def _build_model(cfg: TrainConfig, env: TradingEnv, existing_model=None):
         existing_model.set_env(env)
         return existing_model
 
+    # ── Learning rate schedule (Gap 7) ──────────────────────
+    lr = cfg.learning_rate
+    if cfg.lr_schedule == "cosine":
+        lr = _cosine_lr_schedule(cfg.learning_rate, cfg.total_timesteps)
+    elif cfg.lr_schedule == "linear":
+        lr = _linear_lr_schedule(cfg.learning_rate)
+
+    policy_kwargs = {"net_arch": cfg.net_arch}
+
     common_kwargs = {
         "env": env,
-        "learning_rate": cfg.learning_rate,
+        "learning_rate": lr,
         "gamma": cfg.gamma,
         "verbose": 0,
         "device": "auto",
+        "policy_kwargs": policy_kwargs,
     }
 
     if cfg.algorithm.upper() == "DQN":
@@ -327,7 +340,7 @@ def _build_model(cfg: TrainConfig, env: TradingEnv, existing_model=None):
             buffer_size=cfg.buffer_size,
             exploration_fraction=cfg.exploration_fraction,
             exploration_final_eps=0.05,
-            target_update_interval=500,
+            target_update_interval=1000,
         )
     else:
         # PPO or A2C
@@ -337,6 +350,29 @@ def _build_model(cfg: TrainConfig, env: TradingEnv, existing_model=None):
             n_steps=min(cfg.n_steps, env.n_steps - env._lookback - 1),
             ent_coef=cfg.ent_coef,
         )
+
+
+def _cosine_lr_schedule(initial_lr: float, total_timesteps: int):
+    """Cosine annealing LR schedule — decays smoothly to 10% of initial."""
+    import math
+
+    def schedule(progress_remaining: float) -> float:
+        # progress_remaining goes from 1.0 → 0.0
+        min_lr = initial_lr * 0.1
+        return min_lr + 0.5 * (initial_lr - min_lr) * (
+            1 + math.cos(math.pi * (1 - progress_remaining))
+        )
+
+    return schedule
+
+
+def _linear_lr_schedule(initial_lr: float):
+    """Linear LR decay — reaches 10% of initial at end of training."""
+
+    def schedule(progress_remaining: float) -> float:
+        return initial_lr * (0.1 + 0.9 * progress_remaining)
+
+    return schedule
 
 
 def _evaluate_on_env(model, env: TradingEnv) -> Dict:

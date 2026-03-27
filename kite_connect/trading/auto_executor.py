@@ -232,6 +232,14 @@ class AutoExecutor:
         report.trade_plans = plans
         report.plans_count = len(plans)
 
+
+        # ── 4c. Gap 6: Multi-timeframe entry confirmation ───────
+        # Reject BUY entries where daily + weekly TradingView signals
+        # disagree (both must be BUY or STRONG_BUY for swing/positional)
+        if plans:
+            plans = self._filter_by_mtf_consensus(plans, _cb)
+            report.trade_plans = plans
+            report.plans_count = len(plans)
         # â”€â”€ 5.  Order placement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         if self.auto_place and self.kite is not None:
             _cb(f"Placing {len(plans)} orders via Kite â€¦")
@@ -251,6 +259,81 @@ class AutoExecutor:
             )
 
         return report
+
+    # -- Gap 6: Multi-timeframe entry confirmation -----------------------
+
+    def _filter_by_mtf_consensus(
+        self, plans: List[TradePlan], _cb,
+    ) -> List[TradePlan]:
+        """Reject BUY plans where daily and weekly TradingView signals disagree.
+
+        For swing/positional trades, both 1D and 1W timeframes must show
+        BUY or STRONG_BUY.  If either shows SELL/STRONG_SELL, the plan is
+        rejected.  NEUTRAL is permitted (no veto).
+        """
+        _BULLISH = {"BUY", "STRONG_BUY"}
+        _BEARISH = {"SELL", "STRONG_SELL"}
+
+        try:
+            from services.technical_analysis.tradingview import fetch_tradingview_consensus
+        except ImportError:
+            logger.debug("tradingview_ta not available -- MTF gate skipped")
+            return plans
+
+        approved: List[TradePlan] = []
+        rejected_count = 0
+
+        for plan in plans:
+            ticker = plan.symbol
+            # Append .NS for Indian equities if not already present
+            tv_ticker = f"{ticker}.NS" if not ticker.endswith((".NS", ".BO")) else ticker
+
+            try:
+                consensus = fetch_tradingview_consensus(
+                    tv_ticker, timeframes=["1d", "1W"],
+                )
+                if not consensus.available:
+                    # TradingView unavailable -- allow through (no veto)
+                    approved.append(plan)
+                    continue
+
+                daily = consensus.timeframes.get("1d")
+                weekly = consensus.timeframes.get("1W")
+
+                daily_rec = daily.recommendation if daily else "NEUTRAL"
+                weekly_rec = weekly.recommendation if weekly else "NEUTRAL"
+
+                # Veto: reject if EITHER timeframe is bearish
+                if daily_rec in _BEARISH or weekly_rec in _BEARISH:
+                    _cb(
+                        f"  MTF rejected {ticker} -- "
+                        f"1D={daily_rec}, 1W={weekly_rec}"
+                    )
+                    rejected_count += 1
+                    continue
+
+                # For swing trades: at least daily must be bullish
+                if daily_rec not in _BULLISH:
+                    _cb(
+                        f"  MTF skipped {ticker} -- "
+                        f"1D={daily_rec} (not bullish), 1W={weekly_rec}"
+                    )
+                    rejected_count += 1
+                    continue
+
+                approved.append(plan)
+
+            except Exception as exc:
+                logger.debug("MTF check failed for %s: %s -- allowing through", ticker, exc)
+                approved.append(plan)
+
+        if rejected_count:
+            _cb(
+                f"MTF gate: {len(approved)} passed, {rejected_count} rejected "
+                f"(daily/weekly disagreement)"
+            )
+
+        return approved
 
     # â”€â”€ Order persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 

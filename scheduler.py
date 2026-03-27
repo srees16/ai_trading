@@ -466,7 +466,7 @@ def run_walk_forward_audit():
 
     try:
         from strategies import StrategyRegistry, load_all_strategies
-        from services.walk_forward import walk_forward_validate
+        from services.walk_forward import walk_forward_validate, save_optimal_params
 
         load_all_strategies()
         all_strategies = StrategyRegistry._strategies
@@ -490,6 +490,8 @@ def run_walk_forward_audit():
                     total_days=756,
                 )
                 audit_results[name] = summary.to_dict()
+                # Gap 5: Persist winning params for the live pipeline
+                save_optimal_params(summary)
                 if summary.degradation_ratio < 0.5 and summary.total_folds > 0:
                     overfit_strategies.append(name)
                     logger.warning(
