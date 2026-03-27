@@ -1000,6 +1000,129 @@ class OpenAILLMBackend:
 
 
 # ---------------------------------------------------------------------------
+# HuggingFace Inference API backend (OpenAI-compatible, free with HF_TOKEN)
+# ---------------------------------------------------------------------------
+
+class HFInferenceLLMBackend:
+    """
+    LLM backend using HuggingFace's Inference API via the OpenAI SDK.
+
+    HF Inference exposes an OpenAI-compatible ``/v1/chat/completions``
+    endpoint, so we reuse the ``openai`` Python package with a custom
+    ``base_url``.  This is the **cloud fallback** when Ollama is not
+    available (e.g. on HuggingFace Spaces, Vercel, etc.).
+
+    Set ``HF_TOKEN`` in environment (automatically available on HF Spaces).
+    """
+
+    _HF_BASE_URL = "https://router.huggingface.co/hf-inference/v1"
+
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "mistralai/Mistral-7B-Instruct-v0.3",
+        temperature: float = 0.3,
+        max_tokens: int = 1024,
+        timeout: int = 120,
+    ) -> None:
+        self.api_key = api_key
+        self.model = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.timeout = timeout
+        self._client = None
+
+    @property
+    def client(self):
+        if self._client is None:
+            try:
+                import openai
+            except ImportError:
+                raise ImportError(
+                    "The 'openai' package is required for HF Inference. "
+                    "Install it with: pip install openai"
+                )
+            self._client = openai.OpenAI(
+                api_key=self.api_key,
+                base_url=self._HF_BASE_URL,
+                timeout=self.timeout,
+            )
+            logger.info(
+                "HF Inference client initialised (model=%s)", self.model,
+            )
+        return self._client
+
+    def generate(self, query: str, context: str) -> str:
+        system_prompt = _pick_system_prompt(context, compact=False)
+        user_message = _build_user_message(query, context)
+
+        max_retries = 2
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_message},
+                    ],
+                )
+                answer = response.choices[0].message.content or ""
+                if not answer:
+                    return "The LLM returned an empty response. Please try again."
+                logger.info("HF Inference response (model=%s)", self.model)
+                return answer
+
+            except Exception as e:
+                err_str = str(e).lower()
+                if "rate" in err_str or "429" in err_str:
+                    return "\u26a0\ufe0f **HF Inference rate limited.** Please wait and retry."
+                if attempt < max_retries:
+                    time.sleep(2)
+                    self._client = None
+                    continue
+                logger.error("HF Inference error: %s", e, exc_info=True)
+                return f"\u26a0\ufe0f HF Inference error: {e}"
+
+        return "\u26a0\ufe0f HF Inference error after retries."
+
+    def generate_stream(
+        self, query: str, context: str
+    ) -> Generator[str, None, None]:
+        system_prompt = _pick_system_prompt(context, compact=False)
+        user_message = _build_user_message(query, context)
+
+        try:
+            stream = self.client.chat.completions.create(
+                model=self.model,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                stream=True,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if delta and delta.content:
+                    yield delta.content
+        except Exception as e:
+            logger.error("HF Inference streaming error: %s", e, exc_info=True)
+            yield f"\u26a0\ufe0f HF Inference streaming error: {e}"
+
+    def is_available(self) -> bool:
+        if not self.api_key:
+            return False
+        try:
+            _ = self.client
+            return True
+        except Exception:
+            return False
+
+
+# ---------------------------------------------------------------------------
 # Factory: create the right backend from RAGConfig
 # ---------------------------------------------------------------------------
 
@@ -1007,6 +1130,7 @@ _PROVIDERS = {
     "ollama": "OllamaLLMBackend",
     "claude": "ClaudeLLMBackend",
     "openai": "OpenAILLMBackend",
+    "hf": "HFInferenceLLMBackend",
 }
 
 
@@ -1028,14 +1152,46 @@ def _create_ollama_backend(config: RAGConfig) -> OllamaLLMBackend:
     )
 
 
+def _create_fallback_backend(config: RAGConfig):
+    """Build the best available fallback backend.
+
+    Priority:
+    1. Ollama (if reachable at llm_base_url)
+    2. HuggingFace Inference API (if HF_TOKEN is set)
+    3. Raw Ollama backend (will produce a helpful error if unreachable)
+    """
+    ollama = _create_ollama_backend(config)
+    if ollama.is_available():
+        logger.info("Fallback: Ollama is available at %s", config.llm_base_url)
+        return ollama
+
+    if config.hf_api_key:
+        logger.info(
+            "Fallback: Ollama unreachable — using HF Inference API (model=%s)",
+            config.hf_model,
+        )
+        return HFInferenceLLMBackend(
+            api_key=config.hf_api_key,
+            model=config.hf_model,
+            temperature=config.hf_temperature,
+            max_tokens=config.hf_max_tokens,
+        )
+
+    logger.warning("Fallback: Neither Ollama nor HF_TOKEN available")
+    return ollama
+
+
 def create_llm_backend(config: Optional[RAGConfig] = None):
     """
     Instantiate the appropriate LLM backend based on ``config.llm_provider``.
 
     Supported providers:
       - ``ollama``  — local Ollama inference (default)
-      - ``claude``  — Anthropic Claude API (with Ollama fallback)
-      - ``openai``  — OpenAI API (with Ollama fallback)
+      - ``claude``  — Anthropic Claude API (with smart fallback)
+      - ``openai``  — OpenAI API (with smart fallback)
+      - ``hf``      — HuggingFace Inference API
+
+    Fallback order: Ollama → HF Inference API → error message.
 
     Returns an object with ``.generate(query, context) -> str`` and
     ``.generate_stream(query, context)`` methods.
@@ -1053,6 +1209,9 @@ def create_llm_backend(config: Optional[RAGConfig] = None):
         elif config.openai_api_key:
             provider = "openai"
             logger.info("Auto-detected OPENAI_API_KEY — using OpenAI as primary LLM")
+        elif config.hf_api_key:
+            provider = "hf"
+            logger.info("Auto-detected HF_TOKEN — using HF Inference as primary LLM")
 
     # --- Claude ---
     if provider == "claude":
@@ -1068,7 +1227,7 @@ def create_llm_backend(config: Optional[RAGConfig] = None):
             temperature=config.claude_temperature,
             max_tokens=config.claude_max_tokens,
         )
-        fallback = _create_ollama_backend(config)
+        fallback = _create_fallback_backend(config)
         return _FallbackChainBackend(primary, fallback)
 
     # --- OpenAI ---
@@ -1086,8 +1245,20 @@ def create_llm_backend(config: Optional[RAGConfig] = None):
             max_tokens=config.openai_max_tokens,
             timeout=config.llm_timeout,
         )
-        fallback = _create_ollama_backend(config)
+        fallback = _create_fallback_backend(config)
         return _FallbackChainBackend(primary, fallback)
+
+    # --- HuggingFace Inference ---
+    if provider == "hf":
+        if not config.hf_api_key:
+            logger.warning("HF selected but HF_TOKEN not set")
+            return _FallbackLLMBackend("hf", "HF_TOKEN")
+        return HFInferenceLLMBackend(
+            api_key=config.hf_api_key,
+            model=config.hf_model,
+            temperature=config.hf_temperature,
+            max_tokens=config.hf_max_tokens,
+        )
 
     # --- Ollama (default) ---
     if provider != "ollama":

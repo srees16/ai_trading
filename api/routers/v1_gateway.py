@@ -548,13 +548,30 @@ async def backtest_run(req: BacktestRunRequest):
             "created_at": datetime.now().isoformat(),
         }
 
-        # Persist
+        # Persist to database
         db = get_db_service()
         if db:
             try:
                 db.save_backtest_result(req.market, response)
             except Exception as e:
                 logger.warning("Failed to save backtest: %s", e)
+
+        # Upload charts to R2 / MinIO object storage (non-blocking)
+        if result.charts:
+            try:
+                from services.storage.minio_service import get_minio_service
+                minio_svc = get_minio_service()
+                if minio_svc.is_available:
+                    saved = await asyncio.to_thread(
+                        minio_svc.save_backtest_charts,
+                        run_id=response["id"],
+                        charts=result.charts,
+                        strategy_name=response.get("strategy_name", req.strategy_id),
+                    )
+                    logger.info("Saved %d chart(s) to R2 for backtest %s",
+                                len(saved) if saved else 0, response["id"])
+            except Exception as e:
+                logger.warning("R2 chart upload failed (non-fatal): %s", e)
 
         return response
     except HTTPException:
