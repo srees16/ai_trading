@@ -1,6 +1,6 @@
 # Centurion Capital LLC — Enterprise AI Trading Platform
 
-A Python-based enterprise trading platform combining multi-source news scraping, AI-powered sentiment analysis, fundamental & technical analysis, strategy backtesting, persistent data storage, live Indian market trading via Zerodha Kite Connect, and a RAG-powered document intelligence pipeline. Built with a **Next.js 14 frontend** (React, TanStack Query, Tailwind CSS) and a **FastAPI backend**, plus a Streamlit UI for legacy workflows. Backed by PostgreSQL/Neon persistence, MinIO/Cloudflare R2 object storage, Upstash Redis caching, ChromaDB vector search, and multi-provider LLM integration (Claude / OpenAI / Ollama). Deployable on HF Spaces + Vercel with GitHub Actions CI/CD.
+A Python-based enterprise trading platform combining multi-source news scraping, AI-powered sentiment analysis, fundamental & technical analysis, strategy backtesting, persistent data storage, live Indian market trading via Zerodha Kite Connect, and a RAG-powered document intelligence pipeline. Built with a **Next.js 14 frontend** (React, TanStack Query, Tailwind CSS) and a **FastAPI backend**, plus a Streamlit UI for legacy workflows. Backed by PostgreSQL/Neon persistence, MinIO/Cloudflare R2 object storage, Upstash Redis caching, ChromaDB vector search, multi-provider LLM integration (Claude / OpenAI / Ollama), Sentry error tracking, and Better Stack log aggregation. Deployable on HF Spaces + Vercel with GitHub Actions CI/CD.
 
 ---
 
@@ -16,8 +16,9 @@ cd centurion_core
 python -m venv myenv 
 myenv\Scripts\activate (macOS/Linux: source myenv/bin/activate)
 pip install -r requirements.txt
-
+```
 > Install Next.js frontend dependencies
+```
 cd frontend
 npm install
 cd ..
@@ -28,13 +29,15 @@ cd ..
 
 **Windows PowerShell:**
 ```powershell
-$env:ZERODHA_API_KEY='YOUR_API_KEY'; $env:ZERODHA_API_SECRET='YOUR_API_SECRET'; $env:ZERODHA_USER_ID='YOUR_ZERODHA_ID'; $env:ZERODHA_PASSWORD='YOUR_ZERODHA_PASSWORD'; $env:ZERODHA_TOTP_SECRET='YOUR_BASE32_TOTP_SECRET'; $env:ANTHROPIC_API_KEY='YOUR_ANTHROPIC_API_KEY'; $env:CENTURION_RAG_LLM_PROVIDER='YOUR_LLM_PROVIDER'; $env:CENTURION_RAG_CLAUDE_MODEL='YOUR_LLM_MODEL'; $env:CENTURION_EMAIL_USER='YOUR_GMAIL_ID'; $env:CENTURION_EMAIL_PASS='YOUR_GMAIL_APP_PASSWORD'; $env:STREAMLIT_SERVER_PORT='9000'; $env:API_PORT='9001'; $env:CENTURION_DB_HOST='localhost'; $env:CENTURION_DB_PORT='9003'; $env:CENTURION_DB_NAME='centurion_rag'; $env:CENTURION_DB_USER='postgres'; $env:CENTURION_DB_PASSWORD='superadmin1'; $env:KITE_DB_HOST='localhost'; $env:KITE_DB_PORT='9003'; $env:KITE_DB_NAME='livestocks_ind'; $env:KITE_DB_USER='postgres'; $env:KITE_DB_PASSWORD='superadmin1'; $env:KITE_POOL_MAXSIZE='40'; $env:MINIO_ENDPOINT='localhost:9004'; $env:MINIO_ACCESS_KEY='minioadmin'; $env:MINIO_SECRET_KEY='minioadmin123'; $env:MINIO_SECURE='false'; $env:MINIO_BUCKET='centurion-backtests'; $env:MINIO_ENABLED='true'; $env:CENTURION_DEFAULT_ADMIN_PASSWORD='admin123'; $env:CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'; $env:CENTURION_RAG_LLM_URL='http://localhost:11434'; $env:RAG_MODEL='qwen2.5:3b'; $env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300'; $env:CENTURION_RAG_LLM_CHUNK_TIMEOUT='30'; $env:CENTURION_RAG_LLM_NUM_CTX='4096'; $env:CENTURION_RAG_LLM_NUM_PREDICT='500'; $env:CENTURION_RAG_LLM_MAX_TOKENS='500'; $env:CENTURION_RAG_LLM_TEMPERATURE='0.2'; $env:CENTURION_RAG_CLAUDE_MAX_TOKENS='1024'; $env:CENTURION_RAG_CLAUDE_TEMPERATURE='0.2'; $env:CENTURION_RAG_CHROMA_DIR='./data/chroma_db'; $env:CENTURION_RAG_EMBEDDING_MODEL='BAAI/bge-base-en-v1.5'; $env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET='2000'; $env:CENTURION_RAG_MAX_CONTEXT_CHUNKS='8'; $env:CENTURION_RAG_TOP_K='15'; $env:CENTURION_RAG_SIMILARITY_THRESHOLD='0.70'; $env:CENTURION_RAG_QUERY_BUDGET='300'; $env:CENTURION_RAG_QUERY_REWRITE='false'; $env:CENTURION_RAG_STREAMING='true'; $env:CENTURION_RAG_CACHE_ENABLED='false'; $env:CENTURION_RAG_FAQ_ENABLED='false'; $env:RAG_FAST_MODE='false'; $env:CENTURION_EMAIL_HOST='smtp.gmail.com'; $env:CENTURION_EMAIL_PORT='587'
+$env:ZERODHA_API_KEY='YOUR_API_KEY'; $env:ZERODHA_API_SECRET='YOUR_API_SECRET'; $env:ZERODHA_USER_ID='YOUR_ZERODHA_ID'; $env:ZERODHA_PASSWORD='YOUR_ZERODHA_PASSWORD'; $env:ZERODHA_TOTP_SECRET='YOUR_BASE32_TOTP_SECRET'; $env:ANTHROPIC_API_KEY='YOUR_ANTHROPIC_API_KEY'; $env:CENTURION_EMAIL_USER='YOUR_GMAIL_ID'; $env:CENTURION_EMAIL_PASS='YOUR_GMAIL_APP_PASSWORD'; $env:CENTURION_DATABASE_URL='postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require'; $env:UPSTASH_REDIS_URL='rediss://default:token@host.upstash.io:6379'; $env:SENTRY_DSN='https://YOUR_KEY@YOUR_ORG.ingest.sentry.io/YOUR_PROJECT_ID'; $env:LOGTAIL_TOKEN='YOUR_LOGTAIL_SOURCE_TOKEN'; $env:CENTURION_RAG_LLM_PROVIDER='claude'; $env:CENTURION_RAG_CLAUDE_MODEL='claude-opus-4-20250514'; $env:CENTURION_RAG_CLAUDE_MAX_TOKENS='1024'; $env:CENTURION_RAG_CLAUDE_TEMPERATURE='0.2'; $env:CENTURION_EMAIL_HOST='smtp.gmail.com'; $env:CENTURION_EMAIL_PORT='587'; $env:STREAMLIT_SERVER_PORT='9000'; $env:API_PORT='9001'; $env:CENTURION_DB_HOST='localhost'; $env:CENTURION_DB_PORT='9003'; $env:CENTURION_DB_NAME='centurion_rag'; $env:CENTURION_DB_USER='postgres'; $env:CENTURION_DB_PASSWORD='superadmin1'; $env:KITE_DB_HOST='localhost'; $env:KITE_DB_PORT='9003'; $env:KITE_DB_NAME='livestocks_ind'; $env:KITE_DB_USER='postgres'; $env:KITE_DB_PASSWORD='superadmin1'; $env:KITE_POOL_MAXSIZE='40'; $env:MINIO_ENDPOINT='localhost:9004'; $env:MINIO_ACCESS_KEY='minioadmin'; $env:MINIO_SECRET_KEY='minioadmin123'; $env:MINIO_SECURE='false'; $env:MINIO_BUCKET='centurion-backtests'; $env:MINIO_ENABLED='true'; $env:MINIO_REGION='auto'; $env:CENTURION_DEFAULT_ADMIN_PASSWORD='admin123'; $env:CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'; $env:CENTURION_RAG_LLM_URL='http://localhost:11434'; $env:RAG_MODEL='qwen2.5:3b'; $env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300'; $env:CENTURION_RAG_LLM_CHUNK_TIMEOUT='30'; $env:CENTURION_RAG_LLM_NUM_CTX='4096'; $env:CENTURION_RAG_LLM_NUM_PREDICT='500'; $env:CENTURION_RAG_LLM_MAX_TOKENS='500'; $env:CENTURION_RAG_LLM_TEMPERATURE='0.2'; $env:CENTURION_RAG_CHROMA_DIR='./data/chroma_db'; $env:CENTURION_RAG_EMBEDDING_MODEL='BAAI/bge-base-en-v1.5'; $env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET='2000'; $env:CENTURION_RAG_MAX_CONTEXT_CHUNKS='8'; $env:CENTURION_RAG_TOP_K='15'; $env:CENTURION_RAG_SIMILARITY_THRESHOLD='0.70'; $env:CENTURION_RAG_QUERY_BUDGET='300'; $env:CENTURION_RAG_QUERY_REWRITE='false'; $env:CENTURION_RAG_STREAMING='true'; $env:CENTURION_RAG_CACHE_ENABLED='false'; $env:CENTURION_RAG_FAQ_ENABLED='false'; $env:RAG_FAST_MODE='false'; $env:SENTRY_TRACES_SAMPLE_RATE='0.2'; $env:SENTRY_ENVIRONMENT='development'
 ```
 
 **macOS / Linux:**
 ```bash
-export ZERODHA_API_KEY="YOUR_API_KEY" && export ZERODHA_API_SECRET="YOUR_API_SECRET" && export ZERODHA_USER_ID="YOUR_ZERODHA_ID" && export ZERODHA_PASSWORD='YOUR_ZERODHA_PASSWORD' && export ZERODHA_TOTP_SECRET="YOUR_BASE32_TOTP_SECRET" && export ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY" && export CENTURION_RAG_LLM_PROVIDER="YOUR_LLM_PROVIDER" && export CENTURION_RAG_CLAUDE_MODEL="YOUR_LLM_MODEL" && export CENTURION_EMAIL_USER="YOUR_GMAIL_ID" && export CENTURION_EMAIL_PASS="YOUR_GMAIL_APP_PASSWORD" && export STREAMLIT_SERVER_PORT="9000" && export API_PORT="9001" && export CENTURION_DB_HOST="localhost" && export CENTURION_DB_PORT="9003" && export CENTURION_DB_NAME="centurion_rag" && export CENTURION_DB_USER="postgres" && export CENTURION_DB_PASSWORD="superadmin1" && export KITE_DB_HOST="localhost" && export KITE_DB_PORT="9003" && export KITE_DB_NAME="livestocks_ind" && export KITE_DB_USER="postgres" && export KITE_DB_PASSWORD="superadmin1" && export KITE_POOL_MAXSIZE="40" && export MINIO_ENDPOINT="localhost:9004" && export MINIO_ACCESS_KEY="minioadmin" && export MINIO_SECRET_KEY="minioadmin123" && export MINIO_SECURE="false" && export MINIO_BUCKET="centurion-backtests" && export MINIO_ENABLED="true" && export CENTURION_DEFAULT_ADMIN_PASSWORD="admin123" && export CENTURION_DEFAULT_ANALYST_PASSWORD="analyst123" && export CENTURION_RAG_LLM_URL="http://localhost:11434" && export RAG_MODEL="qwen2.5:3b" && export CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT="300" && export CENTURION_RAG_LLM_CHUNK_TIMEOUT="30" && export CENTURION_RAG_LLM_NUM_CTX="4096" && export CENTURION_RAG_LLM_NUM_PREDICT="500" && export CENTURION_RAG_LLM_MAX_TOKENS="500" && export CENTURION_RAG_CLAUDE_MAX_TOKENS="1024" && export CENTURION_RAG_CLAUDE_TEMPERATURE="0.2" && export CENTURION_RAG_LLM_TEMPERATURE="0.2" && export CENTURION_RAG_CHROMA_DIR="./data/chroma_db" && export CENTURION_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5" && export CENTURION_RAG_CONTEXT_TOKEN_BUDGET="2000" && export CENTURION_RAG_MAX_CONTEXT_CHUNKS="8" && export CENTURION_RAG_TOP_K="15" && export CENTURION_RAG_SIMILARITY_THRESHOLD="0.70" && export CENTURION_RAG_QUERY_BUDGET="300" && export CENTURION_RAG_QUERY_REWRITE="false" && export CENTURION_RAG_STREAMING="true" && export CENTURION_RAG_CACHE_ENABLED="false" && export CENTURION_RAG_FAQ_ENABLED="false" && export RAG_FAST_MODE="false" && export CENTURION_EMAIL_HOST="smtp.gmail.com" && export CENTURION_EMAIL_PORT="587"
+export ZERODHA_API_KEY="YOUR_API_KEY" && export ZERODHA_API_SECRET="YOUR_API_SECRET" && export ZERODHA_USER_ID="YOUR_ZERODHA_ID" && export ZERODHA_PASSWORD="YOUR_ZERODHA_PASSWORD" && export ZERODHA_TOTP_SECRET="YOUR_BASE32_TOTP_SECRET" && export ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY" && export CENTURION_EMAIL_USER="YOUR_GMAIL_ID" && export CENTURION_EMAIL_PASS="YOUR_GMAIL_APP_PASSWORD" && export CENTURION_DATABASE_URL="postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require" && export UPSTASH_REDIS_URL="rediss://default:token@host.upstash.io:6379" && export SENTRY_DSN="https://YOUR_KEY@YOUR_ORG.ingest.sentry.io/YOUR_PROJECT_ID" && export LOGTAIL_TOKEN="YOUR_LOGTAIL_SOURCE_TOKEN" && export CENTURION_RAG_LLM_PROVIDER="claude" && export CENTURION_RAG_CLAUDE_MODEL="claude-opus-4-20250514" && export CENTURION_RAG_CLAUDE_MAX_TOKENS="1024" && export CENTURION_RAG_CLAUDE_TEMPERATURE="0.2" && export CENTURION_EMAIL_HOST="smtp.gmail.com" && export CENTURION_EMAIL_PORT="587" && export STREAMLIT_SERVER_PORT="9000" && export API_PORT="9001" && export CENTURION_DB_HOST="localhost" && export CENTURION_DB_PORT="9003" && export CENTURION_DB_NAME="centurion_rag" && export CENTURION_DB_USER="postgres" && export CENTURION_DB_PASSWORD="superadmin1" && export KITE_DB_HOST="localhost" && export KITE_DB_PORT="9003" && export KITE_DB_NAME="livestocks_ind" && export KITE_DB_USER="postgres" && export KITE_DB_PASSWORD="superadmin1" && export KITE_POOL_MAXSIZE="40" && export MINIO_ENDPOINT="localhost:9004" && export MINIO_ACCESS_KEY="minioadmin" && export MINIO_SECRET_KEY="minioadmin123" && export MINIO_SECURE="false" && export MINIO_BUCKET="centurion-backtests" && export MINIO_ENABLED="true" && export MINIO_REGION="auto" && export CENTURION_DEFAULT_ADMIN_PASSWORD="admin123" && export CENTURION_DEFAULT_ANALYST_PASSWORD="analyst123" && export CENTURION_RAG_LLM_URL="http://localhost:11434" && export RAG_MODEL="qwen2.5:3b" && export CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT="300" && export CENTURION_RAG_LLM_CHUNK_TIMEOUT="30" && export CENTURION_RAG_LLM_NUM_CTX="4096" && export CENTURION_RAG_LLM_NUM_PREDICT="500" && export CENTURION_RAG_LLM_MAX_TOKENS="500" && export CENTURION_RAG_LLM_TEMPERATURE="0.2" && export CENTURION_RAG_CHROMA_DIR="./data/chroma_db" && export CENTURION_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5" && export CENTURION_RAG_CONTEXT_TOKEN_BUDGET="2000" && export CENTURION_RAG_MAX_CONTEXT_CHUNKS="8" && export CENTURION_RAG_TOP_K="15" && export CENTURION_RAG_SIMILARITY_THRESHOLD="0.70" && export CENTURION_RAG_QUERY_BUDGET="300" && export CENTURION_RAG_QUERY_REWRITE="false" && export CENTURION_RAG_STREAMING="true" && export CENTURION_RAG_CACHE_ENABLED="false" && export CENTURION_RAG_FAQ_ENABLED="false" && export RAG_FAST_MODE="false" && export SENTRY_TRACES_SAMPLE_RATE="0.2" && export SENTRY_ENVIRONMENT="development"
 ```
+
+> **Tip:** Instead of setting env vars inline, you can copy `.env.example` to `.env` in the project root. The app loads it via `python-dotenv` automatically. See **Section 11, Step 6** or **Section 16.8** for the complete `.env` reference.
 
 ---
 
@@ -57,8 +60,8 @@ This creates three databases: `centurion_rag` (analysis results, backtesting, RA
 ### Step 4 — Initialize database tables
 
 Run in the same terminal (env vars from Step 2 are still active):
-```
-$env:STREAMLIT_SERVER_PORT=9000; $env:API_PORT=9001; $env:ZERODHA_API_KEY="YOUR_KEY_HERE"; $env:ZERODHA_API_SECRET="YOUR_SECRET_HERE"; $env:ZERODHA_USER_ID="YOUR_USER_HERE"; $env:ZERODHA_PASSWORD="YOUR_PASSWORD_HERE"; $env:KITE_DB_HOST="localhost"; $env:KITE_DB_PORT="9003"; $env:KITE_DB_NAME="livestocks_ind"; $env:KITE_DB_USER="postgres"; $env:KITE_DB_PASSWORD="superadmin1"; $env:KITE_POOL_MAXSIZE=40; $env:MINIO_ENDPOINT="localhost:9004"; $env:MINIO_ACCESS_KEY="minioadmin"; $env:MINIO_SECRET_KEY="minioadmin123"; $env:MINIO_SECURE="false"; $env:MINIO_BUCKET="centurion-backtests"; $env:MINIO_ENABLED="true"; $env:CENTURION_DB_HOST="localhost"; $env:CENTURION_DB_PORT="9003"; $env:CENTURION_DB_NAME="centurion_rag"; $env:CENTURION_DB_USER="postgres"; $env:CENTURION_DB_PASSWORD="superadmin1"; $env:CENTURION_RAG_LLM_URL="http://localhost:11434"; $env:RAG_MODEL="qwen2.5:3b"; $env:CENTURION_RAG_CHROMA_DIR="./data/chroma_db"; $env:CENTURION_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5"; $env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET="2000"; $env:CENTURION_RAG_MAX_CONTEXT_CHUNKS="8"; $env:CENTURION_RAG_TOP_K="15"; $env:CENTURION_RAG_SIMILARITY_THRESHOLD="0.70"; $env:CENTURION_RAG_LLM_NUM_CTX="4096"; $env:CENTURION_RAG_LLM_NUM_PREDICT="500"; $env:CENTURION_RAG_LLM_MAX_TOKENS="500"; $env:CENTURION_RAG_LLM_TEMPERATURE="0.2"; $env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT="300"; $env:CENTURION_RAG_LLM_CHUNK_TIMEOUT="30"; $env:CENTURION_RAG_QUERY_BUDGET="300"; $env:CENTURION_RAG_QUERY_REWRITE="false"; $env:CENTURION_RAG_STREAMING="true"; $env:CENTURION_RAG_FAQ_ENABLED="false"; $env:RAG_FAST_MODE="false"; $env:CENTURION_RAG_CACHE_ENABLED="false"; $env:CENTURION_DEFAULT_ADMIN_PASSWORD="admin123"; $env:CENTURION_DEFAULT_ANALYST_PASSWORD="analyst123"; $env:CENTURION_RAG_LLM_PROVIDER="claude"; $env:ANTHROPIC_API_KEY="YOUR_KEY_HERE"; $env:CENTURION_RAG_CLAUDE_MODEL="claude-opus-4-20250514"; $env:CENTURION_RAG_CLAUDE_MAX_TOKENS="1024"; $env:CENTURION_RAG_CLAUDE_TEMPERATURE="0.2"
+```powershell
+python setup_database.py
 ```
 Expected output: `✓ Database tables created successfully`
 
@@ -69,8 +72,8 @@ This creates all 14 tables in the `centurion_rag` database: `analysis_runs`, `ne
 
 ### Step 5 — Start MinIO (Docker) — for backtest, Financial ML & Test-and-Tune charts
 
-```
-export STREAMLIT_SERVER_PORT=9000 API_PORT=9001 ZERODHA_API_KEY="YOUR_KEY_HERE" ZERODHA_API_SECRET="YOUR_SECRET_HERE" ZERODHA_USER_ID="YOUR_USER_HERE" ZERODHA_PASSWORD="YOUR_PASSWORD_HERE" KITE_DB_HOST="localhost" KITE_DB_PORT="9003" KITE_DB_NAME="livestocks_ind" KITE_DB_USER="postgres" KITE_DB_PASSWORD="superadmin1" KITE_POOL_MAXSIZE=40 MINIO_ENDPOINT="localhost:9004" MINIO_ACCESS_KEY="minioadmin" MINIO_SECRET_KEY="minioadmin123" MINIO_SECURE="false" MINIO_BUCKET="centurion-backtests" MINIO_ENABLED="true" CENTURION_DB_HOST="localhost" CENTURION_DB_PORT="9003" CENTURION_DB_NAME="centurion_rag" CENTURION_DB_USER="postgres" CENTURION_DB_PASSWORD="superadmin1" CENTURION_RAG_LLM_URL="http://localhost:11434" RAG_MODEL="qwen2.5:3b" CENTURION_RAG_CHROMA_DIR="./data/chroma_db" CENTURION_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5" CENTURION_RAG_CONTEXT_TOKEN_BUDGET="2000" CENTURION_RAG_MAX_CONTEXT_CHUNKS="8" CENTURION_RAG_TOP_K="15" CENTURION_RAG_SIMILARITY_THRESHOLD="0.70" CENTURION_RAG_LLM_NUM_CTX="4096" CENTURION_RAG_LLM_NUM_PREDICT="500" CENTURION_RAG_LLM_MAX_TOKENS="500" CENTURION_RAG_LLM_TEMPERATURE="0.2" CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT="300" CENTURION_RAG_LLM_CHUNK_TIMEOUT="30" CENTURION_RAG_QUERY_BUDGET="300" CENTURION_RAG_QUERY_REWRITE="false" CENTURION_RAG_STREAMING="true" CENTURION_RAG_FAQ_ENABLED="false" RAG_FAST_MODE="false" CENTURION_RAG_CACHE_ENABLED="false" CENTURION_DEFAULT_ADMIN_PASSWORD="admin123" CENTURION_DEFAULT_ANALYST_PASSWORD="analyst123" CENTURION_RAG_LLM_PROVIDER="claude" ANTHROPIC_API_KEY="YOUR_KEY_HERE" CENTURION_RAG_CLAUDE_MODEL="claude-opus-4-20250514" CENTURION_RAG_CLAUDE_MAX_TOKENS="1024" CENTURION_RAG_CLAUDE_TEMPERATURE="0.2"
+```powershell
+docker run -d --name centurion-minio -p 9004:9000 -p 9002:9001 -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin123 minio/minio:latest server /data --console-address ":9001"
 ```
 
 The `centurion-backtests` bucket is auto-created on first use. It stores backtest strategy charts, Financial ML figures.
@@ -149,6 +152,7 @@ Jump to **Section 14: Troubleshooting** or **Section 11: Installation** for deta
 13. [API Reference](#13-api-reference)
 14. [Troubleshooting](#14-troubleshooting)
 15. [Dependencies](#15-dependencies)
+16. [Cloud Infrastructure & Observability](#16-cloud-infrastructure--observability)
 
 ---
 
@@ -252,8 +256,9 @@ infrastructure/
   ├── TimeSeriesStore  TimescaleDB (live) / in-memory ring buffer (replay); unified tick/OHLCV API
   ├── ExecutionContext Dual-mode context (live / paper / backtest); same code path for all modes
   ├── AnalysisPipeline 8-stage institutional pipeline: Raw → Clean → Feature → Alpha → Combine → Optimize → Execute → Post-Trade
-  ├── LoggingConfig    JSON structured logging with correlation IDs; thread-local context
-  ├── CacheService     Redis (Upstash) backend with in-memory fallback; TTL, key prefix, health check
+  ├── LoggingConfig    JSON structured logging with correlation IDs; Better Stack (Logtail) cloud shipping
+  ├── CacheService     Dual-layer L1 (in-memory) + L2 (Upstash Redis); lazy URL resolution; /health reporting
+  ├── Sentry           Error tracking + performance tracing (FastAPI/Starlette/Logging integrations)
   └── BackupService    Nightly SQLite backup to R2/MinIO (scheduler_cache, trade_monitor, chroma)
 ```
 
@@ -810,8 +815,8 @@ centurion_core/
 │   ├── timeseries_store.py       # TimescaleDB (live) / in-memory ring buffer (replay)
 │   ├── execution_context.py      # Dual-mode context (live / paper / backtest)
 │   ├── analysis_pipeline.py      # 8-stage institutional pipeline (Raw → Post-Trade)
-│   ├── logging_config.py         # JSON structured logging with correlation IDs
-│   ├── cache.py                  # Redis (Upstash) cache with in-memory fallback
+│   ├── logging_config.py         # JSON structured logging with correlation IDs + Better Stack (Logtail)
+│   ├── cache.py                  # Dual-layer cache: L1 in-memory + L2 Upstash Redis (lazy URL resolution)
 │   └── backup_service.py         # Nightly SQLite backup to R2/MinIO
 │
 ├── layers/                       # Architectural abstraction layers
@@ -936,7 +941,7 @@ centurion_core/
 │   └── minio_service.py          # S3 client (MinIO local / Cloudflare R2 production)
 │
 ├── api/                          # FastAPI REST API layer
-│   ├── main.py                   # App factory, auth-gated /docs
+│   ├── main.py                   # App factory, auth-gated /docs, Sentry init
 │   ├── auth.py                   # Token signing, login/logout
 │   ├── dependencies.py           # Dependency injection (DB, Kite, RAG)
 │   ├── schemas/                  # Pydantic v2 request/response models
@@ -947,7 +952,7 @@ centurion_core/
 │   │   ├── crypto.py             # Prices, backtest, strategies
 │   │   └── streaming.py          # SSE, WebSocket, Postback, OHLC, Alerts
 │   └── routers/                  # Route modules (50+ endpoints)
-│       ├── health.py             # GET /health
+│       ├── health.py             # GET /health (includes cache health: backend type, key count)
 │       ├── us_stocks.py          # 9 endpoints
 │       ├── ind_stocks.py         # 11 endpoints
 │       ├── rag.py                # 10 endpoints
@@ -1206,6 +1211,27 @@ CENTURION_RAG_CLAUDE_TEMPERATURE=0.2
 # ─── Optional: OpenAI (uncomment to use instead of Claude) ──────────
 # CENTURION_RAG_LLM_PROVIDER=openai
 # OPENAI_API_KEY=your_openai_key_here
+
+# ─── Neon PostgreSQL (cloud — overrides local DB settings) ──────────
+# CENTURION_DATABASE_URL=postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require
+
+# ─── Upstash Redis (cloud caching — falls back to in-memory if unset)
+# UPSTASH_REDIS_URL=rediss://default:token@host.upstash.io:6379
+
+# ─── Cloudflare R2 (production object storage — overrides local MinIO)
+# MINIO_ENDPOINT=<account_id>.r2.cloudflarestorage.com
+# MINIO_ACCESS_KEY=<r2_access_key>
+# MINIO_SECRET_KEY=<r2_secret_key>
+# MINIO_SECURE=true
+# MINIO_REGION=auto
+
+# ─── Sentry (error tracking) ──────────────────────────────────────
+# SENTRY_DSN=https://<key>@<org>.ingest.sentry.io/<project_id>
+# SENTRY_TRACES_SAMPLE_RATE=0.2
+# SENTRY_ENVIRONMENT=development
+
+# ─── Better Stack / Logtail (log aggregation) ─────────────────────
+# LOGTAIL_TOKEN=<your_source_token>
 ```
 
 **Verify .env is in the correct location:**
@@ -1595,9 +1621,251 @@ docker-compose down -v
 | **Database** | sqlalchemy ≥ 2.0, psycopg2-binary ≥ 2.9, python-dotenv ≥ 1.0 |
 | **Object Storage** | minio ≥ 7.2 (MinIO local / Cloudflare R2 production) |
 | **Caching** | redis (Upstash Redis in production, in-memory fallback) |
+| **Error Tracking** | sentry-sdk[fastapi] (Sentry — error capture + performance tracing) |
+| **Log Aggregation** | logtail-python (Better Stack — cloud log shipping) |
 | **Auth** | pyyaml ≥ 6.0, itsdangerous, bcrypt |
 | **Notifications** | plyer |
 | **API** | fastapi, uvicorn[standard], python-multipart |
+
+---
+
+## 16. Cloud Infrastructure & Observability
+
+Production deployment uses a fully managed cloud stack with zero self-hosted servers.
+
+### Production Architecture
+
+```
+User → Vercel (Next.js frontend)
+         │
+         ├── API calls → HF Spaces (FastAPI backend)
+         │                  ├── Neon PostgreSQL (database)
+         │                  ├── Upstash Redis (caching)
+         │                  ├── Cloudflare R2 (object storage)
+         │                  ├── Sentry (error tracking)
+         │                  └── Better Stack (log aggregation)
+         │
+         └── Static assets → Vercel CDN
+```
+
+### Service Summary
+
+| Service | Purpose | Free Tier | Dashboard |
+|---------|---------|-----------|----------|
+| **HF Spaces** | FastAPI backend hosting | Community GPU / CPU | huggingface.co/spaces |
+| **Vercel** | Next.js frontend hosting | 100 GB bandwidth/month | vercel.com/dashboard |
+| **Neon** | Serverless PostgreSQL | 0.5 GB storage, 1 project | console.neon.tech |
+| **Upstash** | Serverless Redis (caching) | 10K commands/day | console.upstash.com |
+| **Cloudflare R2** | S3-compatible object storage | 10 GB, zero egress | dash.cloudflare.com |
+| **Sentry** | Error tracking + performance | 5K errors/month | sentry.io |
+| **Better Stack** | Cloud log aggregation | 1 GB logs/month | logs.betterstack.com |
+
+### Access URLs
+
+| Service | URL | Notes |
+|---------|-----|-------|
+| **Frontend (prod)** | https://centurion-core-fe.vercel.app | Next.js — login with `admin` / `admin123` |
+| **Frontend (local)** | http://localhost:3000 | `npm run dev` from `centurion_core-fe/` |
+| **Backend API (prod)** | https://srees16-centurion-core.hf.space | HF Spaces — FastAPI |
+| **Backend API (local)** | http://localhost:9001 | `python run_api.py` |
+| **API Docs (local)** | http://localhost:9001/docs | Swagger UI (auth-gated) |
+| **Streamlit (local)** | http://localhost:9000 | `streamlit run app.py` (legacy UI) |
+| **Neon Console** | https://console.neon.tech | Database management, SQL editor, branching |
+| **Upstash Console** | https://console.upstash.com | Redis data browser, CLI, usage metrics |
+| **Cloudflare Dashboard** | https://dash.cloudflare.com | R2 bucket browser, API tokens, usage |
+| **Sentry Dashboard** | https://sentry.io | Issues, performance traces, releases |
+| **Better Stack Live Tail** | https://logs.betterstack.com | Real-time log stream, search, alerts |
+| **HF Spaces Settings** | https://huggingface.co/spaces/srees16/centurion_core/settings | Repository secrets, hardware, visibility |
+| **Vercel Settings** | https://vercel.com/dashboard | Deployments, domains, env vars |
+| **MinIO Console (local)** | http://localhost:9002 | `minioadmin` / `minioadmin123` |
+| **Zerodha Kite** | https://kite.zerodha.com | Live trading, API app management |
+
+---
+
+### 16.1 HF Spaces (Backend)
+
+The FastAPI backend runs on Hugging Face Spaces using a Docker container.
+
+| Setting | Value |
+|---------|-------|
+| **Runtime** | Docker (Python 3.11-slim) |
+| **Entrypoint** | `deployment/start.sh` — dual-process (FastAPI + APScheduler) |
+| **Port** | 7860 (HF Spaces default) |
+| **Secrets** | All `.env` variables added as HF Space secrets |
+
+**Deployment**: Push to `main` branch → GitHub Actions builds and deploys to HF Spaces automatically.
+
+**Secrets to configure** (HF Space → Settings → Repository secrets):
+
+| Secret | Description |
+|--------|-------------|
+| `CENTURION_DATABASE_URL` | Neon PostgreSQL connection string |
+| `UPSTASH_REDIS_URL` | Upstash Redis connection string |
+| `MINIO_ENDPOINT` | Cloudflare R2 endpoint |
+| `MINIO_ACCESS_KEY` | R2 access key ID |
+| `MINIO_SECRET_KEY` | R2 secret access key |
+| `SENTRY_DSN` | Sentry project DSN |
+| `SENTRY_ENVIRONMENT` | `production` |
+| `LOGTAIL_TOKEN` | Better Stack source token |
+| `ANTHROPIC_API_KEY` | Claude API key |
+| `ZERODHA_*` | Zerodha Kite Connect credentials (6 vars) |
+| `CENTURION_EMAIL_*` | Gmail SMTP credentials (4 vars) |
+
+---
+
+### 16.2 Vercel (Frontend)
+
+The Next.js 14 frontend deploys to Vercel with API rewrites to the HF Spaces backend.
+
+| Setting | Value |
+|---------|-------|
+| **Framework** | Next.js 14 (auto-detected) |
+| **Build** | `next build` |
+| **Config** | `vercel.json` — API rewrites to HF Spaces URL |
+| **Auth** | JWT token via signed cookies (8-hour TTL) |
+
+**`vercel.json` rewrites**: All `/api/*` requests are proxied to the HF Spaces backend URL, keeping the frontend decoupled from the backend host.
+
+---
+
+### 16.3 Neon PostgreSQL (Database)
+
+Serverless PostgreSQL with auto-suspend and connection pooling.
+
+| Setting | Value |
+|---------|-------|
+| **Connection** | `CENTURION_DATABASE_URL` env var (pooled endpoint) |
+| **SSL** | Auto-forced `sslmode=require` for Neon endpoints |
+| **Pool** | 5 connections + 5 overflow (serverless-optimised) |
+| **Recycle** | 300s `pool_recycle` for Neon connection timeout |
+| **Pre-warming** | `DatabaseManager.pre_warm()` wakes suspended compute before market hours |
+| **URL rewrite** | `postgres://` → `postgresql+psycopg2://` handled automatically |
+| **Tables** | 14 tables in `centurion_rag` database |
+
+---
+
+### 16.4 Upstash Redis (Caching)
+
+Dual-layer caching: L1 in-memory dict + L2 Upstash Redis for cross-restart persistence.
+
+| Setting | Value |
+|---------|-------|
+| **Connection** | `UPSTASH_REDIS_URL` env var (TLS `rediss://`) |
+| **Module** | `infrastructure/cache.py` — `CacheService` singleton |
+| **L1** | In-memory Python dict (fastest, per-process) |
+| **L2** | Upstash Redis (persistent, shared across restarts) |
+| **Resolution** | Lazy `_resolve_url()` — defers env lookup until first use (dotenv compat) |
+| **Health** | Reported in `GET /health` response (`cache.backend`, `cache.key_count`) |
+
+**Caches using dual-layer (L1 + L2)**:
+
+| Cache | Redis Key Pattern | TTL |
+|-------|-------------------|-----|
+| Layer 1 scorer | `l1:{symbol}` | 15 minutes |
+| Ticker prices | `price:{symbol}` | 5 minutes |
+| Sector rotation | `sector:rotation` | 1 hour |
+| Fundamental freshness | `fresh:{symbol}` | 12 hours |
+
+---
+
+### 16.5 Cloudflare R2 (Object Storage)
+
+S3-compatible storage for backtest charts, Financial ML figures, and nightly SQLite backups.
+
+| Setting | Value |
+|---------|-------|
+| **Endpoint** | `MINIO_ENDPOINT` (R2 auto-detected via `r2.cloudflarestorage.com`) |
+| **Auth** | `MINIO_ACCESS_KEY` + `MINIO_SECRET_KEY` (R2 API tokens) |
+| **Bucket** | `centurion-backtests` (auto-created on first use) |
+| **TLS** | `MINIO_SECURE=true` (auto-forced for R2) |
+| **Region** | `MINIO_REGION=auto` |
+| **Module** | `services/storage/minio_service.py` |
+| **Availability** | `is_available()` uses `bucket_exists()` fallback (R2 denies `list_buckets()`) |
+| **Presigned URLs** | 1-hour expiry for chart viewing in History page |
+
+**Storage layout**:
+```
+centurion-backtests/
+├── <run_id>/<TICKER>/<strategy>/<chart>.png    # Backtest charts
+├── <run_id>/financial_ml/<chapter>/<fig>.png    # Financial ML figures
+└── backups/<YYYY-MM-DD>/<db>.sqlite3            # Nightly SQLite backups
+```
+
+---
+
+### 16.6 Sentry (Error Tracking)
+
+Automatic error capture and performance tracing for the FastAPI backend.
+
+| Setting | Value |
+|---------|-------|
+| **Package** | `sentry-sdk[fastapi]` |
+| **Init** | `api/main.py` — `_init_sentry()` called at module import |
+| **Integrations** | `FastApiIntegration`, `StarletteIntegration`, `LoggingIntegration` |
+| **Breadcrumbs** | From `INFO` level and above |
+| **Events** | From `ERROR` level and above |
+| **Traces** | `SENTRY_TRACES_SAMPLE_RATE=0.2` (20% of requests) |
+| **Graceful** | Skips silently if `sentry-sdk` not installed or `SENTRY_DSN` not set |
+
+**Environment variables**:
+
+| Variable | Description | Example |
+|----------|-------------|--------|
+| `SENTRY_DSN` | Project DSN from sentry.io | `https://key@org.ingest.sentry.io/id` |
+| `SENTRY_TRACES_SAMPLE_RATE` | Performance trace sampling (0.0–1.0) | `0.2` |
+| `SENTRY_ENVIRONMENT` | Environment tag | `production` / `development` |
+
+---
+
+### 16.7 Better Stack (Log Aggregation)
+
+Cloud log shipping via Logtail — all structured JSON logs are forwarded to Better Stack for search, alerting, and dashboards.
+
+| Setting | Value |
+|---------|-------|
+| **Package** | `logtail-python` |
+| **Init** | `infrastructure/logging_config.py` — `setup_logging()` |
+| **Handler** | `LogtailHandler` attached to root logger when `LOGTAIL_TOKEN` is set |
+| **Format** | Structured JSON (correlation IDs, timestamps, module names) |
+| **Graceful** | Skips silently if `logtail` not installed or `LOGTAIL_TOKEN` not set |
+| **Live tail** | Real-time log stream at logs.betterstack.com |
+
+**Environment variables**:
+
+| Variable | Description | Example |
+|----------|-------------|--------|
+| `LOGTAIL_TOKEN` | Source token from Better Stack | `tBx3cfn8ihznc4A3hru5mUJT` |
+
+---
+
+### 16.8 Complete Cloud `.env` Reference
+
+All cloud-specific environment variables (add to `.env` locally and as HF Spaces secrets for production):
+
+```ini
+# ─── Neon PostgreSQL ───────────────────────────────────────────────
+CENTURION_DATABASE_URL=postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require
+
+# ─── Upstash Redis ─────────────────────────────────────────────────
+UPSTASH_REDIS_URL=rediss://default:token@host.upstash.io:6379
+
+# ─── Cloudflare R2 ─────────────────────────────────────────────────
+MINIO_ENDPOINT=<account_id>.r2.cloudflarestorage.com
+MINIO_ACCESS_KEY=<r2_access_key>
+MINIO_SECRET_KEY=<r2_secret_key>
+MINIO_SECURE=true
+MINIO_BUCKET=centurion-backtests
+MINIO_ENABLED=true
+MINIO_REGION=auto
+
+# ─── Sentry ────────────────────────────────────────────────────────
+SENTRY_DSN=https://<key>@<org>.ingest.sentry.io/<project_id>
+SENTRY_TRACES_SAMPLE_RATE=0.2
+SENTRY_ENVIRONMENT=production
+
+# ─── Better Stack / Logtail ───────────────────────────────────────
+LOGTAIL_TOKEN=<your_source_token>
+```
 
 ---
 

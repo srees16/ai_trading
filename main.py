@@ -20,11 +20,11 @@ from models import TradingSignal
 from scrapers.us_aggregator import USNewsAggregator
 from scrapers.ind_aggregator import IndianNewsAggregator
 from scrapers.macro.macro_indicators import MacroIndicators
-from sentiment import SentimentAnalyzer
-from metrics import MetricsCalculator
-from decision_engine import DecisionEngine
-from notifications import NotificationManager
-from storage import StorageManager
+from services.sentiment import SentimentAnalyzer
+from services.metrics import MetricsCalculator
+from services.decision_engine import DecisionEngine
+from services.notifications import NotificationManager
+from services.storage import StorageManager
 
 # Infrastructure
 from infrastructure.event_bus import event_bus

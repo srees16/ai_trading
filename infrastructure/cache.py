@@ -79,16 +79,23 @@ class CacheService:
     def __init__(self):
         self._redis: Optional[Any] = None
         self._memory = _InMemoryCache()
-        self._redis_url = os.getenv("UPSTASH_REDIS_URL", os.getenv("REDIS_URL", ""))
+        self._redis_url: Optional[str] = None  # resolved lazily
         self._prefix = "centurion:"
+
+    def _resolve_url(self) -> str:
+        """Lazily resolve Redis URL so dotenv has time to load."""
+        if self._redis_url is None:
+            self._redis_url = os.getenv("UPSTASH_REDIS_URL", os.getenv("REDIS_URL", ""))
+        return self._redis_url
 
     @property
     def _client(self):
         """Lazy-init Redis connection."""
-        if self._redis is None and REDIS_AVAILABLE and self._redis_url:
+        url = self._resolve_url()
+        if self._redis is None and REDIS_AVAILABLE and url:
             try:
                 self._redis = _redis_lib.from_url(
-                    self._redis_url,
+                    url,
                     decode_responses=True,
                     socket_connect_timeout=5,
                     socket_timeout=5,
