@@ -607,11 +607,26 @@ async def verdict_run(req: VerdictRunRequest):
         from services.integrated_scorer import IntegratedScorer
 
         # --- Serve cached verdicts where available ---
+        # Gap C fix: validate cache age — reject entries older than 30 min
         cached_results = []
         uncached_tickers = []
+        _MAX_CACHE_AGE_MIN = 30
         for t in req.tickers:
             cached = get_cached_verdict(t)
             if cached:
+                try:
+                    from datetime import datetime as _dt
+                    cached_at = _dt.fromisoformat(cached.get("cached_at", ""))
+                    age_min = (_dt.now(cached_at.tzinfo) - cached_at).total_seconds() / 60
+                    if age_min > _MAX_CACHE_AGE_MIN:
+                        logger.info(
+                            "Verdict cache stale for %s (%.0f min old) — re-evaluating",
+                            t, age_min,
+                        )
+                        uncached_tickers.append(t)
+                        continue
+                except Exception:
+                    pass  # if cached_at missing/invalid, still serve the cache
                 cached_results.append(cached)
             else:
                 uncached_tickers.append(t)

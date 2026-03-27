@@ -36,6 +36,18 @@ except ImportError:
     CircuitOpenError = RuntimeError
 
 
+def _is_nse_market_open() -> bool:
+    """Check if NSE is within trading hours (9:15 AM – 3:30 PM IST, weekdays)."""
+    from datetime import datetime, timezone, timedelta
+    _IST = timezone(timedelta(hours=5, minutes=30))
+    now = datetime.now(_IST)
+    if now.weekday() > 4:  # Saturday=5, Sunday=6
+        return False
+    market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    return market_open <= now <= market_close
+
+
 # ── Order Placement ────────────────────────────────────────────
 
 def place_order(kite, symbol, exchange, transaction_type, quantity,
@@ -79,6 +91,14 @@ def place_order(kite, symbol, exchange, transaction_type, quantity,
         if state == "OPEN":
             logger.error("Circuit breaker OPEN — rejecting order for %s", symbol)
             return {"success": False, "error": "Circuit breaker OPEN: Kite API consecutive failures detected. Halting orders for safety."}
+
+    # ── Gap E fix: market hours guard ──
+    # Block orders outside NSE hours (9:15 AM – 3:30 PM IST, weekdays).
+    # SL and SL-M orders placed by TradeMonitor are exempt (trigger-based).
+    if order_type not in ("SL", "SL-M"):
+        if not _is_nse_market_open():
+            logger.warning("Order blocked for %s — NSE market is closed", symbol)
+            return {"success": False, "error": "NSE market closed (9:15 AM – 3:30 PM IST, Mon-Fri)"}
 
     # Generate idempotency tag from order parameters
     tag_seed = f"{symbol}:{exchange}:{transaction_type}:{quantity}:{order_type}:{price}:{int(time.time()//60)}"

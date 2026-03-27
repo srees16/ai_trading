@@ -5,7 +5,7 @@ also verify if monte carlo evaluation of trading system is implemented
 
 prompts:
 ~~~~
-you are the senior technical architect at THE most reputed quant trading firm in the world. However you are designing centurion_core for 1 or 2 retail traders, a trading platform that would automatically trigger buy/sell orders based on fundamental analysis, technical analysis, qualitative analysis, macro-economic head & tail winds and event-driven news updates. Considering these requirements, perform the below tasks:
+/godmode you are the senior technical architect at THE most reputed quant trading firm in the world. However you are designing centurion_core for 1 or 2 retail traders, a trading platform that would automatically trigger buy/sell orders based on fundamental analysis, technical analysis, qualitative analysis, macro-economic head & tail winds and event-driven news updates. Considering these requirements, perform the below tasks:
 
 audit, investigate and analyze the characteristics of a trading terminal of a highly reputable quant firm. Compare & contrast that with the current implementation of centurion_core app with focus "ind stocks module". Remember that centurion_core app is to be used by 1-2 users only. List out the implementation gaps in high level system design & architecture, stock analysis methodology along with low level technical details. Give readable and crisp details.
 

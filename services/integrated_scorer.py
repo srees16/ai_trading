@@ -372,6 +372,17 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
             "statistical arbitrage",
         }
 
+        # ── Gap A fix: load WF-optimised params per strategy ──
+        _wf_params_map: Dict[str, dict] = {}
+        try:
+            from services.walk_forward import load_optimal_params as _load_wf
+            for name in all_strategies:
+                wfp = _load_wf(name, ticker)
+                if wfp:
+                    _wf_params_map[name.lower()] = wfp
+        except Exception:
+            pass  # degrade — use default params
+
         for name, strategy_cls in all_strategies.items():
             # Skip crypto strategies when evaluating US/IND stocks
             if "crypto" in name.lower():
@@ -386,11 +397,14 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
                 continue
             try:
                 strategy = strategy_cls()
+                # Use WF-optimised params if available for this strategy
+                wf_kwargs = _wf_params_map.get(name.lower(), {})
                 result = strategy.run(
                     tickers=[ticker],
                     start_date=start_date,
                     end_date=end_date,
                     capital=10000,
+                    **wf_kwargs,
                 )
                 if not result.success:
                     strategy_results[name] = {"error": result.error_message}

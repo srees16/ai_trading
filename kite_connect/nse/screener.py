@@ -315,6 +315,63 @@ class NSEScreener:
             except Exception:
                 self.cfg.sector_indices = {}
 
+        # ── Gap A fix: load walk-forward optimised screener params ──
+        self._apply_wf_optimal_params()
+
+    def _apply_wf_optimal_params(self) -> None:
+        """Override screener config with walk-forward optimal params if available.
+
+        Reads the latest WF-optimised params from ``data/wf_params/``.
+        Only numeric screener params (thresholds, lookbacks) are overridden;
+        structural config (concurrency, sector indices) is never touched.
+        Silently degrades to static defaults if no fresh params exist.
+        """
+        try:
+            from services.walk_forward import load_all_optimal_params
+
+            all_params = load_all_optimal_params()
+            if not all_params:
+                return
+
+            # Aggregate: for each screener-relevant key, collect the
+            # best-performing value across all saved strategy/ticker combos.
+            _SCREENER_KEYS = {
+                "min_price", "min_avg_volume", "min_volume", "min_beta",
+                "pullback_pct", "breakout_vol_mult", "breakout_lookback",
+                "rsi_period", "bb_period", "bb_std", "sr_lookback",
+            }
+            applied = {}
+            for key, record in all_params.items():
+                params = record.get("params", {})
+                for pname, pval in params.items():
+                    if pname in _SCREENER_KEYS and isinstance(pval, (int, float)):
+                        # Keep the value from the record with the highest OOS Sharpe
+                        prev = applied.get(pname)
+                        if prev is None or record.get("oos_sharpe", 0) > prev[1]:
+                            applied[pname] = (pval, record.get("oos_sharpe", 0))
+
+            if not applied:
+                return
+
+            count = 0
+            for pname, (pval, _sharpe) in applied.items():
+                # Map aliases
+                attr = "min_avg_volume" if pname == "min_volume" else pname
+                if hasattr(self.cfg, attr):
+                    old_val = getattr(self.cfg, attr)
+                    setattr(self.cfg, attr, type(old_val)(pval))
+                    count += 1
+                    logger.debug(
+                        "WF param override: %s %s → %s", attr, old_val, pval,
+                    )
+            if count:
+                logger.info(
+                    "Applied %d walk-forward optimal params to screener config",
+                    count,
+                )
+        except Exception as exc:
+            logger.debug("WF param loading skipped: %s", exc)
+
     # ── Public API ─────────────────────────────────────────────
 
     def screen(

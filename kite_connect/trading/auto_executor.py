@@ -293,8 +293,16 @@ class AutoExecutor:
                     tv_ticker, timeframes=["1d", "1W"],
                 )
                 if not consensus.available:
-                    # TradingView unavailable -- allow through (no veto)
-                    approved.append(plan)
+                    # Gap B fix: TradingView unavailable — fall back to
+                    # local technical consensus (RSI > 50 + Close > MA200)
+                    if self._local_technical_consensus(ticker):
+                        approved.append(plan)
+                    else:
+                        _cb(
+                            f"  MTF fallback rejected {ticker} -- "
+                            f"TradingView offline, local technicals bearish"
+                        )
+                        rejected_count += 1
                     continue
 
                 daily = consensus.timeframes.get("1d")
@@ -324,8 +332,15 @@ class AutoExecutor:
                 approved.append(plan)
 
             except Exception as exc:
-                logger.debug("MTF check failed for %s: %s -- allowing through", ticker, exc)
-                approved.append(plan)
+                logger.debug("MTF check failed for %s: %s -- using local fallback", ticker, exc)
+                if self._local_technical_consensus(ticker):
+                    approved.append(plan)
+                else:
+                    _cb(
+                        f"  MTF fallback rejected {ticker} -- "
+                        f"TradingView error, local technicals bearish"
+                    )
+                    rejected_count += 1
 
         if rejected_count:
             _cb(
@@ -334,6 +349,35 @@ class AutoExecutor:
             )
 
         return approved
+
+
+    # -- Gap B fix: local technical fallback when TradingView offline ----
+
+    @staticmethod
+    def _local_technical_consensus(symbol: str) -> bool:
+        """Quick local check: RSI > 50 AND Close > 200-day MA.
+
+        Used as a fallback when TradingView is unavailable.  Returns True
+        (bullish) if both conditions are met, False otherwise.
+        """
+        try:
+            from utils import download_ind_ohlcv
+            df = download_ind_ohlcv(f"{symbol}.NS", period="1y")
+            if df is None or df.empty or len(df) < 200:
+                return False
+            close = df["Close"].squeeze()
+            # RSI (14-period)
+            delta = close.diff().dropna()
+            gain = delta.clip(lower=0).rolling(14).mean()
+            loss = (-delta.clip(upper=0)).rolling(14).mean()
+            rs = gain / loss.replace(0, float("nan"))
+            rsi = float((100 - 100 / (1 + rs)).iloc[-1])
+            # MA200
+            ma200 = float(close.rolling(200).mean().iloc[-1])
+            last_close = float(close.iloc[-1])
+            return rsi > 50 and last_close > ma200
+        except Exception:
+            return False  # conservative: reject if local check also fails
 
     # â”€â”€ Order persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 

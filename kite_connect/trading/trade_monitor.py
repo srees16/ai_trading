@@ -312,33 +312,65 @@ class TradeMonitor:
             pass  # notifications are non-critical
 
     def _place_sl_for_trade(self, trade: MonitoredTrade) -> None:
-        """Place a stop-loss order after entry fills."""
+        """Place a stop-loss order after entry fills.
+
+        Gap D fix: retries up to 3 times with 1s backoff if SL placement
+        fails, to prevent orphaned positions running without a stop-loss.
+        """
         if not self.kite:
             return
+        import time as _time
+        from kite_connect.trading.order_service import place_order
+        sl_side = "SELL" if trade.side == "BUY" else "BUY"
+
+        _MAX_SL_RETRIES = 3
+        for attempt in range(_MAX_SL_RETRIES):
+            try:
+                resp = place_order(
+                    kite=self.kite,
+                    symbol=trade.symbol,
+                    exchange="NSE",
+                    transaction_type=sl_side,
+                    quantity=trade.quantity,
+                    order_type="SL",
+                    product="CNC",
+                    trigger_price=trade.stop_loss,
+                    price=round(trade.stop_loss * 0.99, 2),
+                )
+                _time.sleep(0.15)
+                if resp.get("success"):
+                    trade.sl_order_id = resp["order_id"]
+                    logger.info("SL placed for %s: trigger=%.2f, id=%s",
+                                trade.symbol, trade.stop_loss, resp["order_id"])
+                    return  # success — exit retry loop
+                else:
+                    logger.warning(
+                        "SL attempt %d/%d failed for %s: %s",
+                        attempt + 1, _MAX_SL_RETRIES,
+                        trade.symbol, resp.get("error"),
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "SL attempt %d/%d exception for %s: %s",
+                    attempt + 1, _MAX_SL_RETRIES, trade.symbol, exc,
+                )
+            if attempt < _MAX_SL_RETRIES - 1:
+                _time.sleep(1)  # 1s backoff between retries
+
+        # All retries exhausted — log critical alert
+        logger.error(
+            "CRITICAL: SL placement FAILED after %d retries for %s — "
+            "position is UNPROTECTED",
+            _MAX_SL_RETRIES, trade.symbol,
+        )
         try:
-            from kite_connect.trading.order_service import place_order
-            import time
-            sl_side = "SELL" if trade.side == "BUY" else "BUY"
-            resp = place_order(
-                kite=self.kite,
-                symbol=trade.symbol,
-                exchange="NSE",
-                transaction_type=sl_side,
-                quantity=trade.quantity,
-                order_type="SL",
-                product="CNC",
-                trigger_price=trade.stop_loss,
-                price=round(trade.stop_loss * 0.99, 2),  # SL limit 1% below trigger
+            from services.notifications.manager import NotificationManager
+            NotificationManager().notify_critical(
+                f"SL FAILED for {trade.symbol} after {_MAX_SL_RETRIES} retries — "
+                f"position unprotected at entry={trade.entry_price}"
             )
-            time.sleep(0.15)
-            if resp.get("success"):
-                trade.sl_order_id = resp["order_id"]
-                logger.info("SL placed for %s: trigger=%.2f, id=%s",
-                            trade.symbol, trade.stop_loss, resp["order_id"])
-            else:
-                logger.error("SL FAILED for %s: %s", trade.symbol, resp.get("error"))
-        except Exception as exc:
-            logger.error("SL exception for %s: %s", trade.symbol, exc)
+        except Exception:
+            pass
 
     def _place_tp_for_trade(self, trade: MonitoredTrade) -> None:
         """Place a take-profit order after entry fills."""
