@@ -739,6 +739,19 @@ async def screener_run(req: ScreenerRunRequest):
         screener = NSEScreener(config=screener_cfg)
         risk_mgr = RiskManager(config=risk_cfg)
 
+        # Carver: inject VolatilityTarget when enabled
+        try:
+            from config import Config as _Cfg
+            if getattr(_Cfg, "CARVER_ENABLED", False):
+                from services.volatility_target import VolatilityTarget, VolatilityTargetConfig
+                vt = VolatilityTarget(VolatilityTargetConfig(
+                    initial_capital=risk_cfg.total_capital,
+                    annual_vol_target_pct=getattr(_Cfg, "CARVER_ANNUAL_VOL_TARGET", 0.20),
+                ))
+                risk_mgr = RiskManager(config=risk_cfg, volatility_target=vt)
+        except Exception:
+            pass
+
         # Default to NIFTY50 when no tickers provided
         tickers = req.tickers if req.tickers else list(INDEX_CONSTITUENTS.get("NIFTY50", []))
 

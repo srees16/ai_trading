@@ -79,7 +79,102 @@ def render_screener_page():
     # ── Show cached results if available ───────────────────────
     _show_cached_results(risk_cfg, auto_place)
 
+    # ── Carver efficiency report (Task 4: Before vs After) ────
+    _render_carver_efficiency_section()
+
     render_footer()
+
+
+# ═══════════════════════════════════════════════════════════════
+# Carver Efficiency Report (Task 4: Before vs After)
+# ═══════════════════════════════════════════════════════════════
+
+def _render_carver_efficiency_section():
+    """Render Carver framework efficiency comparison panel."""
+    try:
+        from config import Config
+        if not getattr(Config, "CARVER_ENABLED", False):
+            return
+    except Exception:
+        return
+
+    with st.expander("📊 Carver Framework — Before vs After Analysis", expanded=False):
+        st.markdown(
+            "Compares the legacy Kelly-based sizing with the Carver Systematic "
+            "Trading framework (EWMAC + FDM + vol-targeted sizing)."
+        )
+
+        col_b, col_a = st.columns(2)
+        with col_b:
+            st.markdown("**BEFORE (Legacy)**")
+            st.markdown("""
+            - Forecast: 0–100 screener score
+            - Sizing: Half-Kelly 1–3% risk
+            - Stop-loss: Fixed 5–8% below entry
+            - Vol target: None (static capital)
+            - Diversification: None
+            - Cost mgmt: Slippage buffer only
+            """)
+        with col_a:
+            st.markdown("**AFTER (Carver)**")
+            st.markdown("""
+            - Forecast: Unified -20/+20, avg|f|=10
+            - Sizing: (f/10) × vol_scalar × w × IDM
+            - Stop-loss: N × daily_vol (adaptive)
+            - Vol target: 20% annual, Half-Kelly
+            - Diversification: FDM ≈ 1.35, IDM ≈ 1.6
+            - Cost mgmt: SR > 3× cost drag filter
+            """)
+
+        if st.button("Run Calibration Backtest", key="carver_calibrate"):
+            with st.spinner("Running Carver expanding-window backtest …"):
+                try:
+                    from services.carver_calibration import CarverCalibrator, generate_efficiency_report
+                    from utils import download_ind_ohlcv
+                    from kite_connect.nse.nse_universe import get_nse_universe
+
+                    tickers = get_nse_universe()[:15]
+                    ohlcv_cache = {}
+                    for sym in tickers:
+                        try:
+                            df = download_ind_ohlcv(sym, period="1y")
+                            if df is not None and len(df) >= 120:
+                                ohlcv_cache[sym] = df
+                        except Exception:
+                            pass
+
+                    if not ohlcv_cache:
+                        st.warning("Insufficient OHLCV data for backtest")
+                        return
+
+                    calibrator = CarverCalibrator(
+                        annual_vol_target=getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.20),
+                        initial_capital=getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000.0),
+                    )
+                    report = calibrator.run_expanding_backtest(ohlcv_cache)
+
+                    # Display metrics
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Sharpe Ratio", f"{report.backtest_sharpe:.3f}")
+                    m2.metric("Sortino Ratio", f"{report.backtest_sortino:.3f}")
+                    m3.metric("Max Drawdown", f"{report.backtest_max_drawdown_pct:.1f}%")
+                    m4.metric("Annual Return", f"{report.backtest_annual_return_pct:.1f}%")
+
+                    st.markdown(f"**Symbols:** {report.n_symbols} | **Days:** {report.n_days}")
+
+                    # Show calibrated parameters
+                    if report.ewmac_scalars:
+                        st.markdown("**Calibrated EWMAC Scalars:**")
+                        for k, v in sorted(report.ewmac_scalars.items()):
+                            st.text(f"  {k}: {v:.3f}")
+
+                    # Full report text
+                    text = generate_efficiency_report(report)
+                    st.code(text, language="text")
+
+                except Exception as exc:
+                    st.error(f"Calibration failed: {exc}")
+                    logger.exception("Carver calibration UI error")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -158,6 +253,23 @@ def _render_config():
         value=False,
         key="screener_auto_place",
     )
+
+    # Carver framework toggle
+    carver_enabled = False
+    try:
+        from config import Config
+        carver_enabled = getattr(Config, "CARVER_ENABLED", False)
+    except Exception:
+        pass
+
+    if carver_enabled:
+        st.markdown(
+            '<span style="font-size:0.78rem; color:#065f46; background:#d1fae5; '
+            'padding:0.2rem 0.6rem; border-radius:6px;">'
+            '✅ Carver Systematic Trading framework active — '
+            'using vol-targeted sizing with EWMAC + FDM</span>',
+            unsafe_allow_html=True,
+        )
 
     # Auth status warning (shown after checkbox)
     if st.session_state.get("kite") is None:

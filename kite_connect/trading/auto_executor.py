@@ -118,9 +118,32 @@ class AutoExecutor:
     ):
         self.kite = kite
         self.screener = NSEScreener(screener_cfg)
-        self.risk_mgr = RiskManager(risk_cfg, kite=kite)
         self.auto_place = auto_place
         self._trade_monitor = trade_monitor
+
+        # Carver framework: create VolatilityTarget and inject into RiskManager
+        self._vol_target = None
+        self._carver_enabled = False
+        try:
+            from config import Config
+            if getattr(Config, "CARVER_ENABLED", False):
+                from services.volatility_target import VolatilityTarget, VolatilityTargetConfig
+                vt_cfg = VolatilityTargetConfig(
+                    initial_capital=getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000.0),
+                    annual_vol_target_pct=getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.20),
+                    max_leverage_factor=getattr(Config, "CARVER_MAX_LEVERAGE", 1.0),
+                )
+                self._vol_target = VolatilityTarget(vt_cfg)
+                self._carver_enabled = True
+                logger.info("Carver framework enabled: vol_target=%.0f%%, capital=%.0f",
+                            vt_cfg.annual_vol_target_pct * 100, vt_cfg.initial_capital)
+        except Exception as exc:
+            logger.debug("Carver framework not available: %s", exc)
+
+        self.risk_mgr = RiskManager(
+            risk_cfg, kite=kite,
+            volatility_target=self._vol_target,
+        )
 
     # â”€â”€ Public API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
@@ -219,7 +242,7 @@ class AutoExecutor:
 
         # â”€â”€ 4.  Risk management / trade plans â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         _cb("Generating trade plans with risk management â€¦")
-        plans = self.risk_mgr.plan_trades(screened_df)
+        plans = self._generate_trade_plans(screened_df, _cb)
         report.trade_plans = plans
         report.plans_count = len(plans)
 
@@ -259,6 +282,116 @@ class AutoExecutor:
             )
 
         return report
+
+    # -- Carver-aware trade plan generation ------------------------------
+
+    def _generate_trade_plans(
+        self, screened_df: pd.DataFrame, _cb,
+    ) -> List[TradePlan]:
+        """Generate trade plans using Carver pipeline when enabled, else legacy.
+
+        When CARVER_ENABLED=True:
+          1. Compute OHLCV volatilities for screened stocks
+          2. Run EWMAC forecasts + screener forecast
+          3. Combine forecasts with FDM
+          4. Apply cost speed limit filter
+          5. Compute Carver position sizes and generate plans via plan_trades_carver()
+
+        Falls back to legacy plan_trades() if anything fails.
+        """
+        if not self._carver_enabled or self._vol_target is None:
+            return self.risk_mgr.plan_trades(screened_df)
+
+        try:
+            _cb("Carver pipeline: computing volatilities & forecasts …")
+            from services.instrument_volatility import compute_volatilities_batch
+            from strategies.ewmac import compute_ewmac_batch
+            from services.forecast_scalar import screener_to_forecast
+            from services.forecast_combiner import combine_forecasts_batch
+            from services.cost_speed_limit import filter_by_cost
+            from services.instrument_weights import compute_handcrafted_weights, get_default_idm
+            from config import Config
+            from utils import download_ind_ohlcv
+
+            symbols = screened_df["symbol"].tolist()
+
+            # Step 1: Fetch OHLCV for vol + EWMAC computation
+            ohlcv_cache = {}
+            for sym in symbols:
+                try:
+                    df = download_ind_ohlcv(sym, period="6mo")
+                    if df is not None and len(df) >= 64:
+                        ohlcv_cache[sym] = df
+                except Exception:
+                    pass
+
+            if not ohlcv_cache:
+                logger.warning("Carver: no OHLCV data — falling back to legacy")
+                return self.risk_mgr.plan_trades(screened_df)
+
+            # Step 2: Volatilities
+            vol_data = compute_volatilities_batch(ohlcv_cache)
+            instrument_vols = {s: v["instrument_value_vol"] for s, v in vol_data.items()}
+
+            # Step 3: EWMAC forecasts
+            ewmac_batch = compute_ewmac_batch(ohlcv_cache)
+
+            # Step 4: Build per-symbol forecast dicts
+            all_forecasts = {}
+            score_col = "score"
+            for sym in ohlcv_cache:
+                fc = {}
+                if sym in ewmac_batch:
+                    for ef in ewmac_batch[sym]:
+                        fc[f"ewmac_{ef.fast}_{ef.slow}"] = ef.forecast
+                # Add screener score as a forecast
+                row_match = screened_df[screened_df["symbol"] == sym]
+                if not row_match.empty and score_col in row_match.columns:
+                    sc = float(row_match.iloc[0][score_col])
+                    fc["screener"] = screener_to_forecast(sc)
+                if fc:
+                    all_forecasts[sym] = fc
+
+            if not all_forecasts:
+                logger.warning("Carver: no forecasts generated — falling back to legacy")
+                return self.risk_mgr.plan_trades(screened_df)
+
+            # Step 5: Combine forecasts
+            combined = combine_forecasts_batch(all_forecasts)
+            combined_values = {s: cf.combined_forecast for s, cf in combined.items()}
+
+            # Step 6: Cost speed limit
+            vol_target_pct = getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.20)
+            combined_values = filter_by_cost(combined_values, vol_target_pct)
+
+            if not combined_values:
+                logger.info("Carver: all symbols filtered by cost — falling back to legacy")
+                return self.risk_mgr.plan_trades(screened_df)
+
+            # Step 7: Instrument weights + IDM
+            active = [s for s in combined_values if combined_values[s] > 0]
+            sector_map = getattr(Config, "NSE_SECTOR_MAP", {})
+            weights = compute_handcrafted_weights(active, sector_map)
+            idm = get_default_idm(len(active))
+
+            _cb(f"Carver pipeline: {len(combined_values)} forecasts, IDM={idm:.2f}")
+
+            # Step 8: Generate Carver trade plans
+            plans = self.risk_mgr.plan_trades_carver(
+                screened_df=screened_df,
+                combined_forecasts=combined_values,
+                instrument_vols=instrument_vols,
+                instrument_weights=weights,
+                idm=idm,
+            )
+
+            _cb(f"Carver pipeline: {len(plans)} trade plans generated")
+            return plans
+
+        except Exception as exc:
+            logger.warning("Carver pipeline failed — falling back to legacy: %s", exc)
+            _cb("Carver pipeline error — using legacy risk management")
+            return self.risk_mgr.plan_trades(screened_df)
 
     # -- Gap 6: Multi-timeframe entry confirmation -----------------------
 

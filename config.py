@@ -94,6 +94,18 @@ class Config:
     PAPER_TRADE_MODE: bool = False          # Set True to route orders to PaperTrader
 
     # =================================================================
+    # Carver Systematic Trading Framework (Robert Carver)
+    # =================================================================
+    CARVER_ENABLED: bool = True             # Enable Carver vol-targeted sizing (False = legacy Kelly)
+    CARVER_ANNUAL_VOL_TARGET: float = 0.20  # 20% annual vol target (Half-Kelly for SR ~0.40)
+    CARVER_INITIAL_CAPITAL: float = 500_000.0  # Starting capital (₹)
+    CARVER_DEFAULT_IDM: float = 1.6         # Instrument Diversification Multiplier (6-10 stocks)
+    CARVER_MAX_LEVERAGE: float = 1.0        # No leverage for swing equity
+    CARVER_INERTIA_THRESHOLD: float = 0.10  # 10% position change needed to re-trade
+    CARVER_COST_SPEED_LIMIT: float = 3.0    # SR must exceed 3× cost drag
+    CARVER_TRADE_HORIZON: str = "swing"     # "swing" (2.5σ stop) or "positional" (3.5σ stop)
+
+    # =================================================================
     # Signal Freshness (data staleness gate)
     # =================================================================
     SIGNAL_FRESHNESS_MAX_HOURS: int = 4    # Discard signals older than 4 hours

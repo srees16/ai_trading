@@ -327,8 +327,77 @@ def _paper_trade_orders(verdicts: list, screened_df):
         if buy_df.empty:
             return
 
-        rm = RiskManager(RiskConfig())
-        plans = rm.plan_trades(buy_df)
+        # Carver-aware: create VolatilityTarget and use plan_trades_carver when enabled
+        vol_target = None
+        carver_enabled = False
+        try:
+            from config import Config
+            if getattr(Config, "CARVER_ENABLED", False):
+                from services.volatility_target import VolatilityTarget, VolatilityTargetConfig
+                vt_cfg = VolatilityTargetConfig(
+                    initial_capital=getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000.0),
+                    annual_vol_target_pct=getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.20),
+                )
+                vol_target = VolatilityTarget(vt_cfg)
+                carver_enabled = True
+        except Exception:
+            pass
+
+        rm = RiskManager(RiskConfig(), volatility_target=vol_target)
+
+        if carver_enabled and vol_target is not None:
+            try:
+                from services.instrument_volatility import compute_volatilities_batch
+                from strategies.ewmac import compute_ewmac_batch
+                from services.forecast_scalar import screener_to_forecast
+                from services.forecast_combiner import combine_forecasts_batch
+                from services.cost_speed_limit import filter_by_cost
+                from services.instrument_weights import compute_handcrafted_weights, get_default_idm
+                from utils import download_ind_ohlcv
+
+                ohlcv_cache = {}
+                for sym in buy_symbols:
+                    try:
+                        df = download_ind_ohlcv(sym, period="6mo")
+                        if df is not None and len(df) >= 64:
+                            ohlcv_cache[sym] = df
+                    except Exception:
+                        pass
+
+                if ohlcv_cache:
+                    vol_data = compute_volatilities_batch(ohlcv_cache)
+                    instrument_vols = {s: v["instrument_value_vol"] for s, v in vol_data.items()}
+                    ewmac_batch = compute_ewmac_batch(ohlcv_cache)
+                    all_forecasts = {}
+                    for sym in ohlcv_cache:
+                        fc = {}
+                        if sym in ewmac_batch:
+                            for ef in ewmac_batch[sym]:
+                                fc[f"ewmac_{ef.fast}_{ef.slow}"] = ef.forecast
+                        row_m = buy_df[buy_df["symbol"] == sym]
+                        if not row_m.empty and "score" in row_m.columns:
+                            fc["screener"] = screener_to_forecast(float(row_m.iloc[0]["score"]))
+                        if fc:
+                            all_forecasts[sym] = fc
+
+                    if all_forecasts:
+                        combined = combine_forecasts_batch(all_forecasts)
+                        cv = {s: cf.combined_forecast for s, cf in combined.items()}
+                        cv = filter_by_cost(cv, getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.20))
+                        active = [s for s in cv if cv[s] > 0]
+                        weights = compute_handcrafted_weights(active, getattr(Config, "NSE_SECTOR_MAP", {}))
+                        idm = get_default_idm(len(active))
+                        plans = rm.plan_trades_carver(buy_df, cv, instrument_vols, weights, idm)
+                        logger.info("Paper trade: Carver generated %d plans", len(plans))
+                    else:
+                        plans = rm.plan_trades(buy_df)
+                else:
+                    plans = rm.plan_trades(buy_df)
+            except Exception as exc:
+                logger.warning("Carver paper trade failed, using legacy: %s", exc)
+                plans = rm.plan_trades(buy_df)
+        else:
+            plans = rm.plan_trades(buy_df)
         if not plans:
             logger.info("Paper trade: no plans met R:R threshold")
             return
