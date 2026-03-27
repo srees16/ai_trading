@@ -656,6 +656,27 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
                 "per_strategy": strategy_results,
             },
         }
+
+        # ── Benchmark alpha overlay (IND only) ──
+        # Adds benchmark comparison data to the details dict for
+        # transparency. Does NOT alter the score — informational.
+        if market == "IND":
+            try:
+                from services.benchmark_tracker import compare_strategy_to_nifty
+                bcomp = compare_strategy_to_nifty(ticker, start_date, end_date)
+                if bcomp is not None:
+                    result["details"]["benchmark"] = {
+                        "nifty_return_pct": bcomp.benchmark_return_pct,
+                        "stock_return_pct": bcomp.portfolio_return_pct,
+                        "excess_return_pct": bcomp.excess_return_pct,
+                        "jensens_alpha": bcomp.jensens_alpha,
+                        "beta_vs_nifty": bcomp.portfolio_beta,
+                        "information_ratio": bcomp.information_ratio,
+                    }
+            except Exception as e:
+                result["details"]["benchmark"] = {"error": str(e)}
+
+        return result
     except Exception as exc:
         logger.warning("Layer 2 (Strategy+Robustness) failed for %s: %s", ticker, exc)
         return {"score": None, "details": {"error": str(exc)}}

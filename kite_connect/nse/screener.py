@@ -819,4 +819,13 @@ class NSEScreener:
             except Exception:
                 pass
 
+        # ── Circuit limit penalty — stock at/near circuit can't be traded ──
+        if stock.close > 0 and hasattr(stock, 'open') and stock.open > 0:
+            daily_chg_pct = abs((stock.close - stock.open) / stock.open * 100)
+            for band in (5.0, 10.0, 20.0):
+                if abs(daily_chg_pct - band) < 0.5:
+                    score -= 30  # heavy penalty — order unlikely to fill
+                    stock.at_circuit = True
+                    break
+
         stock.score = min(100, max(0, score))

@@ -81,6 +81,33 @@ class RiskEngine:
         """
         from infrastructure.event_bus import event_bus
 
+        # ── Portfolio drawdown enforcement ──
+        current_dd = self._compute_portfolio_drawdown()
+        if current_dd >= self.max_portfolio_drawdown_pct:
+            result = RiskCheckResult(
+                ticker=ticker, passed=False,
+                reason=(
+                    f"Portfolio drawdown {current_dd:.1f}% exceeds limit "
+                    f"({self.max_portfolio_drawdown_pct:.0f}%) — blocking new trades"
+                ),
+            )
+            event_bus.emit("risk.check_failed", payload=result.__dict__, source="risk_engine")
+            logger.warning("Portfolio drawdown breach: %.1f%% — trade blocked for %s", current_dd, ticker)
+            return result
+
+        # ── Max deployment cap (80% of capital) ──
+        total_deployed = sum(
+            pos["qty"] * pos["entry"] for pos in self._open_positions.values()
+        )
+        max_deploy = self.total_capital * 0.80
+        if total_deployed >= max_deploy and ticker not in self._open_positions:
+            result = RiskCheckResult(
+                ticker=ticker, passed=False,
+                reason=f"Capital deployment {total_deployed/self.total_capital:.0%} >= 80% cap",
+            )
+            event_bus.emit("risk.check_failed", payload=result.__dict__, source="risk_engine")
+            return result
+
         # Check open position count
         if len(self._open_positions) >= self.max_open_positions and ticker not in self._open_positions:
             result = RiskCheckResult(
@@ -164,8 +191,30 @@ class RiskEngine:
     def register_position(self, ticker: str, qty: int, entry_price: float) -> None:
         self._open_positions[ticker] = {"qty": qty, "entry": entry_price}
 
+    def update_position_ltp(self, ticker: str, ltp: float) -> None:
+        """Update the last-traded-price for an open position (for drawdown computation)."""
+        if ticker in self._open_positions:
+            self._open_positions[ticker]["ltp"] = ltp
+
     def close_position(self, ticker: str) -> None:
         self._open_positions.pop(ticker, None)
+
+    def _compute_portfolio_drawdown(self) -> float:
+        """Compute current portfolio drawdown as a percentage of total capital.
+
+        Uses entry price vs LTP (if available) to compute unrealised P&L,
+        then expresses the loss as a % of total capital.
+        Returns 0.0 when no positions or no losses.
+        """
+        if not self._open_positions:
+            return 0.0
+        total_pnl = 0.0
+        for pos in self._open_positions.values():
+            ltp = pos.get("ltp", pos["entry"])  # default to entry if no LTP yet
+            total_pnl += (ltp - pos["entry"]) * pos["qty"]
+        if total_pnl >= 0:
+            return 0.0
+        return abs(total_pnl) / self.total_capital * 100
 
     @property
     def open_position_count(self) -> int:
