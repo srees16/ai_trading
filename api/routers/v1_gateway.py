@@ -580,44 +580,61 @@ async def backtest_get(backtest_id: str):
 
 @router.post("/verdict/run")
 async def verdict_run(req: VerdictRunRequest):
-    """Run the multi-layer verdict engine via IntegratedScorer."""
+    """Run the multi-layer verdict engine via IntegratedScorer.
+
+    Checks the scheduler verdict cache first; only tickers with a cache
+    miss are evaluated live (saves 60-90s per cached ticker).
+    """
     try:
+        from scheduler import get_cached_verdict
         from services.integrated_scorer import IntegratedScorer
 
-        scorer = IntegratedScorer(weights=req.weights)
-        date_range = tuple(req.date_range) if req.date_range and req.date_range[0] else None
+        # --- Serve cached verdicts where available ---
+        cached_results = []
+        uncached_tickers = []
+        for t in req.tickers:
+            cached = get_cached_verdict(t)
+            if cached:
+                cached_results.append(cached)
+            else:
+                uncached_tickers.append(t)
 
-        try:
-            verdicts = await asyncio.wait_for(
-                asyncio.to_thread(
-                    scorer.evaluate,
-                    tickers=req.tickers,
-                    market=req.market,
-                    date_range=date_range,
-                    skip_layers=req.skip_layers,
-                ),
-                timeout=540,  # 9-minute hard cap
-            )
-        except asyncio.TimeoutError:
-            raise HTTPException(status_code=504, detail="Verdict timed out after 9 minutes")
+        # --- Evaluate only the cache-miss tickers ---
+        live_results = []
+        if uncached_tickers:
+            scorer = IntegratedScorer(weights=req.weights)
+            date_range = tuple(req.date_range) if req.date_range and req.date_range[0] else None
 
-        results = []
-        for v in verdicts:
-            ls = v.layer_scores or {}
-            results.append({
-                "ticker": v.ticker,
-                "core_score": ls.get("core", 0) or 0,
-                "strategy_score": ls.get("strategy", 0) or 0,
-                "ml_score": ls.get("ml_features", 0) or 0,
-                "rl_score": ls.get("rl_bot", 0) or 0,
-                "robustness_score": ls.get("robustness", 0) or 0,
-                "weighted_score": v.final_score,
-                "verdict": v.classification,
-                "layer_details": v.layer_details,
-                "strategy_breakdown": v.layer_details.get("strategy", {}),
-            })
+            try:
+                verdicts = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        scorer.evaluate,
+                        tickers=uncached_tickers,
+                        market=req.market,
+                        date_range=date_range,
+                        skip_layers=req.skip_layers,
+                    ),
+                    timeout=540,  # 9-minute hard cap
+                )
+            except asyncio.TimeoutError:
+                raise HTTPException(status_code=504, detail="Verdict timed out after 9 minutes")
 
-        return results
+            for v in verdicts:
+                ls = v.layer_scores or {}
+                live_results.append({
+                    "ticker": v.ticker,
+                    "core_score": ls.get("core", 0) or 0,
+                    "strategy_score": ls.get("strategy", 0) or 0,
+                    "ml_score": ls.get("ml_features", 0) or 0,
+                    "rl_score": ls.get("rl_bot", 0) or 0,
+                    "robustness_score": ls.get("robustness", 0) or 0,
+                    "weighted_score": v.final_score,
+                    "verdict": v.classification,
+                    "layer_details": v.layer_details,
+                    "strategy_breakdown": v.layer_details.get("strategy", {}),
+                })
+
+        return cached_results + live_results
     except HTTPException:
         raise
     except Exception as e:
@@ -834,11 +851,11 @@ async def kite_session_start():
     to complete the OAuth flow manually.
     """
     import concurrent.futures
-    from api.dependencies import set_kite_session
+    from api.dependencies import set_kite_session, is_kite_token_expiring_soon
 
-    # If already active, return immediately
+    # If already active and not expiring soon, return immediately
     existing = get_kite_session()
-    if existing:
+    if existing and not is_kite_token_expiring_soon():
         try:
             profile = await asyncio.to_thread(existing.profile)
             return {"success": True, "profile": profile, "message": "Session already active"}
@@ -953,6 +970,25 @@ async def kite_session_stop():
             pass
     set_kite_session(None)
     return {"success": True}
+
+
+@router.get("/kite/session/status")
+async def kite_session_status():
+    """Return Kite session health: active, remaining time, expiring flag."""
+    from api.dependencies import is_kite_token_expiring_soon, kite_token_remaining_seconds
+
+    kite = get_kite_session()
+    if not kite:
+        return {"active": False, "remaining_seconds": 0, "expiring_soon": True}
+
+    remaining = kite_token_remaining_seconds()
+    expiring = is_kite_token_expiring_soon()
+    return {
+        "active": True,
+        "remaining_seconds": remaining,
+        "remaining_minutes": remaining // 60,
+        "expiring_soon": expiring,
+    }
 
 
 @router.get("/kite/quotes")
