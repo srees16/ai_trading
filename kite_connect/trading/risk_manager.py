@@ -102,10 +102,17 @@ class TradePlan:
 class RiskManager:
     """Converts a screened-stock DataFrame into a list of *TradePlan* objects."""
 
-    def __init__(self, config: RiskConfig | None = None, kite=None, max_deployment_cap: float = 0):
+    def __init__(
+        self,
+        config: RiskConfig | None = None,
+        kite=None,
+        max_deployment_cap: float = 0,
+        volatility_target=None,
+    ):
         self.cfg = config or RiskConfig()
         self.kite = kite
         self._max_deployment_cap = max_deployment_cap  # 0 = no cap
+        self._vol_target = volatility_target  # Carver VolatilityTarget instance
 
     def _available_capital(self) -> float:
         """Return capital remaining after deducting open positions.
@@ -220,6 +227,103 @@ class RiskManager:
         logger.info("Generated %d trade plans (top-%d)", len(plans), limit)
         return plans
 
+    def plan_trades_carver(
+        self,
+        screened_df: pd.DataFrame,
+        combined_forecasts: Dict[str, float],
+        instrument_vols: Dict[str, float],
+        instrument_weights: Optional[Dict[str, float]] = None,
+        idm: float = 1.6,
+        max_trades: Optional[int] = None,
+    ) -> List[TradePlan]:
+        """Carver-framework trade planner using combined forecasts and vol-targeting.
+
+        Uses volatility-targeted continuous position sizing instead of Kelly.
+        Falls back to legacy plan_trades() if Carver components unavailable.
+
+        Parameters
+        ----------
+        screened_df : pd.DataFrame
+            Output of NSEScreener.screen().
+        combined_forecasts : dict[str, float]
+            {symbol: combined_forecast} from forecast_combiner.
+        instrument_vols : dict[str, float]
+            {symbol: instrument_value_volatility} from instrument_volatility.
+        instrument_weights : dict[str, float] | None
+            Handcrafted instrument weights.
+        idm : float
+            Instrument Diversification Multiplier.
+        max_trades : int | None
+            Override for max_open_trades.
+
+        Returns
+        -------
+        list[TradePlan]
+        """
+        if screened_df.empty or not combined_forecasts:
+            return self.plan_trades(screened_df, max_trades)
+
+        if self._vol_target is None:
+            logger.warning("VolatilityTarget not set — falling back to legacy plan_trades")
+            return self.plan_trades(screened_df, max_trades)
+
+        limit = max_trades or self.cfg.max_open_trades
+        available = self._available_capital()
+        plans: List[TradePlan] = []
+        sector_trade_count: Dict[str, int] = {}
+        sector_capital: Dict[str, float] = {}
+
+        regime_scale = self._get_regime_scale()
+        if regime_scale <= 0:
+            logger.warning("VIX panic regime — no new BUY orders generated")
+            return []
+
+        # Sort by absolute forecast strength (strongest conviction first)
+        df_sorted = screened_df.copy()
+        df_sorted["_abs_forecast"] = df_sorted["symbol"].map(
+            lambda s: abs(combined_forecasts.get(s, 0))
+        )
+        df_sorted = df_sorted.sort_values("_abs_forecast", ascending=False)
+
+        for _, row in df_sorted.head(limit).iterrows():
+            if available <= 0:
+                break
+
+            sym = row.get("symbol", "")
+            forecast = combined_forecasts.get(sym)
+            vol = instrument_vols.get(sym)
+            if forecast is None or vol is None or vol <= 0:
+                continue
+
+            # Only take positive-forecast trades (long-only for NSE)
+            if forecast <= 0:
+                continue
+
+            sector = str(row.get("sector_name", "")).strip() or "Unknown"
+            if sector_trade_count.get(sector, 0) >= self.cfg.max_trades_per_sector:
+                continue
+            sector_cap = sector_capital.get(sector, 0.0)
+            if sector_cap >= self.cfg.total_capital * self.cfg.max_sector_exposure_pct:
+                continue
+
+            weight = (instrument_weights or {}).get(sym, 0.10)
+            plan = self._build_plan(
+                row, available, regime_scale,
+                carver_forecast=forecast,
+                instrument_value_vol=vol,
+                instrument_weight=weight,
+                idm=idm,
+            )
+            if plan is not None:
+                plans.append(plan)
+                allocated = plan.quantity * plan.entry_price
+                available -= allocated
+                sector_trade_count[sector] = sector_trade_count.get(sector, 0) + 1
+                sector_capital[sector] = sector_cap + allocated
+
+        logger.info("Generated %d Carver trade plans (top-%d)", len(plans), limit)
+        return plans
+
     # ── Internal ───────────────────────────────────────────────
 
     def _get_regime_scale(self) -> float:
@@ -263,7 +367,16 @@ class RiskManager:
 
         return scale
 
-    def _build_plan(self, row: pd.Series, available_capital: float, regime_scale: float = 1.0) -> Optional[TradePlan]:
+    def _build_plan(
+        self,
+        row: pd.Series,
+        available_capital: float,
+        regime_scale: float = 1.0,
+        carver_forecast: Optional[float] = None,
+        instrument_value_vol: Optional[float] = None,
+        instrument_weight: float = 0.10,
+        idm: float = 1.6,
+    ) -> Optional[TradePlan]:
         entry = float(row["close"])
         ma50 = float(row.get("ma_50", 0))
         support = float(row.get("support", 0))
@@ -309,7 +422,51 @@ class RiskManager:
         if rr_ratio < self.cfg.min_rr_ratio:
             return None
 
-        # ── Position sizing (Kelly-scaled or fixed risk) ───────
+        # ── Position sizing (Carver vol-target or Kelly-scaled) ───
+        # Carver path: uses combined forecast + vol target when available
+        if (
+            carver_forecast is not None
+            and instrument_value_vol is not None
+            and instrument_value_vol > 0
+            and self._vol_target is not None
+        ):
+            from services.position_sizer import compute_position_size
+            daily_cash_vol = self._vol_target.daily_cash_vol_target
+            capital = self._vol_target.current_capital
+            ps = compute_position_size(
+                symbol=row.get("symbol", ""),
+                combined_forecast=carver_forecast,
+                instrument_value_vol=instrument_value_vol,
+                daily_cash_vol_target=daily_cash_vol,
+                price=entry,
+                capital=capital,
+                instrument_weight=instrument_weight,
+                idm=idm,
+            )
+            qty = ps.target_quantity
+            # Apply regime scaling as a dampener
+            qty = max(0, int(qty * regime_scale))
+            # Cap by available capital
+            max_qty_cap = math.floor(available_capital / entry) if entry > 0 else 0
+            qty = min(qty, max_qty_cap)
+            if qty <= 0:
+                return None
+            risk_amount = qty * risk_per_share
+            reward_amount = qty * reward_per_share
+            return TradePlan(
+                symbol=row["symbol"],
+                side="BUY",
+                entry_price=entry,
+                stop_loss=sl,
+                target_price=target,
+                quantity=qty,
+                risk_amount=risk_amount,
+                reward_amount=reward_amount,
+                rr_ratio=rr_ratio,
+                score=score,
+            )
+
+        # Legacy path: Half-Kelly sizing (fallback when Carver modules unavailable)
         if self.cfg.use_kelly_sizing:
             # Half-Kelly: scale risk_pct by confidence (score 0-1)
             # score from screener is typically 0-100, normalize

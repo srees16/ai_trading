@@ -60,6 +60,7 @@ class RiskEngine:
         max_open_positions: int = 10,
         max_portfolio_drawdown_pct: float = 15.0,
         max_deployment_cap: float = 20_000.0,
+        volatility_target=None,
     ):
         self.total_capital = total_capital
         self.risk_per_trade_pct = risk_per_trade_pct
@@ -68,6 +69,10 @@ class RiskEngine:
         self.max_deployment_cap = max_deployment_cap
         self._open_positions: Dict[str, dict] = {}
         self._realized_pnl: float = 0.0  # Track realized losses for drawdown
+
+        # Carver volatility target — drives capital rolling
+        self._vol_target = volatility_target  # VolatilityTarget instance
+
         # Lazy-initialise the class-level sector map once
         if RiskEngine._SECTOR_MAP is None:
             RiskEngine._SECTOR_MAP = RiskEngine._build_sector_map()
@@ -227,6 +232,19 @@ class RiskEngine:
         if pos and exit_price is not None:
             realized = (exit_price - pos["entry"]) * pos["qty"]
             self._realized_pnl += realized
+            # Feed capital rolling into VolatilityTarget
+            if self._vol_target is not None:
+                self._vol_target.add_realized(realized)
+
+    def _sync_vol_target_unrealized(self) -> None:
+        """Push current unrealised P&L into VolatilityTarget for capital rolling."""
+        if self._vol_target is None:
+            return
+        total_unrealized = 0.0
+        for pos in self._open_positions.values():
+            ltp = pos.get("ltp", pos["entry"])
+            total_unrealized += (ltp - pos["entry"]) * pos["qty"]
+        self._vol_target.set_unrealized(total_unrealized)
 
     def _compute_portfolio_drawdown(self) -> float:
         """Compute current portfolio drawdown as a percentage of total capital.
