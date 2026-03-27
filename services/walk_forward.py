@@ -121,6 +121,28 @@ _PARAM_GRIDS = {
         {"lower_bound": 0.2, "body_size": 0.5},
         {"lower_bound": 0.15, "body_size": 0.4},
     ],
+    "liquidity sweep": [
+        {"swing_lookback": 8, "vol_mult": 1.5, "confirmation_bars": 2},
+        {"swing_lookback": 10, "vol_mult": 1.5, "confirmation_bars": 2},
+        {"swing_lookback": 12, "vol_mult": 1.3, "confirmation_bars": 3},
+        {"swing_lookback": 15, "vol_mult": 2.0, "confirmation_bars": 2},
+    ],
+    "anchored vwap": [
+        {"vol_pctile": 95, "touch_pct": 0.005, "rsi_period": 14},
+        {"vol_pctile": 90, "touch_pct": 0.005, "rsi_period": 14},
+        {"vol_pctile": 95, "touch_pct": 0.003, "rsi_period": 10},
+        {"vol_pctile": 90, "touch_pct": 0.008, "rsi_period": 21},
+    ],
+    "order flow imbalance": [
+        {"obv_lookback": 20, "mfi_period": 14, "mfi_oversold": 40, "mfi_overbought": 60, "cvd_smooth": 10},
+        {"obv_lookback": 15, "mfi_period": 10, "mfi_oversold": 35, "mfi_overbought": 65, "cvd_smooth": 8},
+        {"obv_lookback": 25, "mfi_period": 14, "mfi_oversold": 30, "mfi_overbought": 70, "cvd_smooth": 12},
+    ],
+    "volume profile": [
+        {"profile_lookback": 60, "n_bins": 50, "va_pct": 0.70, "touch_pct": 0.003},
+        {"profile_lookback": 40, "n_bins": 40, "va_pct": 0.70, "touch_pct": 0.005},
+        {"profile_lookback": 80, "n_bins": 60, "va_pct": 0.68, "touch_pct": 0.003},
+    ],
 }
 
 
