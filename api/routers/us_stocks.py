@@ -109,12 +109,28 @@ async def run_analysis(request: AnalysisRequest):
             TradingSignalResponse(**s.to_dict()) for s in signals
         ]
 
-        return AnalysisResponse(
+        # Carver enrichment: attach vol-targeted trade plans when enabled
+        carver_plans = []
+        try:
+            from config import Config
+            if getattr(Config, "CARVER_US_ENABLED", False):
+                from services.us_carver_pipeline import run_us_carver_pipeline
+                carver_result = run_us_carver_pipeline(request.tickers)
+                carver_plans = carver_result.trade_plans
+                logger.info("Carver US enrichment: %d trade plans for %d tickers",
+                            len(carver_plans), len(request.tickers))
+        except Exception as exc:
+            logger.debug("Carver US enrichment skipped: %s", exc)
+
+        resp = AnalysisResponse(
             success=True,
             ticker_count=len(request.tickers),
             signal_count=len(signals),
             signals=signal_responses,
         )
+        # Attach Carver plans as extra field (won't break schema)
+        resp.__dict__["carver_trade_plans"] = carver_plans
+        return resp
 
     except Exception as exc:
         logger.exception("Analysis failed")
@@ -447,3 +463,115 @@ async def get_analysis_history(
     except Exception as exc:
         logger.exception("History retrieval failed")
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+# -----------------------------------------------------------------------
+# Carver Systematic Trading Framework — US Stocks
+# -----------------------------------------------------------------------
+
+@router.get(
+    "/carver/status",
+    summary="Carver framework status for US stocks",
+)
+async def us_carver_status():
+    """Return Carver framework configuration and module availability for US stocks."""
+    try:
+        from config import Config
+        enabled = getattr(Config, "CARVER_US_ENABLED", False)
+        return {
+            "carver_us_enabled": enabled,
+            "annual_vol_target": getattr(Config, "CARVER_US_ANNUAL_VOL_TARGET", 0.20),
+            "initial_capital_usd": getattr(Config, "CARVER_US_INITIAL_CAPITAL", 10_000.0),
+            "default_idm": getattr(Config, "CARVER_US_DEFAULT_IDM", 1.5),
+            "max_leverage": getattr(Config, "CARVER_US_MAX_LEVERAGE", 1.0),
+            "cost_round_trip_pct": getattr(Config, "CARVER_US_COST_ROUND_TRIP_PCT", 0.0010),
+            "spread_slippage_pct": getattr(Config, "CARVER_US_SPREAD_SLIPPAGE_PCT", 0.0005),
+            "trade_horizon": getattr(Config, "CARVER_TRADE_HORIZON", "swing"),
+            "modules_available": _check_us_carver_modules(),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post(
+    "/carver/pipeline",
+    summary="Run Carver pipeline on US stocks",
+)
+async def us_carver_pipeline(tickers: Optional[List[str]] = None):
+    """Execute the full Carver systematic trading pipeline for US stocks.
+
+    Returns vol-targeted trade plans with EWMAC forecasts, cost filtering,
+    and position sizing.
+    """
+    try:
+        from config import Config
+        if not getattr(Config, "CARVER_US_ENABLED", False):
+            raise HTTPException(status_code=400, detail="Carver US is not enabled in config")
+
+        from services.us_carver_pipeline import run_us_carver_pipeline, DEFAULT_US_CARVER_TICKERS
+
+        syms = tickers or DEFAULT_US_CARVER_TICKERS
+        result = await asyncio.to_thread(run_us_carver_pipeline, syms)
+
+        return {
+            "success": True,
+            "trade_plans": result.trade_plans,
+            "symbols_processed": result.symbols_processed,
+            "symbols_filtered_by_cost": result.symbols_filtered_by_cost,
+            "combined_forecasts": result.combined_forecasts,
+            "idm": result.idm,
+            "pipeline_log": result.pipeline_log,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("US Carver pipeline failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post(
+    "/carver/efficiency",
+    summary="Run Carver calibration backtest on US stocks",
+)
+async def us_carver_efficiency(tickers: Optional[List[str]] = None):
+    """Run an expanding-window backtest and return before vs after metrics.
+
+    Computes Sharpe, Sortino, MaxDD, and annual return using the Carver
+    vol-targeted framework on US historical data.
+    """
+    try:
+        from services.us_carver_pipeline import run_us_carver_backtest
+
+        report = await asyncio.to_thread(run_us_carver_backtest, tickers)
+        if "error" in report:
+            raise HTTPException(status_code=400, detail=report["error"])
+        return report
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("US Carver efficiency report failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+def _check_us_carver_modules() -> Dict[str, bool]:
+    """Check which Carver modules are importable for US stocks."""
+    modules = {
+        "us_carver_pipeline": "services.us_carver_pipeline",
+        "instrument_volatility": "services.instrument_volatility",
+        "volatility_target": "services.volatility_target",
+        "forecast_scalar": "services.forecast_scalar",
+        "forecast_combiner": "services.forecast_combiner",
+        "position_sizer": "services.position_sizer",
+        "instrument_weights": "services.instrument_weights",
+        "ewmac": "strategies.ewmac",
+        "cost_speed_limit": "services.cost_speed_limit",
+        "carver_calibration": "services.carver_calibration",
+    }
+    status = {}
+    for name, mod_path in modules.items():
+        try:
+            __import__(mod_path)
+            status[name] = True
+        except Exception:
+            status[name] = False
+    return status

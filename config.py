@@ -105,6 +105,15 @@ class Config:
     CARVER_COST_SPEED_LIMIT: float = 3.0    # SR must exceed 3× cost drag
     CARVER_TRADE_HORIZON: str = "swing"     # "swing" (2.5σ stop) or "positional" (3.5σ stop)
 
+    # Carver — US Stocks overrides (USD-based)
+    CARVER_US_ENABLED: bool = True          # Enable Carver for US stocks pipeline
+    CARVER_US_INITIAL_CAPITAL: float = 10_000.0  # Starting capital ($USD)
+    CARVER_US_ANNUAL_VOL_TARGET: float = 0.20    # 20% annual vol target
+    CARVER_US_DEFAULT_IDM: float = 1.5      # IDM for US diversified basket
+    CARVER_US_MAX_LEVERAGE: float = 1.0     # No leverage for swing equity
+    CARVER_US_COST_ROUND_TRIP_PCT: float = 0.0010  # 10 bps round-trip (US zero-commission)
+    CARVER_US_SPREAD_SLIPPAGE_PCT: float = 0.0005  # 5 bps spread+slippage (US large-cap)
+
     # =================================================================
     # Signal Freshness (data staleness gate)
     # =================================================================

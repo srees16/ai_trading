@@ -80,6 +80,11 @@ def render_analysis_page():
         )
     elif st.session_state.analysis_complete and not st.session_state.signals:
         _render_no_signals_warning()
+
+    # Carver US efficiency panel (Before vs After)
+    market = st.session_state.get('current_market', 'US')
+    if market == 'US':
+        _render_us_carver_efficiency_section()
     
     render_footer()
 
@@ -157,3 +162,83 @@ def _render_no_signals_warning():
                     st.session_state.get('username', 'unknown'))
         st.session_state.current_page = 'main'
         st.rerun()
+
+
+# ═══════════════════════════════════════════════════════════════
+# Carver US Efficiency Report (Before vs After)
+# ═══════════════════════════════════════════════════════════════
+
+def _render_us_carver_efficiency_section():
+    """Render Carver framework efficiency comparison panel for US stocks."""
+    try:
+        from config import Config
+        if not getattr(Config, "CARVER_US_ENABLED", False):
+            return
+    except Exception:
+        return
+
+    with st.expander("📊 Carver Framework (US) — Before vs After Analysis", expanded=False):
+        st.markdown(
+            "Compares the legacy sentiment-driven sizing with the Carver Systematic "
+            "Trading framework (EWMAC + FDM + vol-targeted sizing) for US equities."
+        )
+
+        col_b, col_a = st.columns(2)
+        with col_b:
+            st.markdown("**BEFORE (Legacy)**")
+            st.markdown("""
+            - Signal: News sentiment → BUY/SELL/HOLD
+            - Sizing: Fixed position (no vol-targeting)
+            - Stop-loss: None (manual)
+            - Vol target: None
+            - Diversification: Ad-hoc
+            - Cost mgmt: None
+            """)
+        with col_a:
+            st.markdown("**AFTER (Carver)**")
+            st.markdown("""
+            - Forecast: EWMAC unified -20/+20 scale
+            - Sizing: (f/10) × vol_scalar × w × IDM
+            - Stop-loss: 2.5 × daily_vol (adaptive)
+            - Vol target: 20% annual, Half-Kelly
+            - Diversification: FDM + IDM multipliers
+            - Cost mgmt: SR > 3× cost drag (US: 15 bps)
+            """)
+
+        if st.button("Run US Calibration Backtest", key="us_carver_calibrate"):
+            with st.spinner("Running Carver expanding-window backtest on US stocks …"):
+                try:
+                    from services.us_carver_pipeline import run_us_carver_backtest
+
+                    report = run_us_carver_backtest()
+
+                    if "error" in report:
+                        st.warning(report["error"])
+                        return
+
+                    # Display metrics
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Sharpe Ratio", f"{report['backtest_sharpe']:.3f}")
+                    m2.metric("Sortino Ratio", f"{report['backtest_sortino']:.3f}")
+                    m3.metric("Max Drawdown", f"{report['backtest_max_drawdown_pct']:.1f}%")
+                    m4.metric("Annual Return", f"{report['backtest_annual_return_pct']:.1f}%")
+
+                    st.markdown(
+                        f"**Symbols:** {report['n_symbols']} | "
+                        f"**Days:** {report['n_days']} | "
+                        f"**Capital:** ${report['initial_capital']:,.0f} USD"
+                    )
+
+                    # Calibrated parameters
+                    if report.get("ewmac_scalars"):
+                        st.markdown("**Calibrated EWMAC Scalars:**")
+                        for k, v in sorted(report["ewmac_scalars"].items()):
+                            st.text(f"  {k}: {v:.3f}")
+
+                    # Full report text
+                    if report.get("report_text"):
+                        st.code(report["report_text"], language="text")
+
+                except Exception as exc:
+                    st.error(f"US calibration failed: {exc}")
+                    logger.exception("US Carver calibration UI error")

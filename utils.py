@@ -214,6 +214,53 @@ def download_ind_ohlcv(
     return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
 
 
+def download_us_ohlcv(
+    ticker: str,
+    *,
+    period: str = "1y",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> pd.DataFrame:
+    """Download OHLCV for a US stock via yfinance (no .NS suffix).
+
+    Parameters
+    ----------
+    ticker : str
+        US ticker symbol (e.g. ``"AAPL"``, ``"MSFT"``).
+    period : str
+        yfinance period string (``"1y"``, ``"6mo"``, etc.).
+    start, end : str | None
+        ISO date strings.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns: Open, High, Low, Close, Volume.
+    """
+    import yfinance as yf
+
+    # US tickers: use as-is (no .NS suffix)
+    sym = ticker.replace(".NS", "").replace(".BO", "")
+
+    for attempt in range(2):
+        try:
+            df = yf.download(sym, period=period, start=start, end=end,
+                             progress=False, auto_adjust=True)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            if df is not None and not df.empty:
+                return _normalize_ohlcv(df)
+        except Exception as exc:
+            exc_str = str(exc)
+            if attempt == 0 and ("401" in exc_str or "Invalid Crumb" in exc_str):
+                _clear_yfinance_crumb_cache()
+                continue
+            logger.debug("yfinance US failed for %s: %s", ticker, exc)
+            break
+
+    return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
+
+
 def download_ind_ohlcv_batch(
     tickers: List[str],
     *,

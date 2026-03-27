@@ -1311,6 +1311,66 @@ async def dw_place_order(req: OrderRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/drivewealth/carver-orders")
+async def dw_carver_orders(tickers: Optional[list] = None):
+    """Generate Carver vol-targeted trade plans and optionally place via DriveWealth.
+
+    Runs the full Carver pipeline (EWMAC → forecast → vol-target → sizing)
+    on the requested US tickers, then submits BUY orders through DriveWealth.
+    If DriveWealth is not connected, returns dry-run plans only.
+    """
+    try:
+        from config import Config
+        if not getattr(Config, "CARVER_US_ENABLED", False):
+            raise HTTPException(status_code=400, detail="Carver US is not enabled")
+
+        from services.us_carver_pipeline import run_us_carver_pipeline, DEFAULT_US_CARVER_TICKERS
+
+        syms = tickers or DEFAULT_US_CARVER_TICKERS
+        result = await asyncio.to_thread(run_us_carver_pipeline, syms)
+
+        placed_orders = []
+        client = _dw_session.get("client")
+        account_id = _dw_session.get("account_id")
+
+        if client and account_id and client.is_authenticated:
+            for plan in result.trade_plans:
+                try:
+                    order_payload = {
+                        "accountNo": account_id,
+                        "symbol": plan["symbol"],
+                        "side": "BUY",
+                        "type": "MARKET",
+                        "quantity": str(plan["quantity"]),
+                    }
+                    order_result = await asyncio.to_thread(client.create_order, order_payload)
+                    placed_orders.append({
+                        "symbol": plan["symbol"],
+                        "quantity": plan["quantity"],
+                        "status": "placed",
+                        "order_id": order_result.get("orderID", ""),
+                    })
+                except Exception as exc:
+                    placed_orders.append({
+                        "symbol": plan["symbol"],
+                        "quantity": plan["quantity"],
+                        "status": "failed",
+                        "error": str(exc),
+                    })
+
+        return {
+            "success": True,
+            "trade_plans": result.trade_plans,
+            "orders_placed": placed_orders,
+            "dry_run": not bool(client and account_id),
+            "pipeline_log": result.pipeline_log,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── Financial ML ────────────────────────────────────────────────────────
 
 @router.get("/fml/chapters")
