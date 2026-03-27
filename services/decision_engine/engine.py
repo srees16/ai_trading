@@ -346,9 +346,14 @@ class DecisionEngine:
                 score -= 0.1
             count += 1
         
-        # Average the score
-        if count > 0:
+        # Average the score — require minimum 4 components to avoid
+        # inflated scores from sparse data (survivorship bias fix)
+        _MIN_FUNDAMENTAL_COMPONENTS = 4
+        if count >= _MIN_FUNDAMENTAL_COMPONENTS:
             score = score / count
+        elif count > 0:
+            # Penalize sparse data: normalize by floor, not actual count
+            score = score / _MIN_FUNDAMENTAL_COMPONENTS
         
         # Clamp to [-1, 1]
         return max(-1.0, min(1.0, score))

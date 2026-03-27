@@ -535,6 +535,13 @@ class NSEScreener:
 
         logger.info("Downloaded data for %d / %d symbols via yfinance", len(cache), len(symbols))
 
+        # ── Deduplicate OHLCV indices ─────────────────────────
+        for sym in list(cache):
+            df = cache[sym]
+            if df.index.duplicated().any():
+                cache[sym] = df[~df.index.duplicated(keep="first")]
+            cache[sym] = cache[sym].sort_index()
+
         # ── Bhavcopy fallback for missed symbols ──────────────
         missed = [s for s in symbols if s not in cache]
         if missed:

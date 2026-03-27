@@ -64,8 +64,9 @@ class TradeMonitor:
         events = monitor.poll()
     """
 
-    def __init__(self, kite=None):
+    def __init__(self, kite=None, risk_config=None):
         self.kite = kite
+        self._risk_config = risk_config  # RiskConfig for trailing SL params
         self._trades: Dict[str, MonitoredTrade] = {}  # keyed by entry_order_id
         self._init_state_db()
         self._restore_state()
@@ -409,8 +410,10 @@ class TradeMonitor:
         if not self.kite or not trade.sl_order_id:
             return None
         try:
-            activation_pct = 0.05   # 5% profit triggers trailing
-            trail_pct = 0.03        # trail 3% below current price
+            # Use config values if available, else fall back to sensible defaults
+            cfg = self._risk_config
+            activation_pct = getattr(cfg, "trailing_sl_activation_pct", 0.05) if cfg else 0.05
+            trail_pct = getattr(cfg, "trailing_sl_distance_pct", 0.03) if cfg else 0.03
 
             key = f"NSE:{trade.symbol}"
             ltp_data = self.kite.ltp([key])

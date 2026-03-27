@@ -194,8 +194,13 @@ def adjust_ohlcv_for_action(
     if action.ex_date and "Date" in str(type(adjusted.index)):
         mask = adjusted.index < pd.Timestamp(action.ex_date)
     else:
-        # If we can't determine the date, adjust all rows
-        mask = pd.Series(True, index=adjusted.index)
+        # Cannot determine ex-date boundary — skip adjustment to avoid
+        # corrupting the entire price history.
+        logger.warning(
+            "Skipping OHLCV adjustment for %s (%s): no valid ex_date or non-DatetimeIndex",
+            action.symbol, action.action_type,
+        )
+        return df
 
     for col in ("Open", "High", "Low", "Close"):
         if col in adjusted.columns:

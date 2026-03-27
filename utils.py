@@ -157,6 +157,21 @@ def _is_indian_ticker(ticker: str) -> bool:
     return ticker.upper().endswith(_IND_SUFFIXES)
 
 
+def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
+    """Deduplicate index, enforce canonical column names, sort by date."""
+    if df.empty:
+        return df
+    # Flatten MultiIndex columns from yfinance batch downloads
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    # Deduplicate on index (keep first occurrence)
+    if df.index.duplicated().any():
+        df = df[~df.index.duplicated(keep="first")]
+    # Sort chronologically
+    df = df.sort_index()
+    return df
+
+
 def download_ind_ohlcv(
     ticker: str,
     *,
@@ -189,12 +204,12 @@ def download_ind_ohlcv(
     if is_ind:
         df = _try_bhavcopy(ticker, period=period, start=start, end=end)
         if df is not None and not df.empty:
-            return df
+            return _normalize_ohlcv(df)
 
     # yfinance fallback
     df = _try_yfinance(ticker, period=period, start=start, end=end)
     if df is not None and not df.empty:
-        return df
+        return _normalize_ohlcv(df)
 
     return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
 
@@ -249,6 +264,10 @@ def download_ind_ohlcv_batch(
                     results[t] = df
             except Exception:
                 pass
+
+    # Normalize all DataFrames: dedup index, flatten columns, sort
+    for t in list(results):
+        results[t] = _normalize_ohlcv(results[t])
 
     return results
 

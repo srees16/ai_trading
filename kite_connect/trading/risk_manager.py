@@ -44,7 +44,7 @@ class RiskConfig:
     sl_min_pct: float = 0.05              # SL at least 5 % below entry
     sl_max_pct: float = 0.08              # SL at most 8 % below entry
     # R1: Sector concentration limits
-    max_sector_exposure_pct: float = 0.40 # Max 40% capital in one sector
+    max_sector_exposure_pct: float = 0.30 # Max 30% capital in one sector (aligned with RiskEngine)
     max_trades_per_sector: int = 3        # Max 3 open trades per sector
     # R3: Trailing stop-loss
     trailing_sl_enabled: bool = True      # Enable trailing stop once profit > threshold
@@ -102,14 +102,22 @@ class TradePlan:
 class RiskManager:
     """Converts a screened-stock DataFrame into a list of *TradePlan* objects."""
 
-    def __init__(self, config: RiskConfig | None = None, kite=None):
+    def __init__(self, config: RiskConfig | None = None, kite=None, max_deployment_cap: float = 0):
         self.cfg = config or RiskConfig()
         self.kite = kite
+        self._max_deployment_cap = max_deployment_cap  # 0 = no cap
 
     def _available_capital(self) -> float:
-        """Return capital remaining after deducting open positions."""
+        """Return capital remaining after deducting open positions.
+
+        Respects max_deployment_cap from RiskEngine when set.
+        """
+        capital_ceiling = self.cfg.total_capital
+        if self._max_deployment_cap > 0:
+            capital_ceiling = min(capital_ceiling, self._max_deployment_cap)
+
         if self.kite is None:
-            return self.cfg.total_capital
+            return capital_ceiling
         try:
             from kite_connect.trading.order_service import get_positions
             positions = get_positions(self.kite)
@@ -118,13 +126,13 @@ class RiskManager:
                 for p in positions.get("net", [])
                 if float(p.get("quantity", 0)) != 0
             )
-            available = max(0, self.cfg.total_capital - deployed)
-            logger.info("Capital: %.0f total, %.0f deployed, %.0f available",
-                        self.cfg.total_capital, deployed, available)
+            available = max(0, capital_ceiling - deployed)
+            logger.info("Capital: %.0f ceiling (%.0f total), %.0f deployed, %.0f available",
+                        capital_ceiling, self.cfg.total_capital, deployed, available)
             return available
         except Exception as exc:
             logger.warning("Could not fetch positions for capital calc: %s", exc)
-            return self.cfg.total_capital
+            return capital_ceiling
 
     def plan_trades(
         self,
@@ -238,11 +246,20 @@ class RiskManager:
             logger.debug("VIX regime check failed: %s", exc)
 
         try:
-            # ADX: if screened data has adx column, use the median
-            # Otherwise skip (ADX is per-stock, so we use portfolio median)
-            pass  # ADX is applied per-stock in _build_plan if available
-        except Exception:
-            pass
+            # ADX: fetch Nifty 50 ADX as market-wide trend proxy
+            import yfinance as yf
+            nifty = yf.download("^NSEI", period="2mo", progress=False, auto_adjust=True)
+            if isinstance(nifty.columns, pd.MultiIndex):
+                nifty.columns = nifty.columns.get_level_values(0)
+            if nifty is not None and len(nifty) > 28:
+                from kite_connect.nse.screener import _adx
+                market_adx = _adx(nifty)
+                if market_adx is not None and market_adx < self.cfg.adx_choppy_threshold:
+                    scale = min(scale, self.cfg.adx_choppy_scale)
+                    logger.info("Market ADX=%.1f < %.0f (choppy) — scaling to %.0f%%",
+                                market_adx, self.cfg.adx_choppy_threshold, scale * 100)
+        except Exception as exc:
+            logger.debug("ADX regime check failed: %s", exc)
 
         return scale
 
@@ -307,6 +324,11 @@ class RiskManager:
 
         # R4: Apply VIX/ADX regime scaling to position size
         effective_risk_pct *= regime_scale
+
+        # Per-stock ADX scaling: halve size in choppy individual stocks
+        stock_adx = float(row.get("adx", 0))
+        if 0 < stock_adx < self.cfg.adx_choppy_threshold:
+            effective_risk_pct *= self.cfg.adx_choppy_scale
 
         # GAP 8: Dynamic slippage buffer — adapt to market conditions
         slippage_pct = self._estimate_slippage(row)
