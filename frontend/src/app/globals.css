@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 142 71% 35%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+    --accent: 220 14% 96%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 142 71% 35%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 222 47% 6%;
+    --foreground: 210 40% 96%;
+    --card: 222 47% 9%;
+    --card-foreground: 210 40% 96%;
+    --popover: 222 47% 9%;
+    --popover-foreground: 210 40% 96%;
+    --primary: 142 71% 45%;
+    --primary-foreground: 222 47% 6%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 96%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 55%;
+    --accent: 217 33% 17%;
+    --accent-foreground: 210 40% 96%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 96%;
+    --border: 217 33% 17%;
+    --input: 217 33% 17%;
+    --ring: 142 71% 45%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: hsl(var(--background));
+}
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--muted-foreground) / 0.5);
+}
+
+/* Ticker ribbon animation */
+.ticker-ribbon {
+  overflow: hidden;
+  white-space: nowrap;
+}
+.ticker-ribbon-inner {
+  display: inline-flex;
+  animation: ticker-scroll 30s linear infinite;
+}
+.ticker-ribbon-inner:hover {
+  animation-play-state: paused;
+}
+
+/* Decision badge colors */
+.badge-strong-buy { @apply bg-green-600/20 text-green-400 border-green-600/30; }
+.badge-buy { @apply bg-emerald-600/20 text-emerald-400 border-emerald-600/30; }
+.badge-hold { @apply bg-yellow-600/20 text-yellow-400 border-yellow-600/30; }
+.badge-sell { @apply bg-orange-600/20 text-orange-400 border-orange-600/30; }
+.badge-strong-sell { @apply bg-red-600/20 text-red-400 border-red-600/30; }
+
+/* Metric card glow effects */
+.metric-card-profit {
+  box-shadow: 0 0 20px rgba(0, 204, 68, 0.1);
+}
+.metric-card-loss {
+  box-shadow: 0 0 20px rgba(255, 51, 51, 0.1);
+}
