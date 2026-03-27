@@ -338,13 +338,23 @@ def _run_layer_core(ticker: str, market: str) -> Dict[str, Any]:
 # Layer 2 — Strategy Consensus + Robustness (merged)
 # ===================================================================
 
-def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str, Any]:
+def _run_layer_strategy(
+    ticker: str, market: str, date_range: tuple,
+    trade_horizon: str = "swing",
+) -> Dict[str, Any]:
     """Run registered strategies, aggregate consensus, and apply robustness validation.
 
     Robustness tests (previously a separate Layer 4) are now integrated:
     walk-forward, CSCV, BCa bootstrap, and permutation tests run on the
     best-performing strategy's returns, producing a single robustness-
     adjusted score.
+
+    Parameters
+    ----------
+    trade_horizon : str
+        ``"swing"`` (3-10 day) or ``"positional"`` (2-6 week).
+        Strategies more suited to the chosen horizon receive a 1.5×
+        weight multiplier in the Sharpe-weighted consensus vote.
     """
     try:
         from strategies import StrategyRegistry, load_all_strategies
@@ -371,6 +381,21 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
             "pairs trading", "mean reversion", "mean reversion (z-score)",
             "statistical arbitrage",
         }
+
+        # ── P1-P2: Trade-horizon weight multipliers ──────────
+        # Strategies more suited to the chosen horizon get a 1.5× boost
+        # in the Sharpe-weighted consensus vote; less-suited get 0.8×.
+        _SWING_PREFERRED = {
+            "liquidity sweep", "order flow imbalance", "rsi pattern",
+            "swing combo",
+        }
+        _POSITIONAL_PREFERRED = {
+            "volume profile", "anchored vwap", "liquidity sweep",
+            "positional combo", "macd oscillator", "parabolic sar",
+        }
+        _horizon_preferred = (
+            _SWING_PREFERRED if trade_horizon == "swing" else _POSITIONAL_PREFERRED
+        )
 
         # ── Gap A fix: load WF-optimised params per strategy ──
         _wf_params_map: Dict[str, dict] = {}
@@ -503,7 +528,9 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
                     sr_val = float(res["sharpe"])
                     if sr_val < Config.MIN_STRATEGY_SHARPE:
                         continue  # below quality floor — excluded
-                    w = sr_val  # weight = Sharpe ratio
+                    # P1-P2: horizon-aware weight multiplier
+                    horizon_mult = 1.5 if name.lower() in _horizon_preferred else 0.8
+                    w = sr_val * horizon_mult
                     sig = res.get("last_signal", "NEUTRAL")
                     if sig == "BUY":
                         weighted_buy += w
@@ -518,6 +545,25 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
         sharpe_adj = _clamp(median_sharpe / 5.0, -0.3, 0.3)
         # Drawdown penalty (worst drawdown, negative = bad)
         dd_adj = _clamp(worst_dd / 2.0, -0.3, 0.0) if worst_dd < -0.10 else 0.0
+
+        # ── P9: Sector-aware combo weighting ─────────────────
+        # If the ticker's sector is in a strong momentum regime
+        # (positive 20-day return), boost the combo strategies'
+        # contribution.  Weak-sector tickers get a small penalty.
+        sector_adj = 0.0
+        sector_details: Dict[str, Any] = {}
+        try:
+            from services.sector_momentum import get_sector_momentum
+            sm = get_sector_momentum(ticker, market)
+            if sm is not None:
+                sector_details["sector"] = sm.sector_name
+                sector_details["sector_return_20d"] = round(sm.return_20d, 4)
+                if sm.return_20d > 0.03:       # sector up > 3%
+                    sector_adj = 0.05           # mild bullish boost
+                elif sm.return_20d < -0.03:    # sector down > 3%
+                    sector_adj = -0.05          # mild bearish drag
+        except Exception:
+            pass  # sector data unavailable — no adjustment
 
         # ── Walk-forward degradation penalty (#1) ────────────
         # Run walk-forward validation on top-voted strategies to
@@ -557,7 +603,7 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
         except Exception as e:
             wf_details = {"error": str(e)}
 
-        score = _clamp(weighted_consensus * 0.6 + sharpe_adj + dd_adj + wf_adj)
+        score = _clamp(weighted_consensus * 0.6 + sharpe_adj + dd_adj + wf_adj + sector_adj)
 
         # ── Merged robustness validation (ex-Layer 4) ────────
         # Run CSCV, BCa bootstrap, and permutation tests on price
@@ -651,6 +697,8 @@ def _run_layer_strategy(ticker: str, market: str, date_range: tuple) -> Dict[str
                 "median_sharpe": round(median_sharpe, 4),
                 "worst_max_drawdown": round(worst_dd, 4),
                 "consensus_raw": round(consensus, 4),
+                "trade_horizon": trade_horizon,
+                "sector": sector_details,
                 "walk_forward": wf_details,
                 "robustness": robustness_details,
                 "per_strategy": strategy_results,
@@ -1007,6 +1055,7 @@ class IntegratedScorer:
         date_range: Optional[tuple] = None,
         skip_layers: Optional[List[str]] = None,
         max_workers: int = 4,
+        trade_horizon: str = "swing",
     ) -> List[StockVerdict]:
         """
         Run the multi-layer pipeline for *tickers*.
@@ -1022,6 +1071,8 @@ class IntegratedScorer:
             date_range: (start_date_str, end_date_str) for backtests.
             skip_layers: Layer names to skip (e.g. ['ml_features']).
             max_workers: Thread-pool size for parallel layer execution.
+            trade_horizon: 'swing' (3-10 day) or 'positional' (2-6 week).
+                Strategy weights are adjusted based on horizon suitability.
 
         Returns:
             List of StockVerdict objects.
@@ -1096,7 +1147,8 @@ class IntegratedScorer:
                     futures["core"] = pool.submit(_run_layer_core, ticker, market)
                 if "strategy" not in skip:
                     futures["strategy"] = pool.submit(
-                        _run_layer_strategy, ticker, market, date_range
+                        _run_layer_strategy, ticker, market, date_range,
+                        trade_horizon,
                     )
                 if "ml_features" not in skip:
                     futures["ml_features"] = pool.submit(_run_layer_ml, ticker, market)

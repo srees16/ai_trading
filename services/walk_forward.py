@@ -143,6 +143,26 @@ _PARAM_GRIDS = {
         {"profile_lookback": 40, "n_bins": 40, "va_pct": 0.70, "touch_pct": 0.005},
         {"profile_lookback": 80, "n_bins": 60, "va_pct": 0.68, "touch_pct": 0.003},
     ],
+    "swing combo": [
+        {"swing_lookback": 10, "vol_mult": 1.5, "obv_lookback": 20, "mfi_period": 14,
+         "rsi_period": 14, "rsi_oversold": 35, "rsi_overbought": 65, "min_agreement": 2},
+        {"swing_lookback": 8, "vol_mult": 1.5, "obv_lookback": 15, "mfi_period": 10,
+         "rsi_period": 10, "rsi_oversold": 30, "rsi_overbought": 70, "min_agreement": 2},
+        {"swing_lookback": 12, "vol_mult": 1.3, "obv_lookback": 25, "mfi_period": 14,
+         "rsi_period": 14, "rsi_oversold": 40, "rsi_overbought": 60, "min_agreement": 2},
+        {"swing_lookback": 10, "vol_mult": 2.0, "obv_lookback": 20, "mfi_period": 14,
+         "rsi_period": 14, "rsi_oversold": 35, "rsi_overbought": 65, "min_agreement": 3},
+    ],
+    "positional combo": [
+        {"profile_lookback": 60, "n_bins": 50, "va_pct": 0.70, "vol_pctile": 95,
+         "touch_pct": 0.005, "swing_lookback": 12, "vol_mult": 1.5, "min_agreement": 2},
+        {"profile_lookback": 40, "n_bins": 40, "va_pct": 0.70, "vol_pctile": 90,
+         "touch_pct": 0.005, "swing_lookback": 10, "vol_mult": 1.5, "min_agreement": 2},
+        {"profile_lookback": 80, "n_bins": 60, "va_pct": 0.68, "vol_pctile": 95,
+         "touch_pct": 0.003, "swing_lookback": 15, "vol_mult": 1.3, "min_agreement": 2},
+        {"profile_lookback": 60, "n_bins": 50, "va_pct": 0.70, "vol_pctile": 95,
+         "touch_pct": 0.005, "swing_lookback": 12, "vol_mult": 2.0, "min_agreement": 3},
+    ],
 }
 
 

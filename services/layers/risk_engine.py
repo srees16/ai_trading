@@ -59,11 +59,13 @@ class RiskEngine:
         risk_per_trade_pct: float = 2.0,
         max_open_positions: int = 10,
         max_portfolio_drawdown_pct: float = 15.0,
+        max_deployment_cap: float = 20_000.0,
     ):
         self.total_capital = total_capital
         self.risk_per_trade_pct = risk_per_trade_pct
         self.max_open_positions = max_open_positions
         self.max_portfolio_drawdown_pct = max_portfolio_drawdown_pct
+        self.max_deployment_cap = max_deployment_cap
         self._open_positions: Dict[str, dict] = {}
         # Lazy-initialise the class-level sector map once
         if RiskEngine._SECTOR_MAP is None:
@@ -95,15 +97,15 @@ class RiskEngine:
             logger.warning("Portfolio drawdown breach: %.1f%% — trade blocked for %s", current_dd, ticker)
             return result
 
-        # ── Max deployment cap (80% of capital) ──
+        # ── Max deployment cap ──
         total_deployed = sum(
             pos["qty"] * pos["entry"] for pos in self._open_positions.values()
         )
-        max_deploy = self.total_capital * 0.80
+        max_deploy = min(self.max_deployment_cap, self.total_capital * 0.80)
         if total_deployed >= max_deploy and ticker not in self._open_positions:
             result = RiskCheckResult(
                 ticker=ticker, passed=False,
-                reason=f"Capital deployment {total_deployed/self.total_capital:.0%} >= 80% cap",
+                reason=f"Capital deployment ₹{total_deployed:,.0f} >= ₹{max_deploy:,.0f} cap",
             )
             event_bus.emit("risk.check_failed", payload=result.__dict__, source="risk_engine")
             return result

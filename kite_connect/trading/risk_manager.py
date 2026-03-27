@@ -34,8 +34,9 @@ class RiskConfig:
     total_capital: float = 500_000.0      # Total trading capital (₹)
     risk_per_trade_pct: float = 0.02      # Max 2 % of capital per trade
     max_open_trades: int = 6              # Concentrated portfolio — higher conviction
-    sl_method: str = "tighter"            # "ma50", "swing_low", "tighter"
+    sl_method: str = "tighter"            # "ma50", "swing_low", "atr", "tighter"
     swing_lookback: int = 10              # Days for swing-low computation
+    atr_multiplier: float = 2.0           # ATR × multiplier for ATR-based SL
     min_rr_ratio: float = 2.5            # Higher R:R for fewer, better trades
     use_kelly_sizing: bool = True         # Scale risk by signal confidence (half-Kelly)
     kelly_floor_pct: float = 0.01         # Minimum risk (1%) for low-confidence
@@ -49,6 +50,9 @@ class RiskConfig:
     trailing_sl_enabled: bool = True      # Enable trailing stop once profit > threshold
     trailing_sl_activation_pct: float = 0.05  # Activate trailing SL after 5% profit
     trailing_sl_distance_pct: float = 0.03    # Trail SL 3% below current price
+    # P7: Swing exit timing
+    swing_max_hold_days: int = 10         # Force exit after 10 trading days (swing)
+    positional_max_hold_days: int = 30    # Force exit after 30 trading days (positional)
     # R4: Market regime (VIX / ADX) scaling
     vix_caution_threshold: float = 20.0   # VIX > 20 → scale position to vix_caution_scale
     vix_panic_threshold: float = 25.0     # VIX > 25 → block all new BUY orders
@@ -248,17 +252,24 @@ class RiskManager:
         support = float(row.get("support", 0))
         resistance = float(row.get("resistance", 0))
         score = float(row.get("score", 0))
+        atr = float(row.get("atr", 0))
 
         # ── Stop-loss ──────────────────────────────────────────
         sl_ma50 = ma50 if ma50 > 0 else entry * 0.95
         sl_swing = support if support > 0 else entry * 0.95
+        sl_atr = (entry - atr * self.cfg.atr_multiplier) if atr > 0 else entry * 0.95
 
         if self.cfg.sl_method == "ma50":
             sl = sl_ma50
         elif self.cfg.sl_method == "swing_low":
             sl = sl_swing
-        else:  # "tighter" — whichever is closer to entry (smaller loss)
-            sl = max(sl_ma50, sl_swing)
+        elif self.cfg.sl_method == "atr":
+            sl = sl_atr
+        else:  # "tighter" — whichever is closest to entry (smallest loss)
+            candidates = [sl_ma50, sl_swing]
+            if atr > 0:
+                candidates.append(sl_atr)
+            sl = max(candidates)
 
         # Clamp SL to [sl_min_pct, sl_max_pct] below entry
         sl_floor = entry * (1 - self.cfg.sl_max_pct)   # farthest allowed
@@ -437,3 +448,85 @@ class RiskManager:
 
         # Tier 3: Static fallback
         return self.cfg.slippage_buffer_pct
+
+    # ── P7: Time-based swing / positional exit review ──────────
+
+    def review_hold_exits(
+        self,
+        holdings: List[dict],
+        trade_horizon: str = "swing",
+    ) -> List[TradePlan]:
+        """Flag positions that exceed the max hold period for forced exit.
+
+        Parameters
+        ----------
+        holdings : list[dict]
+            Kite holdings response.  Each dict should include
+            ``tradingsymbol``, ``quantity``, ``average_price``,
+            ``last_price``, and ``order_timestamp`` (or ``product``
+            for inference).
+        trade_horizon : str
+            ``"swing"`` (3-10 day) or ``"positional"`` (2-6 week).
+
+        Returns
+        -------
+        list[TradePlan]
+            SELL plans for positions that have exceeded the hold window.
+        """
+        from datetime import datetime, timedelta
+
+        max_days = (
+            self.cfg.swing_max_hold_days
+            if trade_horizon == "swing"
+            else self.cfg.positional_max_hold_days
+        )
+
+        plans: List[TradePlan] = []
+        now = datetime.utcnow()
+
+        for h in holdings:
+            sym = h.get("tradingsymbol", "")
+            qty = int(h.get("quantity", 0))
+            if qty <= 0:
+                continue
+
+            # Determine entry date from order timestamp or t1_quantity
+            order_ts = h.get("order_timestamp") or h.get("opening_date")
+            if not order_ts:
+                continue  # can't determine age without timestamp
+
+            if isinstance(order_ts, str):
+                try:
+                    entry_date = datetime.fromisoformat(order_ts)
+                except (ValueError, TypeError):
+                    continue
+            elif isinstance(order_ts, datetime):
+                entry_date = order_ts
+            else:
+                continue
+
+            hold_days = (now - entry_date).days
+            if hold_days <= max_days:
+                continue
+
+            avg_price = float(h.get("average_price", 0))
+            ltp = float(h.get("last_price", avg_price))
+
+            plans.append(TradePlan(
+                symbol=sym,
+                side="SELL",
+                entry_price=ltp,
+                stop_loss=0.0,
+                target_price=0.0,
+                quantity=qty,
+                risk_amount=0.0,
+                reward_amount=0.0,
+                rr_ratio=0.0,
+                score=0.0,
+            ))
+            logger.info(
+                "P7 hold-period exit: %s held %d days (max %d for %s) — recommending SELL × %d",
+                sym, hold_days, max_days, trade_horizon, qty,
+            )
+
+        return plans
