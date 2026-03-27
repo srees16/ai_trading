@@ -135,8 +135,30 @@ class AutoExecutor:
                 )
                 self._vol_target = VolatilityTarget(vt_cfg)
                 self._carver_enabled = True
+
+                # Restore persisted capital state (peak equity + cumulative P&L)
+                try:
+                    import json as _json
+                    import os as _os
+                    _state_path = _os.path.join(
+                        _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
+                        "data", "portfolio_state.json",
+                    )
+                    if _os.path.exists(_state_path):
+                        with open(_state_path) as _f:
+                            _state = _json.load(_f)
+                        cum_pnl = _state.get("cumulative_realized_pnl", 0.0)
+                        if cum_pnl != 0:
+                            self._vol_target.add_realized(cum_pnl)
+                        Config._CUMULATIVE_REALIZED_PNL = cum_pnl
+                        Config._PEAK_EQUITY = _state.get("peak_equity", vt_cfg.initial_capital)
+                        logger.info("Restored portfolio state: cum_pnl=%.0f, peak=%.0f",
+                                    cum_pnl, Config._PEAK_EQUITY)
+                except Exception:
+                    pass  # No persisted state yet
+
                 logger.info("Carver framework enabled: vol_target=%.0f%%, capital=%.0f",
-                            vt_cfg.annual_vol_target_pct * 100, vt_cfg.initial_capital)
+                            vt_cfg.annual_vol_target_pct * 100, self._vol_target.current_capital)
         except Exception as exc:
             logger.debug("Carver framework not available: %s", exc)
 
@@ -255,8 +277,8 @@ class AutoExecutor:
                         for h in held if h.get("last_price")
                     }
                     inst_vols = {s: 0.02 for s in pos_values}  # conservative 2% default
-                    total_cap = getattr(Config, "CARVER_CAPITAL", 500_000)
-                    peak_eq = getattr(Config, "PEAK_EQUITY", None)
+                    total_cap = getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000)
+                    peak_eq = getattr(Config, "_PEAK_EQUITY", None)
                     snap = assess_portfolio_risk(
                         pos_values, inst_vols,
                         target_annual_vol_pct=getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.20),
@@ -268,6 +290,7 @@ class AutoExecutor:
                         logger.warning('Portfolio DD halt triggered (%.1f%%) - blocking all new orders', snap.drawdown_pct)
                         return report
                     if snap.scale_factor < 1.0:
+                        report._dd_scale = snap.scale_factor
                         _cb(f'Portfolio risk: scale factor {snap.scale_factor:.2f} applied (DD warning)')
         except Exception as exc:
             logger.debug('Portfolio DD check failed (non-fatal): %s', exc)
@@ -275,6 +298,14 @@ class AutoExecutor:
         # â”€â”€ 4.  Risk management / trade plans â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         _cb("Generating trade plans with risk management â€¦")
         plans = self._generate_trade_plans(screened_df, _cb)
+
+        # P1 fix: Apply portfolio DD scale_factor to position quantities
+        dd_scale = getattr(report, '_dd_scale', 1.0)
+        if dd_scale < 1.0 and plans:
+            for plan in plans:
+                plan.quantity = max(1, int(plan.quantity * dd_scale))
+            _cb(f"DD scale {dd_scale:.2f} applied to {len(plans)} plans")
+
         report.trade_plans = plans
         report.plans_count = len(plans)
 
@@ -338,6 +369,7 @@ class AutoExecutor:
             _cb("Carver pipeline: computing volatilities & forecasts …")
             from services.instrument_volatility import compute_volatilities_batch
             from strategies.ewmac import compute_ewmac_batch
+            from strategies.carry_rule import compute_carry_batch
             from services.forecast_scalar import screener_to_forecast
             from services.forecast_combiner import combine_forecasts_batch
             from services.cost_speed_limit import filter_by_cost
@@ -368,6 +400,14 @@ class AutoExecutor:
             # Step 3: EWMAC forecasts
             ewmac_batch = compute_ewmac_batch(ohlcv_cache)
 
+            # Step 3b: Carry forecasts (dividend yield - funding cost)
+            try:
+                carry_batch = compute_carry_batch(ohlcv_cache)
+                _cb(f"Carver: carry forecasts for {len(carry_batch)}/{len(ohlcv_cache)} symbols")
+            except Exception as exc:
+                carry_batch = {}
+                logger.debug("Carry forecast computation failed (non-fatal): %s", exc)
+
             # Step 4: Build per-symbol forecast dicts
             all_forecasts = {}
             score_col = "score"
@@ -376,6 +416,9 @@ class AutoExecutor:
                 if sym in ewmac_batch:
                     for ef in ewmac_batch[sym]:
                         fc[f"ewmac_{ef.fast}_{ef.slow}"] = ef.forecast
+                # Add carry forecast
+                if sym in carry_batch:
+                    fc["carry"] = carry_batch[sym].forecast
                 # Add screener score as a forecast
                 row_match = screened_df[screened_df["symbol"] == sym]
                 if not row_match.empty and score_col in row_match.columns:

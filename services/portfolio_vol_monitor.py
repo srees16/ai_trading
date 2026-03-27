@@ -212,6 +212,13 @@ def assess_portfolio_risk(
     elif snap.drawdown_pct > 10.0:
         scale = min(scale, 0.5)
         alerts.append(f"Drawdown {snap.drawdown_pct:.1f}% — reducing position sizes to 50%")
+    elif snap.drawdown_pct > 7.0:
+        # Gradual recovery ramp: 7-10% DD = 70% scale (prevents binary 0→1 whipsaw)
+        scale = min(scale, 0.7)
+        alerts.append(f"Drawdown {snap.drawdown_pct:.1f}% — recovery ramp at 70% size")
+    elif snap.drawdown_pct > 5.0:
+        scale = min(scale, 0.85)
+        alerts.append(f"Drawdown {snap.drawdown_pct:.1f}% — recovery ramp at 85% size")
 
     snap.scale_factor = round(scale, 2)
     snap.alerts = alerts

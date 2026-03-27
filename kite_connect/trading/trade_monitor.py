@@ -208,21 +208,45 @@ class TradeMonitor:
                         "reason": entry_order.get("status_message", ""),
                     })
                 else:
+                    # Check for partial fills
+                    filled_qty = int(entry_order.get("filled_quantity", 0))
+                    pending_qty = int(entry_order.get("pending_quantity", trade.quantity))
+
                     # M1 fix: cancel stale unfilled entries (>2 hours old)
                     age_minutes = (datetime.now() - trade.opened_at).total_seconds() / 60
                     if age_minutes > 120:
                         self._cancel_order(trade.entry_order_id, trade.symbol, "ENTRY")
-                        trade.closed = True
-                        events.append({
-                            "type": "ENTRY_CANCELLED_STALE",
-                            "symbol": trade.symbol,
-                            "order_id": trade.entry_order_id,
-                            "age_minutes": int(age_minutes),
-                        })
-                        logger.info(
-                            "Stale entry cancelled: %s (%.0f min old)",
-                            trade.symbol, age_minutes,
-                        )
+                        if filled_qty > 0:
+                            # Partial fill: accept what we got, adjust qty and proceed
+                            trade.quantity = filled_qty
+                            trade.entry_filled = True
+                            fill_price = entry_order.get("average_price", trade.entry_price)
+                            events.append({
+                                "type": "ENTRY_PARTIAL_ACCEPTED",
+                                "symbol": trade.symbol,
+                                "filled_qty": filled_qty,
+                                "original_qty": filled_qty + pending_qty,
+                                "fill_price": fill_price,
+                                "order_id": trade.entry_order_id,
+                            })
+                            logger.info(
+                                "Partial fill accepted: %s %d/%d @ %.2f (stale cancelled)",
+                                trade.symbol, filled_qty, filled_qty + pending_qty, fill_price,
+                            )
+                            self._place_sl_for_trade(trade)
+                            self._place_tp_for_trade(trade)
+                        else:
+                            trade.closed = True
+                            events.append({
+                                "type": "ENTRY_CANCELLED_STALE",
+                                "symbol": trade.symbol,
+                                "order_id": trade.entry_order_id,
+                                "age_minutes": int(age_minutes),
+                            })
+                            logger.info(
+                                "Stale entry cancelled: %s (%.0f min old)",
+                                trade.symbol, age_minutes,
+                            )
                 continue  # Wait for entry to fill before checking SL/TP
 
             # Check SL
@@ -232,13 +256,16 @@ class TradeMonitor:
                     trade.sl_triggered = True
                     trade.closed = True
                     exit_price = sl_order.get("average_price", trade.stop_loss)
+                    realized_pnl = (exit_price - trade.entry_price) * trade.quantity
                     events.append({
                         "type": "SL_TRIGGERED",
                         "symbol": trade.symbol,
                         "exit_price": exit_price,
                         "order_id": trade.sl_order_id,
+                        "realized_pnl": round(realized_pnl, 2),
                     })
-                    logger.info("SL triggered: %s @ %.2f", trade.symbol, exit_price)
+                    logger.info("SL triggered: %s @ %.2f (P&L: %.2f)", trade.symbol, exit_price, realized_pnl)
+                    self._roll_capital(realized_pnl)
                     # Cancel the orphaned TP order
                     self._cancel_order(trade.tp_order_id, trade.symbol, "TP")
 
@@ -249,13 +276,16 @@ class TradeMonitor:
                     trade.tp_triggered = True
                     trade.closed = True
                     exit_price = tp_order.get("average_price", trade.target_price)
+                    realized_pnl = (exit_price - trade.entry_price) * trade.quantity
                     events.append({
                         "type": "TP_FILLED",
                         "symbol": trade.symbol,
                         "exit_price": exit_price,
                         "order_id": trade.tp_order_id,
+                        "realized_pnl": round(realized_pnl, 2),
                     })
-                    logger.info("TP filled: %s @ %.2f", trade.symbol, exit_price)
+                    logger.info("TP filled: %s @ %.2f (P&L: %.2f)", trade.symbol, exit_price, realized_pnl)
+                    self._roll_capital(realized_pnl)
                     # Cancel the orphaned SL order
                     self._cancel_order(trade.sl_order_id, trade.symbol, "SL")
 
@@ -277,6 +307,13 @@ class TradeMonitor:
                 trail_event = self._maybe_trail_sl(trade)
                 if trail_event:
                     events.append(trail_event)
+
+            # ── P0 fix: Time-based forced exit ─────────────────
+            # Force close positions held beyond max hold days
+            if trade.entry_filled and not trade.closed:
+                exit_event = self._check_hold_time_exit(trade)
+                if exit_event:
+                    events.append(exit_event)
 
         # ── Corporate action adjustment (#2) ──────────────────
         # Check for pending SPLIT/BONUS on active trades and adjust
@@ -492,6 +529,95 @@ class TradeMonitor:
         except Exception as exc:
             logger.debug("Trailing SL check failed for %s: %s", trade.symbol, exc)
         return None
+
+    def _check_hold_time_exit(self, trade: MonitoredTrade) -> Optional[Dict]:
+        """Force exit positions held beyond max hold days (swing=10, positional=30).
+
+        Places a MARKET sell order and cancels existing SL/TP orders.
+        """
+        if not self.kite or trade.closed:
+            return None
+        try:
+            from config import Config
+            hold_days = (datetime.now() - trade.opened_at).days
+            horizon = getattr(Config, "CARVER_TRADE_HORIZON", "swing")
+            max_days = 30 if horizon == "positional" else 10
+
+            if hold_days < max_days:
+                return None
+
+            # Force market exit
+            from kite_connect.trading.order_service import place_order
+            exit_side = "SELL" if trade.side == "BUY" else "BUY"
+            resp = place_order(
+                kite=self.kite,
+                symbol=trade.symbol,
+                exchange="NSE",
+                transaction_type=exit_side,
+                quantity=trade.quantity,
+                order_type="MARKET",
+                product="CNC",
+            )
+
+            # Cancel existing SL and TP
+            self._cancel_order(trade.sl_order_id, trade.symbol, "SL")
+            self._cancel_order(trade.tp_order_id, trade.symbol, "TP")
+            trade.closed = True
+
+            logger.info(
+                "TIME EXIT: %s held %d days > %d max (%s) — forced market sell",
+                trade.symbol, hold_days, max_days, horizon,
+            )
+            return {
+                "type": "TIME_EXIT_FORCED",
+                "symbol": trade.symbol,
+                "hold_days": hold_days,
+                "max_days": max_days,
+                "horizon": horizon,
+                "exit_order_id": resp.get("order_id") if resp.get("success") else None,
+            }
+        except Exception as exc:
+            logger.warning("Hold time exit check failed for %s: %s", trade.symbol, exc)
+        return None
+
+    def _roll_capital(self, realized_pnl: float) -> None:
+        """Roll realized P&L into VolatilityTarget for dynamic position sizing.
+
+        Also persists peak equity to a JSON file for crash recovery.
+        """
+        try:
+            from config import Config
+            # Update cumulative realized P&L in config for cross-session tracking
+            prev = getattr(Config, "_CUMULATIVE_REALIZED_PNL", 0.0)
+            Config._CUMULATIVE_REALIZED_PNL = prev + realized_pnl
+
+            # Update peak equity
+            capital = getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000)
+            current_equity = capital + Config._CUMULATIVE_REALIZED_PNL
+            peak = getattr(Config, "_PEAK_EQUITY", current_equity)
+            Config._PEAK_EQUITY = max(peak, current_equity)
+
+            # Persist peak equity + cumulative P&L to file
+            _state_file = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "data", "portfolio_state.json",
+            )
+            state = {
+                "cumulative_realized_pnl": Config._CUMULATIVE_REALIZED_PNL,
+                "peak_equity": Config._PEAK_EQUITY,
+                "last_updated": datetime.now().isoformat(),
+            }
+            os.makedirs(os.path.dirname(_state_file), exist_ok=True)
+            with open(_state_file, "w") as f:
+                json.dump(state, f, indent=2)
+
+            logger.info(
+                "Capital rolled: realized=%.2f, cumulative=%.2f, equity=%.0f, peak=%.0f",
+                realized_pnl, Config._CUMULATIVE_REALIZED_PNL,
+                current_equity, Config._PEAK_EQUITY,
+            )
+        except Exception as exc:
+            logger.debug("Capital rollup failed (non-fatal): %s", exc)
 
     def _cancel_order(self, order_id: Optional[str], symbol: str, label: str):
         """Cancel an orphaned order (SL when TP fills, or vice versa)."""

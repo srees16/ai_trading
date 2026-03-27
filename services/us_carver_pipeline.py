@@ -134,6 +134,21 @@ def run_us_carver_pipeline(
     vol_tgt = annual_vol_target or getattr(Config, "CARVER_US_ANNUAL_VOL_TARGET", 0.20)
     max_lev = getattr(Config, "CARVER_US_MAX_LEVERAGE", 1.0)
 
+    # ── Pre-check: Portfolio drawdown halt ────────────────────
+    try:
+        cum_pnl = getattr(Config, "_CUMULATIVE_REALIZED_PNL", 0.0)
+        peak_eq = getattr(Config, "_PEAK_EQUITY", cap)
+        current_eq = cap + cum_pnl
+        if peak_eq > 0 and current_eq < peak_eq:
+            dd_pct = (peak_eq - current_eq) / peak_eq * 100
+            if dd_pct > 15.0:
+                result.pipeline_log.append(f"HALT: US portfolio drawdown {dd_pct:.1f}% > 15% — no new trades")
+                return result
+            elif dd_pct > 10.0:
+                result.pipeline_log.append(f"WARNING: US portfolio drawdown {dd_pct:.1f}% — position sizes halved")
+    except Exception:
+        pass
+
     # ── Step 1: Download OHLCV ───────────────────────────────
     result.pipeline_log.append(f"Step 1: Downloading OHLCV for {len(tickers)} US tickers")
     ohlcv_cache: Dict[str, pd.DataFrame] = {}
@@ -160,6 +175,16 @@ def run_us_carver_pipeline(
     result.pipeline_log.append("Step 3: Computing EWMAC forecasts")
     ewmac_batch = compute_ewmac_batch(ohlcv_cache)
 
+    # ── Step 3b: Carry forecasts (US funding ~5.25%) ─────────
+    carry_batch = {}
+    try:
+        from strategies.carry_rule import compute_carry_batch
+        us_funding = 0.0525  # US Fed Funds rate
+        carry_batch = compute_carry_batch(ohlcv_cache, funding_cost=us_funding)
+        result.pipeline_log.append(f"  Carry: {len(carry_batch)}/{len(ohlcv_cache)} symbols")
+    except Exception:
+        result.pipeline_log.append("  Carry: unavailable (non-fatal)")
+
     # ── Step 4: Build forecast dicts ─────────────────────────
     result.pipeline_log.append("Step 4: Building per-symbol forecast dicts")
     all_forecasts: Dict[str, Dict[str, float]] = {}
@@ -168,6 +193,8 @@ def run_us_carver_pipeline(
         if sym in ewmac_batch:
             for ef in ewmac_batch[sym]:
                 fc[f"ewmac_{ef.fast}_{ef.slow}"] = ef.forecast
+        if sym in carry_batch:
+            fc["carry"] = carry_batch[sym].forecast
         if fc:
             all_forecasts[sym] = fc
 

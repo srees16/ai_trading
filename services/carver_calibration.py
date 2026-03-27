@@ -278,6 +278,10 @@ class CarverCalibrator:
         # Track previous positions for turnover-based cost deduction
         prev_positions: Dict[str, int] = {sym: 0 for sym in symbols}
 
+        # Track peak prices and trailing stops per symbol
+        peak_prices: Dict[str, float] = {}
+        stop_levels: Dict[str, float] = {}
+
         # Simplified walk-forward: iterate day by day from min_history onwards
         for day_idx in range(min_history_days, n_days):
             day_pnl = 0.0
@@ -290,6 +294,23 @@ class CarverCalibrator:
 
                 price = float(close.iloc[-1])
                 prev_price = float(close.iloc[-2]) if len(close) > 1 else price
+
+                # Trailing SL simulation: check if stop was hit
+                prev_qty = prev_positions.get(sym, 0)
+                if prev_qty > 0 and sym in stop_levels:
+                    low = float(df["Low"].iloc[day_idx]) if "Low" in df.columns else price
+                    if low <= stop_levels[sym]:
+                        # Stop hit — force exit at stop level
+                        exit_price = stop_levels[sym]
+                        daily_ret = (exit_price - prev_price) / prev_price if prev_price > 0 else 0
+                        day_pnl += prev_qty * prev_price * daily_ret
+                        # Deduct cost for forced exit
+                        day_pnl -= prev_qty * exit_price * total_cost_pct
+                        trades_count += 1
+                        prev_positions[sym] = 0
+                        peak_prices.pop(sym, None)
+                        stop_levels.pop(sym, None)
+                        continue
 
                 # Compute EWMAC forecasts
                 forecasts = {}
@@ -333,6 +354,20 @@ class CarverCalibrator:
                         day_pnl -= cost
                         trades_count += 1
                     prev_positions[sym] = target_qty
+
+                    # Update trailing stop for held positions
+                    if target_qty > 0:
+                        pk = peak_prices.get(sym, price)
+                        pk = max(pk, price)
+                        peak_prices[sym] = pk
+                        # 2.5σ trailing stop (swing)
+                        stop_dist = 2.5 * (daily_vol if daily_vol > 0 else 0.02) * pk
+                        new_stop = pk - stop_dist
+                        # Only ratchet up
+                        stop_levels[sym] = max(stop_levels.get(sym, 0), new_stop)
+                    else:
+                        peak_prices.pop(sym, None)
+                        stop_levels.pop(sym, None)
 
             # Update equity
             equity += day_pnl
