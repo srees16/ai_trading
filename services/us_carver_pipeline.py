@@ -199,6 +199,53 @@ def run_us_carver_pipeline(
         result.pipeline_log.append("ABORT: All symbols filtered by cost speed limit")
         return result
 
+    # ── Step 6b: Earnings blackout filter (P1 fix) ───────────
+    try:
+        import yfinance as yf
+        from datetime import datetime, timedelta
+        blackout_before = getattr(Config, "EARNINGS_BLACKOUT_DAYS_BEFORE", 2)
+        blackout_after = getattr(Config, "EARNINGS_BLACKOUT_DAYS_AFTER", 1)
+        today = datetime.now().date()
+        blackout_syms = set()
+        for sym in list(combined_values.keys()):
+            try:
+                ticker = yf.Ticker(sym)
+                cal = ticker.calendar
+                if cal is None or (hasattr(cal, 'empty') and cal.empty):
+                    continue
+                earnings_date = None
+                if isinstance(cal, dict):
+                    ed = cal.get("Earnings Date")
+                    if ed:
+                        earnings_date = ed[0] if isinstance(ed, list) else ed
+                elif hasattr(cal, "loc"):
+                    try:
+                        ed = cal.loc["Earnings Date"]
+                        earnings_date = ed.iloc[0] if hasattr(ed, 'iloc') else ed
+                    except Exception:
+                        pass
+                if earnings_date is not None:
+                    if hasattr(earnings_date, 'date'):
+                        earnings_date = earnings_date.date()
+                    window_start = earnings_date - timedelta(days=blackout_before)
+                    window_end = earnings_date + timedelta(days=blackout_after)
+                    if window_start <= today <= window_end:
+                        blackout_syms.add(sym)
+            except Exception:
+                continue
+        if blackout_syms:
+            for sym in blackout_syms:
+                combined_values.pop(sym, None)
+            result.pipeline_log.append(
+                f"  Earnings blackout: {len(blackout_syms)} symbols suppressed — {', '.join(blackout_syms)}"
+            )
+    except Exception:
+        pass  # Earnings data unavailable — proceed without filter
+
+    if not combined_values:
+        result.pipeline_log.append("ABORT: All symbols in earnings blackout")
+        return result
+
     # ── Step 7: Instrument weights + IDM ─────────────────────
     result.pipeline_log.append("Step 7: Computing handcrafted weights + IDM")
     active = [s for s in combined_values if combined_values[s] > 0]

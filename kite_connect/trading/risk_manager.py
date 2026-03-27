@@ -307,6 +307,8 @@ class RiskManager:
                 continue
 
             weight = (instrument_weights or {}).get(sym, 0.10)
+            # P1-6: Apply spread-based position reduction
+            spread_scale = float(row.get("spread_scale", 1.0)) if "spread_scale" in row.index else 1.0
             plan = self._build_plan(
                 row, available, regime_scale,
                 carver_forecast=forecast,
@@ -315,6 +317,9 @@ class RiskManager:
                 idm=idm,
             )
             if plan is not None:
+                # P1-6: Apply spread-based position reduction
+                if spread_scale < 1.0 and plan.quantity > 0:
+                    plan.quantity = max(1, int(plan.quantity * spread_scale))
                 plans.append(plan)
                 allocated = plan.quantity * plan.entry_price
                 available -= allocated
@@ -402,7 +407,16 @@ class RiskManager:
             sl = max(candidates)
 
         # Clamp SL to [sl_min_pct, sl_max_pct] below entry
-        sl_floor = entry * (1 - self.cfg.sl_max_pct)   # farthest allowed
+        # P0 fix: Add overnight gap buffer — NSE has 16h overnight exposure
+        # (close 3:30 PM → open 9:15 AM), during which RBI policy, global
+        # news, FII flows can gap stocks 3-8%.  Buffer = 1.5 × daily_vol.
+        gap_buffer_pct = 0.0
+        if atr > 0 and entry > 0:
+            daily_vol_pct = atr / entry  # ATR as fraction of price
+            gap_buffer_pct = 1.5 * daily_vol_pct  # 1.5σ gap buffer
+            gap_buffer_pct = min(gap_buffer_pct, 0.04)  # cap at 4% extra
+
+        sl_floor = entry * (1 - self.cfg.sl_max_pct - gap_buffer_pct)   # farthest allowed (with gap buffer)
         sl_ceil  = entry * (1 - self.cfg.sl_min_pct)   # closest allowed
         if sl >= entry or sl > sl_ceil:
             sl = sl_ceil

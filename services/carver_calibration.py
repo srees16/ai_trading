@@ -260,6 +260,24 @@ class CarverCalibrator:
         trades_count = 0
         equity = self.initial_capital
 
+        # Transaction cost config (realistic for NSE delivery / US zero-commission)
+        # These are applied on each position change (entry + exit = round-trip)
+        round_trip_cost_pct = 0.0030   # 0.30% NSE (STT + exchange + stamp + GST)
+        slippage_pct = 0.0020          # 0.20% estimated spread + slippage
+        total_cost_pct = round_trip_cost_pct + slippage_pct  # 0.50% per round-trip
+        try:
+            from config import Config
+            # Use US costs if capital looks like USD (< 50K)
+            if self.initial_capital < 50_000:
+                round_trip_cost_pct = getattr(Config, "CARVER_US_COST_ROUND_TRIP_PCT", 0.0010)
+                slippage_pct = getattr(Config, "CARVER_US_SPREAD_SLIPPAGE_PCT", 0.0005)
+                total_cost_pct = round_trip_cost_pct + slippage_pct
+        except Exception:
+            pass
+
+        # Track previous positions for turnover-based cost deduction
+        prev_positions: Dict[str, int] = {sym: 0 for sym in symbols}
+
         # Simplified walk-forward: iterate day by day from min_history onwards
         for day_idx in range(min_history_days, n_days):
             day_pnl = 0.0
@@ -301,10 +319,20 @@ class CarverCalibrator:
                     vol_scalar = daily_cash_target / ivv / len(symbols)
                     position = (forecast / 10.0) * vol_scalar
                     target_qty = max(0, round(position))
-                    # P&L from position (simplified: held position × return)
+                    # P&L from position (held position × return)
                     if prev_price > 0 and target_qty > 0:
                         daily_ret = (price - prev_price) / prev_price
                         day_pnl += target_qty * prev_price * daily_ret
+
+                    # P0 fix: Deduct transaction costs on position changes (turnover)
+                    prev_qty = prev_positions.get(sym, 0)
+                    turnover_qty = abs(target_qty - prev_qty)
+                    if turnover_qty > 0:
+                        turnover_value = turnover_qty * price
+                        cost = turnover_value * total_cost_pct
+                        day_pnl -= cost
+                        trades_count += 1
+                    prev_positions[sym] = target_qty
 
             # Update equity
             equity += day_pnl

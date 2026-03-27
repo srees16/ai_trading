@@ -402,36 +402,71 @@ class TradeMonitor:
             logger.error("TP exception for %s: %s", trade.symbol, exc)
 
     def _maybe_trail_sl(self, trade: MonitoredTrade) -> Optional[Dict]:
-        """Ratchet the stop-loss upward when price moves in our favour.
+        """Ratchet the stop-loss upward using Carver vol-based adaptive trailing.
 
-        Activation: current price > entry * (1 + activation_pct)
-        New SL:     max(existing SL, current_price * (1 - trail_distance_pct))
+        Uses vol_trailing_stop.compute_trailing_stop() which:
+          - Scales stop distance by daily volatility (2.5σ swing, 3.5σ positional)
+          - Activates profit-lock after 4σ gain (tightens to 1.5σ)
+          - Guarantees break-even once profit-lock activates
+          - Clamps stop between 2% (min) and 12% (max) of peak
+
+        Falls back to simple percentage trail if vol computation unavailable.
         """
         if not self.kite or not trade.sl_order_id:
             return None
         try:
-            # Use config values if available, else fall back to sensible defaults
-            cfg = self._risk_config
-            activation_pct = getattr(cfg, "trailing_sl_activation_pct", 0.05) if cfg else 0.05
-            trail_pct = getattr(cfg, "trailing_sl_distance_pct", 0.03) if cfg else 0.03
-
             key = f"NSE:{trade.symbol}"
             ltp_data = self.kite.ltp([key])
             ltp = ltp_data.get(key, {}).get("last_price", 0)
             if ltp <= 0:
                 return None
 
-            # Not enough profit yet to activate trailing
-            profit_pct = (ltp - trade.entry_price) / trade.entry_price
-            if profit_pct < activation_pct:
-                return None
+            # Attempt Carver vol-based trailing stop
+            try:
+                from services.vol_trailing_stop import compute_trailing_stop
+                from services.instrument_volatility import daily_price_volatility
+                from utils import download_ind_ohlcv
+                from config import Config
 
-            new_sl = round(ltp * (1 - trail_pct), 2)
+                # Fetch recent close prices for vol computation
+                df = download_ind_ohlcv(trade.symbol, period="3mo")
+                if df is not None and len(df) >= 20:
+                    close_series = df["Close"] if "Close" in df.columns else df["close"]
+                    daily_vol = daily_price_volatility(close_series)
+                else:
+                    daily_vol = 0.02  # 2% fallback
+
+                trade_horizon = getattr(Config, "CARVER_TRADE_HORIZON", "swing")
+                peak_price = max(getattr(trade, "_peak_price", trade.entry_price), ltp)
+                trade._peak_price = peak_price  # track peak on the trade object
+
+                state = compute_trailing_stop(
+                    entry_price=trade.entry_price,
+                    current_price=ltp,
+                    peak_price=peak_price,
+                    daily_price_vol=daily_vol,
+                    previous_stop=trade.stop_loss,
+                    trade_horizon=trade_horizon,
+                )
+                new_sl = state.current_stop
+            except Exception:
+                # Fallback: simple percentage trail
+                cfg = self._risk_config
+                activation_pct = getattr(cfg, "trailing_sl_activation_pct", 0.05) if cfg else 0.05
+                trail_pct = getattr(cfg, "trailing_sl_distance_pct", 0.03) if cfg else 0.03
+
+                profit_pct = (ltp - trade.entry_price) / trade.entry_price
+                if profit_pct < activation_pct:
+                    return None
+                new_sl = round(ltp * (1 - trail_pct), 2)
+
             # Only ratchet up, never down
             if new_sl <= trade.stop_loss:
                 return None
 
-            # Modify existing SL order
+            new_sl = round(new_sl, 2)
+
+            # Modify existing SL order on exchange
             from kite_connect.trading.order_service import modify_order
             resp = modify_order(
                 self.kite, trade.sl_order_id,
@@ -441,8 +476,9 @@ class TradeMonitor:
             if resp.get("success"):
                 old_sl = trade.stop_loss
                 trade.stop_loss = new_sl
+                profit_pct = (ltp - trade.entry_price) / trade.entry_price
                 logger.info(
-                    "Trailing SL: %s ratcheted %.2f → %.2f (LTP=%.2f, profit=%.1f%%)",
+                    "Trailing SL (vol-based): %s ratcheted %.2f → %.2f (LTP=%.2f, profit=%.1f%%)",
                     trade.symbol, old_sl, new_sl, ltp, profit_pct * 100,
                 )
                 return {

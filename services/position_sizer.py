@@ -150,11 +150,15 @@ def compute_position_size(
 
     notional = target_quantity * price
 
-    # Step 7: Position inertia — only trade if change > threshold
+    # Step 7: Position inertia — asymmetric thresholds
+    # Scale-UP: full inertia (10%) to avoid noise-driven entry increases
+    # Scale-DOWN: lower threshold (5%) to allow faster profit-taking / loss-cutting
     trade_required = True
     if current_quantity > 0:
         pct_change = abs(target_quantity - current_quantity) / current_quantity
-        if pct_change < inertia_threshold:
+        scaling_down = target_quantity < current_quantity
+        effective_threshold = (inertia_threshold * 0.5) if scaling_down else inertia_threshold
+        if pct_change < effective_threshold:
             trade_required = False
             target_quantity = current_quantity  # keep existing
             notional = target_quantity * price
