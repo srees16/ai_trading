@@ -16,7 +16,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-DATA_PATH = Path("data") / "green_energy_portfolio.json"
+DATA_PATH = Path("data") / "thematic_portfolio.json"
 
 # ── Stock sector/theme classification (known green-energy universe) ───────
 STOCK_THEMES: dict[str, list[str]] = {

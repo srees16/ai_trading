@@ -45,6 +45,7 @@ mywinenv/
 *.csv
 *.json
 !config.json
+!data/thematic_portfolio.json
 !sample_tickers.csv
 *.log
 logs/
@@ -67,9 +68,11 @@ desktop.ini
 # ============ ML Models & Serialised Data ============
 .cache/
 models/
+data/rl_models/
 *.h5
 *.pkl
 *.joblib
+*.zip
 
 # ============ Secrets & Credentials ============
 .env

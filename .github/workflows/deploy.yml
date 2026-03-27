@@ -37,6 +37,7 @@ jobs:
             --exclude='data/bhavcopy_cache' \
             --exclude='data/chroma_db' \
             --exclude='data/event_logs' \
+            --exclude='data/rl_models' \
             --exclude='.env' \
             --exclude='.env.*' \
             --exclude='*.pyc' \
