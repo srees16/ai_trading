@@ -120,6 +120,78 @@ def get_latest_run(run_type: Optional[str] = None) -> Optional[dict]:
     return dict(row)
 
 
+# ═══════════════════════════════════════════════════════════════
+# Verdict caching helpers
+# ═══════════════════════════════════════════════════════════════
+
+_VERDICT_CACHE_TTL = 2 * 3600  # 2 hours — refreshed on each pipeline run
+
+
+def _cache_verdicts(verdicts):
+    """Persist individual verdict results to the infrastructure cache."""
+    try:
+        from infrastructure.cache import cache
+        for v in verdicts:
+            ls = v.layer_scores or {}
+            payload = {
+                "ticker": v.ticker,
+                "core_score": ls.get("core", 0) or 0,
+                "strategy_score": ls.get("strategy", 0) or 0,
+                "ml_score": ls.get("ml_features", 0) or 0,
+                "rl_score": ls.get("rl_bot", 0) or 0,
+                "robustness_score": ls.get("robustness", 0) or 0,
+                "weighted_score": v.final_score,
+                "verdict": v.classification,
+                "confidence": round(v.confidence, 2),
+                "cached_at": datetime.now(_IST).isoformat(),
+            }
+            cache.set(f"verdict:{v.ticker}", payload, ttl=_VERDICT_CACHE_TTL)
+        logger.info("Cached %d verdicts (TTL=%ds)", len(verdicts), _VERDICT_CACHE_TTL)
+    except Exception as exc:
+        logger.debug("Verdict caching failed (non-fatal): %s", exc)
+
+
+def get_cached_verdict(ticker: str):
+    """Read a single cached verdict dict, or None if miss/expired."""
+    try:
+        from infrastructure.cache import cache
+        return cache.get(f"verdict:{ticker}")
+    except Exception:
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════
+# Proactive Kite token refresh
+# ═══════════════════════════════════════════════════════════════
+
+def refresh_kite_token_if_needed():
+    """Re-authenticate Kite if the access token is expiring soon.
+
+    Called every 30 min during market hours by the scheduler.
+    Uses the same TOTP auto-auth path as the pipeline.
+    """
+    try:
+        from api.dependencies import is_kite_token_expiring_soon, get_kite_session, set_kite_session
+
+        kite = get_kite_session()
+        if kite is None:
+            return  # not logged in — nothing to refresh
+
+        if not is_kite_token_expiring_soon():
+            return  # still fresh
+
+        logger.info("Kite token expiring soon — proactive re-authentication")
+        from kite_connect.auth.kite_session import create_kite_session
+        new_kite = create_kite_session()
+        if new_kite:
+            set_kite_session(new_kite)
+            logger.info("Kite token refreshed successfully")
+        else:
+            logger.warning("Kite re-auth returned None — token may expire")
+    except Exception as exc:
+        logger.warning("Proactive Kite refresh failed: %s", exc)
+
+
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Pipeline runner (headless â€” no Streamlit, no Kite orders)
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -167,6 +239,9 @@ def run_pipeline(run_type: str = "pre_market"):
             market="IND",
             date_range=(str(start_dt), str(end_dt)),
         )
+
+        # Cache individual verdicts for fast API lookups
+        _cache_verdicts(verdicts)
 
         buy_verdicts = [v for v in verdicts if v.classification in ("BUY", "STRONG_BUY")]
         sell_verdicts = [v for v in verdicts if v.classification in ("SELL", "STRONG_SELL")]
@@ -907,12 +982,22 @@ def start_scheduler():
         misfire_grace_time=3600,
     )
 
+    # Job 6: Proactive Kite token refresh — every 30 min during market hours
+    scheduler.add_job(
+        refresh_kite_token_if_needed,
+        CronTrigger(hour="9-16", minute="0,30", day_of_week="mon-fri", timezone="Asia/Kolkata"),
+        id="kite_token_refresh",
+        name="Kite Token Refresh Check",
+        misfire_grace_time=300,
+    )
+
     logger.info("Scheduler started â€” press Ctrl+C to stop")
     logger.info("  Pre-market scan : 09:20 IST, Mon-Fri")
     logger.info("  Intraday re-scan: 10:30, 12:30, 14:30 IST, Mon-Fri")
     logger.info("  Walk-forward    : 06:00 IST, Saturday")
     logger.info("  Reconciliation  : 07:00 IST, Saturday")
     logger.info("  Nightly backup  : 23:00 IST, daily")
+    logger.info("  Kite refresh    : every 30 min, 09:00-16:30 IST, Mon-Fri")
 
     try:
         scheduler.start()

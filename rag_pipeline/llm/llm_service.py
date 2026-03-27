@@ -1131,7 +1131,17 @@ class _FallbackChainBackend:
                     self._primary_name, self._fallback_name,
                 )
                 fallback_answer = self._fallback.generate(query, context)
-                return answer + "\n\n" + fallback_answer
+                # If fallback also errored, return a single clean message
+                if self._is_error_token(fallback_answer):
+                    return (
+                        f"\u26a0\ufe0f **{self._primary_name} unavailable** "
+                        f"(credit/billing issue) and **{self._fallback_name}** "
+                        f"is not reachable.\n\n"
+                        f"Please either top-up your Claude/OpenAI credits or "
+                        f"ensure Ollama is running locally."
+                    )
+                # Fallback succeeded — return only the fallback answer
+                return fallback_answer
             return answer
         except Exception as e:
             logger.error(
@@ -1177,16 +1187,28 @@ class _FallbackChainBackend:
                 yield from self._fallback.generate_stream(query, context)
                 return
 
-            # First token is an error — show notification and fall back
+            # First token is an error — try fallback silently
             if self._is_error_token(first_token):
                 logger.warning(
                     "%s stream returned error — falling back to %s: %s",
                     self._primary_name, self._fallback_name,
                     first_token[:120],
                 )
-                # Show the primary's error as a notification, then fall back
-                yield first_token + "\n\n"
-                yield from self._fallback.generate_stream(query, context)
+                # Buffer the first fallback token to check if IT also errors
+                fallback_gen = self._fallback.generate_stream(query, context)
+                fb_first = next(fallback_gen, None)
+                if fb_first is None or self._is_error_token(fb_first):
+                    # Both failed — yield a single clean error
+                    yield (
+                        f"\u26a0\ufe0f **{self._primary_name} unavailable** "
+                        f"and **{self._fallback_name}** is not reachable.\n\n"
+                        f"Please either top-up your Claude/OpenAI credits or "
+                        f"ensure Ollama is running locally."
+                    )
+                    return
+                # Fallback is healthy — stream it (no primary error shown)
+                yield fb_first
+                yield from fallback_gen
                 return
 
             # Primary is healthy — stream normally
