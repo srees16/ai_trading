@@ -956,13 +956,88 @@ def _reconcile_backtest_vs_execution(
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 def _pre_market_with_warmup():
-    """Pre-warm DB connection (wakes Neon auto-suspend) then run pipeline."""
+    """Pre-warm DB, restore portfolio state, then run pipeline."""
     try:
         from database.connection import DatabaseManager
         DatabaseManager().pre_warm()
     except Exception as e:
         logger.warning("DB pre-warm failed (non-fatal): %s", e)
+
+    # SOD: restore portfolio state so DD calculations use persisted peak/P&L
+    _restore_portfolio_state()
+
     run_pipeline("pre_market")
+
+
+def _restore_portfolio_state():
+    """Reload cumulative P&L and peak equity from portfolio_state.json.
+
+    Called at start-of-day so the DD halt / graduated scaling logic
+    uses the correct baseline rather than resetting to zero.
+    """
+    state_path = Path(__file__).parent / "data" / "portfolio_state.json"
+    if not state_path.exists():
+        return
+    try:
+        from config import Config
+        with open(state_path, "r") as f:
+            state = json.load(f)
+        cum_pnl = state.get("cumulative_realized_pnl", 0.0)
+        peak = state.get("peak_equity", getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000))
+        Config._CUMULATIVE_REALIZED_PNL = cum_pnl
+        Config._PEAK_EQUITY = peak
+        logger.info(
+            "SOD state restored: cum_pnl=%.0f, peak_equity=%.0f",
+            cum_pnl, peak,
+        )
+    except Exception as e:
+        logger.warning("Portfolio state restore failed (non-fatal): %s", e)
+
+
+def _run_trade_monitor_poll():
+    """Poll TradeMonitor for SL/TP fills, trailing-SL updates, and time exits.
+
+    Runs every 3 min during market hours. Creates a fresh TradeMonitor
+    that auto-restores active trades from its SQLite crash-recovery DB,
+    then calls poll() which handles:
+      - Entry fill detection & SL/TP placement
+      - SL/TP fill detection & orphan cancellation
+      - Vol-based trailing-SL ratcheting
+      - Time-based forced exits (swing 10d / positional 30d)
+      - Partial fill acceptance (stale entries >2 hr)
+      - Capital rollup & peak equity persistence
+    """
+    try:
+        from kite_connect.auth.kite_session import create_kite_session
+        kite = create_kite_session()
+        if kite is None:
+            logger.debug("TradeMonitor poll skipped — no Kite session")
+            return
+    except Exception as exc:
+        logger.debug("TradeMonitor poll skipped — Kite auth failed: %s", exc)
+        return
+
+    try:
+        from kite_connect.trading.trade_monitor import TradeMonitor
+        from kite_connect.trading.risk_manager import RiskConfig
+
+        monitor = TradeMonitor(kite=kite, risk_config=RiskConfig())
+        active_count = len(monitor.active_trades)
+        if active_count == 0:
+            logger.debug("TradeMonitor poll: no active trades")
+            return
+
+        events = monitor.poll()
+        if events:
+            logger.info(
+                "TradeMonitor poll: %d events from %d active trades — %s",
+                len(events), active_count,
+                ", ".join(e.get("type", "?") for e in events),
+            )
+        else:
+            logger.debug("TradeMonitor poll: %d active trades, no events", active_count)
+    except Exception as exc:
+        logger.exception("TradeMonitor poll failed: %s", exc)
 
 
 def _run_nightly_backup():
@@ -1062,9 +1137,20 @@ def start_scheduler():
         misfire_grace_time=300,
     )
 
+    # Job 7: Trade Monitor — poll every 3 min during market hours
+    # Manages SL/TP lifecycle, trailing-SL, time exits, capital rollup
+    scheduler.add_job(
+        _run_trade_monitor_poll,
+        CronTrigger(hour="9-15", minute="*/3", day_of_week="mon-fri", timezone="Asia/Kolkata"),
+        id="trade_monitor_poll",
+        name="Trade Monitor Poll",
+        misfire_grace_time=120,
+    )
+
     logger.info("Scheduler started â€” press Ctrl+C to stop")
     logger.info("  Pre-market scan : 09:20 IST, Mon-Fri")
     logger.info("  Intraday re-scan: 10:30, 12:30, 14:30 IST, Mon-Fri")
+    logger.info("  Trade monitor   : every 3 min, 09:00-15:59 IST, Mon-Fri")
     logger.info("  Walk-forward    : 06:00 IST, Saturday")
     logger.info("  Reconciliation  : 07:00 IST, Saturday")
     logger.info("  Nightly backup  : 23:00 IST, daily")
