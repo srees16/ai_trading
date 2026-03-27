@@ -344,9 +344,8 @@ class OllamaLLMBackend:
                 self.generate_stream(query, context, system_prompt=system_prompt)
             )
             answer = "".join(tokens)
-            if not answer or answer.startswith("\n"):
-                # generate_stream yields error strings starting with 
-                return answer or "The LLM returned an empty response. Please try again."
+            if not answer:
+                return "The LLM returned an empty response. Please try again."
             return answer
         except Exception as e:
             logger.error("Unexpected LLM error: %s", e, exc_info=True)
@@ -544,7 +543,7 @@ class OllamaLLMBackend:
         except requests.ConnectionError:
             logger.error("Cannot connect to Ollama at %s", self.base_url)
             yield (
-                "\n**Cannot connect to Ollama.**\n\n"
+                "\u26a0\ufe0f **Cannot connect to Ollama.**\n\n"
                 "Please ensure Ollama is running:\n"
                 "1. Install from https://ollama.com/download\n"
                 "2. Run: `ollama pull llama3` (or `mistral`)\n"
@@ -557,7 +556,7 @@ class OllamaLLMBackend:
                 self.first_token_timeout, self.model,
             )
             yield (
-                f"\n**No response from Ollama for "
+                f"\u26a0\ufe0f **No response from Ollama for "
                 f"{self.first_token_timeout}s** "
                 "— request cancelled.\n\n"
                 "The model may be loading or the context is too large.\n"
@@ -570,7 +569,7 @@ class OllamaLLMBackend:
         except requests.Timeout:
             logger.error("Ollama connection timed out.")
             yield (
-                "\n**Ollama connection timed out.**\n\n"
+                "\u26a0\ufe0f **Ollama connection timed out.**\n\n"
                 "Ensure Ollama is running and reachable."
             )
         except requests.HTTPError as e:
@@ -579,14 +578,14 @@ class OllamaLLMBackend:
                 hasattr(response, "status_code") and response.status_code == 404
             ):
                 yield (
-                    f"\n**Model '{self.model}' not found.**\n\n"
+                    f"\u26a0\ufe0f **Model '{self.model}' not found.**\n\n"
                     f"Pull it first: `ollama pull {self.model}`"
                 )
             else:
-                yield f"\nLLM error: {e}"
+                yield f"\u26a0\ufe0f LLM error: {e}"
         except Exception as e:
             logger.error("Ollama streaming error: %s", e, exc_info=True)
-            yield f"\nStreaming error: {e}"
+            yield f"\u26a0\ufe0f Streaming error: {e}"
 
     def is_available(self) -> bool:
         """Check if Ollama is running and the model is available."""
