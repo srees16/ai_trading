@@ -408,6 +408,16 @@ async def backtest_run(req: BacktestRunRequest):
     from trading_strategies import get_strategy
 
     try:
+        # ── Normalise Indian tickers to yfinance format (.NS) ──
+        # Raw NSE symbols (e.g. "SBIN", "MARUTI") fail on Yahoo Finance
+        # without the .NS suffix.  US tickers are left untouched.
+        if req.market == "IND":
+            from utils import yf_nse_symbol
+            req.tickers = [
+                yf_nse_symbol(t) if not t.upper().endswith((".NS", ".BO")) else t
+                for t in req.tickers
+            ]
+
         strategy_cls = get_strategy(req.strategy_id)
         if strategy_cls is None:
             raise HTTPException(status_code=404, detail=f"Strategy '{req.strategy_id}' not found")
