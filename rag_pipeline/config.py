@@ -525,6 +525,29 @@ class RAGConfig:
     )
 
     # ------------------------------------------------------------------
+    # LLM — HuggingFace Inference API (free cloud fallback)
+    # ------------------------------------------------------------------
+    hf_api_key: str = field(
+        default_factory=lambda: os.getenv("HF_TOKEN", "")
+    )
+    hf_model: str = field(
+        default_factory=lambda: os.getenv(
+            "CENTURION_RAG_HF_MODEL",
+            "mistralai/Mistral-7B-Instruct-v0.3",
+        )
+    )
+    hf_max_tokens: int = field(
+        default_factory=lambda: int(
+            os.getenv("CENTURION_RAG_HF_MAX_TOKENS", "1024")
+        )
+    )
+    hf_temperature: float = field(
+        default_factory=lambda: float(
+            os.getenv("CENTURION_RAG_HF_TEMPERATURE", "0.3")
+        )
+    )
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
     def ensure_directories(self) -> None:
