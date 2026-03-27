@@ -263,11 +263,11 @@ class Config:
     RL_ENABLED: bool = os.getenv("CENTURION_RL_ENABLED", "false").lower() == "true"
     RL_ALGORITHM: str = os.getenv("CENTURION_RL_ALGORITHM", "PPO")  # DQN | PPO | A2C
     RL_REWARD_TYPE: str = os.getenv("CENTURION_RL_REWARD_TYPE", "hybrid")
-    RL_TOTAL_TIMESTEPS: int = int(os.getenv("CENTURION_RL_TIMESTEPS", "50000"))
+    RL_TOTAL_TIMESTEPS: int = int(os.getenv("CENTURION_RL_TIMESTEPS", "500000"))
     RL_LOOKBACK: int = int(os.getenv("CENTURION_RL_LOOKBACK", "60"))
-    RL_TRAIN_DAYS: int = int(os.getenv("CENTURION_RL_TRAIN_DAYS", "252"))
+    RL_TRAIN_DAYS: int = int(os.getenv("CENTURION_RL_TRAIN_DAYS", "504"))
     RL_TEST_DAYS: int = int(os.getenv("CENTURION_RL_TEST_DAYS", "63"))
-    RL_WALK_FORWARD_FOLDS: int = int(os.getenv("CENTURION_RL_FOLDS", "4"))
+    RL_WALK_FORWARD_FOLDS: int = int(os.getenv("CENTURION_RL_FOLDS", "6"))
     RL_LAYER_WEIGHT: float = float(os.getenv("CENTURION_RL_LAYER_WEIGHT", "0.15"))
 
     @classmethod

@@ -81,13 +81,15 @@ def _reward_hybrid(
     rolling_returns: np.ndarray,
     is_indian: bool,
 ) -> float:
-    """Hybrid reward combining PnL + risk penalties.
+    """Hybrid reward optimised for swing/positional trading.
 
     Components:
       +  PnL change (normalised)
-      -  Drawdown penalty
+      -  Drawdown penalty (scaled by depth)
       -  Transaction cost penalty (on trades)
       +  Sharpe bonus (risk-adjusted performance)
+      +  Swing hold bonus (reward patient holds during uptrend)
+      -  Whipsaw penalty (penalise rapid buy-sell-buy)
     """
     if prev_pv <= 0:
         return 0.0
@@ -115,6 +117,19 @@ def _reward_hybrid(
             recent_sharpe = np.mean(rolling_returns) / std
             sharpe_bonus = np.clip(recent_sharpe * 0.01, -0.02, 0.02)
 
-    reward = ret + dd_penalty + trade_penalty + sharpe_bonus
+    # Gap 7: Swing hold bonus — reward staying in profitable positions
+    # Encourages the agent to hold through multi-day trends (swing trade)
+    hold_bonus = 0.0
+    if action == 0 and prev_action != 2:  # Holding (not just after a sell)
+        if ret > 0:
+            # Profitable hold — small bonus encourages patience
+            hold_bonus = min(ret * 0.3, 0.005)
+
+    # Gap 7: Whipsaw penalty — penalise rapid reversal (buy → sell next bar)
+    whipsaw_penalty = 0.0
+    if (action == 2 and prev_action == 1) or (action == 1 and prev_action == 2):
+        whipsaw_penalty = -0.003  # Fixed penalty for flip-flopping
+
+    reward = ret + dd_penalty + trade_penalty + sharpe_bonus + hold_bonus + whipsaw_penalty
 
     return float(reward)

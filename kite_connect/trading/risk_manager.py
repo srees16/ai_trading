@@ -297,8 +297,9 @@ class RiskManager:
         # R4: Apply VIX/ADX regime scaling to position size
         effective_risk_pct *= regime_scale
 
-        # GAP 8: Slippage buffer — widen risk per share assumption
-        slippage_risk = entry * self.cfg.slippage_buffer_pct
+        # GAP 8: Dynamic slippage buffer — adapt to market conditions
+        slippage_pct = self._estimate_slippage(row)
+        slippage_risk = entry * slippage_pct
         adjusted_risk_per_share = risk_per_share + slippage_risk
 
         max_risk = available_capital * effective_risk_pct
@@ -377,3 +378,62 @@ class RiskManager:
                         sym, qty, ltp, avg_price)
 
         return plans
+
+    # ── Gap 8: Dynamic slippage estimation ─────────────────────
+
+    def _estimate_slippage(self, row: pd.Series) -> float:
+        """Estimate slippage dynamically based on market depth and volume.
+
+        Three-tier estimation:
+          1. Bid-ask spread from Kite market depth (best estimate)
+          2. Volume-adjusted heuristic (mid-tier)
+          3. Static fallback (cfg.slippage_buffer_pct)
+
+        Returns slippage as a fraction (e.g. 0.003 for 0.3%).
+        """
+        symbol = row.get("symbol", "")
+
+        # Tier 1: Real bid-ask spread from Kite
+        if self.kite is not None:
+            try:
+                key = f"NSE:{symbol}"
+                quote = self.kite.quote([key])
+                depth = quote.get(key, {}).get("depth", {})
+                buy_depth = depth.get("buy", [])
+                sell_depth = depth.get("sell", [])
+
+                if buy_depth and sell_depth:
+                    best_bid = buy_depth[0].get("price", 0)
+                    best_ask = sell_depth[0].get("price", 0)
+                    if best_bid > 0 and best_ask > 0:
+                        spread_pct = (best_ask - best_bid) / best_bid
+                        # Slippage ~ half the spread (expected fill midpoint)
+                        # plus a small buffer for market impact
+                        estimated = spread_pct * 0.5 + 0.0005  # half-spread + 5 bps buffer
+                        # Clamp to reasonable range
+                        estimated = max(0.001, min(estimated, 0.01))
+                        logger.debug(
+                            "Dynamic slippage for %s: spread=%.3f%%, est=%.3f%%",
+                            symbol, spread_pct * 100, estimated * 100,
+                        )
+                        return estimated
+            except Exception:
+                pass  # Fall through to tier 2
+
+        # Tier 2: Volume-adjusted heuristic
+        avg_volume = float(row.get("avg_volume", 0) or row.get("volume", 0))
+        if avg_volume > 0:
+            # Higher volume → lower slippage
+            # Base: 0.2% for stocks with 1M+ avg volume
+            # Scale up for lower volume stocks
+            if avg_volume >= 1_000_000:
+                return 0.002  # 0.2% — highly liquid
+            elif avg_volume >= 500_000:
+                return 0.003  # 0.3%
+            elif avg_volume >= 100_000:
+                return 0.004  # 0.4%
+            else:
+                return 0.006  # 0.6% — illiquid
+
+        # Tier 3: Static fallback
+        return self.cfg.slippage_buffer_pct

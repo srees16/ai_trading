@@ -1762,11 +1762,11 @@ class RLTrainRequest(BaseModel):
     tickers: List[str]
     algorithm: str = "PPO"
     reward_type: str = "hybrid"
-    total_timesteps: int = 50000
+    total_timesteps: int = 500000
     lookback: int = 60
-    train_days: int = 252
+    train_days: int = 504
     test_days: int = 63
-    folds: int = 4
+    folds: int = 6
     initial_capital: float = 100000
 
 
