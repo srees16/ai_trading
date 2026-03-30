@@ -262,6 +262,12 @@ def run_pipeline(run_type: str = "pre_market"):
         }
         _save_run(run_type, summary)
 
+        # 4a. Daily email report
+        _send_daily_email(summary)
+
+        # 4b. Check go-live readiness
+        _check_go_live_readiness()
+
         # 4. Desktop notification if signals found
         if buy_verdicts or sell_verdicts:
             _notify_signals(buy_verdicts, sell_verdicts)
@@ -279,6 +285,98 @@ def run_pipeline(run_type: str = "pre_market"):
     except Exception as exc:
         logger.exception("Pipeline run failed: %s", exc)
         _save_run(run_type, {"status": f"error: {exc}"})
+
+
+def _send_daily_email(summary: dict):
+    """Send daily pipeline email report."""
+    try:
+        from services.notifications.manager import NotificationManager
+        nm = NotificationManager()
+        nm.email_daily_pipeline_report(summary)
+    except Exception as exc:
+        logger.debug("Daily email failed (non-fatal): %s", exc)
+
+
+def _check_go_live_readiness():
+    """Check if paper trading meets go-live criteria and email if so."""
+    try:
+        from kite_connect.trading.paper_trader import PaperTrader
+        from services.notifications.manager import NotificationManager
+        import sqlite3
+        from pathlib import Path
+        from datetime import datetime
+
+        pt = PaperTrader()
+        dash = pt.dashboard()
+
+        # Need enough closed trades to evaluate
+        if dash.closed_trades < 10:
+            return
+
+        # Compute weeks active from first paper trade
+        db_path = Path(__file__).parent / "data" / "paper_trades.sqlite3"
+        weeks_active = 0
+        if db_path.exists():
+            conn = sqlite3.connect(str(db_path))
+            row = conn.execute(
+                "SELECT MIN(opened_at) FROM paper_positions"
+            ).fetchone()
+            conn.close()
+            if row and row[0]:
+                first_dt = datetime.fromisoformat(row[0].replace("Z", "+00:00"))
+                days = (datetime.now(first_dt.tzinfo) - first_dt).days
+                weeks_active = days // 7
+
+        nm = NotificationManager()
+        nm.email_go_live_recommendation(dash, weeks_active)
+    except Exception as exc:
+        logger.debug("Go-live check failed (non-fatal): %s", exc)
+
+
+def _send_daily_email(summary: dict):
+    """Send daily pipeline email report."""
+    try:
+        from services.notifications.manager import NotificationManager
+        nm = NotificationManager()
+        nm.email_daily_pipeline_report(summary)
+    except Exception as exc:
+        logger.debug("Daily email failed (non-fatal): %s", exc)
+
+
+def _check_go_live_readiness():
+    """Check if paper trading meets go-live criteria and email if so."""
+    try:
+        from kite_connect.trading.paper_trader import PaperTrader
+        from services.notifications.manager import NotificationManager
+        import sqlite3
+        from pathlib import Path
+        from datetime import datetime
+
+        pt = PaperTrader()
+        dash = pt.dashboard()
+
+        # Need enough closed trades to evaluate
+        if dash.closed_trades < 10:
+            return
+
+        # Compute weeks active from first paper trade
+        db_path = Path(__file__).parent / "data" / "paper_trades.sqlite3"
+        weeks_active = 0
+        if db_path.exists():
+            conn = sqlite3.connect(str(db_path))
+            row = conn.execute(
+                "SELECT MIN(opened_at) FROM paper_positions"
+            ).fetchone()
+            conn.close()
+            if row and row[0]:
+                first_dt = datetime.fromisoformat(row[0].replace("Z", "+00:00"))
+                days = (datetime.now(first_dt.tzinfo) - first_dt).days
+                weeks_active = days // 7
+
+        nm = NotificationManager()
+        nm.email_go_live_recommendation(dash, weeks_active)
+    except Exception as exc:
+        logger.debug("Go-live check failed (non-fatal): %s", exc)
 
 
 def _notify_signals(buy_verdicts: list, sell_verdicts: list):
@@ -666,6 +764,14 @@ def _run_paper_live_reconciliation():
     report["backtest_vs_paper"] = leg3
 
     _save_run("reconciliation", report)
+
+    # Weekly reconciliation email
+    try:
+        from services.notifications.manager import NotificationManager
+        NotificationManager().email_reconciliation_report(report)
+    except Exception as exc:
+        logger.debug("Reconciliation email failed (non-fatal): %s", exc)
+
 
     # â”€â”€ Alert on discrepancies â”€â”€
     all_issues: List[str] = []

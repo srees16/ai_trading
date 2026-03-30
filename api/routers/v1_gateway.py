@@ -1734,6 +1734,7 @@ async def rag_query(
 
 _ticker_price_cache: Dict[str, Any] = {}   # L1 in-memory: cache_key -> response dict
 _ticker_cache_ts: Dict[str, float] = {}    # L1 in-memory: cache_key -> monotonic ts
+_ticker_cache_lock = asyncio.Lock()        # guards concurrent dict access
 _TICKER_CACHE_TTL_OPEN = 10    # seconds – during market hours
 _TICKER_CACHE_TTL_CLOSED = 120 # seconds – after market close
 
@@ -1762,28 +1763,31 @@ def _is_market_open(market: str) -> bool:
 async def market_ticker_prices(symbols: str, market: str = "US"):
     """Get current/last-traded prices for comma-separated ticker symbols."""
     import time
+    cache_key = ""
     try:
         import yfinance as yf
         syms = [s.strip() for s in symbols.split(",") if s.strip()]
         if not syms:
             return {"is_market_open": _is_market_open(market), "prices": []}
 
-        # ── cache lookup ──
+        # ── cache lookup (lock-protected) ──
         cache_key = f"{market}:{',' .join(sorted(syms))}"
         now = time.monotonic()
         is_open = _is_market_open(market)
         ttl = _TICKER_CACHE_TTL_OPEN if is_open else _TICKER_CACHE_TTL_CLOSED
 
-        if cache_key in _ticker_price_cache and (now - _ticker_cache_ts.get(cache_key, 0)) < ttl:
-            return _ticker_price_cache[cache_key]
+        async with _ticker_cache_lock:
+            if cache_key in _ticker_price_cache and (now - _ticker_cache_ts.get(cache_key, 0)) < ttl:
+                return _ticker_price_cache[cache_key]
 
         # L2: Redis (cross-restart persistence)
         try:
             from infrastructure.cache import cache as _redis_cache
             redis_val = _redis_cache.get(f"price:{cache_key}")
             if redis_val is not None:
-                _ticker_price_cache[cache_key] = redis_val
-                _ticker_cache_ts[cache_key] = now
+                async with _ticker_cache_lock:
+                    _ticker_price_cache[cache_key] = redis_val
+                    _ticker_cache_ts[cache_key] = now
                 return redis_val
         except Exception:
             pass
@@ -1825,9 +1829,10 @@ async def market_ticker_prices(symbols: str, market: str = "US"):
         prices = await asyncio.to_thread(_fetch)
         result = {"is_market_open": is_open, "prices": prices}
 
-        # ── populate cache (L1 + L2) ──
-        _ticker_price_cache[cache_key] = result
-        _ticker_cache_ts[cache_key] = now
+        # ── populate cache (L1 + L2, lock-protected) ──
+        async with _ticker_cache_lock:
+            _ticker_price_cache[cache_key] = result
+            _ticker_cache_ts[cache_key] = now
         try:
             from infrastructure.cache import cache as _redis_cache
             _redis_cache.set(f"price:{cache_key}", result, ttl=ttl)
@@ -1838,8 +1843,10 @@ async def market_ticker_prices(symbols: str, market: str = "US"):
     except Exception as e:
         logger.error(f"ticker-prices error: {e}")
         # Return stale cache on error if available
-        if cache_key in _ticker_price_cache:
-            return _ticker_price_cache[cache_key]
+        async with _ticker_cache_lock:
+            stale = _ticker_price_cache.get(cache_key)
+        if stale is not None:
+            return stale
         raise HTTPException(status_code=500, detail=str(e))
 
 
