@@ -35,6 +35,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import pandas as pd
+
 logger = logging.getLogger(__name__)
 
 _IST = timezone(timedelta(hours=5, minutes=30))
@@ -78,6 +80,15 @@ class PaperDashboard:
     win_rate: float
     avg_win_pct: float
     avg_loss_pct: float
+    max_drawdown_pct: float
+    sharpe_ratio: float
+    # Advanced risk metrics (Phase 0)
+    sortino_ratio: float = 0.0
+    calmar_ratio: float = 0.0
+    omega_ratio: float = 0.0
+    cvar_95: float = 0.0
+    profit_factor: float = 0.0
+    positions: List[dict] = field(default_factory=list)
     max_drawdown_pct: float
     sharpe_ratio: float
     positions: List[dict] = field(default_factory=list)
@@ -258,12 +269,23 @@ class PaperTrader:
 
         return None
 
-    def _apply_slippage(self, price: float, side: str) -> float:
-        """Apply slippage to simulate realistic fills."""
-        slip = price * (self._slippage_bps / 10_000.0)
+    def _apply_slippage(self, price: float, side: str, order_qty: int = 0, adv: float = 0.0) -> float:
+        """Apply volume-aware slippage to simulate realistic fills.
+
+        Tier 1 Gap 4: slippage_bps = base_bps + (order_pct_of_volume × 300).
+        Falls back to flat slippage if ADV unknown.
+        """
+        base_bps = self._slippage_bps
+        if adv > 0 and order_qty > 0:
+            order_pct = abs(order_qty) / adv
+            impact_bps = order_pct * 300.0  # 300 bps impact per 100% of ADV
+            total_bps = base_bps + impact_bps
+        else:
+            total_bps = base_bps
+        slip = price * (total_bps / 10_000.0)
         if side == "BUY":
-            return round(price + slip, 2)   # buy slightly higher
-        return round(price - slip, 2)       # sell slightly lower
+            return round(price + slip, 2)
+        return round(price - slip, 2)
 
     # ── Execution ──────────────────────────────────────────────
 
@@ -283,7 +305,7 @@ class PaperTrader:
                 })
                 continue
 
-            fill_price = self._apply_slippage(ltp, plan.side)
+            fill_price = self._apply_slippage(ltp, plan.side, order_qty=plan.quantity)
             cost = fill_price * plan.quantity
 
             if plan.side == "BUY":
@@ -448,6 +470,20 @@ class PaperTrader:
         else:
             sr = 0.0
 
+        # Advanced risk metrics (Phase 0)
+        sortino = calmar = omega = cvar95 = pf = 0.0
+        if len(trade_returns) >= 5:
+            try:
+                from services.risk_metrics import RiskMetrics
+                returns_series = pd.Series(trade_returns)
+                sortino = RiskMetrics.sortino_ratio(returns_series)
+                calmar = RiskMetrics.calmar_ratio(returns_series)
+                omega = RiskMetrics.omega_ratio(returns_series)
+                cvar95 = RiskMetrics.cvar(returns_series, alpha=0.05)
+                pf = RiskMetrics.profit_factor(returns_series)
+            except Exception as exc:
+                logger.debug("Advanced risk metrics unavailable: %s", exc)
+
         return PaperDashboard(
             initial_capital=self.initial_capital,
             current_capital=round(current_capital, 2),
@@ -460,6 +496,11 @@ class PaperTrader:
             avg_loss_pct=round(avg_loss, 2),
             max_drawdown_pct=round(max_dd * 100, 2),
             sharpe_ratio=round(sr, 3),
+            sortino_ratio=round(sortino, 3),
+            calmar_ratio=round(calmar, 3),
+            omega_ratio=round(omega, 3),
+            cvar_95=round(cvar95, 4),
+            profit_factor=round(pf, 3),
             positions=[p.to_dict() for p in self._positions if p.is_open],
         )
 

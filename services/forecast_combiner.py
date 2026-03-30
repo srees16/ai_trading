@@ -49,12 +49,20 @@ class ForecastWeight:
 
 
 # Default handcrafted weights for centurion_core NSE swing/positional
+# Updated Phase 1: Added momentum and pead sources
+# Updated Gap A2/A5/A6/B6: Added mean_reversion, fii_flow, oi_signal, decision_engine
 DEFAULT_FORECAST_WEIGHTS: List[ForecastWeight] = [
-    ForecastWeight("ewmac_16_64", 0.22),
-    ForecastWeight("ewmac_32_128", 0.17),
-    ForecastWeight("ewmac_64_256", 0.22),
-    ForecastWeight("carry", 0.22),
-    ForecastWeight("screener", 0.17),
+    ForecastWeight("ewmac_16_64", 0.14),
+    ForecastWeight("ewmac_32_128", 0.11),
+    ForecastWeight("ewmac_64_256", 0.14),
+    ForecastWeight("carry", 0.14),
+    ForecastWeight("screener", 0.08),
+    ForecastWeight("momentum", 0.12),
+    ForecastWeight("pead", 0.05),
+    ForecastWeight("mean_reversion", 0.08),
+    ForecastWeight("fii_flow", 0.05),
+    ForecastWeight("oi_signal", 0.04),
+    ForecastWeight("decision_engine", 0.05),
 ]
 
 # Rule-of-thumb correlations between forecast sources (Carver Appendix C):
@@ -72,6 +80,57 @@ DEFAULT_CORRELATION_MATRIX = {
     ("ewmac_32_128", "screener"): 0.50,
     ("ewmac_64_256", "screener"): 0.50,
     ("carry", "screener"): 0.30,
+    # Momentum correlations (Phase 1)
+    ("ewmac_16_64", "momentum"): 0.55,
+    ("ewmac_32_128", "momentum"): 0.50,
+    ("ewmac_64_256", "momentum"): 0.45,
+    ("carry", "momentum"): 0.20,
+    ("screener", "momentum"): 0.40,
+    # PEAD correlations (Phase 1) — low corr with trend-following
+    ("ewmac_16_64", "pead"): 0.15,
+    ("ewmac_32_128", "pead"): 0.15,
+    ("ewmac_64_256", "pead"): 0.15,
+    ("carry", "pead"): 0.10,
+    ("screener", "pead"): 0.20,
+    ("momentum", "pead"): 0.25,
+    # Mean-reversion correlations (Gap A2) — negatively correlated with trend
+    ("ewmac_16_64", "mean_reversion"): -0.30,
+    ("ewmac_32_128", "mean_reversion"): -0.25,
+    ("ewmac_64_256", "mean_reversion"): -0.15,
+    ("carry", "mean_reversion"): 0.10,
+    ("screener", "mean_reversion"): 0.20,
+    ("momentum", "mean_reversion"): -0.20,
+    ("pead", "mean_reversion"): 0.05,
+    # FII flow correlations (Gap A5) — same signal for all stocks
+    ("ewmac_16_64", "fii_flow"): 0.30,
+    ("ewmac_32_128", "fii_flow"): 0.25,
+    ("ewmac_64_256", "fii_flow"): 0.20,
+    ("carry", "fii_flow"): 0.15,
+    ("screener", "fii_flow"): 0.20,
+    ("momentum", "fii_flow"): 0.35,
+    ("pead", "fii_flow"): 0.10,
+    ("mean_reversion", "fii_flow"): 0.05,
+    # OI signal correlations (Gap A6)
+    ("ewmac_16_64", "oi_signal"): 0.25,
+    ("ewmac_32_128", "oi_signal"): 0.20,
+    ("ewmac_64_256", "oi_signal"): 0.15,
+    ("carry", "oi_signal"): 0.10,
+    ("screener", "oi_signal"): 0.15,
+    ("momentum", "oi_signal"): 0.30,
+    ("pead", "oi_signal"): 0.10,
+    ("mean_reversion", "oi_signal"): -0.10,
+    ("fii_flow", "oi_signal"): 0.25,
+    # Decision engine correlations (Gap B6)
+    ("ewmac_16_64", "decision_engine"): 0.30,
+    ("ewmac_32_128", "decision_engine"): 0.25,
+    ("ewmac_64_256", "decision_engine"): 0.20,
+    ("carry", "decision_engine"): 0.25,
+    ("screener", "decision_engine"): 0.60,
+    ("momentum", "decision_engine"): 0.35,
+    ("pead", "decision_engine"): 0.15,
+    ("mean_reversion", "decision_engine"): 0.20,
+    ("fii_flow", "decision_engine"): 0.15,
+    ("oi_signal", "decision_engine"): 0.15,
 }
 
 
@@ -209,7 +268,7 @@ def combine_forecasts(
 
 def combine_forecasts_batch(
     all_forecasts: Dict[str, Dict[str, float]],
-    weights: Optional[List[ForecastWeight]] = None,
+    weights: Optional[any] = None,
     correlations: Optional[Dict[tuple, float]] = None,
 ) -> Dict[str, CombinedForecast]:
     """Combine forecasts for all symbols.
@@ -218,14 +277,24 @@ def combine_forecasts_batch(
     ----------
     all_forecasts : dict[str, dict[str, float]]
         ``{symbol: {source_name: forecast_value}}``.
+    weights : list[ForecastWeight] | dict[str, float] | None
+        Forecast weights. Can be a list of ForecastWeight or a dict
+        from HMM blending. Default: handcrafted NSE weights.
 
     Returns
     -------
     dict[str, CombinedForecast]
     """
+    # Convert dict weights to ForecastWeight list
+    fw_list = None
+    if isinstance(weights, dict):
+        fw_list = [ForecastWeight(name=k, weight=v) for k, v in weights.items()]
+    elif isinstance(weights, list):
+        fw_list = weights
+
     results = {}
     for sym, fc_dict in all_forecasts.items():
-        results[sym] = combine_forecasts(sym, fc_dict, weights, correlations)
+        results[sym] = combine_forecasts(sym, fc_dict, fw_list, correlations)
 
     # Log summary
     avg_sources = (

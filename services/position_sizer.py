@@ -257,6 +257,26 @@ def compute_position_sizes_batch(
         results[sym] = ps
         total_notional += ps.notional_value
 
+    # ── Tier 1 Gap 3: Gross notional ceiling (2× capital) ──
+    max_notional = 2.0 * capital
+    if capital > 0 and total_notional > max_notional:
+        scale = max_notional / total_notional
+        logger.warning(
+            "Gross notional ₹%.0f exceeds 2× capital ₹%.0f — scaling all positions by %.2f",
+            total_notional, capital, scale,
+        )
+        from dataclasses import replace as _dc_replace
+        for sym, ps in results.items():
+            scaled_qty = int(ps.target_quantity * scale)
+            results[sym] = _dc_replace(
+                ps,
+                target_quantity=scaled_qty,
+                trade_delta=scaled_qty - ps.current_quantity,
+                trade_required=abs(scaled_qty - ps.current_quantity) > 0,
+                notional_value=abs(scaled_qty) * ps.price if ps.price else 0.0,
+            )
+        total_notional *= scale
+
     # Log summary
     trades_needed = sum(1 for ps in results.values() if ps.trade_required and ps.trade_delta != 0)
     logger.info(

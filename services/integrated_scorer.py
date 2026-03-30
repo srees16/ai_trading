@@ -493,10 +493,20 @@ def _run_layer_strategy(
                     else "SELL" if strat_sell > strat_buy
                     else "NEUTRAL"
                 )
+
+                # Collect position vector for MC permutation test
+                _pos_vec = None
+                if result.signals is not None and not result.signals.empty and sig_col is not None:
+                    try:
+                        _pos_vec = result.signals[sig_col].fillna(0).values.astype(float)
+                    except Exception:
+                        pass
+
                 strategy_results[name] = {
                     "sharpe": sr,
                     "max_drawdown": md,
                     "last_signal": strat_signal,
+                    "_position_vector": _pos_vec,
                 }
             except Exception as e:
                 strategy_results[name] = {"error": str(e)}
@@ -520,9 +530,15 @@ def _run_layer_strategy(
             # Build per-strategy weighted vote
             # Only strategies above the minimum Sharpe floor get a vote,
             # preventing low-quality strategies from diluting consensus.
+            #
+            # Tier 1 Gap 1: REJECT overfit / random strategies outright.
+            # If degradation_ratio or permutation p-value indicate the
+            # strategy is overfit or no better than random, it is
+            # excluded from the consensus vote entirely.
             weighted_buy = 0.0
             weighted_sell = 0.0
             total_weight = 0.0
+            _rejected_strategies: List[str] = []
             for name, res in strategy_results.items():
                 if isinstance(res, dict) and "sharpe" in res and res["sharpe"] is not None:
                     sr_val = float(res["sharpe"])
@@ -600,6 +616,15 @@ def _run_layer_strategy(
                 elif deg > 0.8:
                     wf_adj = 0.05  # slight bonus for robust strategy
                 wf_details["adjustment"] = round(wf_adj, 3)
+
+                # Tier 1 Gap 1: Hard rejection gate — if degradation < 0.5,
+                # strategy is likely overfit; demote score to suppress signal.
+                if deg < 0.5:
+                    wf_details["rejected_overfit"] = True
+                    logger.info(
+                        "WF rejection gate: %s on %s deg=%.2f < 0.5 → overfit",
+                        best_strat_name, ticker, deg,
+                    )
         except Exception as e:
             wf_details = {"error": str(e)}
 
@@ -655,28 +680,107 @@ def _run_layer_strategy(
                     except Exception as e:
                         robustness_details["bca_error"] = str(e)
 
-                    # Permutation test
+                    # MC Permutation test (Timothy Masters position-shuffle)
                     try:
-                        ch07_tts = _load_module(
-                            str(_TTS_APPLIED / "ch07_permutation_tests.py"), "tts_ch07",
+                        from services.mc_permutation_test import MCPermutationTest
+                        mc_engine = MCPermutationTest(
+                            n_perms=getattr(Config, 'MC_PERMUTATION_N_REPS', 5000),
+                            center_returns=getattr(Config, 'MC_CENTER_RETURNS', True),
+                            normalize_time=getattr(Config, 'MC_NORMALIZE_TIME', True),
+                            significance_level=getattr(Config, 'MC_SIGNIFICANCE_LEVEL', 0.05),
+                            seed=42,
                         )
-                        permutation_test = ch07_tts.permutation_test
 
-                        def _sma_strat_returns(rets):
-                            short, long_ = 10, 50
-                            if len(rets) < long_:
-                                return float(np.mean(rets))
-                            fast = np.convolve(rets, np.ones(short) / short, "valid")
-                            slow = np.convolve(rets, np.ones(long_) / long_, "valid")
-                            ml = min(len(fast), len(slow))
-                            sig = np.where(fast[-ml:] > slow[-ml:], 1.0, -1.0)
-                            return float(np.mean(rets[-ml:] * sig))
+                        # Collect actual position vectors from strategy results
+                        _collected_positions = []
+                        _collected_names = []
+                        for _sname, _sres in strategy_results.items():
+                            _pvec = _sres.get("_position_vector")
+                            if _pvec is not None and len(_pvec) > 0:
+                                # Align to rob_returns length
+                                _plen = min(len(_pvec), len(rob_returns))
+                                if _plen >= 30:
+                                    _collected_positions.append(_pvec[-_plen:])
+                                    _collected_names.append(_sname)
 
-                        perm = permutation_test(rob_returns, _sma_strat_returns, n_perms=200, seed=42)
-                        p_value = perm.get("p_value", 1.0)
-                        perm_score = _clamp((0.5 - p_value) * 2)
-                        robustness_details["perm_p_value"] = round(float(p_value), 4)
-                        rob_sub_scores.append(perm_score)
+                        if _collected_positions:
+                            # Use the BEST strategy's position vector for single-system test
+                            _best_idx = 0
+                            _best_sr = -999
+                            for _ci, _cn in enumerate(_collected_names):
+                                _csr = strategy_results[_cn].get("sharpe") or 0
+                                if _csr and _csr > _best_sr:
+                                    _best_sr = _csr
+                                    _best_idx = _ci
+
+                            _best_pos = _collected_positions[_best_idx]
+                            _n_aligned = min(len(_best_pos), len(rob_returns))
+                            mc_result = mc_engine.test_single_system(
+                                rob_returns[-_n_aligned:], _best_pos[-_n_aligned:],
+                            )
+                            p_value = mc_result.p_value
+                            perm_score = _clamp((0.5 - p_value) * 2)
+                            robustness_details["perm_p_value"] = round(float(p_value), 4)
+                            robustness_details["perm_z_score"] = round(mc_result.z_score, 3)
+                            robustness_details["perm_significant"] = mc_result.significant
+                            rob_sub_scores.append(perm_score)
+
+                            # Tier 1 Gap 1: If permutation p-value > 0.10,
+                            # the strategy is no better than random — suppress score.
+                            if p_value > 0.10:
+                                robustness_details["rejected_random"] = True
+                                # Apply heavy penalty to drive score toward HOLD
+                                robustness_adj = -0.30
+                                logger.info(
+                                    "Perm rejection gate: %s p=%.4f > 0.10 → random",
+                                    ticker, p_value,
+                                )
+
+                            # Skill vs luck decomposition
+                            sl = mc_engine.partition_skill_luck(
+                                rob_returns[-_n_aligned:], _best_pos[-_n_aligned:],
+                            )
+                            robustness_details["skill_fraction"] = round(sl.skill_fraction, 4)
+                            robustness_details["luck_fraction"] = round(sl.luck_fraction, 4)
+                            robustness_details["skill_p_value"] = round(sl.p_value, 4)
+
+                            # Best-of-N correction if multiple strategies
+                            if len(_collected_positions) > 1:
+                                _aligned_vecs = []
+                                _min_len = len(rob_returns)
+                                for _pv in _collected_positions:
+                                    _ml = min(len(_pv), _min_len)
+                                    _min_len = _ml
+                                for _pv in _collected_positions:
+                                    _aligned_vecs.append(_pv[-_min_len:])
+                                bon = mc_engine.test_best_of_n(
+                                    rob_returns[-_min_len:], _aligned_vecs, _collected_names,
+                                )
+                                robustness_details["best_of_n_p"] = round(bon.corrected_p_value, 4)
+                                robustness_details["best_of_n_significant"] = bon.significant
+                        else:
+                            # Fallback: old-style permutation with SMA proxy
+                            ch07_tts = _load_module(
+                                str(_TTS_APPLIED / "ch07_permutation_tests.py"), "tts_ch07",
+                            )
+                            permutation_test = ch07_tts.permutation_test
+
+                            def _sma_strat_returns(rets):
+                                short, long_ = 10, 50
+                                if len(rets) < long_:
+                                    return float(np.mean(rets))
+                                fast = np.convolve(rets, np.ones(short) / short, "valid")
+                                slow = np.convolve(rets, np.ones(long_) / long_, "valid")
+                                ml = min(len(fast), len(slow))
+                                sig = np.where(fast[-ml:] > slow[-ml:], 1.0, -1.0)
+                                return float(np.mean(rets[-ml:] * sig))
+
+                            perm = permutation_test(rob_returns, _sma_strat_returns, n_perms=200, seed=42)
+                            p_value = perm.get("p_value", 1.0)
+                            perm_score = _clamp((0.5 - p_value) * 2)
+                            robustness_details["perm_p_value"] = round(float(p_value), 4)
+                            robustness_details["perm_fallback"] = True
+                            rob_sub_scores.append(perm_score)
                     except Exception as e:
                         robustness_details["perm_error"] = str(e)
 
@@ -687,6 +791,14 @@ def _run_layer_strategy(
             robustness_details["error"] = str(e)
 
         score = _clamp(score + robustness_adj)
+
+        # Strip internal _position_vector from per-strategy output
+        _clean_results = {}
+        for _k, _v in strategy_results.items():
+            if isinstance(_v, dict):
+                _clean_results[_k] = {k2: v2 for k2, v2 in _v.items() if k2 != "_position_vector"}
+            else:
+                _clean_results[_k] = _v
 
         return {
             "score": score,
@@ -701,7 +813,7 @@ def _run_layer_strategy(
                 "sector": sector_details,
                 "walk_forward": wf_details,
                 "robustness": robustness_details,
-                "per_strategy": strategy_results,
+                "per_strategy": _clean_results,
             },
         }
 

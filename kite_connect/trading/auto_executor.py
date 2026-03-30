@@ -262,6 +262,11 @@ class AutoExecutor:
             screened_df = self._filter_by_spread(screened_df, _cb)
             report.screened_df = screened_df
 
+        # ── 3b-vol. Tier 1 Gap 4: Volume filter — reject if order > 5% ADV ──
+        if self.kite is not None and not screened_df.empty:
+            screened_df = self._filter_by_volume(screened_df, _cb)
+            report.screened_df = screened_df
+
 
         # -- 3c. P1 fix: Portfolio drawdown halt ---------------
         try:
@@ -659,6 +664,47 @@ class AutoExecutor:
 
         except Exception as exc:
             logger.warning("Depth filter failed (non-fatal): %s", exc)
+
+        return screened_df
+
+
+    # -- Tier 1 Gap 4: Volume filter -- reject order > 5% of 20-day ADV --
+
+    def _filter_by_volume(self, screened_df: "pd.DataFrame", _cb) -> "pd.DataFrame":
+        """Remove stocks where estimated order size would exceed 5% of 20-day ADV."""
+        try:
+            import yfinance as yf
+
+            symbols = screened_df["symbol"].tolist()
+            remove_syms = set()
+            for sym in symbols:
+                try:
+                    hist = yf.download(
+                        f"{sym}.NS", period="30d", progress=False, timeout=10,
+                    )
+                    if hist.empty or len(hist) < 5:
+                        continue
+                    adv = float(hist["Volume"].tail(20).mean())
+                    if adv <= 0:
+                        continue
+                    row = screened_df[screened_df["symbol"] == sym].iloc[0]
+                    order_qty = float(row.get("quantity", row.get("qty", 0)) or 0)
+                    if order_qty > 0:
+                        order_pct = order_qty / adv
+                        if order_pct > 0.05:
+                            remove_syms.add(sym)
+                            _cb(f"  Volume filter: removed {sym} -- order {order_pct:.1%} of ADV")
+                except Exception:
+                    continue
+
+            if remove_syms:
+                screened_df = screened_df[~screened_df["symbol"].isin(remove_syms)]
+                _cb(f"Volume filter removed {len(remove_syms)} over-concentrated stocks")
+            else:
+                _cb("Volume filter: all stocks within 5% ADV limit")
+
+        except Exception as exc:
+            logger.warning("Volume filter failed (non-fatal): %s", exc)
 
         return screened_df
 
@@ -1083,7 +1129,87 @@ class AutoExecutor:
         # Store monitor reference for lifecycle management
         self._trade_monitor = monitor
 
+        # ── P0 fix: Live capital rolling — update VolatilityTarget with real P&L ──
+        if self._vol_target and results:
+            self._update_capital_from_kite(_cb)
+
         return results
+
+    # ── P0 fix: Live capital rolling from Kite portfolio ──────────────
+
+    def _update_capital_from_kite(self, _cb=None):
+        """Fetch real P&L from Kite positions and update VolatilityTarget.
+
+        This closes the capital-rolling gap: position sizes now adapt
+        to actual wins/losses instead of using stale initial capital.
+        """
+        if not self._vol_target or self.kite is None:
+            return
+        try:
+            positions = self.kite.positions()
+            net_positions = positions.get("net", [])
+
+            realized_pnl = 0.0
+            unrealized_pnl = 0.0
+            for pos in net_positions:
+                realized_pnl += float(pos.get("realised", 0))
+                unrealized_pnl += float(pos.get("unrealised", 0))
+
+            # Also aggregate closed-trade P&L from holdings
+            try:
+                from kite_connect.trading.order_service import get_holdings
+                holdings = get_holdings(self.kite)
+                for h in holdings:
+                    pnl = float(h.get("pnl", 0))
+                    if pnl != 0:
+                        realized_pnl += pnl
+            except Exception:
+                pass
+
+            self._vol_target.update_pnl(realized=realized_pnl, unrealized=unrealized_pnl)
+
+            # Persist state for crash recovery
+            self._persist_portfolio_state(realized_pnl)
+
+            if _cb:
+                _cb(f"Capital rolling: realized={realized_pnl:+,.0f}, "
+                    f"unrealized={unrealized_pnl:+,.0f}, "
+                    f"capital={self._vol_target.current_capital:,.0f}")
+            logger.info(
+                "Capital rolling updated: realized=%.0f, unrealized=%.0f, capital=%.0f",
+                realized_pnl, unrealized_pnl, self._vol_target.current_capital,
+            )
+        except Exception as exc:
+            logger.warning("Capital rolling update failed (non-fatal): %s", exc)
+
+    def _persist_portfolio_state(self, realized_pnl: float):
+        """Save portfolio state to disk for crash recovery."""
+        try:
+            import json as _json
+            import os as _os
+
+            state_path = _os.path.join(
+                _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
+                "data", "portfolio_state.json",
+            )
+            _os.makedirs(_os.path.dirname(state_path), exist_ok=True)
+
+            peak = max(
+                getattr(self, '_peak_equity', self._vol_target.current_capital),
+                self._vol_target.current_capital,
+            )
+            self._peak_equity = peak
+
+            state = {
+                "cumulative_realized_pnl": realized_pnl,
+                "peak_equity": peak,
+                "current_capital": self._vol_target.current_capital,
+                "updated_at": datetime.now().isoformat(),
+            }
+            with open(state_path, "w") as f:
+                _json.dump(state, f, indent=2)
+        except Exception as exc:
+            logger.debug("Portfolio state persistence failed: %s", exc)
 
     # â”€â”€ Trade journal persistence â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 

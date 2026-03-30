@@ -50,6 +50,11 @@ class BenchmarkComparison:
     portfolio_beta: float  # vs NIFTY
     portfolio_max_dd_pct: float
     benchmark_max_dd_pct: float
+    # Advanced risk metrics (Phase 0)
+    portfolio_sortino: float = 0.0
+    portfolio_calmar: float = 0.0
+    portfolio_omega: float = 0.0
+    portfolio_cvar_95: float = 0.0
     # Meta
     computed_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
 
@@ -160,6 +165,17 @@ def compare_to_benchmark(
     te_annual = float(tracking_diff.std() * np.sqrt(TRADING_DAYS)) * 100
     ir = float(tracking_diff.mean() / tracking_diff.std() * np.sqrt(TRADING_DAYS)) if tracking_diff.std() > 0 else 0.0
 
+    # Advanced risk metrics (Phase 0)
+    sortino = calmar = omega = cvar95 = 0.0
+    try:
+        from services.risk_metrics import RiskMetrics
+        sortino = RiskMetrics.sortino_ratio(port_ret, rf_annual=RISK_FREE_RATE_ANNUAL)
+        calmar = RiskMetrics.calmar_ratio(port_ret)
+        omega = RiskMetrics.omega_ratio(port_ret)
+        cvar95 = RiskMetrics.cvar(port_ret, alpha=0.05)
+    except Exception:
+        pass
+
     return BenchmarkComparison(
         ticker=ticker,
         period_days=len(common_ret),
@@ -174,6 +190,10 @@ def compare_to_benchmark(
         portfolio_beta=round(beta, 3),
         portfolio_max_dd_pct=round(_max_drawdown(port_cum) * 100, 2),
         benchmark_max_dd_pct=round(_max_drawdown(bench_cum) * 100, 2),
+        portfolio_sortino=round(sortino, 3),
+        portfolio_calmar=round(calmar, 3),
+        portfolio_omega=round(omega, 3),
+        portfolio_cvar_95=round(cvar95, 4),
     )
 
 

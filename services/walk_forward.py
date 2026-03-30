@@ -56,9 +56,11 @@ class WalkForwardSummary:
     degradation_ratio: float = 0.0  # OOS/IS — <0.5 = likely overfit
     avg_oos_return: float = 0.0
     total_folds: int = 0
+    wf_perm_p_value: Optional[float] = None       # WF factory permutation p-value
+    wf_perm_significant: Optional[bool] = None    # Is the model factory genuinely skilled?
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "strategy": self.strategy_name,
             "ticker": self.ticker,
             "total_folds": self.total_folds,
@@ -77,6 +79,12 @@ class WalkForwardSummary:
                 for f in self.folds
             ],
         }
+        if self.wf_perm_p_value is not None:
+            d["wf_permutation"] = {
+                "p_value": round(self.wf_perm_p_value, 4),
+                "significant": self.wf_perm_significant,
+            }
+        return d
 
 
 # ─── Parameter grids for common strategies ──────────────────
@@ -269,6 +277,18 @@ def walk_forward_validate(
                     metrics = metrics[ticker]
                 _oos_sharpe = metrics.get("sharpe_ratio") or metrics.get("sharpe") or 0
                 _oos_return = (metrics.get("total_return", 0)) / 100
+
+                # P0 fix: Deduct realistic transaction costs from OOS results
+                # NSE round-trip: ~0.40% (STT + exchange + GST + slippage)
+                # Apply per trade, estimate trades from signals count
+                _total_trades = metrics.get("total_trades", 0) or metrics.get("trades", 0) or 2
+                _round_trip_cost = 0.004  # 0.40% per round-trip (conservative)
+                _cost_drag = _total_trades * _round_trip_cost
+                _oos_return = _oos_return - _cost_drag
+                # Adjust Sharpe by cost drag (annualized)
+                _ann_cost = _cost_drag * (252 / max((_test_end - _test_start).days, 1))
+                if _oos_sharpe > 0:
+                    _oos_sharpe = max(0, _oos_sharpe - _ann_cost * 2)  # rough cost-adjusted SR
         except Exception:
             pass
 
@@ -416,3 +436,85 @@ def load_all_optimal_params() -> Dict[str, Dict[str, Any]]:
         except Exception:
             continue
     return results
+
+
+def wf_permutation_test(
+    summary: WalkForwardSummary,
+    raw_returns: np.ndarray,
+    factory_fn=None,
+    n_perms: int = 2000,
+    train_days: int = 252,
+    test_days: int = 63,
+) -> WalkForwardSummary:
+    """Run MC permutation test on the walk-forward model factory.
+
+    Tests whether the WF optimization process (train → select params → test)
+    produces OOS performance better than random. Shuffles the entire return
+    series and repeats the WF process (Timothy Masters pp.291-293).
+
+    Parameters
+    ----------
+    summary : WalkForwardSummary
+        Existing WF summary to augment with permutation results.
+    raw_returns : np.ndarray
+        Full daily return series used for the walk-forward.
+    factory_fn : callable or None
+        factory_fn(train_returns) → position_vector for the test period.
+        If None, a default simple mean-reversion factory is used.
+    n_perms : int
+        Number of MC permutation trials.
+    train_days / test_days : int
+        Window sizes matching the original WF.
+
+    Returns
+    -------
+    WalkForwardSummary
+        Same summary, with wf_perm_p_value and wf_perm_significant set.
+    """
+    try:
+        from services.mc_permutation_test import MCPermutationTest
+
+        raw_returns = np.asarray(raw_returns, dtype=np.float64).ravel()
+        if len(raw_returns) < train_days + test_days:
+            logger.warning(
+                "Not enough data (%d) for WF permutation test (need %d)",
+                len(raw_returns), train_days + test_days,
+            )
+            return summary
+
+        # Default factory: simple momentum sign
+        if factory_fn is None:
+            def factory_fn(train):
+                # Simple: momentum sign from training period
+                if len(train) < 20:
+                    return np.ones(test_days)
+                momentum = np.mean(train[-20:])
+                sign = 1.0 if momentum > 0 else -1.0
+                return np.full(test_days, sign)
+
+        mc = MCPermutationTest(
+            n_perms=n_perms,
+            center_returns=True,
+            normalize_time=True,
+            seed=42,
+        )
+
+        result = mc.test_walk_forward_factory(
+            raw_returns, factory_fn,
+            train_days=train_days,
+            test_days=test_days,
+        )
+
+        summary.wf_perm_p_value = result.p_value
+        summary.wf_perm_significant = result.significant
+
+        logger.info(
+            "WF permutation for %s on %s: p=%.4f, significant=%s",
+            summary.strategy_name, summary.ticker,
+            result.p_value, result.significant,
+        )
+
+    except Exception as exc:
+        logger.warning("WF permutation test failed: %s", exc)
+
+    return summary
