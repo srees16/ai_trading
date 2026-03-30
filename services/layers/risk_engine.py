@@ -50,7 +50,15 @@ class RiskEngine:
 
     _SECTOR_MAP: Dict[str, str] = None  # type: ignore[assignment]
 
-    MAX_SECTOR_CONCENTRATION_PCT: float = 30.0  # max 30% of capital per sector
+    @staticmethod
+    def _load_sector_cap() -> float:
+        try:
+            from config import Config
+            return Config.MAX_SECTOR_EXPOSURE_PCT * 100  # Config stores as fraction
+        except Exception:
+            return 30.0
+
+    MAX_SECTOR_CONCENTRATION_PCT: float = 30.0  # G13: Overridden in __init__ from Config
 
     def __init__(
         self,
@@ -69,6 +77,9 @@ class RiskEngine:
         self.max_deployment_cap = max_deployment_cap
         self._open_positions: Dict[str, dict] = {}
         self._realized_pnl: float = 0.0  # Track realized losses for drawdown
+
+        # G13: Load sector cap from Config at runtime
+        self.MAX_SECTOR_CONCENTRATION_PCT = self._load_sector_cap()
 
         # Carver volatility target — drives capital rolling
         self._vol_target = volatility_target  # VolatilityTarget instance

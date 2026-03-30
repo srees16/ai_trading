@@ -176,7 +176,7 @@ class MomentumFactor:
 
         for ticker in universe:
             try:
-                df = yf.download(ticker, period=period, progress=False, timeout=15)
+                df = yf.download(ticker, period=period, progress=False, timeout=15, auto_adjust=True)
                 if df is not None and len(df) > self.formation:
                     ohlcv_cache[ticker] = df
             except Exception:

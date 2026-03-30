@@ -55,14 +55,17 @@ DEFAULT_FORECAST_WEIGHTS: List[ForecastWeight] = [
     ForecastWeight("ewmac_16_64", 0.14),
     ForecastWeight("ewmac_32_128", 0.11),
     ForecastWeight("ewmac_64_256", 0.14),
-    ForecastWeight("carry", 0.14),
-    ForecastWeight("screener", 0.08),
-    ForecastWeight("momentum", 0.12),
-    ForecastWeight("pead", 0.05),
-    ForecastWeight("mean_reversion", 0.08),
-    ForecastWeight("fii_flow", 0.05),
-    ForecastWeight("oi_signal", 0.04),
-    ForecastWeight("decision_engine", 0.05),
+    ForecastWeight("carry", 0.05),          # G7: reduced from 14% — weak for equities
+    ForecastWeight("screener", 0.09),
+    ForecastWeight("momentum", 0.13),
+    ForecastWeight("pead", 0.08),           # G6: increased — highest-Sharpe academic signal
+    ForecastWeight("mean_reversion", 0.07),
+    ForecastWeight("fii_flow", 0.06),
+    ForecastWeight("decision_engine", 0.04),
+    ForecastWeight("oi_signal", 0.03),      # G19: Restored — OI provides vol expansion signal
+    # Phase 4: Uncorrelated alpha sources
+    ForecastWeight("pairs_arb", 0.03),      # G19: Activated — highly decorrelated
+    ForecastWeight("event_driven", 0.03),   # G19: Activated — episodic alpha
 ]
 
 # Rule-of-thumb correlations between forecast sources (Carver Appendix C):
@@ -110,16 +113,7 @@ DEFAULT_CORRELATION_MATRIX = {
     ("momentum", "fii_flow"): 0.35,
     ("pead", "fii_flow"): 0.10,
     ("mean_reversion", "fii_flow"): 0.05,
-    # OI signal correlations (Gap A6)
-    ("ewmac_16_64", "oi_signal"): 0.25,
-    ("ewmac_32_128", "oi_signal"): 0.20,
-    ("ewmac_64_256", "oi_signal"): 0.15,
-    ("carry", "oi_signal"): 0.10,
-    ("screener", "oi_signal"): 0.15,
-    ("momentum", "oi_signal"): 0.30,
-    ("pead", "oi_signal"): 0.10,
-    ("mean_reversion", "oi_signal"): -0.10,
-    ("fii_flow", "oi_signal"): 0.25,
+    # OI signal removed (G8) — correlations kept for backward compat if re-enabled
     # Decision engine correlations (Gap B6)
     ("ewmac_16_64", "decision_engine"): 0.30,
     ("ewmac_32_128", "decision_engine"): 0.25,
@@ -130,7 +124,42 @@ DEFAULT_CORRELATION_MATRIX = {
     ("pead", "decision_engine"): 0.15,
     ("mean_reversion", "decision_engine"): 0.20,
     ("fii_flow", "decision_engine"): 0.15,
-    ("oi_signal", "decision_engine"): 0.15,
+    # Phase 4: Pairs arb correlations — highly uncorrelated with directional signals
+    ("ewmac_16_64", "pairs_arb"): 0.05,
+    ("ewmac_32_128", "pairs_arb"): 0.05,
+    ("ewmac_64_256", "pairs_arb"): 0.05,
+    ("carry", "pairs_arb"): 0.05,
+    ("screener", "pairs_arb"): 0.10,
+    ("momentum", "pairs_arb"): 0.00,
+    ("pead", "pairs_arb"): 0.05,
+    ("mean_reversion", "pairs_arb"): 0.30,
+    ("fii_flow", "pairs_arb"): 0.00,
+    ("decision_engine", "pairs_arb"): 0.10,
+    # Phase 4: Event-driven correlations — episodic, low correlation with everything
+    ("ewmac_16_64", "event_driven"): 0.10,
+    ("ewmac_32_128", "event_driven"): 0.10,
+    ("ewmac_64_256", "event_driven"): 0.10,
+    ("carry", "event_driven"): 0.05,
+    ("screener", "event_driven"): 0.15,
+    ("momentum", "event_driven"): 0.10,
+    ("pead", "event_driven"): 0.20,
+    ("mean_reversion", "event_driven"): 0.05,
+    ("fii_flow", "event_driven"): 0.10,
+    ("decision_engine", "event_driven"): 0.15,
+    ("pairs_arb", "event_driven"): 0.05,
+    # G19: OI signal correlations — moderately correlated with momentum/trend
+    ("ewmac_16_64", "oi_signal"): 0.30,
+    ("ewmac_32_128", "oi_signal"): 0.25,
+    ("ewmac_64_256", "oi_signal"): 0.20,
+    ("carry", "oi_signal"): 0.10,
+    ("screener", "oi_signal"): 0.25,
+    ("momentum", "oi_signal"): 0.35,
+    ("pead", "oi_signal"): 0.10,
+    ("mean_reversion", "oi_signal"): 0.15,
+    ("fii_flow", "oi_signal"): 0.20,
+    ("decision_engine", "oi_signal"): 0.15,
+    ("pairs_arb", "oi_signal"): 0.05,
+    ("event_driven", "oi_signal"): 0.10,
 }
 
 
@@ -247,7 +276,9 @@ def combine_forecasts(
         active_weights[k] * available[k] for k in available
     )
 
-    # Compute FDM for the active set
+    # G20: Compute FDM per-symbol from AVAILABLE sources (Carver Ch.8).
+    # When a source is missing, the reduced set has different correlations
+    # and thus a different FDM. This avoids over-scaling thin-signal symbols.
     fdm = compute_fdm(active_weights, correlations)
 
     # Apply FDM and cap
@@ -268,7 +299,7 @@ def combine_forecasts(
 
 def combine_forecasts_batch(
     all_forecasts: Dict[str, Dict[str, float]],
-    weights: Optional[any] = None,
+    weights: Optional[object] = None,
     correlations: Optional[Dict[tuple, float]] = None,
 ) -> Dict[str, CombinedForecast]:
     """Combine forecasts for all symbols.

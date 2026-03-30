@@ -135,17 +135,21 @@ def compute_mean_reversion_forecast(
         forecast = min(FORECAST_CAP, max(0.0, raw))
         signal_type = "OVERSOLD_BOUNCE"
 
-    elif current_rsi < 35 and bb_pctile < 0.25:
-        # Moderate oversold — weaker signal
-        rsi_strength = (35 - current_rsi) / 35
+    elif current_rsi < (oversold_rsi + 10) and bb_pctile < 0.25:
+        # Moderate oversold — weaker signal (within 10pts above oversold threshold)
+        moderate_threshold = oversold_rsi + 10
+        rsi_strength = (moderate_threshold - current_rsi) / moderate_threshold
         bb_strength = max(0, 0.25 - bb_pctile) / 0.25
         raw = (rsi_strength * 0.6 + bb_strength * 0.4) * FORECAST_CAP * 0.5
         forecast = min(FORECAST_CAP, max(0.0, raw))
         signal_type = "OVERSOLD_BOUNCE"
 
-    # For long-only: overbought = reduce forecast to 0 (no shorting)
+    # G18: Overbought = negative forecast (SHORT signal for Carver combiner)
     elif current_rsi > overbought_rsi and bb_pctile > 0.85:
-        forecast = 0.0
+        rsi_strength = (current_rsi - overbought_rsi) / (100 - overbought_rsi)
+        bb_strength = max(0, bb_pctile - 0.85) / 0.15
+        raw = -(rsi_strength * 0.6 + bb_strength * 0.4) * FORECAST_CAP
+        forecast = max(-FORECAST_CAP, min(0.0, raw))
         signal_type = "OVERBOUGHT_FADE"
 
     return MeanReversionSignal(

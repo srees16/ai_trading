@@ -89,9 +89,6 @@ class PaperDashboard:
     cvar_95: float = 0.0
     profit_factor: float = 0.0
     positions: List[dict] = field(default_factory=list)
-    max_drawdown_pct: float
-    sharpe_ratio: float
-    positions: List[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -129,12 +126,29 @@ class PaperTrader:
 
         if slippage_bps is not None:
             self._slippage_bps = slippage_bps
+            self._tiered_slippage = False
         else:
             try:
                 from config import Config
                 self._slippage_bps = getattr(Config, "SLIPPAGE_MODEL_IND_BPS", 20.0)
+                self._slip_large = getattr(Config, "SLIPPAGE_IND_LARGECAP_BPS", 5.0)
+                self._slip_mid = getattr(Config, "SLIPPAGE_IND_MIDCAP_BPS", 20.0)
+                self._slip_small = getattr(Config, "SLIPPAGE_IND_SMALLCAP_BPS", 50.0)
+                self._tiered_slippage = True
             except Exception:
                 self._slippage_bps = 20.0
+                self._tiered_slippage = False
+
+        # Build large-cap / mid-cap symbol sets for tiered slippage
+        self._largecap_set: set = set()
+        self._midcap_set: set = set()
+        if getattr(self, "_tiered_slippage", False):
+            try:
+                from kite_connect.core.config import INDEX_CONSTITUENTS
+                self._largecap_set = set(INDEX_CONSTITUENTS.get("NIFTY50", []))
+                self._midcap_set = set(INDEX_CONSTITUENTS.get("NIFTY_NEXT50", []))
+            except Exception:
+                pass
 
         self._init_db()
         self._load_state()
@@ -269,13 +283,30 @@ class PaperTrader:
 
         return None
 
-    def _apply_slippage(self, price: float, side: str, order_qty: int = 0, adv: float = 0.0) -> float:
-        """Apply volume-aware slippage to simulate realistic fills.
+    def _get_base_slippage_bps(self, symbol: str = "") -> float:
+        """Return market-cap tiered slippage for *symbol*.
 
-        Tier 1 Gap 4: slippage_bps = base_bps + (order_pct_of_volume × 300).
+        Large-cap (NIFTY50):   ~5 bps
+        Mid-cap (NIFTY_NEXT50): ~20 bps
+        Small-cap (others):     ~50 bps
+        """
+        if not self._tiered_slippage or not symbol:
+            return self._slippage_bps
+        clean = symbol.replace(".NS", "").upper()
+        if clean in self._largecap_set:
+            return self._slip_large
+        if clean in self._midcap_set:
+            return self._slip_mid
+        return self._slip_small
+
+    def _apply_slippage(self, price: float, side: str, order_qty: int = 0, adv: float = 0.0, symbol: str = "") -> float:
+        """Apply volume-aware, market-cap-tiered slippage.
+
+        base_bps is determined by symbol market-cap tier, then
+        impact_bps = order_pct_of_volume × 300  is added.
         Falls back to flat slippage if ADV unknown.
         """
-        base_bps = self._slippage_bps
+        base_bps = self._get_base_slippage_bps(symbol)
         if adv > 0 and order_qty > 0:
             order_pct = abs(order_qty) / adv
             impact_bps = order_pct * 300.0  # 300 bps impact per 100% of ADV
@@ -305,7 +336,7 @@ class PaperTrader:
                 })
                 continue
 
-            fill_price = self._apply_slippage(ltp, plan.side, order_qty=plan.quantity)
+            fill_price = self._apply_slippage(ltp, plan.side, order_qty=plan.quantity, symbol=symbol)
             cost = fill_price * plan.quantity
 
             if plan.side == "BUY":
@@ -367,11 +398,11 @@ class PaperTrader:
             if ltp <= pos.stop_loss:
                 closed = True
                 reason = "SL"
-                exit_price = self._apply_slippage(pos.stop_loss, "SELL")
+                exit_price = self._apply_slippage(pos.stop_loss, "SELL", symbol=pos.symbol)
             elif ltp >= pos.target_price:
                 closed = True
                 reason = "TP"
-                exit_price = self._apply_slippage(pos.target_price, "SELL")
+                exit_price = self._apply_slippage(pos.target_price, "SELL", symbol=pos.symbol)
 
             if closed:
                 pos.is_open = False

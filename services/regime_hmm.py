@@ -52,6 +52,15 @@ _MODEL_CACHE_PATH = Path(__file__).resolve().parent.parent / "data" / "hmm_model
 _REGIME_LOG_PATH = Path(__file__).resolve().parent.parent / "data" / "hmm_regime_log.jsonl"
 
 
+def _logsumexp(x: np.ndarray) -> float:
+    """Numerically stable log-sum-exp: log(sum(exp(x)))."""
+    x = np.asarray(x, dtype=np.float64)
+    mx = x.max()
+    if not np.isfinite(mx):
+        return float(-np.inf)
+    return float(mx + np.log(np.sum(np.exp(x - mx)) + 1e-300))
+
+
 # ═══════════════════════════════════════════════════════════════
 # State Mapping
 # ═══════════════════════════════════════════════════════════════
@@ -127,6 +136,9 @@ class MarkovRegimeModel:
         self._covars = None
         self._transmat = None
         self._startprob = None
+        # Feature normalization params (set during fit, applied during filter)
+        self._feat_mean: Optional[np.ndarray] = None
+        self._feat_std: Optional[np.ndarray] = None
 
     def fit(self, observations: np.ndarray) -> "MarkovRegimeModel":
         """Fit HMM on historical observations via EM (Baum-Welch).
@@ -145,6 +157,12 @@ class MarkovRegimeModel:
         if T < 100:
             raise ValueError(f"Need ≥100 observations, got {T}")
 
+        # Normalize features so all columns are on comparable scales
+        self._feat_mean = observations.mean(axis=0)
+        self._feat_std = observations.std(axis=0)
+        self._feat_std[self._feat_std < 1e-10] = 1.0  # avoid zero-division
+        obs_norm = (observations - self._feat_mean) / self._feat_std
+
         try:
             from hmmlearn.hmm import GaussianHMM
             self._model = GaussianHMM(
@@ -154,7 +172,7 @@ class MarkovRegimeModel:
                 tol=self.tol,
                 random_state=42,
             )
-            self._model.fit(observations)
+            self._model.fit(obs_norm)
             self._transmat = self._model.transmat_.copy()
             self._means = self._model.means_.copy()
             self._covars = self._model.covars_.copy()
@@ -179,6 +197,8 @@ class MarkovRegimeModel:
 
         Implements simplified Baum-Welch for Gaussian emissions.
         """
+        # Apply same normalization as fit() (params already set)
+        observations = (observations - self._feat_mean) / self._feat_std
         T, D = observations.shape
         K = self.n_states
 
@@ -258,29 +278,57 @@ class MarkovRegimeModel:
         return -0.5 * (D * np.log(2 * np.pi) + log_det + mahal)
 
     def _forward_backward(self, log_likes: np.ndarray) -> Tuple:
-        """Forward-backward algorithm with scaling."""
+        """Forward-backward algorithm in LOG-SPACE to prevent numerical underflow.
+
+        BUG-7 FIX: Previous implementation used sum-based scaling which
+        underflows for T>200 observations. Now uses log-sum-exp throughout.
+        """
         T, K = log_likes.shape
-        likes = np.exp(log_likes - log_likes.max(axis=1, keepdims=True))
 
-        alpha = np.zeros((T, K))
-        beta = np.zeros((T, K))
-        scale = np.zeros(T)
+        log_alpha = np.full((T, K), -np.inf)
+        log_beta = np.full((T, K), -np.inf)
+        scale = np.zeros(T)  # kept for compatibility
 
-        # Forward
-        alpha[0] = self._startprob * likes[0]
-        scale[0] = alpha[0].sum() + 1e-300
-        alpha[0] /= scale[0]
+        log_startprob = np.log(self._startprob + 1e-300)
+        log_transmat = np.log(self._transmat + 1e-300)
+
+        # Forward pass in log-space
+        log_alpha[0] = log_startprob + log_likes[0]
+        # Normalize (log-sum-exp)
+        lse_0 = _logsumexp(log_alpha[0])
+        scale[0] = np.exp(lse_0) + 1e-300
+        log_alpha[0] -= lse_0
 
         for t in range(1, T):
-            alpha[t] = (alpha[t - 1] @ self._transmat) * likes[t]
-            scale[t] = alpha[t].sum() + 1e-300
-            alpha[t] /= scale[t]
+            for j in range(K):
+                log_alpha[t, j] = _logsumexp(log_alpha[t - 1] + log_transmat[:, j]) + log_likes[t, j]
+            lse_t = _logsumexp(log_alpha[t])
+            scale[t] = np.exp(lse_t) + 1e-300
+            log_alpha[t] -= lse_t
 
-        # Backward
-        beta[T - 1] = 1.0
+        # Backward pass in log-space
+        log_beta[T - 1] = 0.0  # log(1) = 0
         for t in range(T - 2, -1, -1):
-            beta[t] = (self._transmat @ (likes[t + 1] * beta[t + 1]))
-            beta[t] /= scale[t + 1] + 1e-300
+            for i in range(K):
+                log_beta[t, i] = _logsumexp(
+                    log_transmat[i, :] + log_likes[t + 1] + log_beta[t + 1]
+                )
+            lse_t = _logsumexp(log_beta[t])
+            if np.isfinite(lse_t):
+                log_beta[t] -= lse_t
+
+        # Convert back to probability space for compatibility
+        alpha = np.exp(log_alpha)
+        beta = np.exp(log_beta)
+
+        # Ensure rows sum to ~1 (re-normalize)
+        alpha_sums = alpha.sum(axis=1, keepdims=True)
+        alpha_sums = np.where(alpha_sums > 0, alpha_sums, 1.0)
+        alpha /= alpha_sums
+
+        beta_sums = beta.sum(axis=1, keepdims=True)
+        beta_sums = np.where(beta_sums > 0, beta_sums, 1.0)
+        beta /= beta_sums
 
         return alpha, beta, scale
 
@@ -298,11 +346,13 @@ class MarkovRegimeModel:
 
         if self._model is not None:
             try:
-                self._model.means_ = self._means
-                self._model.covars_ = self._covars
-                self._model.transmat_ = self._transmat
-                self._model.startprob_ = self._startprob
+                self._model.means_ = self._means.copy()
+                self._model.covars_ = self._covars.copy()
+                self._model.transmat_ = self._transmat.copy()
+                self._model.startprob_ = self._startprob.copy()
             except Exception:
+                # If hmmlearn internals change, our sorted copies are still used
+                # by the built-in filter() / predict() fallbacks
                 pass
 
     def filter(self, observations: np.ndarray) -> np.ndarray:
@@ -318,6 +368,10 @@ class MarkovRegimeModel:
         """
         if not self._fitted:
             raise RuntimeError("Model not fitted. Call fit() first.")
+
+        # Normalize with same params used during fit
+        if self._feat_mean is not None and self._feat_std is not None:
+            observations = (observations - self._feat_mean) / self._feat_std
 
         if self._model is not None:
             return self._model.predict_proba(observations)

@@ -26,27 +26,28 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 # Carver recommends a 35-day EWMA for daily vol (Appendix D).
-# The EWMA span parameter corresponds to ``2 / (span + 1) = decay``.
-DEFAULT_VOL_LOOKBACK = 35
+# Gap D5 FIX: Use halflife=20 for proper 20-day half-life decay.
+# span=35 gives effective lookback of ~10 days; halflife=20 gives ~20 days.
+DEFAULT_VOL_HALFLIFE = 20
 ANNUALISATION_FACTOR = 16  # sqrt(256 trading days) ≈ 16
 
 
 def daily_price_volatility(
     close: pd.Series,
     *,
-    lookback: int = DEFAULT_VOL_LOOKBACK,
+    lookback: int = DEFAULT_VOL_HALFLIFE,
 ) -> float:
     """Return the latest daily percentage price volatility (as a decimal).
 
     Uses an exponentially weighted moving standard deviation of daily
-    percentage returns over ``lookback`` days.
+    percentage returns with a half-life of ``lookback`` days.
 
     Parameters
     ----------
     close : pd.Series
         Daily closing prices (DatetimeIndex, chronological).
     lookback : int
-        EWMA span (default 35 business days ≈ 7 weeks).
+        EWMA halflife (default 20 business days ≈ 4 weeks).
 
     Returns
     -------
@@ -61,7 +62,7 @@ def daily_price_volatility(
     if pct_returns.empty:
         return 0.0
 
-    ewm_std = pct_returns.ewm(span=lookback, min_periods=max(5, lookback // 2)).std()
+    ewm_std = pct_returns.ewm(halflife=lookback, min_periods=max(5, lookback // 2)).std()
     latest = ewm_std.iloc[-1]
     return float(latest) if np.isfinite(latest) else 0.0
 
@@ -69,7 +70,7 @@ def daily_price_volatility(
 def annual_price_volatility(
     close: pd.Series,
     *,
-    lookback: int = DEFAULT_VOL_LOOKBACK,
+    lookback: int = DEFAULT_VOL_HALFLIFE,
 ) -> float:
     """Annualised percentage volatility = daily_vol × 16."""
     return daily_price_volatility(close, lookback=lookback) * ANNUALISATION_FACTOR
@@ -78,7 +79,7 @@ def annual_price_volatility(
 def instrument_value_volatility(
     close: pd.Series,
     *,
-    lookback: int = DEFAULT_VOL_LOOKBACK,
+    lookback: int = DEFAULT_VOL_HALFLIFE,
 ) -> float:
     """Daily cash volatility per 1 share = price × daily_price_vol.
 
@@ -95,7 +96,7 @@ def instrument_value_volatility(
 def compute_volatilities_batch(
     ohlcv_cache: Dict[str, pd.DataFrame],
     *,
-    lookback: int = DEFAULT_VOL_LOOKBACK,
+    lookback: int = DEFAULT_VOL_HALFLIFE,
 ) -> Dict[str, dict]:
     """Compute volatility metrics for a batch of instruments.
 

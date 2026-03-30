@@ -57,8 +57,8 @@ def _norm_pdf(x: float) -> float:
     return (1.0 / math.sqrt(2 * math.pi)) * math.exp(-0.5 * x * x)
 
 
-def black_scholes_call(S: float, K: float, T: float, r: float, sigma: float) -> float:
-    """Black-Scholes call option price.
+def black_scholes_call(S: float, K: float, T: float, r: float, sigma: float, q: float = 0.0) -> float:
+    """Black-Scholes call option price with dividend yield.
 
     Parameters
     ----------
@@ -67,36 +67,37 @@ def black_scholes_call(S: float, K: float, T: float, r: float, sigma: float) -> 
     T : Time to expiry in years
     r : Risk-free rate (annual)
     sigma : Implied volatility (annual)
+    q : Continuous dividend yield (annual, e.g. 0.02 for 2%)
     """
     if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
         return max(0, S - K)
 
-    d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+    d1 = (math.log(S / K) + (r - q + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
     d2 = d1 - sigma * math.sqrt(T)
-    return S * _norm_cdf(d1) - K * math.exp(-r * T) * _norm_cdf(d2)
+    return S * math.exp(-q * T) * _norm_cdf(d1) - K * math.exp(-r * T) * _norm_cdf(d2)
 
 
-def black_scholes_put(S: float, K: float, T: float, r: float, sigma: float) -> float:
-    """Black-Scholes put option price."""
+def black_scholes_put(S: float, K: float, T: float, r: float, sigma: float, q: float = 0.0) -> float:
+    """Black-Scholes put option price with dividend yield."""
     if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
         return max(0, K - S)
 
-    d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+    d1 = (math.log(S / K) + (r - q + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
     d2 = d1 - sigma * math.sqrt(T)
-    return K * math.exp(-r * T) * _norm_cdf(-d2) - S * _norm_cdf(-d1)
+    return K * math.exp(-r * T) * _norm_cdf(-d2) - S * math.exp(-q * T) * _norm_cdf(-d1)
 
 
-def compute_delta_call(S: float, K: float, T: float, r: float, sigma: float) -> float:
-    """Call option delta."""
+def compute_delta_call(S: float, K: float, T: float, r: float, sigma: float, q: float = 0.0) -> float:
+    """Call option delta with dividend yield."""
     if T <= 0 or sigma <= 0 or S <= 0:
         return 1.0 if S > K else 0.0
-    d1 = (math.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
-    return _norm_cdf(d1)
+    d1 = (math.log(S / K) + (r - q + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+    return math.exp(-q * T) * _norm_cdf(d1)
 
 
-def compute_delta_put(S: float, K: float, T: float, r: float, sigma: float) -> float:
-    """Put option delta."""
-    return compute_delta_call(S, K, T, r, sigma) - 1.0
+def compute_delta_put(S: float, K: float, T: float, r: float, sigma: float, q: float = 0.0) -> float:
+    """Put option delta with dividend yield."""
+    return compute_delta_call(S, K, T, r, sigma, q) - math.exp(-q * T)
 
 
 def find_strike_by_delta(
@@ -315,12 +316,18 @@ class OptionsOverlay:
         list[OptionOrder]
         """
         from services.oi_signal import FNO_LOT_SIZES
+        from config import Config
 
         orders: List[OptionOrder] = []
         days_to_expiry = 30
         T = days_to_expiry / 365.0
         capital_used = 0.0
         max_capital = available_capital * self.max_overlay_pct
+
+        # Sector concentration limit: max 2 puts per sector
+        _MAX_PUTS_PER_SECTOR = 2
+        sector_map = Config.NSE_SECTOR_MAP if hasattr(Config, 'NSE_SECTOR_MAP') else {}
+        sector_put_count: Dict[str, int] = {}
 
         # Sort by forecast strength (strongest first)
         sorted_candidates = sorted(
@@ -332,6 +339,11 @@ class OptionsOverlay:
         for sym, info in sorted_candidates:
             lot_size = FNO_LOT_SIZES.get(sym, 0)
             if lot_size == 0:
+                continue
+
+            # Sector concentration check
+            sector = sector_map.get(sym, "Unknown")
+            if sector_put_count.get(sector, 0) >= _MAX_PUTS_PER_SECTOR:
                 continue
 
             price = info.get("current_price", 0)
@@ -353,8 +365,10 @@ class OptionsOverlay:
             if premium / price < self.min_premium_pct:
                 continue
 
-            # Capital needed: strike × lot_size (margin for assignment)
-            margin_required = strike * lot_size * 0.20  # ~20% SPAN margin
+            # Capital needed: strike × lot_size × SPAN margin
+            # Dynamic SPAN margin: higher IV → higher margin requirement
+            span_margin_pct = min(0.25, max(0.10, 0.12 + iv * 0.30))  # 10-25% based on IV
+            margin_required = strike * lot_size * span_margin_pct
             if capital_used + margin_required > max_capital:
                 continue
 
@@ -377,6 +391,7 @@ class OptionsOverlay:
                 underlying_price=price,
             ))
             capital_used += margin_required
+            sector_put_count[sector] = sector_put_count.get(sector, 0) + 1
 
         return orders
 

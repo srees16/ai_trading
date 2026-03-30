@@ -265,20 +265,37 @@ class RegimeDetector:
             return 0.0, 20.0
 
     def _fetch_breadth(self) -> float:
-        """Estimate market breadth from NIFTY500 advance/decline."""
+        """Compute market breadth from NIFTY 50 constituent advance/decline ratio."""
         try:
             import yfinance as yf
-            # Use NIFTY500 ETF as proxy
-            data = yf.download("^CRSLDX", period="5d", progress=False)
+            # Use NIFTY 50 top constituents as breadth proxy
+            _NIFTY_TICKERS = [
+                "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS",
+                "ICICIBANK.NS", "HINDUNILVR.NS", "ITC.NS", "SBIN.NS",
+                "BHARTIARTL.NS", "KOTAKBANK.NS", "LT.NS", "AXISBANK.NS",
+                "BAJFINANCE.NS", "MARUTI.NS", "TITAN.NS", "SUNPHARMA.NS",
+                "TATAMOTORS.NS", "WIPRO.NS", "HCLTECH.NS", "NTPC.NS",
+            ]
+            data = yf.download(_NIFTY_TICKERS, period="5d", progress=False, group_by="ticker")
             if data.empty:
                 return 0.5
-            # Approximate breadth from index return sign
-            ret = float((data["Close"].iloc[-1] / data["Close"].iloc[-2] - 1).item())
-            if ret > 0.005:
-                return 0.6
-            elif ret < -0.005:
-                return 0.4
-            return 0.5
+            advances = 0
+            declines = 0
+            for tkr in _NIFTY_TICKERS:
+                try:
+                    close = data[tkr]["Close"].dropna()
+                    if len(close) >= 2:
+                        ret = float(close.iloc[-1] / close.iloc[-2] - 1)
+                        if ret > 0:
+                            advances += 1
+                        elif ret < 0:
+                            declines += 1
+                except Exception:
+                    continue
+            total = advances + declines
+            if total == 0:
+                return 0.5
+            return round(advances / total, 3)
         except Exception:
             return 0.5
 

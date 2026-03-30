@@ -55,6 +55,7 @@ class CostCheckResult:
     """Result of a cost speed limit check."""
     symbol: str
     allowed: bool
+    speed_multiplier: float     # 0.0-1.0 graduated dampening (1.0 = full pass)
     total_cost_pct: float       # round-trip cost for this trade
     annual_cost_drag: float     # estimated annual cost drag (fraction)
     min_sr_required: float      # minimum SR to justify this cost
@@ -87,9 +88,11 @@ def estimate_trade_cost(
     """
     cfg = config or CostConfig()
     turnover = price * quantity
-    cost_pct = cfg.round_trip_cost_pct / 2 + cfg.spread_slippage_pct / 2
-    if is_sell:
-        cost_pct += 0.001  # extra STT on sell
+    # Consistent one-way cost: half of round-trip + half of spread
+    base_cost_pct = cfg.round_trip_cost_pct / 2 + cfg.spread_slippage_pct / 2
+    # STT is 0.1% on sell-side only for delivery trades; buyer pays no STT
+    stt_pct = 0.001 if is_sell else 0.0
+    cost_pct = base_cost_pct + stt_pct
     return turnover * cost_pct
 
 
@@ -127,8 +130,8 @@ def check_speed_limit(
     # Total cost per round-trip trade (fraction)
     cost_per_trade = cfg.round_trip_cost_pct + cfg.spread_slippage_pct
 
-    # Annual cost drag = turnover × cost_per_trade
-    annual_cost_drag = turnover * cost_per_trade
+    # Annual cost drag = turnover × cost_per_trade (one-way adjusted)
+    annual_cost_drag = turnover * (cost_per_trade / 2)
 
     # Estimated SR contribution from this forecast
     # Forecast of 10 = neutral conviction → SR ≈ 0.20 (half-Kelly target)
@@ -138,7 +141,25 @@ def check_speed_limit(
 
     # Speed limit: SR contribution must be > factor × cost drag
     min_sr = cfg.speed_limit_factor * annual_cost_drag
-    allowed = estimated_sr >= min_sr
+
+    # Graduated dampening instead of binary allow/block:
+    # ratio >= 1.0 → full pass (multiplier=1.0)
+    # ratio in (0.5, 1.0) → proportional dampening
+    # ratio <= 0.5 → blocked (multiplier=0.0)
+    if min_sr <= 0:
+        ratio = 2.0
+    else:
+        ratio = estimated_sr / min_sr
+
+    if ratio >= 1.0:
+        speed_multiplier = 1.0
+        allowed = True
+    elif ratio > 0.5:
+        speed_multiplier = (ratio - 0.5) / 0.5  # linear 0→1 in the 0.5-1.0 band
+        allowed = True
+    else:
+        speed_multiplier = 0.0
+        allowed = False
 
     reason = ""
     if not allowed:
@@ -147,10 +168,16 @@ def check_speed_limit(
             f"(cost drag {annual_cost_drag:.3f} × {cfg.speed_limit_factor:.0f})"
         )
         logger.info("Speed limit blocks %s: %s", symbol, reason)
+    elif speed_multiplier < 1.0:
+        reason = (
+            f"Cost speed dampening: SR ratio {ratio:.2f} → multiplier {speed_multiplier:.2f}"
+        )
+        logger.info("Speed limit dampens %s: %s", symbol, reason)
 
     return CostCheckResult(
         symbol=symbol,
         allowed=allowed,
+        speed_multiplier=round(speed_multiplier, 3),
         total_cost_pct=cost_per_trade,
         annual_cost_drag=annual_cost_drag,
         min_sr_required=min_sr,
@@ -191,3 +218,60 @@ def filter_by_cost(
     if blocked > 0:
         logger.info("Cost speed limit: %d/%d symbols blocked", blocked, len(forecasts))
     return passed
+
+
+# ═══════════════════════════════════════════════════════════════
+# Gap B8: Forecast Capacity / Liquidity Check
+# ═══════════════════════════════════════════════════════════════
+
+def check_forecast_capacity(
+    symbol: str,
+    position_value: float,
+    avg_daily_volume_value: float,
+    max_adv_pct: float = 0.05,
+) -> float:
+    """Check if position size is within liquidity capacity.
+
+    Returns a dampening multiplier (0.0 to 1.0) based on the ratio
+    of position value to average daily traded value.
+
+    Parameters
+    ----------
+    symbol : str
+        Instrument ticker.
+    position_value : float
+        Target position notional value (₹).
+    avg_daily_volume_value : float
+        20-day average daily traded value in ₹.
+    max_adv_pct : float
+        Maximum position as fraction of ADV (default 5%).
+
+    Returns
+    -------
+    float
+        Capacity multiplier: 1.0 if within limit, linear dampening
+        down to 0.0 as position approaches 2× the limit.
+    """
+    if avg_daily_volume_value <= 0:
+        logger.warning("Capacity check: %s has zero ADV — blocking", symbol)
+        return 0.0
+
+    ratio = position_value / avg_daily_volume_value
+
+    if ratio <= max_adv_pct:
+        return 1.0
+    elif ratio <= max_adv_pct * 2:
+        # Linear dampening between 1× and 2× the limit
+        mult = 1.0 - (ratio - max_adv_pct) / max_adv_pct
+        logger.info(
+            "Capacity dampening %s: position=%.0f, ADV=%.0f, ratio=%.1f%%, mult=%.2f",
+            symbol, position_value, avg_daily_volume_value, ratio * 100, mult,
+        )
+        return max(0.0, mult)
+    else:
+        logger.info(
+            "Capacity blocked %s: position=%.0f is %.1f%% of ADV=%.0f (> %d%%)",
+            symbol, position_value, ratio * 100, avg_daily_volume_value,
+            int(max_adv_pct * 200),
+        )
+        return 0.0

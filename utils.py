@@ -158,7 +158,7 @@ def _is_indian_ticker(ticker: str) -> bool:
 
 
 def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
-    """Deduplicate index, enforce canonical column names, sort by date."""
+    """Deduplicate index, enforce canonical column names, sort by date, validate OHLC."""
     if df.empty:
         return df
     # Flatten MultiIndex columns from yfinance batch downloads
@@ -169,6 +169,19 @@ def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
         df = df[~df.index.duplicated(keep="first")]
     # Sort chronologically
     df = df.sort_index()
+
+    # Gap D2: OHLC validation — ensure High >= max(Open,Close) and Low <= min(Open,Close)
+    if all(c in df.columns for c in ("Open", "High", "Low", "Close")):
+        max_oc = df[["Open", "Close"]].max(axis=1)
+        min_oc = df[["Open", "Close"]].min(axis=1)
+        bad_high = df["High"] < max_oc
+        bad_low = df["Low"] > min_oc
+        n_bad = int(bad_high.sum() + bad_low.sum())
+        if n_bad > 0:
+            logger.warning("OHLC validation: fixed %d bad bars", n_bad)
+            df.loc[bad_high, "High"] = max_oc[bad_high]
+            df.loc[bad_low, "Low"] = min_oc[bad_low]
+
     return df
 
 

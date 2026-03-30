@@ -13,6 +13,7 @@ Features:
 
 import hashlib
 import logging
+import os
 import time
 
 from kiteconnect import exceptions as kite_exceptions
@@ -23,13 +24,13 @@ logger = logging.getLogger(__name__)
 _MAX_RETRIES = 3
 _BACKOFF_SECONDS = [1, 2, 4]  # 1s, 2s, 4s
 
-# ── Circuit breaker (3 consecutive failures → halt for 2 min) ──
+# ── Circuit breaker (3 consecutive failures → halt for 10 min) ──
 try:
     from infrastructure.fault_isolation import CircuitBreaker, CircuitOpenError
     _order_circuit = CircuitBreaker(
         "kite_orders",
         failure_threshold=3,
-        reset_timeout=120.0,  # 2 minutes before half-open test
+        reset_timeout=600.0,  # 10 minutes before half-open test (G16 fix)
     )
 except ImportError:
     _order_circuit = None
@@ -85,6 +86,18 @@ def place_order(kite, symbol, exchange, transaction_type, quantity,
         ``{"success": True, "order_id": "..."}`` on success, or
         ``{"success": False, "error": "..."}`` on failure.
     """
+    # ── G2: KILL SWITCH — instant halt of all order placement ──
+    kill_switch = os.environ.get("CENTURION_KILL_SWITCH", "").lower() in ("true", "1", "yes")
+    if not kill_switch:
+        try:
+            from config import Config
+            kill_switch = getattr(Config, "KILL_SWITCH", False)
+        except Exception:
+            pass
+    if kill_switch:
+        logger.critical("KILL SWITCH ACTIVE — rejecting ALL orders for %s", symbol)
+        return {"success": False, "error": "KILL SWITCH active: all order placement halted"}
+
     # ── Circuit breaker check ──
     if _order_circuit:
         state = _order_circuit.state
