@@ -314,12 +314,13 @@ class CarverCalibrator:
 
                 # Compute EWMAC forecasts
                 forecasts = {}
+                dpv = daily_price_volatility(close)
                 for fast, slow in DEFAULT_VARIATIONS:
                     fast_ewma = close.ewm(span=fast, adjust=False).mean()
                     slow_ewma = close.ewm(span=slow, adjust=False).mean()
-                    raw = float((fast_ewma.iloc[-1] - slow_ewma.iloc[-1]) / price)
+                    raw = float(fast_ewma.iloc[-1] - slow_ewma.iloc[-1])
                     key = f"ewmac_{fast}_{slow}"
-                    scaled = ewmac_to_forecast(raw, fast, slow)
+                    scaled = ewmac_to_forecast(raw, dpv if dpv > 0 else price * 0.02, fast, slow)
                     forecasts[key] = scaled
 
                 # Combine forecasts (EWMAC only for backtest simplicity)
@@ -332,21 +333,21 @@ class CarverCalibrator:
                 cf = combine_forecasts(sym, forecasts, bt_weights)
                 forecast = cf.combined_forecast
 
-                # Simple position sizing
-                daily_vol = daily_price_volatility(close)
-                ivv = price * daily_vol if daily_vol > 0 else price * 0.02
+                # Simple position sizing (long-only for equities)
+                ivv = price * dpv if dpv > 0 else price * 0.02
                 daily_cash_target = vol_target.daily_cash_vol_target
                 if ivv > 0 and daily_cash_target > 0:
                     vol_scalar = daily_cash_target / ivv / len(symbols)
                     position = (forecast / 10.0) * vol_scalar
                     target_qty = max(0, round(position))
-                    # P&L from position (held position × return)
-                    if prev_price > 0 and target_qty > 0:
-                        daily_ret = (price - prev_price) / prev_price
-                        day_pnl += target_qty * prev_price * daily_ret
 
-                    # P0 fix: Deduct transaction costs on position changes (turnover)
+                    # P&L from PREVIOUS held position (mark-to-market)
                     prev_qty = prev_positions.get(sym, 0)
+                    if prev_qty > 0 and prev_price > 0:
+                        daily_ret = (price - prev_price) / prev_price
+                        day_pnl += prev_qty * prev_price * daily_ret
+
+                    # Deduct transaction costs on position changes (turnover)
                     turnover_qty = abs(target_qty - prev_qty)
                     if turnover_qty > 0:
                         turnover_value = turnover_qty * price
@@ -361,7 +362,7 @@ class CarverCalibrator:
                         pk = max(pk, price)
                         peak_prices[sym] = pk
                         # 2.5σ trailing stop (swing)
-                        stop_dist = 2.5 * (daily_vol if daily_vol > 0 else 0.02) * pk
+                        stop_dist = 2.5 * (dpv if dpv > 0 else 0.02) * pk
                         new_stop = pk - stop_dist
                         # Only ratchet up
                         stop_levels[sym] = max(stop_levels.get(sym, 0), new_stop)
