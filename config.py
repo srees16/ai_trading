@@ -91,19 +91,25 @@ class Config:
     # =================================================================
     # Paper Trading Mode
     # =================================================================
-    PAPER_TRADE_MODE: bool = False          # Set True to route orders to PaperTrader
+    PAPER_TRADE_MODE: bool = True           # Tier 1: Paper mode ON for 4-week validation
+    SIGNAL_FRESHNESS_MAX_HOURS: int = 4      # Tier 1 Gap 5: reject OHLCV older than N hours
 
     # =================================================================
     # Carver Systematic Trading Framework (Robert Carver)
     # =================================================================
     CARVER_ENABLED: bool = True             # Enable Carver vol-targeted sizing (False = legacy Kelly)
-    CARVER_ANNUAL_VOL_TARGET: float = 0.20  # 20% annual vol target (Half-Kelly for SR ~0.40)
+    CARVER_ANNUAL_VOL_TARGET: float = 0.25  # 25% annual vol target (raised for 60% CAGR pursuit)
     CARVER_INITIAL_CAPITAL: float = 500_000.0  # Starting capital (₹)
-    CARVER_DEFAULT_IDM: float = 1.6         # Instrument Diversification Multiplier (6-10 stocks)
+    CARVER_DEFAULT_IDM: float = 1.8         # Instrument Diversification Multiplier (6-10 stocks)
     CARVER_MAX_LEVERAGE: float = 1.0        # No leverage for swing equity
-    CARVER_INERTIA_THRESHOLD: float = 0.10  # 10% position change needed to re-trade
+    CARVER_INERTIA_THRESHOLD: float = 0.08  # 8% position change for re-trade (more responsive)
     CARVER_COST_SPEED_LIMIT: float = 3.0    # SR must exceed 3× cost drag
     CARVER_TRADE_HORIZON: str = "swing"     # "swing" (2.5σ stop) or "positional" (3.5σ stop)
+
+    # Drawdown thresholds (aligned with portfolio_vol_monitor)
+    PORTFOLIO_DRAWDOWN_WARNING: float = 0.10    # 10% DD → reduce to 70%
+    PORTFOLIO_DRAWDOWN_CRITICAL: float = 0.15   # 15% DD → reduce to 50%
+    PORTFOLIO_DRAWDOWN_HALT: float = 0.20       # 20% DD → halt all new trades
 
     # Carver — US Stocks overrides (USD-based)
     CARVER_US_ENABLED: bool = True          # Enable Carver for US stocks pipeline
@@ -129,14 +135,43 @@ class Config:
     # NSE Circuit Breaker
     # =================================================================
     CIRCUIT_BREAKER_PCT: float = 0.20      # 20% daily move → circuit limit hit
+    # Gap C6: Circuit breaker durations for all NSE tiers
+    CIRCUIT_BREAKER_TIERS: list = [0.01, 0.02, 0.05, 0.10, 0.20]  # 1-20%
+    CIRCUIT_BREAKER_RESET_SECONDS: int = 2700  # 45 min (NSE standard)
 
     # =================================================================
-    # VIX Regime Gate
+    # VIX Regime Gate — Gap C4: Unified thresholds
     # =================================================================
-    VIX_CAUTION_THRESHOLD: float = 20.0    # India VIX > 20 → reduce position sizes
+    VIX_CAUTION_THRESHOLD: float = 18.0    # India VIX > 18 → reduce position sizes
     VIX_PANIC_THRESHOLD: float = 25.0      # India VIX > 25 → suppress new BUY signals
     VIX_POSITION_SCALE: float = 0.5        # Scale factor when VIX in caution zone
     NIFTY_BENCHMARK_TICKER: str = "^NSEI"  # NIFTY 50 index ticker for benchmarking
+
+    # =================================================================
+    # Gap C3: Unified max open trades (single source of truth)
+    # =================================================================
+    MAX_OPEN_TRADES: int = 8               # Max concurrent positions
+
+    # =================================================================
+    # Gap C5: Time-based exit enforcement
+    # =================================================================
+    MAX_HOLD_DAYS_SWING: int = 15          # Max holding period for swing trades
+    MAX_HOLD_DAYS_POSITIONAL: int = 60     # Max holding period for positional trades
+
+    # =================================================================
+    # Gap D3: Dynamic slippage model by market cap tier
+    # =================================================================
+    SLIPPAGE_LARGECAP_BPS: float = 5.0     # Large-cap (NIFTY 50) slippage
+    SLIPPAGE_MIDCAP_BPS: float = 20.0      # Mid-cap (NIFTY Next 50) slippage
+    SLIPPAGE_SMALLCAP_BPS: float = 50.0    # Small-cap slippage
+
+    # =================================================================
+    # HMM Regime Detection (Gap B1)
+    # =================================================================
+    HMM_ENABLED: bool = True               # Enable HMM regime detection
+    HMM_N_STATES: int = 3                  # Number of hidden states
+    HMM_MIN_CONFIDENCE: float = 0.6        # Min confidence to use HMM vs rule-based
+    HMM_REFIT_DAYS: int = 30               # Refit model every N days
 
     # =================================================================
     # Minimum Strategy Quality Floor
@@ -290,6 +325,39 @@ class Config:
     RL_TEST_DAYS: int = int(os.getenv("CENTURION_RL_TEST_DAYS", "63"))
     RL_WALK_FORWARD_FOLDS: int = int(os.getenv("CENTURION_RL_FOLDS", "6"))
     RL_LAYER_WEIGHT: float = float(os.getenv("CENTURION_RL_LAYER_WEIGHT", "0.15"))
+
+    # =================================================================
+    # Risk Metrics Configuration (Phase 0)
+    # =================================================================
+    COMPUTE_SORTINO: bool = True
+    COMPUTE_CALMAR: bool = True
+    COMPUTE_CVAR: bool = True
+    CVAR_ALPHA: float = 0.05            # 5% tail for CVaR computation
+    RISK_FREE_RATE_IND: float = 0.07    # India 10-year G-Sec yield
+    RISK_FREE_RATE_US: float = 0.04     # US 10-year Treasury yield
+
+    # =================================================================
+    # Forecast Scalar Calibration
+    # =================================================================
+    AUTO_CALIBRATE_SCALARS: bool = True        # Enable auto-calibration of forecast scalars
+    SCALAR_CALIBRATION_MAX_AGE_DAYS: int = 14  # Recalibrate if older than 14 days
+    SCALAR_CALIBRATION_FILE: str = "data/calibrated_scalars.json"
+
+    # =================================================================
+    # Walk-Forward Transaction Cost Simulation
+    # =================================================================
+    WF_ROUND_TRIP_COST_IND: float = 0.004   # 0.40% NSE round-trip (STT + exchange + GST + slippage)
+    WF_ROUND_TRIP_COST_US: float = 0.001    # 0.10% US round-trip
+
+    # =================================================================
+    # Monte Carlo Permutation Test (Timothy Masters)
+    # =================================================================
+    MC_PERMUTATION_N_REPS: int = 5000       # Number of MC permutation trials
+    MC_CENTER_RETURNS: bool = True           # Center returns to remove directional bias
+    MC_NORMALIZE_TIME: bool = True           # sqrt(n) normalization for comparable p-values
+    MC_SIGNIFICANCE_LEVEL: float = 0.05     # p-value threshold for significance
+    MC_WF_PERM_N_REPS: int = 2000           # Fewer reps for walk-forward permutation (speed)
+    MC_TOURNAMENT_N_REPS: int = 2000        # Fewer reps for tournament best-of-N (speed)
 
     @classmethod
     def get_database_url(cls) -> str:

@@ -21,9 +21,12 @@ Signal sources and their native scales:
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import numpy as np
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -159,3 +162,140 @@ def carry_to_forecast(
     vol_adjusted = annualised_carry / annual_price_vol
     raw = vol_adjusted * SCALAR_CARRY
     return cap_forecast(raw)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Auto-calibration: compute scalars from actual data
+# ═══════════════════════════════════════════════════════════════
+
+_CALIBRATED_SCALARS_PATH = "data/calibrated_scalars.json"
+
+
+def calibrate_scalar_from_data(
+    raw_values: "pd.Series | list",
+    target_abs: float = TARGET_ABS_FORECAST,
+) -> float:
+    """Calibrate a forecast scalar so avg|forecast| ≈ target_abs.
+
+    Uses expanding median (robust to outliers) per Carver Ch. 7.
+
+    Parameters
+    ----------
+    raw_values : pd.Series | list
+        Historical raw (unscaled) forecast values.
+    target_abs : float
+        Target mean absolute forecast (default 10).
+
+    Returns
+    -------
+    float
+        Calibrated scalar.
+    """
+    import pandas as pd
+    series = pd.Series(raw_values).dropna()
+    if len(series) < 30:
+        return 1.0
+    median_abs = series.abs().expanding(min_periods=30).median().iloc[-1]
+    if median_abs <= 0 or np.isnan(median_abs):
+        return 1.0
+    scalar = target_abs / median_abs
+    return round(max(0.1, min(scalar, 100.0)), 4)
+
+
+def calibrate_all_scalars(
+    ohlcv_cache: "dict[str, pd.DataFrame]",
+    screener_scores: "dict[str, float] | None" = None,
+    decision_engine_scores: "dict[str, float] | None" = None,
+) -> dict:
+    """Calibrate all forecast scalars from actual data and persist.
+
+    Reads OHLCV cache, computes EWMAC crossovers, carry signals,
+    screener/DE distributions, and calibrates scalars so each
+    source outputs avg|forecast| ≈ 10.
+
+    Returns dict of calibrated scalars and saves to disk.
+    """
+    import json
+    import pandas as pd
+    from pathlib import Path
+
+    result = {}
+
+    # 1. EWMAC scalars
+    for (fast, slow), default_scalar in EWMAC_SCALARS.items():
+        raw_values = []
+        for sym, df in ohlcv_cache.items():
+            col = "Close" if "Close" in df.columns else "close"
+            close = df[col].dropna()
+            if len(close) < slow + 10:
+                continue
+            fast_ewma = close.ewm(span=fast, adjust=False).mean()
+            slow_ewma = close.ewm(span=slow, adjust=False).mean()
+            vol = close.pct_change().rolling(35).std()
+            # Vol-adjusted crossover
+            raw_cross = (fast_ewma - slow_ewma) / (close * vol.replace(0, np.nan))
+            raw_values.extend(raw_cross.dropna().tolist())
+
+        if raw_values:
+            cal = calibrate_scalar_from_data(raw_values)
+            result[f"ewmac_{fast}_{slow}"] = cal
+            logger.info("Calibrated EWMAC(%d,%d): %.3f (was %.3f)", fast, slow, cal, default_scalar)
+        else:
+            result[f"ewmac_{fast}_{slow}"] = default_scalar
+
+    # 2. Screener scalar
+    if screener_scores:
+        scores = list(screener_scores.values())
+        if scores:
+            cal = calibrate_scalar_from_data(scores)
+            result["screener"] = cal
+            logger.info("Calibrated screener: %.4f (was %.4f)", cal, SCALAR_SCREENER)
+
+    # 3. Decision engine scalar
+    if decision_engine_scores:
+        de_scores = list(decision_engine_scores.values())
+        if de_scores:
+            cal = calibrate_scalar_from_data(de_scores)
+            result["decision_engine"] = cal
+            logger.info("Calibrated decision_engine: %.3f (was %.3f)", cal, SCALAR_DECISION_ENGINE)
+
+    # Persist
+    try:
+        path = Path(_CALIBRATED_SCALARS_PATH)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "scalars": result,
+            "calibrated_at": __import__("datetime").datetime.now().isoformat(),
+            "n_symbols": len(ohlcv_cache),
+        }
+        path.write_text(json.dumps(payload, indent=2))
+        logger.info("Calibrated scalars saved to %s", _CALIBRATED_SCALARS_PATH)
+    except Exception as exc:
+        logger.warning("Failed to persist calibrated scalars: %s", exc)
+
+    return result
+
+
+def load_calibrated_scalars() -> dict:
+    """Load previously calibrated scalars from disk.
+
+    Returns empty dict if no calibration file exists or
+    calibration is older than 14 days (stale).
+    """
+    import json
+    from pathlib import Path
+    from datetime import datetime
+
+    path = Path(_CALIBRATED_SCALARS_PATH)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+        cal_time = datetime.fromisoformat(data.get("calibrated_at", "2000-01-01"))
+        age_days = (datetime.now() - cal_time).days
+        if age_days > 14:
+            logger.info("Calibrated scalars are %d days old — stale, using defaults", age_days)
+            return {}
+        return data.get("scalars", {})
+    except Exception:
+        return {}

@@ -28,6 +28,7 @@ minio
 redis
 scipy
 seaborn
+hmmlearn>=0.3.0
 Backtesting
 chromadb
 sentence-transformers

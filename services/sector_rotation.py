@@ -188,8 +188,13 @@ def _compute_sector_rotation(
     if not sector_returns:
         return SectorRotation(sectors={}, top_sectors=[], bottom_sectors=[])
 
-    # ── Rank sectors by 1-month momentum ──
-    sorted_sectors = sorted(sector_returns.items(), key=lambda x: x[1][0], reverse=True)
+    # ── Rank sectors by dual-timeframe combined momentum ──
+    # Phase 1.2: Combined score = 0.6 × 1M + 0.4 × 3M
+    def _combined_score(item):
+        ret_1m, ret_3m = item[1]
+        return 0.6 * ret_1m + 0.4 * ret_3m
+
+    sorted_sectors = sorted(sector_returns.items(), key=_combined_score, reverse=True)
     n = len(sorted_sectors)
     top_n = max(1, n // 3)  # top third
 

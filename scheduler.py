@@ -1040,6 +1040,105 @@ def _run_trade_monitor_poll():
         logger.exception("TradeMonitor poll failed: %s", exc)
 
 
+def _run_forecast_calibration():
+    """Auto-calibrate forecast scalars from recent OHLCV data.
+
+    Runs weekly (Saturday 5:30 AM IST, before walk-forward audit).
+    Re-computes EWMAC / screener / decision-engine scalars from
+    expanding-window median(|raw forecast|) and persists to
+    ``data/calibrated_scalars.json``.
+    """
+    logger.info("=== Forecast Scalar Calibration started ===")
+    try:
+        from config import Config
+        if not getattr(Config, "AUTO_CALIBRATE_SCALARS", True):
+            logger.info("AUTO_CALIBRATE_SCALARS disabled — skipping")
+            return
+
+        from services.forecast_scalar import calibrate_all_scalars
+        import yfinance as yf
+
+        # Build OHLCV cache for representative NIFTY-50 tickers
+        tickers = [
+            "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS",
+            "ICICIBANK.NS", "HINDUNILVR.NS", "BHARTIARTL.NS",
+            "SBIN.NS", "KOTAKBANK.NS", "LT.NS",
+        ]
+        ohlcv_cache: dict = {}
+        for t in tickers:
+            try:
+                df = yf.download(t, period="2y", progress=False, timeout=15)
+                if df is not None and len(df) > 100:
+                    ohlcv_cache[t] = df
+            except Exception:
+                logger.debug("OHLCV fetch failed for %s", t)
+
+        if len(ohlcv_cache) < 3:
+            logger.warning("Too few tickers for calibration (%d) — skipping", len(ohlcv_cache))
+            return
+
+        result = calibrate_all_scalars(ohlcv_cache)
+        logger.info("Forecast calibration complete: %s", result)
+
+    except Exception as exc:
+        logger.exception("Forecast scalar calibration failed: %s", exc)
+
+
+def _run_strategy_tournament():
+    """Monthly strategy tournament to rank and auto-allocate strategies.
+
+    Runs 1st Saturday of each month at 4:00 AM IST.
+    Evaluates all forecast sources over the trailing 3 months,
+    disables underperformers, and persists allocation decisions.
+    """
+    logger.info("=== Monthly Strategy Tournament started ===")
+    try:
+        import pandas as pd
+        from services.strategy_tournament import StrategyTournament
+        import json, os
+
+        # Load recent per-strategy returns from walk-forward results
+        wf_results_path = os.path.join("data", "walk_forward_results.json")
+        if not os.path.exists(wf_results_path):
+            logger.warning("No walk-forward results found — skipping tournament")
+            return
+
+        with open(wf_results_path) as f:
+            wf_data = json.load(f)
+
+        # Convert to per-strategy return series
+        strat_returns = {}
+        for strat_name, returns_list in wf_data.items():
+            if isinstance(returns_list, list) and len(returns_list) >= 20:
+                strat_returns[strat_name] = pd.Series(returns_list)
+
+        if len(strat_returns) < 2:
+            logger.warning("Too few strategies with results (%d) — skipping", len(strat_returns))
+            return
+
+        tourney = StrategyTournament(top_n=5, min_sharpe=0.0)
+        result = tourney.run_tournament(strat_returns, lookback_months=3)
+
+        logger.info("Tournament complete: top=%s, disabled=%s",
+                     result.top_strategies, result.disabled_strategies)
+
+        # Persist tournament results for pipeline to read
+        tourney_path = os.path.join("data", "tournament_results.json")
+        with open(tourney_path, "w") as f:
+            json.dump({
+                "top_strategies": result.top_strategies,
+                "disabled_strategies": result.disabled_strategies,
+                "entries": [
+                    {"rank": e.rank, "name": e.strategy_name,
+                     "score": e.composite_score, "status": e.allocation_status}
+                    for e in result.entries
+                ],
+            }, f, indent=2)
+
+    except Exception as exc:
+        logger.exception("Strategy tournament failed: %s", exc)
+
+
 def _run_nightly_backup():
     """Upload SQLite databases to R2/MinIO storage."""
     try:
@@ -1119,6 +1218,16 @@ def start_scheduler():
         misfire_grace_time=3600,
     )
 
+    # Job 8: Weekly forecast scalar calibration - Saturday 5:30 AM IST
+    # Runs before walk-forward so WF uses freshly calibrated scalars
+    scheduler.add_job(
+        _run_forecast_calibration,
+        CronTrigger(hour=5, minute=30, day_of_week="sat", timezone="Asia/Kolkata"),
+        id="forecast_calibration",
+        name="Weekly Forecast Scalar Calibration",
+        misfire_grace_time=3600,
+    )
+
     # Job 5: Nightly SQLite backup to R2 â€” 23:00 IST daily
     scheduler.add_job(
         _run_nightly_backup,
@@ -1147,6 +1256,15 @@ def start_scheduler():
         misfire_grace_time=120,
     )
 
+    # Job 9: Monthly strategy tournament — 1st Saturday 4:00 AM IST
+    scheduler.add_job(
+        _run_strategy_tournament,
+        CronTrigger(hour=4, minute=0, day_of_week="sat", day="1-7", timezone="Asia/Kolkata"),
+        id="strategy_tournament",
+        name="Monthly Strategy Tournament",
+        misfire_grace_time=3600,
+    )
+
     logger.info("Scheduler started â€” press Ctrl+C to stop")
     logger.info("  Pre-market scan : 09:20 IST, Mon-Fri")
     logger.info("  Intraday re-scan: 10:30, 12:30, 14:30 IST, Mon-Fri")
@@ -1155,6 +1273,8 @@ def start_scheduler():
     logger.info("  Reconciliation  : 07:00 IST, Saturday")
     logger.info("  Nightly backup  : 23:00 IST, daily")
     logger.info("  Kite refresh    : every 30 min, 09:00-16:30 IST, Mon-Fri")
+    logger.info("  Forecast calib  : 05:30 IST, Saturday")
+    logger.info("  Tournament      : 04:00 IST, 1st Saturday of month")
 
     try:
         scheduler.start()

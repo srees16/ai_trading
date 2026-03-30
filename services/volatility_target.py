@@ -40,7 +40,11 @@ class VolatilityTargetConfig:
 
     # Minimum capital floor — if rolling capital drops below this
     # fraction of initial capital, halt new trades entirely.
-    capital_halt_fraction: float = 0.50  # halt at 50 % drawdown
+    capital_halt_fraction: float = 0.80  # halt at 20% drawdown (1.0 - 0.80)
+
+    # Warning thresholds for graduated response
+    capital_warning_fraction: float = 0.90   # warn at 10% drawdown
+    capital_critical_fraction: float = 0.85  # critical at 15% drawdown
 
     # Maximum leverage factor (for cash equities = 1.0, no leverage).
     max_leverage_factor: float = 1.0
@@ -112,17 +116,45 @@ class VolatilityTarget:
 
     @property
     def is_halted(self) -> bool:
-        """True if capital has fallen below halt threshold."""
+        """True if capital has fallen below halt threshold (20% drawdown)."""
         halt_level = self._initial_capital * self.cfg.capital_halt_fraction
         if self.current_capital < halt_level:
             logger.warning(
-                "Capital ₹%.0f below halt level ₹%.0f (%.0f%% of initial) — "
+                "Capital ₹%.0f below halt level ₹%.0f (%.0f%% drawdown) — "
                 "blocking new trades",
                 self.current_capital, halt_level,
-                self.cfg.capital_halt_fraction * 100,
+                (1 - self.current_capital / self._initial_capital) * 100,
             )
             return True
         return False
+
+    @property
+    def drawdown_pct(self) -> float:
+        """Current drawdown as a percentage of initial capital."""
+        if self._initial_capital <= 0:
+            return 0.0
+        return max(0.0, (1 - self.current_capital / self._initial_capital) * 100)
+
+    @property
+    def risk_scale_factor(self) -> float:
+        """Graduated position scale factor based on drawdown.
+
+        Returns 1.0 (full size) when healthy, scaling down as drawdown
+        increases, reaching 0.0 (halted) at the halt threshold.
+        """
+        dd = self.drawdown_pct / 100.0  # fraction
+        if dd < 0.0501:
+            return 1.0
+        elif dd < 0.0701:
+            return 0.85
+        elif dd < 0.1001:
+            return 0.70
+        elif dd < 0.1501:
+            return 0.50
+        elif dd < 0.2001:
+            return 0.25
+        else:
+            return 0.0  # halted
 
     @property
     def max_portfolio_value(self) -> float:

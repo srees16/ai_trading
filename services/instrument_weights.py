@@ -119,6 +119,92 @@ def compute_idm(
     return round(idm, 3)
 
 
+def compute_dynamic_idm(
+    ohlcv_cache: Dict[str, "pd.DataFrame"],
+    weights: Optional[Dict[str, float]] = None,
+    lookback_days: int = 60,
+) -> float:
+    """Compute IDM from actual rolling return correlations.
+
+    Tier 1 Gap 2 fix: Instead of using the static IDM_LOOKUP table,
+    compute IDM from the real correlation structure of the current
+    portfolio over the last ``lookback_days`` trading days.
+
+    Falls back to ``get_default_idm(n)`` if data is insufficient.
+
+    Parameters
+    ----------
+    ohlcv_cache : dict[str, pd.DataFrame]
+        {symbol: OHLCV DataFrame} for current portfolio holdings.
+    weights : dict[str, float] | None
+        Instrument weights. If None, uses equal weight.
+    lookback_days : int
+        Rolling window for correlation estimation.
+
+    Returns
+    -------
+    float
+        Dynamic IDM, capped at MAX_IDM.
+    """
+    import pandas as pd
+
+    symbols = list(ohlcv_cache.keys())
+    n = len(symbols)
+    if n <= 1:
+        return 1.0
+
+    # Build return matrix
+    return_series = {}
+    for sym in symbols:
+        df = ohlcv_cache[sym]
+        if df is None or df.empty:
+            continue
+        close = df["Close"].squeeze() if "Close" in df.columns else None
+        if close is None or len(close) < lookback_days:
+            continue
+        rets = close.pct_change().dropna().tail(lookback_days)
+        if len(rets) >= lookback_days * 0.8:  # Allow 20% missing
+            return_series[sym] = rets
+
+    valid_syms = list(return_series.keys())
+    if len(valid_syms) < 2:
+        return get_default_idm(n)
+
+    # Align and compute correlation
+    ret_df = pd.DataFrame(return_series)
+    ret_df = ret_df.dropna()
+    if len(ret_df) < 20:
+        return get_default_idm(n)
+
+    corr_matrix = ret_df.corr().values
+
+    # Weights
+    if weights:
+        w = np.array([weights.get(s, 1.0 / len(valid_syms)) for s in valid_syms])
+    else:
+        w = np.ones(len(valid_syms)) / len(valid_syms)
+
+    # Renormalize weights
+    w_sum = w.sum()
+    if w_sum > 0:
+        w = w / w_sum
+
+    port_var = float(w @ corr_matrix @ w)
+    if port_var <= 0:
+        return get_default_idm(n)
+
+    idm = 1.0 / math.sqrt(port_var)
+    idm = min(idm, MAX_IDM)
+
+    logger.info(
+        "Dynamic IDM: %.3f (from %d instruments, %d-day correlation, avg_rho=%.3f)",
+        idm, len(valid_syms), lookback_days,
+        float(np.mean(corr_matrix[np.triu_indices_from(corr_matrix, k=1)])),
+    )
+
+    return round(idm, 3)
+
+
 def compute_handcrafted_weights(
     symbols: List[str],
     sector_map: Optional[Dict[str, str]] = None,
