@@ -33,8 +33,10 @@ logger = logging.getLogger(__name__)
 
 FORECAST_CAP = 20.0
 
-# NSE F&O lot sizes for major stocks (subset — extend as needed)
+# NSE F&O lot sizes for major stocks (Gap D3: expanded from ~50 to ~180 symbols)
+# Source: NSE circular on market lot sizes (updated quarterly)
 FNO_LOT_SIZES: Dict[str, int] = {
+    # NIFTY 50
     "RELIANCE": 250, "TCS": 150, "INFY": 300, "HDFCBANK": 550,
     "ICICIBANK": 700, "SBIN": 750, "KOTAKBANK": 400, "AXISBANK": 600,
     "BAJFINANCE": 125, "BHARTIARTL": 950, "ITC": 1600, "LT": 150,
@@ -47,6 +49,40 @@ FNO_LOT_SIZES: Dict[str, int] = {
     "CIPLA": 325, "GRASIM": 250, "SBILIFE": 375, "EICHERMOT": 75,
     "BAJAJ-AUTO": 125, "BPCL": 1800, "TATACONSUM": 450, "HEROMOTOCO": 75,
     "ASIANPAINT": 200, "BRITANNIA": 100, "VEDL": 1550, "HINDPETRO": 1350,
+    # NIFTY NEXT 50
+    "BANKBARODA": 1800, "PNB": 4000, "CANBK": 3400, "RECLTD": 2000,
+    "PFC": 3000, "BHEL": 3800, "IOC": 3250, "GAIL": 3400,
+    "NMDC": 3400, "SAIL": 5700, "NATIONALUM": 4400, "MUTHOOTFIN": 400,
+    "BAJAJFINSV": 125, "CHOLAFIN": 500, "SHRIRAMFIN": 250, "GODREJCP": 400,
+    "DABUR": 1250, "MARICO": 1200, "COLPAL": 200, "PIDILITIND": 250,
+    "BERGEPAINT": 550, "HAVELLS": 350, "VOLTAS": 350, "CROMPTON": 1400,
+    "TRENT": 150, "PAGEIND": 15, "ABCAPITAL": 5400, "MFSL": 500,
+    "SBICARD": 700, "NAUKRI": 125, "PERSISTENT": 125, "LTIM": 150,
+    "MPHASIS": 250, "COFORGE": 100, "ZOMATO": 4000, "PAYTM": 1500,
+    # BROADER F&O
+    "DLF": 825, "IRCTC": 625, "HAL": 200, "BEL": 3200,
+    "TATAPOWER": 2700, "TATAELXSI": 100, "PIIND": 175, "AARTIIND": 750,
+    "DEEPAKNTR": 250, "ASTRAL": 275, "POLYCAB": 100, "ABFRL": 1900,
+    "OBEROIRLTY": 350, "GODREJPROP": 325, "PRESTIGE": 500, "PHOENIXLTD": 350,
+    "MINDTREE": 200, "LALPATHLAB": 250, "METROPOLIS": 400, "AUROPHARMA": 500,
+    "BIOCON": 2300, "TORNTPHARM": 250, "LUPIN": 425, "IPCALAB": 500,
+    "GRANULES": 1600, "LAURUSLABS": 1000, "ALKEM": 125, "NATCOPHARM": 500,
+    "IDEA": 28000, "TATACOMM": 250, "BANDHANBNK": 1800, "IDFCFIRSTB": 7500,
+    "FEDERALBNK": 5000, "RBLBANK": 2500, "MANAPPURAM": 3000, "L&TFH": 4350,
+    "LICHSGFIN": 1000, "IBULHSGFIN": 4200, "ICICIGI": 350, "ICICIPRULI": 1500,
+    "SRTRANSFIN": 350, "M&MFIN": 2000, "PEL": 550, "CANFINHOME": 750,
+    "ACC": 250, "AMBUJACEM": 900, "RAMCOCEM": 550, "SHREECEM": 25,
+    "DALBHARAT": 250, "INDIACEM": 2700, "JKCEMENT": 200, "STARCEMENT": 5000,
+    "MRF": 5, "BALKRISIND": 200, "CEATLTD": 400, "APOLLOTYRE": 2000,
+    "ESCORTS": 200, "ASHOKLEY": 4000, "TVSMOTOR": 300, "MOTHERSON": 5000,
+    "BOSCHLTD": 25, "EXIDEIND": 1800, "AMARAJABAT": 700, "AMARARAJA": 700,
+    "JINDALSTEL": 625, "NATIONALUM": 4400, "APLAPOLLO": 350,
+    "CHAMBLFERT": 1500, "COROMANDEL": 500, "UPL": 1300, "RAIN": 3700,
+    "INDUSTOWER": 2300, "IRFC": 5000, "NHPC": 10000, "SJVN": 5000,
+    "CONCOR": 900, "MGL": 400, "IGL": 1375, "PETRONET": 3000,
+    "JUBLFOOD": 1000, "TATACONSUM": 450, "UBL": 350, "MCDOWELL-N": 500,
+    "INDHOTEL": 1000, "LEMONTR": 5000, "DIXON": 100, "HONAUT": 15,
+    "SIEMENS": 150, "ABB": 125, "CUMMINSIND": 300,
 }
 
 
@@ -101,12 +137,22 @@ def compute_oi_forecast(
     Returns
     -------
     float
-        Carver-scale forecast (0 to 20 for long-only).
+        Carver-scale forecast (-20 to +20 if shorts enabled, else 0 to +20).
     """
     buildup_type, conviction = classify_oi_buildup(oi_change_pct, price_change_pct)
 
-    if conviction <= 0:
+    # Check if short selling is enabled
+    try:
+        from config import Config
+        allow_short = getattr(Config, "SHORT_SELLING_ENABLED", False)
+    except Exception:
+        allow_short = False
+
+    if conviction <= 0 and not allow_short:
         return 0.0  # Long-only: no signal for bearish setups
+
+    if conviction == 0:
+        return 0.0  # NEUTRAL: no signal regardless
 
     # Scale by OI magnitude
     oi_strength = min(1.0, abs(oi_change_pct) / 10.0)  # 10% OI change = max strength
@@ -115,7 +161,8 @@ def compute_oi_forecast(
     vol_boost = min(1.5, max(0.5, volume_ratio))
 
     raw = conviction * oi_strength * vol_boost * FORECAST_CAP
-    return round(max(0.0, min(FORECAST_CAP, raw)), 2)
+    floor = -FORECAST_CAP if allow_short else 0.0
+    return round(max(floor, min(FORECAST_CAP, raw)), 2)
 
 
 def compute_iv_rank(
@@ -178,7 +225,7 @@ def compute_oi_signals_batch(
         vol_ratio = data.get("volume_ratio", 1.0)
 
         forecast = compute_oi_forecast(oi_pct, price_pct, vol_ratio)
-        if forecast > 0:
+        if forecast != 0:  # G3 FIX: allow negative forecasts for SHORT signals
             forecasts[sym] = forecast
 
     if forecasts:

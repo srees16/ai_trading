@@ -1005,7 +1005,7 @@ def _render_dashboard():
         # ── Order Type | Product (side-by-side) ──
         r2a, r2b = st.columns(2)
         o_type    = r2a.selectbox("Type", ["MARKET", "LIMIT", "SL", "SL-M"], key="o_type")
-        o_product = r2b.selectbox("Product", ["CNC", "MIS", "NRML"], key="o_prod")
+        o_product = r2b.selectbox("Product", ["CNC", "NRML"], key="o_prod")
 
         # ── Quantity | Validity (side-by-side) ──
         r3a, r3b = st.columns(2)
@@ -1253,9 +1253,9 @@ def _render_dashboard():
                                        key="qk_sym", label_visibility="collapsed")
                 qk_qty = qk2.number_input("Qty", min_value=1, value=1, step=1,
                                           key="qk_qty", label_visibility="collapsed")
-                qk_prod = qk3.selectbox("Product", ["CNC", "MIS", "NRML"],
+                qk_prod = qk3.selectbox("Product", ["CNC", "NRML"],
                                         key="qk_prod", label_visibility="collapsed",
-                                        help="CNC = Delivery · MIS = Intraday · NRML = F&O")
+                                        help="CNC = Delivery · NRML = F&O")
                 qk_exch = qk4.selectbox("Exchange", ["NSE", "BSE"],
                                         key="qk_exch", label_visibility="collapsed")
                 qk_b, qk_s, _, _ = st.columns(4)
@@ -1281,9 +1281,9 @@ def _render_dashboard():
                                         key="rg_exch", label_visibility="collapsed")
                 rg_type = r1c.selectbox("Order Type", ["LIMIT", "MARKET", "SL", "SL-M"],
                                         key="rg_type", label_visibility="collapsed")
-                rg_prod = r1d.selectbox("Product", ["CNC", "MIS", "NRML"],
+                rg_prod = r1d.selectbox("Product", ["CNC", "NRML"],
                                         key="rg_prod", label_visibility="collapsed",
-                                        help="CNC = Delivery · MIS = Intraday · NRML = F&O")
+                                        help="CNC = Delivery · NRML = F&O")
 
                 r2a, r2b, r2c, r2d = st.columns(4)
                 rg_qty = r2a.number_input("Qty", min_value=1, value=1, step=1,
@@ -1318,7 +1318,7 @@ def _render_dashboard():
             # COVER ORDER — Market/Limit + mandatory SL
             # ================================================
             with mode_tab_co:
-                st.markdown('<p class="trade-panel-header">Intraday with built-in stop-loss (MIS only)</p>',
+                st.markdown('<p class="trade-panel-header">Cover order with built-in stop-loss (CNC delivery)</p>',
                             unsafe_allow_html=True)
                 c1a, c1b, c1c = st.columns(3)
                 co_sym = c1a.selectbox("Symbol", sorted_stock_list,
@@ -1348,8 +1348,8 @@ def _render_dashboard():
                         _params = dict(
                             tradingsymbol=co_sym, exchange=co_exch,
                             transaction_type=co_txn, quantity=int(co_qty),
-                            order_type=co_type, product="MIS",
-                            validity="DAY", variety="co",
+                            order_type=co_type, product="CNC",
+                            validity="DAY",
                             trigger_price=float(co_trigger),
                         )
                         if co_type == "LIMIT" and co_price > 0:
@@ -1357,11 +1357,11 @@ def _render_dashboard():
                         oid = kite.place_order(**_params)
                         st.success(f"Cover {co_txn} placed — ID: {oid}")
                         _persist_order_to_db(co_sym, co_exch, co_txn, int(co_qty),
-                                            co_type, "MIS", co_price, order_id=oid)
+                                            co_type, "CNC", co_price, order_id=oid)
                     except Exception as e:
                         st.error(f"CO failed: {e}")
                         _persist_order_to_db(co_sym, co_exch, co_txn, int(co_qty),
-                                            co_type, "MIS", co_price, success=False, error_msg=str(e))
+                                            co_type, "CNC", co_price, success=False, error_msg=str(e))
 
             # ================================================
             # AMO — After Market Order
@@ -1376,7 +1376,7 @@ def _render_dashboard():
                                          key="amo_exch", label_visibility="collapsed")
                 amo_type = a1c.selectbox("Order Type", ["LIMIT", "MARKET", "SL", "SL-M"],
                                          key="amo_type", label_visibility="collapsed")
-                amo_prod = a1d.selectbox("Product", ["CNC", "MIS", "NRML"],
+                amo_prod = a1d.selectbox("Product", ["CNC", "NRML"],
                                          key="amo_prod", label_visibility="collapsed")
 
                 a2a, a2b, a2c = st.columns(3)
@@ -2017,7 +2017,7 @@ def _render_option_chain_tab(kite):
         qt_opt    = qt_c2.selectbox("Type", ["CE", "PE"], key="oqt_type")
         qt_side   = qt_c3.selectbox("Side", ["BUY", "SELL"], key="oqt_side")
         qt_qty    = qt_c4.number_input("Lot", min_value=1, value=1, step=1, key="oqt_lot")
-        qt_prod   = qt_c5.selectbox("Prod", ["MIS", "NRML"], key="oqt_prod")
+        qt_prod   = qt_c5.selectbox("Prod", ["NRML"], key="oqt_prod")
 
         # Build the NFO trading symbol
         nfo_symbol = f"{INDEX_META[oc_index]['prefix']}{oc_expiry}{qt_strike}{qt_opt}"

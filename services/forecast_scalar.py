@@ -79,6 +79,38 @@ SCALAR_CARRY = 40.0
 
 
 # ═══════════════════════════════════════════════════════════════
+# Calibration cache — loaded once, refreshed on staleness
+# ═══════════════════════════════════════════════════════════════
+
+_calibrated_cache: dict | None = None
+
+
+def _get_calibrated_ewmac_scalar(fast: int, slow: int) -> float:
+    """Return calibrated scalar if available, else static default."""
+    global _calibrated_cache
+    if _calibrated_cache is None:
+        _calibrated_cache = load_calibrated_scalars()  # {} if stale / missing
+    key = f"ewmac_{fast}_{slow}"
+    if key in _calibrated_cache:
+        return _calibrated_cache[key]
+    return EWMAC_SCALARS.get((fast, slow), 3.75)
+
+
+def _get_calibrated_carry_scalar() -> float:
+    """Return calibrated carry scalar if available, else static SCALAR_CARRY."""
+    global _calibrated_cache
+    if _calibrated_cache is None:
+        _calibrated_cache = load_calibrated_scalars()
+    return _calibrated_cache.get("carry", SCALAR_CARRY)
+
+
+def invalidate_scalar_cache() -> None:
+    """Force reload of calibrated scalars on next call."""
+    global _calibrated_cache
+    _calibrated_cache = None
+
+
+# ═══════════════════════════════════════════════════════════════
 # Conversion functions
 # ═══════════════════════════════════════════════════════════════
 
@@ -133,7 +165,8 @@ def ewmac_to_forecast(
     if daily_price_vol <= 0:
         return 0.0
     vol_adjusted = raw_crossover / daily_price_vol
-    scalar = EWMAC_SCALARS.get((fast, slow), 3.75)  # default to 16/64
+    # Try calibrated scalars first, fall back to static defaults
+    scalar = _get_calibrated_ewmac_scalar(fast, slow)
     raw = vol_adjusted * scalar
     return cap_forecast(raw)
 
@@ -160,7 +193,9 @@ def carry_to_forecast(
     if annual_price_vol <= 0:
         return 0.0
     vol_adjusted = annualised_carry / annual_price_vol
-    raw = vol_adjusted * SCALAR_CARRY
+    # Gap B3: Use walk-forward calibrated scalar when available
+    scalar = _get_calibrated_carry_scalar()
+    raw = vol_adjusted * scalar
     return cap_forecast(raw)
 
 
@@ -259,6 +294,24 @@ def calibrate_all_scalars(
             result["decision_engine"] = cal
             logger.info("Calibrated decision_engine: %.3f (was %.3f)", cal, SCALAR_DECISION_ENGINE)
 
+    # 4. Gap B3: Carry scalar — calibrate from NSE equity carry (dividend yield / vol)
+    try:
+        from strategies.carry_rule import compute_carry_batch
+        carry_batch = compute_carry_batch(ohlcv_cache)
+        if carry_batch:
+            # Collect raw carry / vol values (before scalar multiplication)
+            raw_carry_values = []
+            for sym, cf in carry_batch.items():
+                # cf.forecast is already scalar-multiplied; reverse to get raw
+                if SCALAR_CARRY > 0:
+                    raw_carry_values.append(cf.forecast / SCALAR_CARRY)
+            if raw_carry_values:
+                cal = calibrate_scalar_from_data(raw_carry_values)
+                result["carry"] = cal
+                logger.info("Calibrated carry: %.3f (was %.3f)", cal, SCALAR_CARRY)
+    except Exception as exc:
+        logger.debug("Carry calibration skipped: %s", exc)
+
     # Persist
     try:
         path = Path(_CALIBRATED_SCALARS_PATH)
@@ -292,7 +345,8 @@ def load_calibrated_scalars() -> dict:
     try:
         data = json.loads(path.read_text())
         cal_time = datetime.fromisoformat(data.get("calibrated_at", "2000-01-01"))
-        age_days = (datetime.now() - cal_time).days
+        age_seconds = (datetime.now() - cal_time).total_seconds()
+        age_days = age_seconds / 86400.0
         if age_days > 14:
             logger.info("Calibrated scalars are %d days old — stale, using defaults", age_days)
             return {}

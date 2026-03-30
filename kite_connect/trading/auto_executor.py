@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import time
+import concurrent.futures
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -37,6 +38,7 @@ _BUY_TAGS = {"BUY", "STRONG_BUY"}
 
 # Rate-limiting: pause between Kite API calls (seconds)
 _ORDER_DELAY_S = 0.15
+_ORDER_TIMEOUT_S = 30  # Max seconds to wait for a single order placement
 
 
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -56,6 +58,10 @@ class OrderResult:
     tp_order_id: Optional[str] = None
     success: bool = False
     error: Optional[str] = None
+    # Gap E5: Execution quality tracking
+    theoretical_price: float = 0.0   # price at signal generation
+    actual_fill_price: float = 0.0   # actual fill from order book
+    slippage_bps: float = 0.0        # abs(fill - theoretical) / theoretical × 10000
 
     def to_dict(self) -> dict:
         return {
@@ -70,6 +76,9 @@ class OrderResult:
             "tp_order_id": self.tp_order_id or "",
             "success": self.success,
             "error": self.error or "",
+            "theoretical_price": round(self.theoretical_price, 2),
+            "actual_fill_price": round(self.actual_fill_price, 2),
+            "slippage_bps": round(self.slippage_bps, 1),
         }
 
 
@@ -252,11 +261,45 @@ class AutoExecutor:
                 _cb("No stocks have BUY/STRONG_BUY signal â€” skipping execution")
                 return report
 
+        _pre_ltp_closes = {}
+        if not screened_df.empty:
+            _pre_ltp_closes = dict(zip(screened_df["symbol"], screened_df["close"]))
         # â”€â”€ 3.  Enrich with live prices if Kite available â”€â”€â”€â”€â”€â”€
         if self.kite is not None and not screened_df.empty:
             screened_df = self._enrich_with_ltp(screened_df, _cb)
             report.screened_df = screened_df
 
+
+        # G15: Stale verdict re-evaluation after LTP enrichment
+        # If pre-scored verdicts were passed in and LTP drifted >5%, re-evaluate
+        if signal_verdicts and _pre_ltp_closes and not screened_df.empty:
+            drifted = []
+            for _, row in screened_df.iterrows():
+                sym = row["symbol"]
+                old_close = _pre_ltp_closes.get(sym)
+                new_close = row.get("close")
+                if old_close and new_close and old_close > 0:
+                    drift_pct = abs(new_close - old_close) / old_close
+                    if drift_pct > 0.05:
+                        drifted.append(sym)
+            if drifted:
+                _cb(f"G15: {len(drifted)} stocks drifted >5% -- re-evaluating verdicts")
+                logger.info("Stale verdict re-eval for: %s", drifted)
+                fresh = self._auto_evaluate_verdicts(
+                    screened_df[screened_df["symbol"].isin(drifted)], _cb
+                )
+                revoked = []
+                for sym in drifted:
+                    new_verdict = fresh.get(sym, "HOLD").upper()
+                    old_verdict = signal_verdicts.get(sym, "").upper()
+                    if old_verdict in ("BUY", "STRONG_BUY") and new_verdict not in ("BUY", "STRONG_BUY"):
+                        revoked.append(sym)
+                        signal_verdicts[sym] = new_verdict
+                if revoked:
+                    screened_df = screened_df[~screened_df["symbol"].isin(revoked)]
+                    report.screened_df = screened_df
+                    _cb(f"G15: Revoked {len(revoked)} stale BUY verdicts: {revoked}")
+                    logger.warning("Revoked stale verdicts: %s", revoked)
         # â”€â”€ 3b. Order book depth: filter illiquid stocks â”€â”€â”€â”€â”€â”€â”€
         if self.kite is not None and not screened_df.empty:
             screened_df = self._filter_by_spread(screened_df, _cb)
@@ -290,6 +333,24 @@ class AutoExecutor:
                         total_capital=total_cap,
                         peak_equity=peak_eq,
                     )
+                    # G13: Emergency liquidation on extreme drawdown (>20%)
+                    if getattr(snap, 'emergency_liquidate', False) and held:
+                        _cb(f'EMERGENCY LIQUIDATION: drawdown {snap.drawdown_pct:.1f}% - selling all positions')
+                        logger.critical('Emergency liquidation triggered (DD=%.1f%%) - closing all positions', snap.drawdown_pct)
+                        from kite_connect.trading.order_service import place_order
+                        for h in held:
+                            sym = h.get('tradingsymbol', '')
+                            qty = int(h.get('quantity', 0))
+                            if qty > 0 and sym:
+                                try:
+                                    place_order(self.kite, symbol=sym, exchange='NSE',
+                                                transaction_type='SELL', quantity=qty,
+                                                order_type='MARKET', product='CNC',
+                                                tag='EMERGENCY_LIQUIDATE')
+                                    logger.warning('Emergency SELL placed: %s x %d', sym, qty)
+                                except Exception as liq_exc:
+                                    logger.error('Emergency SELL failed for %s: %s', sym, liq_exc)
+                        return report
                     if snap.risk_level.value == 'HALTED':
                         _cb(f'PORTFOLIO HALT: drawdown {snap.drawdown_pct:.1f}% exceeds limit - no new trades')
                         logger.warning('Portfolio DD halt triggered (%.1f%%) - blocking all new orders', snap.drawdown_pct)
@@ -359,11 +420,9 @@ class AutoExecutor:
         """Generate trade plans using Carver pipeline when enabled, else legacy.
 
         When CARVER_ENABLED=True:
-          1. Compute OHLCV volatilities for screened stocks
-          2. Run EWMAC forecasts + screener forecast
-          3. Combine forecasts with FDM
-          4. Apply cost speed limit filter
-          5. Compute Carver position sizes and generate plans via plan_trades_carver()
+          Delegates to the full CarverPipeline.run() which includes all 8+
+          forecast sources, HMM regime blending, strategy decay, Markov
+          signal filter, forecast capacity checks, and options overlay.
 
         Falls back to legacy plan_trades() if anything fails.
         """
@@ -371,20 +430,14 @@ class AutoExecutor:
             return self.risk_mgr.plan_trades(screened_df)
 
         try:
-            _cb("Carver pipeline: computing volatilities & forecasts …")
-            from services.instrument_volatility import compute_volatilities_batch
-            from strategies.ewmac import compute_ewmac_batch
-            from strategies.carry_rule import compute_carry_batch
-            from services.forecast_scalar import screener_to_forecast
-            from services.forecast_combiner import combine_forecasts_batch
-            from services.cost_speed_limit import filter_by_cost
-            from services.instrument_weights import compute_handcrafted_weights, get_default_idm
+            _cb("Full Carver pipeline: running all forecast sources + HMM regime …")
+            from services.carver_pipeline import CarverPipeline
             from config import Config
             from utils import download_ind_ohlcv
 
             symbols = screened_df["symbol"].tolist()
 
-            # Step 1: Fetch OHLCV for vol + EWMAC computation
+            # Step 1: Fetch OHLCV for pipeline
             ohlcv_cache = {}
             for sym in symbols:
                 try:
@@ -398,89 +451,62 @@ class AutoExecutor:
                 logger.warning("Carver: no OHLCV data — falling back to legacy")
                 return self.risk_mgr.plan_trades(screened_df)
 
-            # Step 2: Volatilities
-            vol_data = compute_volatilities_batch(ohlcv_cache)
-            instrument_vols = {s: v["instrument_value_vol"] for s, v in vol_data.items()}
-
-            # Step 3: EWMAC forecasts
-            ewmac_batch = compute_ewmac_batch(ohlcv_cache)
-
-            # Step 3b: Carry forecasts (dividend yield - funding cost)
-            try:
-                carry_batch = compute_carry_batch(ohlcv_cache)
-                _cb(f"Carver: carry forecasts for {len(carry_batch)}/{len(ohlcv_cache)} symbols")
-            except Exception as exc:
-                carry_batch = {}
-                logger.debug("Carry forecast computation failed (non-fatal): %s", exc)
-
-            # Step 4: Build per-symbol forecast dicts
-            all_forecasts = {}
+            # Build screener scores for screener_to_forecast
             score_col = "score"
+            screener_scores = {}
             for sym in ohlcv_cache:
-                fc = {}
-                if sym in ewmac_batch:
-                    for ef in ewmac_batch[sym]:
-                        fc[f"ewmac_{ef.fast}_{ef.slow}"] = ef.forecast
-                # Add carry forecast
-                if sym in carry_batch:
-                    fc["carry"] = carry_batch[sym].forecast
-                # Add screener score as a forecast
                 row_match = screened_df[screened_df["symbol"] == sym]
                 if not row_match.empty and score_col in row_match.columns:
-                    sc = float(row_match.iloc[0][score_col])
-                    fc["screener"] = screener_to_forecast(sc)
-                if fc:
-                    all_forecasts[sym] = fc
+                    screener_scores[sym] = float(row_match.iloc[0][score_col])
 
-            if not all_forecasts:
-                logger.warning("Carver: no forecasts generated — falling back to legacy")
-                return self.risk_mgr.plan_trades(screened_df)
-
-            # Step 5: Combine forecasts
-            combined = combine_forecasts_batch(all_forecasts)
-            combined_values = {s: cf.combined_forecast for s, cf in combined.items()}
-
-            # Step 6: Cost speed limit
-            vol_target_pct = getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.20)
-            combined_values = filter_by_cost(combined_values, vol_target_pct)
-
-            if not combined_values:
-                logger.info("Carver: all symbols filtered by cost — falling back to legacy")
-                return self.risk_mgr.plan_trades(screened_df)
-
-            # Step 6b: P1 fix — Earnings blackout filter
-            # Suppress forecasts for stocks within ±2 days of earnings date
+            # Build decision engine scores if available
+            decision_scores = {}
             try:
-                blackout_syms = self._get_earnings_blackout_symbols(list(combined_values.keys()))
-                if blackout_syms:
-                    for sym in blackout_syms:
-                        combined_values.pop(sym, None)
-                    _cb(f"Earnings blackout: {len(blackout_syms)} symbols suppressed — {', '.join(blackout_syms)}")
+                from services.integrated_scorer import IntegratedScorer
+                scorer = IntegratedScorer()
+                for sym in list(ohlcv_cache.keys())[:20]:
+                    try:
+                        result = scorer.evaluate(sym, market="IND")
+                        if hasattr(result, "final_score"):
+                            decision_scores[sym] = result.final_score
+                    except Exception:
+                        pass
             except Exception:
-                pass  # Earnings data unavailable — proceed without filter
+                pass
 
-            if not combined_values:
-                logger.info("Carver: all symbols in earnings blackout — falling back to legacy")
-                return self.risk_mgr.plan_trades(screened_df)
-
-            # Step 7: Instrument weights + IDM
-            active = [s for s in combined_values if combined_values[s] > 0]
-            sector_map = getattr(Config, "NSE_SECTOR_MAP", {})
-            weights = compute_handcrafted_weights(active, sector_map)
-            idm = get_default_idm(len(active))
-
-            _cb(f"Carver pipeline: {len(combined_values)} forecasts, IDM={idm:.2f}")
-
-            # Step 8: Generate Carver trade plans
-            plans = self.risk_mgr.plan_trades_carver(
-                screened_df=screened_df,
-                combined_forecasts=combined_values,
-                instrument_vols=instrument_vols,
-                instrument_weights=weights,
-                idm=idm,
+            # Run the FULL Carver pipeline with all sources
+            pipeline = CarverPipeline()
+            pipe_result = pipeline.run(
+                ohlcv_cache=ohlcv_cache,
+                screener_scores=screener_scores,
+                decision_engine_scores=decision_scores if decision_scores else None,
             )
 
-            _cb(f"Carver pipeline: {len(plans)} trade plans generated")
+            if not pipe_result.trade_plans:
+                logger.info("Carver full pipeline: 0 trade plans — falling back to legacy")
+                return self.risk_mgr.plan_trades(screened_df)
+
+            # Convert PipelineResult.trade_plans to TradePlan objects
+            plans = []
+            for tp in pipe_result.trade_plans:
+                try:
+                    plan = TradePlan(
+                        symbol=tp.symbol,
+                        side=tp.side,
+                        entry_price=tp.entry_price,
+                        stop_loss=tp.stop_loss,
+                        target_price=tp.target_price,
+                        quantity=tp.quantity,
+                        risk_amount=round((tp.entry_price - tp.stop_loss) * tp.quantity, 2),
+                        reward_amount=round((tp.target_price - tp.entry_price) * tp.quantity, 2),
+                        rr_ratio=round((tp.target_price - tp.entry_price) / max(tp.entry_price - tp.stop_loss, 0.01), 2),
+                        score=screener_scores.get(tp.symbol, 0.5),
+                    )
+                    plans.append(plan)
+                except Exception as exc:
+                    logger.debug("TradePlan conversion failed for %s: %s", tp.symbol, exc)
+
+            _cb(f"Full Carver pipeline: {len(plans)} trade plans from {pipe_result.symbols_processed} symbols")
             return plans
 
         except Exception as exc:
@@ -1009,7 +1035,7 @@ class AutoExecutor:
             for o in order_book:
                 if (
                     o.get("status") in ("OPEN", "TRIGGER PENDING", "COMPLETE")
-                    and o.get("transaction_type") == "BUY"
+                    and o.get("transaction_type") in ("BUY", "SELL")
                 ):
                     existing_symbols.add(o.get("tradingsymbol", ""))
         except Exception:
@@ -1066,40 +1092,71 @@ class AutoExecutor:
 
             _cb(f"  Placing {plan.side} {plan.symbol} Ã— {plan.quantity} â€¦")
 
-            # SELL exits use MARKET; BUY entries use LIMIT
-            order_type = "MARKET" if plan.side == "SELL" else "LIMIT"
-            order_kwargs = dict(
-                kite=self.kite,
-                symbol=plan.symbol,
-                exchange="NSE",
-                transaction_type=plan.side,
-                quantity=plan.quantity,
-                order_type=order_type,
-                product="CNC",
-            )
-            if order_type == "LIMIT":
-                order_kwargs["price"] = plan.entry_price
+            # G14: LTP re-check immediately before order placement
+            # Refreshes entry_price to avoid stale limit prices
+            try:
+                ltp_key = f"NSE:{plan.symbol}"
+                ltp_data = self.kite.ltp([ltp_key])
+                fresh_ltp = ltp_data.get(ltp_key, {}).get("last_price", 0)
+                if fresh_ltp > 0:
+                    drift_pct = abs(fresh_ltp - plan.entry_price) / plan.entry_price
+                    if drift_pct > 0.02:
+                        logger.info(
+                            "G14: %s price drifted %.1f%% (plan=%.2f ltp=%.2f), updating",
+                            plan.symbol, drift_pct * 100, plan.entry_price, fresh_ltp,
+                        )
+                        plan.entry_price = round(fresh_ltp, 2)
+            except Exception:
+                pass  # proceed with original price if LTP fetch fails
 
-            resp = place_order(**order_kwargs)
-            time.sleep(_ORDER_DELAY_S)
+            # G4 fix: All orders use CNC + TradeMonitor for SL/TP lifecycle.
+            # Phase 2: SHORT trades use SELL-first with MIS/NRML product.
+            is_short = getattr(plan, "direction", "LONG") == "SHORT"
+            if True:
+                if is_short:
+                    order_type = "LIMIT"
+                    product = getattr(plan, "product", "MIS")
+                else:
+                    order_type = "MARKET" if plan.side == "SELL" else "LIMIT"
+                    product = "CNC"
+                order_kwargs = dict(
+                    kite=self.kite,
+                    symbol=plan.symbol,
+                    exchange="NSE",
+                    transaction_type=plan.side,
+                    quantity=plan.quantity,
+                    order_type=order_type,
+                    product=product,
+                )
+                if order_type == "LIMIT":
+                    order_kwargs["price"] = plan.entry_price
 
-            result = OrderResult(
-                symbol=plan.symbol,
-                side=plan.side,
-                quantity=plan.quantity,
-                entry_price=plan.entry_price,
-                stop_loss=plan.stop_loss,
-                target_price=plan.target_price,
-                order_id=resp.get("order_id"),
-                success=resp.get("success", False),
-                error=resp.get("error"),
-            )
+                try:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        future = pool.submit(place_order, **order_kwargs)
+                        resp = future.result(timeout=_ORDER_TIMEOUT_S)
+                except concurrent.futures.TimeoutError:
+                    resp = {"success": False, "error": f"Order timed out after {_ORDER_TIMEOUT_S}s"}
+                    logger.error("Order timeout for %s", plan.symbol)
+                time.sleep(_ORDER_DELAY_S)
+
+                result = OrderResult(
+                    symbol=plan.symbol,
+                    side=plan.side,
+                    quantity=plan.quantity,
+                    entry_price=plan.entry_price,
+                    stop_loss=plan.stop_loss,
+                    target_price=plan.target_price,
+                    order_id=resp.get("order_id"),
+                    success=resp.get("success", False),
+                    error=resp.get("error"),
+                )
 
             # Register BUY orders with TradeMonitor â€” SL/TP will be placed
             # AFTER the entry order fills (polled by TradeMonitor).
             # SELL exits don't need SL/TP monitoring.
             if result.success and result.order_id:
-                if plan.side == "BUY":
+                if plan.side in ("BUY", "SELL"):
                     monitor.register_trade(MonitoredTrade(
                         symbol=plan.symbol,
                         side=plan.side,
@@ -1108,6 +1165,7 @@ class AutoExecutor:
                         stop_loss=plan.stop_loss,
                         target_price=plan.target_price,
                         entry_order_id=result.order_id,
+                        direction=getattr(plan, "direction", "LONG"),
                     ))
                 existing_symbols.add(plan.symbol)
 

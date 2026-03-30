@@ -58,10 +58,16 @@ class PortfolioRiskSnapshot:
     # Status
     risk_level: RiskLevel = RiskLevel.NORMAL
     scale_factor: float = 1.0              # position scale-down factor
+    emergency_liquidate: bool = False       # G13: trigger full portfolio liquidation
     alerts: List[str] = field(default_factory=list)
 
 
 ANNUALISATION_FACTOR = 16.0  # sqrt(252) ≈ 16
+
+# Module-level EWMA correlation cache for decay smoothing
+_prev_corr_matrix: Optional[np.ndarray] = None
+_prev_corr_symbols: Optional[list] = None
+_CORR_EWMA_ALPHA = 0.06  # ~16-day half-life: alpha ≈ 1 - exp(-ln2/16)
 
 
 def compute_portfolio_volatility(
@@ -115,6 +121,16 @@ def compute_portfolio_volatility(
                 else:
                     C[i, j] = avg_correlation
 
+    # EWMA smoothing: blend current C with previous C for decay
+    global _prev_corr_matrix, _prev_corr_symbols
+    if (_prev_corr_matrix is not None
+            and _prev_corr_symbols is not None
+            and _prev_corr_symbols == symbols
+            and _prev_corr_matrix.shape == C.shape):
+        C = _CORR_EWMA_ALPHA * C + (1 - _CORR_EWMA_ALPHA) * _prev_corr_matrix
+    _prev_corr_matrix = C.copy()
+    _prev_corr_symbols = list(symbols)
+
     port_var = float(pos_vols @ C @ pos_vols)
     return math.sqrt(max(0, port_var))
 
@@ -159,9 +175,21 @@ def assess_portfolio_risk(
     if total_value <= 0 or total_capital <= 0:
         return snap
 
+    # Per-instrument vol cap: no single instrument's vol contribution > 40% of target
+    max_instrument_vol_frac = 0.40 * target_annual_vol_pct
+    capped_vols = {}
+    for sym, vol in instrument_daily_vols.items():
+        annual_vol = vol * ANNUALISATION_FACTOR
+        if annual_vol > max_instrument_vol_frac and sym in position_values:
+            cap_ratio = max_instrument_vol_frac / annual_vol
+            capped_vols[sym] = vol * cap_ratio
+            alerts_pre = getattr(snap, '_pre_alerts', [])
+        else:
+            capped_vols[sym] = vol
+
     # Portfolio daily vol
     daily_vol = compute_portfolio_volatility(
-        position_values, instrument_daily_vols, correlation_matrix
+        position_values, capped_vols, correlation_matrix
     )
     snap.portfolio_daily_vol = round(daily_vol, 2)
     snap.portfolio_annual_vol_pct = round(
@@ -188,16 +216,20 @@ def assess_portfolio_risk(
 
     # Risk level classification
     alerts = []
-    scale = 1.0
+
+    # BUG-2 FIX: Compute vol_scale and dd_scale independently, then take min().
+    # Previously the elif chain could OVERWRITE a lower vol_scale with a higher dd_scale.
+    vol_scale = 1.0
+    dd_scale = 1.0
 
     if snap.vol_ratio > 1.5:
         snap.risk_level = RiskLevel.CRITICAL
-        scale = target_annual_vol_pct / snap.portfolio_annual_vol_pct if snap.portfolio_annual_vol_pct > 0 else 0.5
-        scale = max(0.3, min(scale, 1.0))
-        alerts.append(f"CRITICAL: Portfolio vol {snap.portfolio_annual_vol_pct:.1%} is {snap.vol_ratio:.1f}× target — scaling positions to {scale:.0%}")
+        vol_scale = target_annual_vol_pct / snap.portfolio_annual_vol_pct if snap.portfolio_annual_vol_pct > 0 else 0.5
+        vol_scale = max(0.3, min(vol_scale, 1.0))
+        alerts.append(f"CRITICAL: Portfolio vol {snap.portfolio_annual_vol_pct:.1%} is {snap.vol_ratio:.1f}× target — scaling positions to {vol_scale:.0%}")
     elif snap.vol_ratio > 1.2:
         snap.risk_level = RiskLevel.WARNING
-        scale = 0.8
+        vol_scale = 0.8
         alerts.append(f"WARNING: Portfolio vol {snap.portfolio_annual_vol_pct:.1%} is {snap.vol_ratio:.1f}× target")
     else:
         snap.risk_level = RiskLevel.NORMAL
@@ -205,22 +237,27 @@ def assess_portfolio_risk(
     if snap.hhi > 0.25:
         alerts.append(f"Concentration risk: HHI={snap.hhi:.2f} (>0.25), largest={snap.largest_position_pct:.0f}%")
 
-    if snap.drawdown_pct > 15.0:
+    if snap.drawdown_pct > 20.0:
         snap.risk_level = RiskLevel.HALTED
-        scale = 0.0
+        dd_scale = 0.0
+        snap.emergency_liquidate = True
+        alerts.append(f"EMERGENCY: Drawdown {snap.drawdown_pct:.1f}% > 20% — LIQUIDATING ALL POSITIONS")
+    elif snap.drawdown_pct > 15.0:
+        snap.risk_level = RiskLevel.HALTED
+        dd_scale = 0.0
         alerts.append(f"HALTED: Drawdown {snap.drawdown_pct:.1f}% exceeds 15% limit")
     elif snap.drawdown_pct > 10.0:
-        scale = min(scale, 0.5)
+        dd_scale = 0.5
         alerts.append(f"Drawdown {snap.drawdown_pct:.1f}% — reducing position sizes to 50%")
     elif snap.drawdown_pct > 7.0:
-        # Gradual recovery ramp: 7-10% DD = 70% scale (prevents binary 0→1 whipsaw)
-        scale = min(scale, 0.7)
+        dd_scale = 0.7
         alerts.append(f"Drawdown {snap.drawdown_pct:.1f}% — recovery ramp at 70% size")
     elif snap.drawdown_pct > 5.0:
-        scale = min(scale, 0.85)
+        dd_scale = 0.85
         alerts.append(f"Drawdown {snap.drawdown_pct:.1f}% — recovery ramp at 85% size")
 
-    snap.scale_factor = round(scale, 2)
+    # Always take the MORE conservative (lower) of vol_scale and dd_scale
+    snap.scale_factor = round(min(vol_scale, dd_scale), 2)
     snap.alerts = alerts
 
     for alert in alerts:

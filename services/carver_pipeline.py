@@ -27,6 +27,52 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+# ═══════════════════════════════════════════════════════════════
+# Gap D2: OHLC Validation — ensure data integrity before signals
+# ═══════════════════════════════════════════════════════════════
+
+def validate_ohlcv(
+    ohlcv_cache: Dict[str, pd.DataFrame],
+) -> Dict[str, pd.DataFrame]:
+    """Validate and repair OHLCV data. Returns cleaned cache with bad symbols removed.
+
+    Checks per bar:
+      - High >= max(Open, Close)
+      - Low  <= min(Open, Close)
+      - Volume >= 0
+      - No NaN in OHLC
+    Rows failing checks are dropped. Symbols with < 30 remaining bars are removed.
+    """
+    cleaned: Dict[str, pd.DataFrame] = {}
+    dropped_count = 0
+    for sym, df in ohlcv_cache.items():
+        if df is None or df.empty:
+            continue
+        required = {"Open", "High", "Low", "Close"}
+        if not required.issubset(df.columns):
+            continue
+
+        # Drop rows with NaN in OHLC
+        mask = df[["Open", "High", "Low", "Close"]].notna().all(axis=1)
+        # High >= max(Open, Close)
+        mask &= df["High"] >= df[["Open", "Close"]].max(axis=1)
+        # Low <= min(Open, Close)
+        mask &= df["Low"] <= df[["Open", "Close"]].min(axis=1)
+        # Non-negative volume (if present)
+        if "Volume" in df.columns:
+            mask &= df["Volume"].fillna(0) >= 0
+
+        valid_df = df.loc[mask].copy()
+        if len(valid_df) >= 30:
+            cleaned[sym] = valid_df
+        else:
+            dropped_count += 1
+
+    if dropped_count:
+        logger.warning("OHLC validation dropped %d symbols (< 30 valid bars)", dropped_count)
+    return cleaned
+
+
 @dataclass
 class PipelineConfig:
     """Configuration for the full Carver pipeline."""
@@ -45,6 +91,7 @@ class PipelineResult:
     combined_forecasts: Dict[str, float] = field(default_factory=dict)
     position_sizes: Dict = field(default_factory=dict)
     risk_snapshot: Optional[object] = None
+    options_overlay: Optional[object] = None   # Gap A1: OverlayResult
     symbols_processed: int = 0
     symbols_with_trades: int = 0
     cost_filtered_count: int = 0
@@ -100,27 +147,48 @@ class CarverPipeline:
         log = result.pipeline_log
 
         # ── Step 1: Compute instrument volatilities ────────────
-        log.append("Step 1: Computing instrument volatilities...")
+        log.append("Step 1: Validating OHLCV data and computing volatilities...")
         from services.instrument_volatility import compute_volatilities_batch
 
+        # Gap D2: OHLC validation — repair data integrity before any signals
+        before_validate = len(ohlcv_cache)
+        ohlcv_cache = validate_ohlcv(ohlcv_cache)
+        validated_dropped = before_validate - len(ohlcv_cache)
+        if validated_dropped:
+            log.append(f"  ⚠ OHLC validation dropped {validated_dropped} symbols")
+
         # Tier 1 Gap 5: Data freshness gate — skip symbols with stale OHLCV
-        from datetime import datetime, timedelta
+        # Gap A5 FIX: Use UTC throughout, convert only for display
+        from datetime import datetime, timedelta, timezone
         from config import Config
         freshness_hours = getattr(Config, "SIGNAL_FRESHNESS_MAX_HOURS", 4)
-        stale_cutoff = datetime.now() - timedelta(hours=freshness_hours)
+        stale_cutoff = datetime.now(timezone.utc) - timedelta(hours=freshness_hours)
+        stale_cutoff_naive = stale_cutoff.replace(tzinfo=None)
         stale_symbols = []
         for sym, df in list(ohlcv_cache.items()):
             if df is not None and not df.empty and df.index.dtype.kind == "M":
                 last_bar = df.index[-1]
-                # Convert to tz-naive if needed
+                # Normalize to UTC-naive for consistent comparison
                 if hasattr(last_bar, "tz") and last_bar.tz is not None:
-                    last_bar = last_bar.tz_localize(None)
-                if last_bar < stale_cutoff:
+                    last_bar = last_bar.tz_convert("UTC").tz_localize(None)
+                if last_bar < stale_cutoff_naive:
                     stale_symbols.append(sym)
                     del ohlcv_cache[sym]
         if stale_symbols:
             log.append(f"  ⚠ Freshness gate: dropped {len(stale_symbols)} stale symbols: {stale_symbols[:5]}...")
             logger.warning("Freshness gate dropped %d stale symbols (cutoff=%s)", len(stale_symbols), stale_cutoff)
+
+        # Gap D1: Apply corporate action adjustments to OHLCV before signals
+        try:
+            from services.corporate_actions import get_actions_for_symbols, adjust_ohlcv_for_action
+            corp_actions = get_actions_for_symbols(list(ohlcv_cache.keys()))
+            if corp_actions:
+                for sym, action in corp_actions.items():
+                    if sym in ohlcv_cache:
+                        ohlcv_cache[sym] = adjust_ohlcv_for_action(ohlcv_cache[sym], action)
+                log.append(f"  → Gap D1: Applied corporate actions for {len(corp_actions)} symbols: {list(corp_actions.keys())}")
+        except Exception as exc:
+            log.append(f"  → Corporate actions skipped: {exc}")
 
         vol_data = compute_volatilities_batch(ohlcv_cache)
         instrument_vols = {}
@@ -161,6 +229,7 @@ class CarverPipeline:
         try:
             from services.pead_strategy import PEADStrategy
             pead = PEADStrategy()
+            pead.advance_day()  # G7 FIX: increment decay counter each pipeline run
             pead_forecasts = pead.get_current_forecasts()
             if pead_forecasts:
                 log.append(f"  → PEAD forecasts for {len(pead_forecasts)} symbols")
@@ -188,14 +257,68 @@ class CarverPipeline:
                 log.append(f"  → FII flow forecast applied to {len(fii_forecasts)} symbols")
         except Exception as exc:
             log.append(f"  → FII flow skipped: {exc}")
+        # G2 FIX: Carry rule forecasts (dividend yield − repo rate)
+        carry_forecasts: Dict[str, float] = {}
+        try:
+            from strategies.carry_rule import compute_carry_batch
+            carry_forecasts = compute_carry_batch(ohlcv_cache)
+            if carry_forecasts:
+                log.append(f"  → Carry forecasts for {len(carry_forecasts)} symbols")
+        except Exception as exc:
+            log.append(f"  → Carry rule skipped: {exc}")
 
         # Gap A6: F&O Open Interest signals
         oi_forecasts: Dict[str, float] = {}
         try:
             from services.oi_signal import compute_oi_signals_batch
-            # OI data would come from Kite or cached; skip if unavailable
+
+            # Build OI data from OHLCV price changes (actual OI requires Kite F&O data)
+            oi_data = {}
+            for sym, df in ohlcv_cache.items():
+                if df is not None and len(df) >= 2:
+                    try:
+                        price_change_pct = float(
+                            (df["Close"].iloc[-1] / df["Close"].iloc[-2] - 1) * 100
+                        )
+                        # Use volume change as OI proxy when actual OI unavailable
+                        if "Volume" in df.columns and len(df) >= 5:
+                            avg_vol = float(df["Volume"].iloc[-5:].mean())
+                            last_vol = float(df["Volume"].iloc[-1])
+                            oi_change_pct = ((last_vol / avg_vol) - 1) * 100 if avg_vol > 0 else 0.0
+                        else:
+                            oi_change_pct = 0.0
+                        oi_data[sym] = {
+                            "oi_change_pct": oi_change_pct,
+                            "price_change_pct": price_change_pct,
+                        }
+                    except Exception:
+                        pass
+            if oi_data:
+                oi_forecasts = compute_oi_signals_batch(oi_data)
+                if oi_forecasts:
+                    log.append(f"  → OI signal forecasts for {len(oi_forecasts)} symbols")
         except Exception as exc:
             log.append(f"  → OI signal skipped: {exc}")
+
+        # G9: Event-driven forecasts (earnings, RBI, expiry, rebalance)
+        event_forecasts: Dict[str, float] = {}
+        try:
+            from config import Config as _Cfg
+            if getattr(_Cfg, "EVENT_DRIVEN_ENABLED", False):
+                from services.event_strategy import generate_event_forecasts
+                evt_signals = generate_event_forecasts()
+                for ef in evt_signals:
+                    if ef.symbol and ef.symbol != "MARKET":
+                        event_forecasts[ef.symbol] = ef.forecast
+                    elif ef.symbol == "MARKET":
+                        # Market-wide event → apply to all symbols
+                        for sym in ohlcv_cache:
+                            if sym not in event_forecasts:
+                                event_forecasts[sym] = ef.forecast
+                if event_forecasts:
+                    log.append(f"  → Event-driven forecasts for {len(event_forecasts)} symbols")
+        except Exception as exc:
+            log.append(f"  → Event-driven skipped: {exc}")
 
         all_forecasts: Dict[str, Dict[str, float]] = {}
         for sym in ohlcv_cache:
@@ -237,11 +360,16 @@ class CarverPipeline:
             if sym in oi_forecasts:
                 fc["oi_signal"] = oi_forecasts[sym]
 
+            # G2: Carry rule forecast
+            if sym in carry_forecasts:
+                fc["carry"] = carry_forecasts[sym]
+
+            # G9: Event-driven forecast
+            if sym in event_forecasts:
+                fc["event_driven"] = event_forecasts[sym]
+
             # Gap B6: Decision engine forecast integration
-            if decision_engine_scores and sym in decision_engine_scores:
-                fc["decision_engine"] = decision_engine_to_forecast(
-                    decision_engine_scores[sym]
-                )
+            # NOTE: Removed duplicate — decision_engine forecast already added above
 
             if fc:
                 all_forecasts[sym] = fc
@@ -320,6 +448,8 @@ class CarverPipeline:
                 for sym_forecasts in all_forecasts.values():
                     for source, mult in decay_mults.items():
                         if source in sym_forecasts and mult < 1.0:
+                            if not (np.isfinite(mult) and 0.0 <= mult <= 1.0):
+                                continue  # skip NaN/Inf/negative decay multipliers
                             sym_forecasts[source] *= mult
                 log.append(f"  → Strategy decay applied: {sum(1 for m in decay_mults.values() if m < 1.0)} degraded")
         except Exception:
@@ -338,6 +468,8 @@ class CarverPipeline:
                 for sym in combined_values:
                     original = combined_values[sym]
                     filtered = markov_signal_filter(original, probs, trans)
+                    if not np.isfinite(filtered):
+                        filtered = original  # reject NaN/Inf from filter
                     if abs(filtered - original) > 0.5:
                         filtered_count += 1
                     combined_values[sym] = filtered
@@ -405,6 +537,36 @@ class CarverPipeline:
         result.symbols_with_trades = trades_needed
         log.append(f"  → {trades_needed} trades needed out of {len(position_sizes)} sized")
 
+        # Gap B8: Forecast capacity / liquidity check
+        try:
+            from services.cost_speed_limit import check_forecast_capacity
+            capacity_dampened = 0
+            for sym, ps in list(position_sizes.items()):
+                if ps.notional_value <= 0 or sym not in ohlcv_cache:
+                    continue
+                df = ohlcv_cache[sym]
+                if "Volume" in df.columns and "Close" in df.columns and len(df) >= 20:
+                    avg_vol = float(df["Volume"].tail(20).mean())
+                    avg_price = float(df["Close"].tail(20).mean())
+                    adv_value = avg_vol * avg_price
+                    mult = check_forecast_capacity(sym, ps.notional_value, adv_value)
+                    if mult < 1.0:
+                        from dataclasses import replace as _dc_replace_cap
+                        scaled_qty = max(0, int(ps.target_quantity * mult))
+                        delta = scaled_qty - ps.current_quantity
+                        position_sizes[sym] = _dc_replace_cap(
+                            ps,
+                            target_quantity=scaled_qty,
+                            trade_delta=delta,
+                            trade_required=abs(delta) > 0,
+                            notional_value=abs(scaled_qty) * ps.price if ps.price else 0.0,
+                        )
+                        capacity_dampened += 1
+            if capacity_dampened:
+                log.append(f"  → Gap B8: Capacity check dampened {capacity_dampened} positions")
+        except Exception as exc:
+            log.append(f"  → Capacity check skipped: {exc}")
+
         # ── Step 8: Portfolio risk assessment ──────────────────
         log.append("Step 8: Assessing portfolio risk...")
         from services.portfolio_vol_monitor import assess_portfolio_risk
@@ -450,8 +612,9 @@ class CarverPipeline:
             if ps.price <= 0:
                 continue
 
-            # Apply risk snapshot scale factor
-            scaled_qty = max(0, int(ps.trade_delta * risk_snap.scale_factor))
+            # BUG-1 FIX: scale_factor already applied in Step 8 (Gap C1 block).
+            # Do NOT re-apply here — that caused positions sized at scale² instead of scale.
+            scaled_qty = ps.trade_delta
             if scaled_qty <= 0:
                 continue
 
@@ -465,6 +628,19 @@ class CarverPipeline:
                 daily_price_vol=daily_vol,
                 trade_horizon=self.cfg.trade_horizon,
             )
+
+            # Gap B2: Transition-aware stop tightening
+            # If HMM predicts elevated bear-transition probability, tighten stop
+            if hmm_snap is not None and hmm_snap.confidence >= 0.5:
+                p_bear_next = hmm_snap.predicted_5d[1] if len(hmm_snap.predicted_5d) > 1 else 0.0
+                if p_bear_next > 0.25:
+                    # Tighten stop by reducing stop distance up to 40%
+                    tighten_factor = max(0.6, 1.0 - (p_bear_next - 0.15) * 1.5)
+                    original_stop = stop_state.current_stop
+                    tightened_stop = ps.price - (ps.price - original_stop) * tighten_factor
+                    stop_state = stop_state._replace(current_stop=tightened_stop) if hasattr(stop_state, '_replace') else stop_state
+                    if not hasattr(stop_state, '_replace'):
+                        stop_state.current_stop = tightened_stop
 
             # Target: 3× stop distance (vol-based R:R)
             stop_distance = ps.price - stop_state.current_stop
@@ -485,12 +661,122 @@ class CarverPipeline:
                 score=combined_values.get(sym, 0),
             ))
 
+        # ── Step 9b: SHORT trade plans (Phase 2 — Short Selling) ──
+        try:
+            from config import Config
+            _short_enabled = getattr(Config, "SHORT_SELLING_ENABLED", False)
+            _short_regime = getattr(Config, "SHORT_REGIME_REQUIRED", "bear")
+            _short_min_forecast = getattr(Config, "SHORT_MIN_FORECAST", -5.0)
+            _short_max = getattr(Config, "SHORT_MAX_CONCURRENT", 3)
+            _short_product = getattr(Config, "SHORT_PRODUCT", "MIS")
+        except Exception:
+            _short_enabled = False
+
+        if _short_enabled:
+            current_regime = hmm_snap.regime if hmm_snap else "unknown"
+            if current_regime.lower() == _short_regime.lower():
+                short_plans = []
+                for sym, ps in position_sizes.items():
+                    if ps.price <= 0:
+                        continue
+                    forecast_val = combined_values.get(sym, 0)
+                    if forecast_val >= _short_min_forecast:
+                        continue  # Not bearish enough
+                    if ps.trade_delta >= 0:
+                        continue  # No negative delta
+                    short_qty = abs(ps.trade_delta)
+                    if short_qty <= 0:
+                        continue
+
+                    from services.vol_trailing_stop import compute_trailing_stop
+                    daily_vol = daily_vols.get(sym, 0.02)
+                    # For shorts: stop is ABOVE entry, target is BELOW
+                    stop_distance = ps.price * daily_vol * 2.5  # 2.5σ stop
+                    short_stop = ps.price + stop_distance
+                    short_target = ps.price - 3 * stop_distance
+                    rr = 3.0 if stop_distance > 0 else 0
+
+                    short_plans.append(TradePlan(
+                        symbol=sym,
+                        side="SELL",
+                        entry_price=ps.price,
+                        stop_loss=round(short_stop, 2),
+                        target_price=round(max(0.01, short_target), 2),
+                        quantity=short_qty,
+                        risk_amount=round(short_qty * stop_distance, 2),
+                        reward_amount=round(short_qty * 3 * stop_distance, 2),
+                        rr_ratio=round(rr, 2),
+                        score=forecast_val,
+                        direction="SHORT",
+                        product=_short_product,
+                    ))
+
+                # Limit to max concurrent short positions
+                short_plans.sort(key=lambda p: p.score)  # Most bearish first
+                plans.extend(short_plans[:_short_max])
+                log.append(f"  → {min(len(short_plans), _short_max)} SHORT trade plans added (regime={current_regime})")
+            else:
+                log.append(f"  → SHORT disabled: regime={current_regime} (need {_short_regime})")
+
         # Sort by forecast strength
         plans.sort(key=lambda p: abs(p.score), reverse=True)
         # Limit to max_open_trades
         plans = plans[:self.cfg.max_open_trades]
         result.trade_plans = plans
         log.append(f"  → {len(plans)} final trade plans generated")
+
+        # ── Step 10: Options overlay scan (Gap A1) ─────────────
+        try:
+            from services.options_overlay import OptionsOverlay
+            from services.iv_rank import compute_iv_ranks_batch
+
+            overlay = OptionsOverlay()
+
+            # Build IV data from OHLCV cache
+            iv_ranks = compute_iv_ranks_batch(ohlcv_cache)
+            iv_data = {
+                sym: {"iv": ivr.current_iv, "iv_rank": ivr.iv_rank}
+                for sym, ivr in iv_ranks.items()
+            }
+
+            # Build holdings dict from current_holdings
+            holdings_dict = {}
+            if current_holdings:
+                for sym, qty in current_holdings.items():
+                    if qty > 0 and sym in prices:
+                        holdings_dict[sym] = {
+                            "quantity": qty,
+                            "avg_price": prices[sym],
+                            "current_price": prices[sym],
+                        }
+
+            # Build CSP candidates from BUY forecasts
+            csp_candidates = {
+                sym: {"current_price": prices.get(sym, 0), "forecast": fc}
+                for sym, fc in combined_values.items()
+                if fc > 5.0 and sym in prices
+            }
+
+            overlay_result = overlay.run_overlay(
+                holdings=holdings_dict,
+                candidates=csp_candidates,
+                iv_data=iv_data,
+                available_capital=self._vol_target.current_capital,
+                forecasts=combined_values,
+            )
+
+            result.options_overlay = overlay_result
+            if overlay_result.total_premium_expected > 0:
+                log.append(
+                    f"  → Options overlay: {len(overlay_result.covered_call_orders)} CC + "
+                    f"{len(overlay_result.put_write_orders)} CSP = "
+                    f"₹{overlay_result.total_premium_expected:,.0f} premium "
+                    f"({overlay_result.annualized_yield_pct:.1f}% ann.)"
+                )
+            else:
+                log.append("  → Options overlay: no opportunities (IV rank or VIX filter)")
+        except Exception as exc:
+            log.append(f"  → Options overlay skipped: {exc}")
 
         log.append("Pipeline complete.")
         logger.info("Carver pipeline: %d symbols → %d forecasts → %d trades",

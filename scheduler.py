@@ -56,7 +56,7 @@ def _init_cache_db():
     conn.execute("""
         CREATE TABLE IF NOT EXISTS pipeline_runs (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            run_type    TEXT NOT NULL,          -- 'pre_market' | 'intraday'
+            run_type    TEXT NOT NULL,          -- 'pre_market'
             timestamp   TEXT NOT NULL,
             universe_size  INTEGER DEFAULT 0,
             screened_count INTEGER DEFAULT 0,
@@ -516,6 +516,13 @@ def _auto_place_orders(verdicts: list, screened_df):
             report.orders_placed, report.orders_failed,
             report.signal_filtered_count,
         )
+
+        # G4: Execute options overlay (covered calls + CSPs)
+        _execute_options_overlay(kite)
+
+        # G10: Auto-execute tail hedge if drawdown critical
+        _execute_tail_hedge_if_needed(kite)
+
     except Exception as exc:
         logger.exception("Auto-order placement failed: %s", exc)
 
@@ -1044,7 +1051,7 @@ def _run_forecast_calibration():
     """Auto-calibrate forecast scalars from recent OHLCV data.
 
     Runs weekly (Saturday 5:30 AM IST, before walk-forward audit).
-    Re-computes EWMAC / screener / decision-engine scalars from
+    Re-computes EWMAC / screener / decision-engine / carry scalars from
     expanding-window median(|raw forecast|) and persists to
     ``data/calibrated_scalars.json``.
     """
@@ -1082,6 +1089,80 @@ def _run_forecast_calibration():
 
     except Exception as exc:
         logger.exception("Forecast scalar calibration failed: %s", exc)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Phase 2 Gap B1: Monthly HMM Regime Re-fit
+# ═══════════════════════════════════════════════════════════════
+
+def _run_hmm_refit():
+    """Monthly re-fit of the HMM regime model on 5 years of NIFTY data.
+
+    Trains a 3-state Gaussian HMM on [log_returns, VIX, breadth, delivery_vol]
+    and persists the model to data/hmm_model.pkl for use by the pipeline.
+    """
+    logger.info("=== HMM Regime Re-fit started ===")
+    try:
+        from config import Config
+        if not getattr(Config, "HMM_ENABLED", True):
+            logger.info("HMM_ENABLED=False — skipping re-fit")
+            return
+
+        import yfinance as yf
+        from services.regime_hmm import MarkovRegimeModel, prepare_hmm_observations
+
+        # Fetch 5 years of NIFTY 50 daily data
+        nifty_df = yf.download("^NSEI", period="5y", progress=False, timeout=30)
+        if nifty_df is None or len(nifty_df) < 500:
+            logger.warning("Insufficient NIFTY data for HMM fit (%d rows)", len(nifty_df) if nifty_df is not None else 0)
+            return
+
+        # Fetch India VIX
+        vix_df = None
+        try:
+            vix_df = yf.download("^INDIAVIX", period="5y", progress=False, timeout=15)
+        except Exception:
+            logger.debug("India VIX fetch failed — using proxy")
+
+        # Prepare observation matrix
+        observations = prepare_hmm_observations(nifty_df, vix_df)
+        if len(observations) < 500:
+            logger.warning("Too few valid observations for HMM (%d) — need 500+", len(observations))
+            return
+
+        # Fit model
+        model = MarkovRegimeModel(
+            n_states=getattr(Config, "HMM_N_STATES", 3),
+            n_features=4,
+        )
+        model.fit(observations)
+
+        # Get current regime for logging
+        snap = model.get_current_regime(observations[-60:])
+        logger.info(
+            "HMM re-fit complete: regime=%s (%.0f%%), durations=%s",
+            snap.regime, snap.confidence * 100, snap.expected_durations,
+        )
+
+        # Persist model
+        model.save()
+        logger.info("HMM model persisted to disk")
+
+        # Update singleton
+        from services.regime_hmm import get_hmm_model
+        global_model = get_hmm_model()
+        global_model._fitted = model._fitted
+        global_model._means = model._means
+        global_model._covars = model._covars
+        global_model._transmat = model._transmat
+        global_model._startprob = model._startprob
+        global_model._feat_mean = model._feat_mean
+        global_model._feat_std = model._feat_std
+
+        logger.info("=== HMM Regime Re-fit complete ===")
+
+    except Exception as exc:
+        logger.exception("HMM re-fit failed: %s", exc)
 
 
 def _run_strategy_tournament():
@@ -1149,9 +1230,638 @@ def _run_nightly_backup():
         logger.error("Nightly backup failed: %s", e)
 
 
+def _run_pead_earnings_feed():
+    """G6: Fetch recent earnings data and feed into PEAD strategy.
+
+    Bridges earnings_momentum.py (Trendlyne scraper) with pead_strategy.py
+    (PEAD signal generator) to automate the earnings data pipeline.
+    """
+    logger.info("=== PEAD Earnings Feed started ===")
+    try:
+        from services.earnings_momentum import _fetch_recent_results, EarningsSurprise as EMSurprise
+        from services.pead_strategy import PEADStrategy, EarningsSurprise as PEADSurprise
+
+        # Fetch recent earnings from Trendlyne
+        raw_results = _fetch_recent_results()
+        if not raw_results:
+            logger.info("PEAD feed: no recent earnings data found")
+            return
+
+        # Convert earnings_momentum format to PEAD format
+        pead_surprises = []
+        for sym, em_data in raw_results.items():
+            try:
+                # Use profit surprise as primary SUE proxy
+                sue = em_data.profit_surprise_pct / 10.0  # normalize to ~SUE scale
+                surprise = PEADSurprise(
+                    ticker=sym,
+                    announcement_date=em_data.result_date,
+                    eps_actual=em_data.profit_surprise_pct,  # proxy
+                    eps_consensus=0.0,
+                    sue=sue,
+                    surprise_pct=em_data.profit_surprise_pct,
+                    direction="POSITIVE" if em_data.is_positive else "NEGATIVE",
+                )
+                pead_surprises.append(surprise)
+            except Exception:
+                continue
+
+        if not pead_surprises:
+            logger.info("PEAD feed: no valid earnings surprises to process")
+            return
+
+        # Feed into PEAD strategy
+        pead = PEADStrategy()
+        new_signals = pead.process_earnings(pead_surprises)
+        logger.info("PEAD feed: processed %d earnings, generated %d new signals",
+                     len(pead_surprises), len(new_signals))
+
+    except Exception as exc:
+        logger.exception("PEAD earnings feed failed: %s", exc)
+
+
+def _run_us_pre_market():
+    """G11: Run US stocks pre-market analysis pipeline.
+
+    Executes the US Carver pipeline during US pre-market hours
+    and caches results for the API/UI to consume.
+    """
+    logger.info("=== US Pre-Market Pipeline started ===")
+    try:
+        from services.us_carver_pipeline import run_us_carver_pipeline, DEFAULT_US_CARVER_TICKERS
+
+        result = run_us_carver_pipeline(DEFAULT_US_CARVER_TICKERS)
+
+        # Persist to cache
+        _save_run("us_pre_market", {
+            "trade_plans": len(result.trade_plans),
+            "symbols_processed": result.symbols_processed,
+            "combined_forecasts": {s: round(v, 2) for s, v in result.combined_forecasts.items()},
+        })
+
+        logger.info("US pipeline: %d trade plans from %d symbols",
+                     len(result.trade_plans), result.symbols_processed)
+        for line in result.pipeline_log:
+            logger.info("  US: %s", line)
+
+    except Exception as exc:
+        logger.exception("US pre-market pipeline failed: %s", exc)
+
+
+
+# ===================================================================
+# Phase 1-4: Advanced strategy job handlers
+# ===================================================================
+
+def _run_options_monitor():
+    """Job 13: Poll open options positions for profit-take / roll / expiry."""
+    try:
+        from config import Config
+        if not getattr(Config, "OPTIONS_ENABLED", False):
+            return
+    except Exception:
+        return
+
+    logger.info("=== Options Monitor Poll ===")
+    try:
+        from auth.shared_session import get_shared_kite
+        kite = get_shared_kite()
+        if kite is None:
+            logger.warning("Options monitor: no Kite session")
+            return
+        from kite_connect.options.options_monitor import run_options_monitor_poll
+        run_options_monitor_poll(kite)
+    except Exception as exc:
+        logger.exception("Options monitor failed: %s", exc)
+
+
+def _run_margin_monitor():
+    """Job 14: Check margin utilisation and alert if thresholds breached."""
+    try:
+        from config import Config
+        if not getattr(Config, "LEVERAGE_ENABLED", False):
+            return
+    except Exception:
+        return
+
+    logger.info("=== Margin Monitor Poll ===")
+    try:
+        from auth.shared_session import get_shared_kite
+        kite = get_shared_kite()
+        if kite is None:
+            logger.warning("Margin monitor: no Kite session")
+            return
+        from kite_connect.trading.margin_monitor import get_margin_snapshot
+        snap = get_margin_snapshot(kite)
+        if snap.alert_level in ("WARNING", "CRITICAL"):
+            logger.warning(
+                "Margin %s: %.1f%% used (%.0f / %.0f)",
+                snap.alert_level, snap.utilisation_pct,
+                snap.used, snap.available + snap.used,
+            )
+    except Exception as exc:
+        logger.exception("Margin monitor failed: %s", exc)
+
+
+def _run_pairs_scanner():
+    """Job 15: Scan configured pairs for mean-reversion signals."""
+    try:
+        from config import Config
+        if not getattr(Config, "PAIRS_ENABLED", False):
+            return
+    except Exception:
+        return
+
+    logger.info("=== Pairs Trading Scanner ===")
+    try:
+        import numpy as np
+        from utils import download_ind_ohlcv
+        from services.pairs_trading_live import scan_all_pairs, DEFAULT_PAIRS
+
+        pairs = getattr(Config, "PAIRS_LIST", DEFAULT_PAIRS)
+        symbols = set()
+        for a, b in pairs:
+            symbols.add(a)
+            symbols.add(b)
+
+        price_data = {}
+        for sym in symbols:
+            try:
+                df = download_ind_ohlcv(sym, period="6mo")
+                if df is not None and len(df) >= 60:
+                    col = "Close" if "Close" in df.columns else "close"
+                    price_data[sym] = df[col].values.astype(float)
+            except Exception:
+                pass
+
+        signals = scan_all_pairs(price_data)
+        if signals:
+            logger.info("Pairs signals: %d active", len(signals))
+            for s in signals:
+                logger.info("  %s/%s z=%.2f action=%s forecast=%.1f",
+                            s.leg1, s.leg2, s.z_score, s.action, s.forecast)
+
+            # G5: Execute pairs via SpreadExecutor
+            _execute_pairs_signals(signals)
+
+    except Exception as exc:
+        logger.exception("Pairs scanner failed: %s", exc)
+
+
+def _run_futures_monitor():
+    """Job 16: Monitor futures positions for rollover and de-leveraging."""
+    try:
+        from config import Config
+        if not getattr(Config, "LEVERAGE_ENABLED", False):
+            return
+    except Exception:
+        return
+
+    logger.info("=== Futures Monitor ===")
+    try:
+        from auth.shared_session import get_shared_kite
+        kite = get_shared_kite()
+        if kite is None:
+            logger.warning("Futures monitor: no Kite session")
+            return
+        from kite_connect.trading.futures_monitor import run_futures_monitor
+        result = run_futures_monitor(kite)
+        for alert in result.alerts:
+            logger.warning("Futures alert: %s", alert)
+
+        # G6: Execute futures overlay signal
+        _execute_futures_overlay(kite)
+
+    except Exception as exc:
+        logger.exception("Futures monitor failed: %s", exc)
+
+
+def _run_event_calendar_seed():
+    """Job 17: Seed fixed events (RBI, rebalance) into the calendar DB."""
+    try:
+        from config import Config
+        if not getattr(Config, "EVENT_DRIVEN_ENABLED", False):
+            return
+    except Exception:
+        return
+
+    logger.info("=== Event Calendar Seed ===")
+    try:
+        from services.event_calendar import seed_fixed_events
+        seed_fixed_events()
+    except Exception as exc:
+        logger.exception("Event calendar seed failed: %s", exc)
+
+
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 # Scheduler setup
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+
+
+# =================================================================
+# G4/G5/G6/G10: Execution Helper Functions
+# =================================================================
+
+def _execute_options_overlay(kite):
+    """G4: Execute options overlay - covered calls + CSPs."""
+    try:
+        from config import Config
+        if not getattr(Config, "OPTIONS_ENABLED", False):
+            return
+
+        from kite_connect.options.options_executor import OptionsExecutor
+        from services.options_overlay import scan_covered_call_candidates, scan_csp_candidates
+
+        executor = OptionsExecutor(kite)
+
+        # Covered calls on existing long positions
+        try:
+            cc_candidates = scan_covered_call_candidates(kite)
+            if cc_candidates:
+                results = executor.execute_covered_calls(cc_candidates)
+                logger.info("G4: Covered calls executed: %d orders", len(results))
+        except Exception as exc:
+            logger.warning("G4: Covered calls failed: %s", exc)
+
+        # Cash-secured puts on high-conviction BUY signals
+        try:
+            csp_candidates = scan_csp_candidates(kite)
+            if csp_candidates:
+                results = executor.execute_cash_secured_puts(csp_candidates)
+                logger.info("G4: CSPs executed: %d orders", len(results))
+        except Exception as exc:
+            logger.warning("G4: CSPs failed: %s", exc)
+
+    except Exception as exc:
+        logger.debug("G4: Options overlay skipped: %s", exc)
+
+
+def _execute_tail_hedge_if_needed(kite):
+    """G10: Auto-execute tail hedge when drawdown is critical."""
+    try:
+        from config import Config
+        if not getattr(Config, "OPTIONS_TAIL_HEDGE_ENABLED", False):
+            return
+
+        from services.tail_risk_hedge import TailRiskHedge
+        from kite_connect.options.options_executor import OptionsExecutor
+
+        # Get current portfolio state
+        capital = getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000)
+        realized = getattr(Config, "_CUMULATIVE_REALIZED_PNL", 0.0)
+        equity = getattr(Config, "_CURRENT_EQUITY", capital + realized)
+        peak = getattr(Config, "_PEAK_EQUITY", capital)
+        dd_pct = ((peak - equity) / peak * 100) if peak > 0 else 0
+
+        # Get VIX
+        try:
+            import yfinance as yf
+            vix_data = yf.download("^INDIAVIX", period="5d", progress=False)
+            vix = float(vix_data["Close"].iloc[-1]) if len(vix_data) > 0 else 15.0
+            vix_3d = float(vix_data["Close"].iloc[-4]) if len(vix_data) >= 4 else vix
+        except Exception:
+            vix, vix_3d = 15.0, 15.0
+
+        # Get NIFTY spot
+        try:
+            ltp = kite.ltp(["NSE:NIFTY 50"])
+            nifty_spot = ltp.get("NSE:NIFTY 50", {}).get("last_price", 0)
+        except Exception:
+            nifty_spot = 0
+
+        hedger = TailRiskHedge()
+        assessment = hedger.assess(
+            portfolio_value=equity,
+            drawdown_pct=dd_pct,
+            vix=vix,
+            vix_3d_ago=vix_3d,
+            nifty_spot=nifty_spot,
+        )
+
+        if assessment.hedge_urgency in ("HIGH", "CRITICAL") and assessment.recommendation:
+            executor = OptionsExecutor(kite)
+            result = executor.execute_tail_hedge(assessment.recommendation)
+            logger.info("G10: Tail hedge executed: urgency=%s result=%s",
+                        assessment.hedge_urgency, result)
+        else:
+            logger.info("G10: Tail hedge not needed: urgency=%s dd=%.1f%%",
+                        assessment.hedge_urgency, dd_pct)
+
+    except Exception as exc:
+        logger.debug("G10: Tail hedge check skipped: %s", exc)
+
+
+def _execute_pairs_signals(signals):
+    """G5: Execute pairs trading signals via SpreadExecutor."""
+    try:
+        from auth.shared_session import get_shared_kite
+        kite = get_shared_kite()
+        if kite is None:
+            logger.warning("G5: No Kite session for pairs execution")
+            return
+
+        from kite_connect.trading.spread_executor import SpreadExecutor, LegOrder
+        spread_exec = SpreadExecutor(kite)
+
+        for sig in signals:
+            if not hasattr(sig, "action") or sig.action not in ("ENTER_LONG", "ENTER_SHORT"):
+                continue
+
+            # Build leg orders based on signal direction
+            if sig.action == "ENTER_LONG":
+                leg1 = LegOrder(symbol=sig.leg1, side="BUY", quantity=1, exchange="NSE")
+                leg2 = LegOrder(symbol=sig.leg2, side="SELL", quantity=1, exchange="NSE")
+            else:  # ENTER_SHORT
+                leg1 = LegOrder(symbol=sig.leg1, side="SELL", quantity=1, exchange="NSE")
+                leg2 = LegOrder(symbol=sig.leg2, side="BUY", quantity=1, exchange="NSE")
+
+            result = spread_exec.execute_pair(leg1, leg2)
+            logger.info("G5: Pair %s/%s %s: success=%s",
+                        sig.leg1, sig.leg2, sig.action, result.success)
+
+    except Exception as exc:
+        logger.warning("G5: Pairs execution failed: %s", exc)
+
+
+def _execute_futures_overlay(kite):
+    """G6: Execute futures overlay signal for regime-adaptive leverage."""
+    try:
+        from config import Config
+        if not getattr(Config, "LEVERAGE_ENABLED", False):
+            return
+
+        from services.futures_overlay import compute_futures_overlay
+        from services.regime_detector import get_current_regime
+        from kite_connect.trading.order_service import place_order
+
+        # Get current state
+        capital = getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000)
+        realized = getattr(Config, "_CUMULATIVE_REALIZED_PNL", 0.0)
+        equity = capital + realized
+
+        regime_info = get_current_regime()
+        regime = regime_info.get("regime", "range")
+        confidence = regime_info.get("confidence", 0.5)
+
+        # Get NIFTY spot/futures price
+        try:
+            ltp = kite.ltp(["NSE:NIFTY 50"])
+            nifty_spot = ltp.get("NSE:NIFTY 50", {}).get("last_price", 0)
+        except Exception:
+            nifty_spot = 0
+
+        signal = compute_futures_overlay(
+            portfolio_value=equity,
+            current_futures_notional=0.0,
+            nifty_spot=nifty_spot,
+            regime=regime,
+            regime_confidence=confidence,
+        )
+
+        if signal.action == "BUY_FUT" and signal.lots > 0:
+            lot_size = getattr(Config, "FUTURES_LOT_SIZE", 25)
+            result = place_order(
+                kite,
+                tradingsymbol="NIFTY" + _get_current_expiry_suffix(),
+                exchange="NFO",
+                transaction_type="BUY",
+                quantity=signal.lots * lot_size,
+                product="NRML",
+                order_type="MARKET",
+            )
+            logger.info("G6: BUY_FUT %d lots, order=%s", signal.lots, result)
+
+        elif signal.action == "SELL_FUT" and signal.lots > 0:
+            lot_size = getattr(Config, "FUTURES_LOT_SIZE", 25)
+            result = place_order(
+                kite,
+                tradingsymbol="NIFTY" + _get_current_expiry_suffix(),
+                exchange="NFO",
+                transaction_type="SELL",
+                quantity=signal.lots * lot_size,
+                product="NRML",
+                order_type="MARKET",
+            )
+            logger.info("G6: SELL_FUT %d lots, order=%s", signal.lots, result)
+
+        else:
+            logger.debug("G6: Futures overlay action=%s lots=%d (no trade)",
+                         signal.action, signal.lots)
+
+    except Exception as exc:
+        logger.debug("G6: Futures overlay skipped: %s", exc)
+
+
+def _get_current_expiry_suffix():
+    """Get current month NIFTY futures expiry suffix (e.g. '25JUN' for Jun 2025)."""
+    from datetime import date
+    today = date.today()
+    # NFO convention: YYMMMFUT e.g. NIFTY25JUNFUT
+    suffix = today.strftime("%y%b").upper() + "FUT"
+    return suffix
+
+
+# =================================================================
+# G4/G5/G6/G10: Execution Helper Functions
+# =================================================================
+
+def _execute_options_overlay(kite):
+    """G4: Execute options overlay - covered calls + CSPs."""
+    try:
+        from config import Config
+        if not getattr(Config, "OPTIONS_ENABLED", False):
+            return
+
+        from kite_connect.options.options_executor import OptionsExecutor
+        from services.options_overlay import scan_covered_call_candidates, scan_csp_candidates
+
+        executor = OptionsExecutor(kite)
+
+        # Covered calls on existing long positions
+        try:
+            cc_candidates = scan_covered_call_candidates(kite)
+            if cc_candidates:
+                results = executor.execute_covered_calls(cc_candidates)
+                logger.info("G4: Covered calls executed: %d orders", len(results))
+        except Exception as exc:
+            logger.warning("G4: Covered calls failed: %s", exc)
+
+        # Cash-secured puts on high-conviction BUY signals
+        try:
+            csp_candidates = scan_csp_candidates(kite)
+            if csp_candidates:
+                results = executor.execute_cash_secured_puts(csp_candidates)
+                logger.info("G4: CSPs executed: %d orders", len(results))
+        except Exception as exc:
+            logger.warning("G4: CSPs failed: %s", exc)
+
+    except Exception as exc:
+        logger.debug("G4: Options overlay skipped: %s", exc)
+
+
+def _execute_tail_hedge_if_needed(kite):
+    """G10: Auto-execute tail hedge when drawdown is critical."""
+    try:
+        from config import Config
+        if not getattr(Config, "OPTIONS_TAIL_HEDGE_ENABLED", False):
+            return
+
+        from services.tail_risk_hedge import TailRiskHedge
+        from kite_connect.options.options_executor import OptionsExecutor
+
+        # Get current portfolio state
+        capital = getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000)
+        realized = getattr(Config, "_CUMULATIVE_REALIZED_PNL", 0.0)
+        equity = getattr(Config, "_CURRENT_EQUITY", capital + realized)
+        peak = getattr(Config, "_PEAK_EQUITY", capital)
+        dd_pct = ((peak - equity) / peak * 100) if peak > 0 else 0
+
+        # Get VIX
+        try:
+            import yfinance as yf
+            vix_data = yf.download("^INDIAVIX", period="5d", progress=False)
+            vix = float(vix_data["Close"].iloc[-1]) if len(vix_data) > 0 else 15.0
+            vix_3d = float(vix_data["Close"].iloc[-4]) if len(vix_data) >= 4 else vix
+        except Exception:
+            vix, vix_3d = 15.0, 15.0
+
+        # Get NIFTY spot
+        try:
+            ltp = kite.ltp(["NSE:NIFTY 50"])
+            nifty_spot = ltp.get("NSE:NIFTY 50", {}).get("last_price", 0)
+        except Exception:
+            nifty_spot = 0
+
+        hedger = TailRiskHedge()
+        assessment = hedger.assess(
+            portfolio_value=equity,
+            drawdown_pct=dd_pct,
+            vix=vix,
+            vix_3d_ago=vix_3d,
+            nifty_spot=nifty_spot,
+        )
+
+        if assessment.hedge_urgency in ("HIGH", "CRITICAL") and assessment.recommendation:
+            executor = OptionsExecutor(kite)
+            result = executor.execute_tail_hedge(assessment.recommendation)
+            logger.info("G10: Tail hedge executed: urgency=%s result=%s",
+                        assessment.hedge_urgency, result)
+        else:
+            logger.info("G10: Tail hedge not needed: urgency=%s dd=%.1f%%",
+                        assessment.hedge_urgency, dd_pct)
+
+    except Exception as exc:
+        logger.debug("G10: Tail hedge check skipped: %s", exc)
+
+
+def _execute_pairs_signals(signals):
+    """G5: Execute pairs trading signals via SpreadExecutor."""
+    try:
+        from auth.shared_session import get_shared_kite
+        kite = get_shared_kite()
+        if kite is None:
+            logger.warning("G5: No Kite session for pairs execution")
+            return
+
+        from kite_connect.trading.spread_executor import SpreadExecutor, LegOrder
+        spread_exec = SpreadExecutor(kite)
+
+        for sig in signals:
+            if not hasattr(sig, "action") or sig.action not in ("ENTER_LONG", "ENTER_SHORT"):
+                continue
+
+            # Build leg orders based on signal direction
+            if sig.action == "ENTER_LONG":
+                leg1 = LegOrder(symbol=sig.leg1, side="BUY", quantity=1, exchange="NSE")
+                leg2 = LegOrder(symbol=sig.leg2, side="SELL", quantity=1, exchange="NSE")
+            else:  # ENTER_SHORT
+                leg1 = LegOrder(symbol=sig.leg1, side="SELL", quantity=1, exchange="NSE")
+                leg2 = LegOrder(symbol=sig.leg2, side="BUY", quantity=1, exchange="NSE")
+
+            result = spread_exec.execute_pair(leg1, leg2)
+            logger.info("G5: Pair %s/%s %s: success=%s",
+                        sig.leg1, sig.leg2, sig.action, result.success)
+
+    except Exception as exc:
+        logger.warning("G5: Pairs execution failed: %s", exc)
+
+
+def _execute_futures_overlay(kite):
+    """G6: Execute futures overlay signal for regime-adaptive leverage."""
+    try:
+        from config import Config
+        if not getattr(Config, "LEVERAGE_ENABLED", False):
+            return
+
+        from services.futures_overlay import compute_futures_overlay
+        from services.regime_detector import get_current_regime
+        from kite_connect.trading.order_service import place_order
+
+        # Get current state
+        capital = getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000)
+        realized = getattr(Config, "_CUMULATIVE_REALIZED_PNL", 0.0)
+        equity = capital + realized
+
+        regime_info = get_current_regime()
+        regime = regime_info.get("regime", "range")
+        confidence = regime_info.get("confidence", 0.5)
+
+        # Get NIFTY spot/futures price
+        try:
+            ltp = kite.ltp(["NSE:NIFTY 50"])
+            nifty_spot = ltp.get("NSE:NIFTY 50", {}).get("last_price", 0)
+        except Exception:
+            nifty_spot = 0
+
+        signal = compute_futures_overlay(
+            portfolio_value=equity,
+            current_futures_notional=0.0,
+            nifty_spot=nifty_spot,
+            regime=regime,
+            regime_confidence=confidence,
+        )
+
+        if signal.action == "BUY_FUT" and signal.lots > 0:
+            lot_size = getattr(Config, "FUTURES_LOT_SIZE", 25)
+            result = place_order(
+                kite,
+                tradingsymbol="NIFTY" + _get_current_expiry_suffix(),
+                exchange="NFO",
+                transaction_type="BUY",
+                quantity=signal.lots * lot_size,
+                product="NRML",
+                order_type="MARKET",
+            )
+            logger.info("G6: BUY_FUT %d lots, order=%s", signal.lots, result)
+
+        elif signal.action == "SELL_FUT" and signal.lots > 0:
+            lot_size = getattr(Config, "FUTURES_LOT_SIZE", 25)
+            result = place_order(
+                kite,
+                tradingsymbol="NIFTY" + _get_current_expiry_suffix(),
+                exchange="NFO",
+                transaction_type="SELL",
+                quantity=signal.lots * lot_size,
+                product="NRML",
+                order_type="MARKET",
+            )
+            logger.info("G6: SELL_FUT %d lots, order=%s", signal.lots, result)
+
+        else:
+            logger.debug("G6: Futures overlay action=%s lots=%d (no trade)",
+                         signal.action, signal.lots)
+
+    except Exception as exc:
+        logger.debug("G6: Futures overlay skipped: %s", exc)
+
+
+def _get_current_expiry_suffix():
+    """Get current month NIFTY futures expiry suffix (e.g. '25JUN' for Jun 2025)."""
+    from datetime import date
+    today = date.today()
+    # NFO convention: YYMMMFUT e.g. NIFTY25JUNFUT
+    suffix = today.strftime("%y%b").upper() + "FUT"
+    return suffix
 
 def start_scheduler():
     """Start the APScheduler background scheduler with IST-aware jobs.
@@ -1160,7 +1870,6 @@ def start_scheduler():
     ----
     1. **pre_market_scan** â€” 9:20 AM IST, Mon-Fri
        Full pipeline run before market opens (NSE opens 9:15).
-    2. **intraday_rescan** â€” every 2 hours (10:30, 12:30, 14:30) Mon-Fri
        Lighter re-scan for intraday momentum shifts.
     3. **walk_forward_audit** â€” Saturday 6:00 AM IST
        Weekly walk-forward validation of registered strategies.
@@ -1190,17 +1899,8 @@ def start_scheduler():
         misfire_grace_time=600,
     )
 
-    # Job 2: Intraday re-scan every 2 hours during 10:30â€“14:30 IST
-    scheduler.add_job(
-        run_pipeline,
-        CronTrigger(hour="10,12,14", minute=30, day_of_week="mon-fri", timezone="Asia/Kolkata"),
-        args=["intraday"],
-        id="intraday_rescan",
-        name="Intraday Re-Scan",
-        misfire_grace_time=600,
-    )
 
-    # Job 3: Weekly walk-forward strategy audit â€” Saturday 6 AM IST
+    # Job 2: Weekly walk-forward strategy audit â€” Saturday 6 AM IST
     scheduler.add_job(
         run_walk_forward_audit,
         CronTrigger(hour=6, minute=0, day_of_week="sat", timezone="Asia/Kolkata"),
@@ -1209,7 +1909,7 @@ def start_scheduler():
         misfire_grace_time=3600,
     )
 
-    # Job 4: Weekly paper vs live reconciliation â€” Saturday 7 AM IST
+    # Job 3: Weekly paper vs live reconciliation â€” Saturday 7 AM IST
     scheduler.add_job(
         _run_paper_live_reconciliation,
         CronTrigger(hour=7, minute=0, day_of_week="sat", timezone="Asia/Kolkata"),
@@ -1228,7 +1928,7 @@ def start_scheduler():
         misfire_grace_time=3600,
     )
 
-    # Job 5: Nightly SQLite backup to R2 â€” 23:00 IST daily
+    # Job 4: Nightly SQLite backup to R2 â€” 23:00 IST daily
     scheduler.add_job(
         _run_nightly_backup,
         CronTrigger(hour=23, minute=0, timezone="Asia/Kolkata"),
@@ -1267,7 +1967,6 @@ def start_scheduler():
 
     logger.info("Scheduler started â€” press Ctrl+C to stop")
     logger.info("  Pre-market scan : 09:20 IST, Mon-Fri")
-    logger.info("  Intraday re-scan: 10:30, 12:30, 14:30 IST, Mon-Fri")
     logger.info("  Trade monitor   : every 3 min, 09:00-15:59 IST, Mon-Fri")
     logger.info("  Walk-forward    : 06:00 IST, Saturday")
     logger.info("  Reconciliation  : 07:00 IST, Saturday")
@@ -1275,6 +1974,103 @@ def start_scheduler():
     logger.info("  Kite refresh    : every 30 min, 09:00-16:30 IST, Mon-Fri")
     logger.info("  Forecast calib  : 05:30 IST, Saturday")
     logger.info("  Tournament      : 04:00 IST, 1st Saturday of month")
+
+    # Job 10: Monthly HMM regime re-fit — 1st Sunday 3:00 AM IST
+    # Gap B1: Re-train 3-state Gaussian HMM on 5 years of NIFTY data
+    scheduler.add_job(
+        _run_hmm_refit,
+        CronTrigger(hour=3, minute=0, day_of_week="sun", day="1-7", timezone="Asia/Kolkata"),
+        id="hmm_refit",
+        name="Monthly HMM Regime Re-fit",
+        misfire_grace_time=3600,
+    )
+
+    logger.info("  HMM re-fit      : 03:00 IST, 1st Sunday of month")
+
+    # Job 11: PEAD Earnings Feed — 8:00 AM IST, Mon-Fri (before pre-market)
+    # G6: Fetch Trendlyne earnings data and feed into PEADStrategy
+    scheduler.add_job(
+        _run_pead_earnings_feed,
+        CronTrigger(hour=8, minute=0, day_of_week="mon-fri", timezone="Asia/Kolkata"),
+        id="pead_earnings_feed",
+        name="PEAD Earnings Data Feed",
+        misfire_grace_time=600,
+    )
+
+    # Job 12: US Pre-Market Pipeline — 19:00 IST (9:30 AM ET), Mon-Fri
+    # G11: Run US Carver pipeline during US market hours
+    scheduler.add_job(
+        _run_us_pre_market,
+        CronTrigger(hour=19, minute=0, day_of_week="mon-fri", timezone="Asia/Kolkata"),
+        id="us_pre_market",
+        name="US Pre-Market Pipeline",
+        misfire_grace_time=600,
+    )
+
+    logger.info("  PEAD feed       : 08:00 IST, Mon-Fri")
+    logger.info("  US pipeline     : 19:00 IST, Mon-Fri")
+
+    # ── Phase 1-4: Advanced strategy jobs ──────────────────────
+
+    # Job 13: Options Monitor — Every 5 min during market hours
+    scheduler.add_job(
+        _run_options_monitor,
+        CronTrigger(
+            hour="9-15", minute="*/5", day_of_week="mon-fri",
+            timezone="Asia/Kolkata",
+        ),
+        id="options_monitor",
+        name="Options Monitor Poll",
+        misfire_grace_time=120,
+    )
+
+    # Job 14: Margin Monitor — Every 10 min during market hours
+    scheduler.add_job(
+        _run_margin_monitor,
+        CronTrigger(
+            hour="9-15", minute="*/10", day_of_week="mon-fri",
+            timezone="Asia/Kolkata",
+        ),
+        id="margin_monitor",
+        name="Margin Monitor Poll",
+        misfire_grace_time=120,
+    )
+
+    # Job 15: Pairs Scanner — Every 30 min during market hours
+    scheduler.add_job(
+        _run_pairs_scanner,
+        CronTrigger(
+            hour="9-15", minute="0,30", day_of_week="mon-fri",
+            timezone="Asia/Kolkata",
+        ),
+        id="pairs_scanner",
+        name="Pairs Trading Scanner",
+        misfire_grace_time=300,
+    )
+
+    # Job 16: Futures Rollover Check — 14:00 IST, Mon-Fri
+    scheduler.add_job(
+        _run_futures_monitor,
+        CronTrigger(hour=14, minute=0, day_of_week="mon-fri", timezone="Asia/Kolkata"),
+        id="futures_monitor",
+        name="Futures Monitor & Rollover",
+        misfire_grace_time=300,
+    )
+
+    # Job 17: Event Calendar Seed — 07:00 IST, Mon-Fri
+    scheduler.add_job(
+        _run_event_calendar_seed,
+        CronTrigger(hour=7, minute=0, day_of_week="mon-fri", timezone="Asia/Kolkata"),
+        id="event_calendar",
+        name="Event Calendar Seed",
+        misfire_grace_time=600,
+    )
+
+    logger.info("  Options monitor : */5 min, 09-15 IST, Mon-Fri")
+    logger.info("  Margin monitor  : */10 min, 09-15 IST, Mon-Fri")
+    logger.info("  Pairs scanner   : */30 min, 09-15 IST, Mon-Fri")
+    logger.info("  Futures monitor : 14:00 IST, Mon-Fri")
+    logger.info("  Event calendar  : 07:00 IST, Mon-Fri")
 
     try:
         scheduler.start()

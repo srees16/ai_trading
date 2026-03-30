@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
@@ -31,9 +32,9 @@ logger = logging.getLogger(__name__)
 class RiskConfig:
     """Tuneable risk parameters."""
 
-    total_capital: float = 500_000.0      # Total trading capital (₹)
+    total_capital: float = float(os.getenv("CENTURION_TOTAL_CAPITAL", "500000"))  # from env or ₹5L default
     risk_per_trade_pct: float = 0.02      # Max 2 % of capital per trade
-    max_open_trades: int = 6              # Concentrated portfolio — higher conviction
+    max_open_trades: int = 8              # Unified with Config.MAX_OPEN_TRADES (Gap C3 fix)
     sl_method: str = "tighter"            # "ma50", "swing_low", "atr", "tighter"
     swing_lookback: int = 10              # Days for swing-low computation
     atr_multiplier: float = 2.0           # ATR × multiplier for ATR-based SL
@@ -51,10 +52,10 @@ class RiskConfig:
     trailing_sl_activation_pct: float = 0.05  # Activate trailing SL after 5% profit
     trailing_sl_distance_pct: float = 0.03    # Trail SL 3% below current price
     # P7: Swing exit timing
-    swing_max_hold_days: int = 10         # Force exit after 10 trading days (swing)
-    positional_max_hold_days: int = 30    # Force exit after 30 trading days (positional)
-    # R4: Market regime (VIX / ADX) scaling
-    vix_caution_threshold: float = 20.0   # VIX > 20 → scale position to vix_caution_scale
+    swing_max_hold_days: int = 15         # Force exit after 15 trading days (swing)
+    positional_max_hold_days: int = 60    # Force exit after 60 trading days (positional)
+    # R4: Market regime (VIX / ADX) scaling — unified with Config (Gap C4 fix)
+    vix_caution_threshold: float = 18.0   # VIX > 18 → scale position to vix_caution_scale
     vix_panic_threshold: float = 25.0     # VIX > 25 → block all new BUY orders
     vix_caution_scale: float = 0.60       # 60% position size during caution
     adx_choppy_threshold: float = 20.0    # ADX < 20 → market choppy, scale down
@@ -70,7 +71,7 @@ class RiskConfig:
 @dataclass
 class TradePlan:
     symbol: str
-    side: str                # "BUY"
+    side: str                # "BUY" or "SELL"
     entry_price: float
     stop_loss: float
     target_price: float
@@ -79,6 +80,8 @@ class TradePlan:
     reward_amount: float     # ₹ potential gain
     rr_ratio: float          # reward / risk
     score: float             # from screener
+    direction: str = "LONG"  # "LONG" or "SHORT"
+    product: str = "CNC"     # "CNC", "MIS", "NRML"
 
     def to_dict(self) -> dict:
         return {
@@ -92,6 +95,8 @@ class TradePlan:
             "reward_amount": round(self.reward_amount, 2),
             "rr_ratio": round(self.rr_ratio, 2),
             "score": round(self.score, 2),
+            "direction": self.direction,
+            "product": self.product,
         }
 
 
@@ -352,7 +357,10 @@ class RiskManager:
                     logger.info("VIX=%.1f (caution) — scaling positions to %.0f%%",
                                 vix, scale * 100)
         except Exception as exc:
-            logger.debug("VIX regime check failed: %s", exc)
+            # G9 fail-safe: default to caution scale when VIX data unavailable
+            scale = min(scale, self.cfg.vix_caution_scale)
+            logger.warning("VIX regime check failed — defaulting to caution scale %.0f%%: %s",
+                           scale * 100, exc)
 
         try:
             # ADX: fetch Nifty 50 ADX as market-wide trend proxy
@@ -368,7 +376,10 @@ class RiskManager:
                     logger.info("Market ADX=%.1f < %.0f (choppy) — scaling to %.0f%%",
                                 market_adx, self.cfg.adx_choppy_threshold, scale * 100)
         except Exception as exc:
-            logger.debug("ADX regime check failed: %s", exc)
+            # G9 fail-safe: default to choppy scale when ADX data unavailable
+            scale = min(scale, self.cfg.adx_choppy_scale)
+            logger.warning("ADX regime check failed — defaulting to choppy scale %.0f%%: %s",
+                           scale * 100, exc)
 
         return scale
 
@@ -383,6 +394,8 @@ class RiskManager:
         idm: float = 1.6,
     ) -> Optional[TradePlan]:
         entry = float(row["close"])
+        if entry <= 0:
+            return None  # BUG-8 FIX: guard against zero/negative entry price
         ma50 = float(row.get("ma_50", 0))
         support = float(row.get("support", 0))
         resistance = float(row.get("resistance", 0))
@@ -505,6 +518,8 @@ class RiskManager:
         slippage_pct = self._estimate_slippage(row)
         slippage_risk = entry * slippage_pct
         adjusted_risk_per_share = risk_per_share + slippage_risk
+        if adjusted_risk_per_share <= 0:
+            return None  # BUG-8 FIX: prevent zero-division
 
         max_risk = available_capital * effective_risk_pct
         qty = max(1, math.floor(max_risk / adjusted_risk_per_share))

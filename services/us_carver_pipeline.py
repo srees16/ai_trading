@@ -185,6 +185,26 @@ def run_us_carver_pipeline(
     except Exception:
         result.pipeline_log.append("  Carry: unavailable (non-fatal)")
 
+    # ── G10: Momentum factor forecasts ───────────────────────
+    momentum_forecasts: Dict[str, float] = {}
+    try:
+        from services.momentum_factor import compute_momentum_forecasts
+        momentum_forecasts = compute_momentum_forecasts(ohlcv_cache)
+        if momentum_forecasts:
+            result.pipeline_log.append(f"  Momentum: {len(momentum_forecasts)} symbols")
+    except Exception:
+        result.pipeline_log.append("  Momentum: unavailable (non-fatal)")
+
+    # ── G10: Mean-reversion forecasts ────────────────────────
+    mean_rev_forecasts: Dict[str, float] = {}
+    try:
+        from strategies.mean_reversion import compute_mean_reversion_batch
+        mean_rev_forecasts = compute_mean_reversion_batch(ohlcv_cache)
+        if mean_rev_forecasts:
+            result.pipeline_log.append(f"  Mean-reversion: {len(mean_rev_forecasts)} symbols")
+    except Exception:
+        result.pipeline_log.append("  Mean-reversion: unavailable (non-fatal)")
+
     # ── Step 4: Build forecast dicts ─────────────────────────
     result.pipeline_log.append("Step 4: Building per-symbol forecast dicts")
     all_forecasts: Dict[str, Dict[str, float]] = {}
@@ -195,6 +215,10 @@ def run_us_carver_pipeline(
                 fc[f"ewmac_{ef.fast}_{ef.slow}"] = ef.forecast
         if sym in carry_batch:
             fc["carry"] = carry_batch[sym].forecast
+        if sym in momentum_forecasts:
+            fc["momentum"] = momentum_forecasts[sym]
+        if sym in mean_rev_forecasts:
+            fc["mean_reversion"] = mean_rev_forecasts[sym]
         if fc:
             all_forecasts[sym] = fc
 

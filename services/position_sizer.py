@@ -31,7 +31,13 @@ logger = logging.getLogger(__name__)
 FORECAST_SCALAR = 10.0          # Carver: forecast is expressed in units of 10
 INERTIA_THRESHOLD = 0.10        # Only re-trade if target changes > 10%
 MAX_FORECAST_ABS = 20.0         # Hard cap on forecast magnitude
-MAX_LEVERAGE = 2.0              # Absolute leverage limit (notional / capital)
+
+# G12: Read max leverage from Config; fallback to 1.0 (not 2.0)
+try:
+    from config import Config as _Cfg
+    MAX_LEVERAGE = getattr(_Cfg, "CARVER_MAX_LEVERAGE", 1.0)
+except Exception:
+    MAX_LEVERAGE = 1.0
 
 
 @dataclass
@@ -145,14 +151,21 @@ def compute_position_size(
         max_qty_by_leverage = int(max_notional / price)
         target_quantity = max(-max_qty_by_leverage, min(target_quantity, max_qty_by_leverage))
 
-    # Step 6: For NSE long-only, floor at 0 (no shorting)
-    target_quantity = max(0, target_quantity)
+    # Step 6: Floor at 0 unless short selling is enabled
+    try:
+        from config import Config
+        allow_short = getattr(Config, "SHORT_SELLING_ENABLED", False)
+    except Exception:
+        allow_short = False
+    if not allow_short:
+        target_quantity = max(0, target_quantity)
 
     notional = target_quantity * price
 
     # Step 7: Position inertia — asymmetric thresholds
     # Scale-UP: full inertia (10%) to avoid noise-driven entry increases
     # Scale-DOWN: lower threshold (5%) to allow faster profit-taking / loss-cutting
+    # FIX: Inertia must NOT override leverage limit — clamp after inertia restore
     trade_required = True
     if current_quantity > 0:
         pct_change = abs(target_quantity - current_quantity) / current_quantity
@@ -160,7 +173,13 @@ def compute_position_size(
         effective_threshold = (inertia_threshold * 0.5) if scaling_down else inertia_threshold
         if pct_change < effective_threshold:
             trade_required = False
-            target_quantity = current_quantity  # keep existing
+            # Restore current qty but re-enforce leverage cap
+            restored_qty = current_quantity
+            if capital > 0:
+                max_notional = capital * max_leverage
+                max_qty_by_leverage = int(max_notional / price)
+                restored_qty = min(restored_qty, max_qty_by_leverage)
+            target_quantity = max(0, restored_qty)
             notional = target_quantity * price
     elif target_quantity == 0 and current_quantity == 0:
         trade_required = False
@@ -258,16 +277,25 @@ def compute_position_sizes_batch(
         total_notional += ps.notional_value
 
     # ── Tier 1 Gap 3: Gross notional ceiling (2× capital) ──
+    # FIX: Scale proportionally by forecast strength (weakest conviction cut most)
     max_notional = 2.0 * capital
     if capital > 0 and total_notional > max_notional:
-        scale = max_notional / total_notional
+        excess_ratio = total_notional / max_notional  # e.g. 1.5 = 50% over
         logger.warning(
-            "Gross notional ₹%.0f exceeds 2× capital ₹%.0f — scaling all positions by %.2f",
-            total_notional, capital, scale,
+            "Gross notional ₹%.0f exceeds 2× capital ₹%.0f — scaling by forecast strength",
+            total_notional, capital,
         )
         from dataclasses import replace as _dc_replace
+        # Compute per-instrument scale: weaker forecasts get cut more
+        forecast_abs = {sym: abs(ps.combined_forecast) + 1e-6 for sym, ps in results.items()}
+        max_fc = max(forecast_abs.values())
         for sym, ps in results.items():
-            scaled_qty = int(ps.target_quantity * scale)
+            # Proportional scale: strongest forecast gets minimal cut
+            fc_ratio = forecast_abs[sym] / max_fc  # 0 to 1
+            # Blend: uniform_scale * (1 - alpha) + proportional * alpha
+            uniform_scale = max_notional / total_notional
+            proportional_scale = min(1.0, uniform_scale * (0.5 + 0.5 * fc_ratio))
+            scaled_qty = int(ps.target_quantity * proportional_scale)
             results[sym] = _dc_replace(
                 ps,
                 target_quantity=scaled_qty,
@@ -275,7 +303,10 @@ def compute_position_sizes_batch(
                 trade_required=abs(scaled_qty - ps.current_quantity) > 0,
                 notional_value=abs(scaled_qty) * ps.price if ps.price else 0.0,
             )
-        total_notional *= scale
+        # G1 FIX: Recompute total_notional from scaled positions
+        total_notional = sum(
+            ps.notional_value for ps in results.values()
+        )
 
     # Log summary
     trades_needed = sum(1 for ps in results.values() if ps.trade_required and ps.trade_delta != 0)

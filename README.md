@@ -1,6 +1,6 @@
 # Centurion Capital LLC — Enterprise AI Trading Platform
 
-A Python-based enterprise trading platform combining multi-source news scraping, AI-powered sentiment analysis, fundamental & technical analysis, strategy backtesting, persistent data storage, live Indian market trading via Zerodha Kite Connect, and a RAG-powered document intelligence pipeline. Built with a **Next.js 14 frontend** (React, TanStack Query, Tailwind CSS) and a **FastAPI backend**, plus a Streamlit UI for legacy workflows. Backed by PostgreSQL/Neon persistence, MinIO/Cloudflare R2 object storage, Upstash Redis caching, ChromaDB vector search, multi-provider LLM integration (Claude / OpenAI / Ollama), Sentry error tracking, and Better Stack log aggregation. Deployable on HF Spaces + Vercel with GitHub Actions CI/CD.
+A Python-based enterprise trading platform built on a **Carver systematic trading framework** (11 forecast sources, FDM combination, volatility-targeted position sizing). Combines multi-source news scraping, AI-powered sentiment analysis, fundamental & technical analysis, strategy backtesting, HMM regime detection, 6-tier drawdown protection, and automated live Indian market trading via Zerodha Kite Connect. Includes a RAG-powered document intelligence pipeline for research. Built with a **Next.js 14 frontend** (React, TanStack Query, Tailwind CSS) and a **FastAPI backend**, plus a Streamlit UI for legacy workflows. Backed by PostgreSQL/Neon persistence, MinIO/Cloudflare R2 object storage, Upstash Redis caching, ChromaDB vector search, multi-provider LLM integration (Claude / OpenAI / Ollama), Sentry error tracking, and Better Stack log aggregation. Deployable on HF Spaces + Vercel with GitHub Actions CI/CD.
 
 ---
 
@@ -131,34 +131,35 @@ MinIO console at: **http://localhost:9002/login** — login with `minioadmin` / 
 
 ---
 
-Jump to **Section 14: Troubleshooting** or **Section 11: Installation** for detailed setup.
+Jump to **Section 15: Troubleshooting** or **Section 12: Installation** for detailed setup.
 
 ---
 
 ## Table of Contents
 
 1. [Architecture Overview](#1-architecture-overview)
-2. [Core Analysis Engine](#2-core-analysis-engine)
-3. [Strategy Backtesting](#3-strategy-backtesting)
-4. [Live Trading — Zerodha Kite Connect](#4-live-trading--zerodha-kite-connect)
-5. [RAG Document Intelligence](#5-rag-document-intelligence)
-6. [Database Layer](#6-database-layer)
-7. [Object Storage (MinIO / Cloudflare R2)](#7-object-storage-minio--cloudflare-r2)
-8. [Interactive Web Interface](#8-interactive-web-interface)
-9. [Financial ML & Test-and-Tune](#9-financial-ml--test-and-tune)
-10. [Project Structure](#10-project-structure)
-11. [Installation (Detailed)](#11-installation)
-12. [Usage Guide](#12-usage-guide)
-13. [API Reference](#13-api-reference)
-14. [Troubleshooting](#14-troubleshooting)
-15. [Dependencies](#15-dependencies)
-16. [Cloud Infrastructure & Observability](#16-cloud-infrastructure--observability)
+2. [Carver Systematic Trading Framework](#2-carver-systematic-trading-framework)
+3. [Core Analysis Engine](#3-core-analysis-engine)
+4. [Strategy Backtesting](#4-strategy-backtesting)
+5. [Live Trading — Zerodha Kite Connect](#5-live-trading--zerodha-kite-connect)
+6. [RAG Document Intelligence](#6-rag-document-intelligence)
+7. [Database Layer](#7-database-layer)
+8. [Object Storage (MinIO / Cloudflare R2)](#8-object-storage-minio--cloudflare-r2)
+9. [Interactive Web Interface](#9-interactive-web-interface)
+10. [Financial ML & Test-and-Tune](#10-financial-ml--test-and-tune)
+11. [Project Structure](#11-project-structure)
+12. [Installation (Detailed)](#12-installation)
+13. [Usage Guide](#13-usage-guide)
+14. [API Reference](#14-api-reference)
+15. [Troubleshooting](#15-troubleshooting)
+16. [Dependencies](#16-dependencies)
+17. [Cloud Infrastructure & Observability](#17-cloud-infrastructure--observability)
 
 ---
 
 ## 1. Architecture Overview
 
-The application follows a modular, deferred-import architecture with dual frontends:
+The application follows a modular, deferred-import architecture with dual frontends and a **Carver-inspired systematic trading pipeline** at its core:
 
 ```
 Next.js 14 Frontend (primary — port 3000)
@@ -170,7 +171,7 @@ Next.js 14 Frontend (primary — port 3000)
 FastAPI Backend (port 9001)
   ├── /api/v1/* — 50+ REST + SSE endpoints
   ├── Auth: itsdangerous signed tokens (8h TTL)
-  └── Delegates to: scrapers, sentiment, metrics, decision_engine, rag_pipeline
+  └── Delegates to: scrapers, sentiment, metrics, forecast_combiner, rag_pipeline
 
 app.py (Streamlit Router — legacy, port 9000)
   ├── apply_custom_styles() initialize_session_state() check_authentication()
@@ -178,43 +179,55 @@ app.py (Streamlit Router — legacy, port 9000)
   └── All page imports deferred to route branches
 ```
 
-### Core Pipeline
+### Signal-to-Execution Pipeline
 
 ```
-AlgoTradingSystem (main.py)
-  ├── USNewsAggregator Yahoo Finance, Finviz, Investing.com, TradingView, r/WallStreetBets
-  ├── IndianNewsAggregator MoneyControl, Economic Times, LiveMint, Business Standard, NDTV Profit, Zerodha Pulse, Google News India
-  ├── SentimentAnalyzer DistilBERT transformer model
-  ├── MetricsCalculator Fundamentals (yfinance) + Technicals (RSI, MACD, Bollinger)
-  ├── DecisionEngine Weighted scoring with regime-adaptive thresholds
-  ├── RegimeDetector 5-state market regime (BULL, BEAR, RANGE, VOLATILITY, CRISIS)
-  ├── NotificationManager Desktop popups (plyer) + HTML email via SMTP
-  └── StorageManager Excel/CSV export + MinIO / R2 object storage
+┌─ STAGE 1: UNIVERSE ──────────────────────────────────────────────────┐
+│ NSE Universe Download (NIFTY50 + NEXT50) via Kite API / yfinance     │
+└──────────────────────────────────────────────────────────────────────┘
+         ↓
+┌─ STAGE 2: SCREENING ─────────────────────────────────────────────────┐
+│ 3-stage NSE screener: liquidity → volatility → technical composite   │
+│ (RSI + MACD + Bollinger + volume surge + price range)                │
+└──────────────────────────────────────────────────────────────────────┘
+         ↓
+┌─ STAGE 3: SIGNAL FILTER ─────────────────────────────────────────────┐
+│ IntegratedScorer 2-layer evaluation → accept BUY / STRONG_BUY only   │
+│ Enrich with live LTP, filter bid-ask < 0.2%, order < 5% ADV         │
+└──────────────────────────────────────────────────────────────────────┘
+         ↓
+┌─ STAGE 4: CARVER FORECAST ENGINE ────────────────────────────────────┐
+│ 11 forecast sources → FDM combination → single forecast (±20)        │
+│ Cost speed limit + strategy decay filter + HMM regime blend          │
+│ Volatility-targeted position sizing (20% annual vol target)          │
+│ Drawdown protection (6-tier) + sector/correlation checks             │
+└──────────────────────────────────────────────────────────────────────┘
+         ↓
+┌─ STAGE 5: EXECUTION ─────────────────────────────────────────────────┐
+│ Kite order placement (BUY CNC) + SL-M + TP limit orders             │
+│ TradeMonitor lifecycle: trailing stop, crash recovery, corp actions   │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-### IntegratedScorer — 5-Layer Evaluation Pipeline
+### IntegratedScorer — 2-Layer Evaluation Pipeline
 
 ```
 IntegratedScorer (services/integrated_scorer.py)
-  Layer 1 — Core Analysis     sentiment, fundamentals, technicals, macro, public opinion
-  Layer 2 — Strategy Signals   all registered strategies run in parallel (ThreadPoolExecutor)
-  Layer 3 — ML Ensemble        AFML chapter models (feature importance, ensemble methods)
-  Layer 4 — Robustness Checks  CSCV, walk-forward, permutation tests (TTMTS chapters)
-  Layer 5 — RAG Context        document-augmented evidence from uploaded PDFs
+  Layer 1 — Core Analysis (45%)
+    Fundamental score (P/E, EPS growth, debt ratios)
+    Technical score (RSI, MACD, moving averages)
+    Macro score (GDP, inflation, FII flows)
+    Delivery conviction multiplier (NSE ≥ 60%)
+    Earnings momentum boost (post-earnings drift)
+
+  Layer 2 — Strategy Consensus + Robustness (55%)
+    10+ strategies run in parallel (ThreadPoolExecutor)
+    Sharpe-weighted consensus vote, horizon-aware multipliers
+    Walk-forward validation (4 rolling folds, 252d train / 63d test)
+    Degradation ratio check (OOS/IS Sharpe; reject if < 0.5)
+    CSCV bootstrap & MC permutation tests
   ──────────────────────────────────────────────────────────────────────
-  Output → StockVerdict (classification, composite_score, layer_scores, reasoning)
-```
-
-### Auto-Execution Engine
-
-```
-AutoExecutor (kite_connect/trading/auto_executor.py)
-  1. NSE Universe Download   → nse_universe.py (NIFTY50 / BANKNIFTY / full NSE)
-  2. 3-Stage NSE Screening   → screener.py (liquidity → volatility → technical filters)
-  3. Signal Filtering         → only BUY / STRONG_BUY verdicts pass through
-  4. Risk Management          → risk_manager.py (position sizing, max drawdown, beta adjustment, SL/TP)
-  5. Order Placement          → order_service.py (Kite API, circuit breaker, idempotent retry) + DB + email
-  6. Post-Trade Monitoring    → trade_monitor.py (SL/TP lifecycle, trailing stop, crash recovery)
+  Output → StockVerdict (STRONG_BUY ≥ 0.55 | BUY ≥ 0.30 | HOLD | SELL ≤ -0.30 | STRONG_SELL ≤ -0.55)
 ```
 
 ### Background Scheduler
@@ -233,7 +246,12 @@ scheduler.py (APScheduler)
 
 ```
 services/
-  ├── RegimeDetector       5-state regime (VIX, NIFTY returns, ADX); 30-min cache; adaptive thresholds
+  ├── ForecastCombiner     11 forecast sources → FDM combination (±20 cap, ~1.35 multiplier)
+  ├── VolatilityTarget     20% annual vol target, Half-Kelly sizing, rolling capital rebalancing
+  ├── RegimeHMM            3-state Gaussian HMM (Bull/Bear/Sideways); log-space forward-backward
+  ├── RegimeDetector       5-state fallback regime (VIX, NIFTY returns, ADX); adaptive thresholds
+  ├── StrategyDecay        63-day rolling Sharpe monitor; auto-scale or blacklist degraded strategies
+  ├── OptionsOverlay       Covered calls + cash-secured puts (IV rank, delta-based strike selection)
   ├── WalkForward          Rolling 1Y train / 1Q test; degradation ratio (OOS/IS < 0.5 = overfit)
   ├── CorporateActions     NSE SPLIT/BONUS/DIVIDEND/RIGHTS; adjusts OHLCV, positions, SL/TP
   ├── DeliveryVolume       NSE delivery % analysis (≥ 60% = institutional conviction, +12 pts)
@@ -241,7 +259,7 @@ services/
   ├── SectorRotation       NIFTY sector 1-month momentum; top 3 bonus, bottom 3 penalty
   ├── SurvivorshipFilter   Detects delisted/suspended/dead stocks (4 methods, 1-hour cache)
   ├── FundamentalFreshness Intra-quarter freshness via bulk deals, promoter pledges, MF holdings
-  └── IntegratedScorer     5-layer eval: Core 35% → Strategy 25% → ML 15% → Robustness 25%
+  └── IntegratedScorer     2-layer eval: Core 45% → Strategy + Robustness 55%
 ```
 
 ### Infrastructure Layer
@@ -283,7 +301,115 @@ layers/
 
 ---
 
-## 2. Core Analysis Engine
+## 2. Carver Systematic Trading Framework
+
+The core alpha engine implements a **Robert Carver–inspired systematic trading pipeline** (*Systematic Trading*, *Leveraged Trading*). All position sizing, forecast generation, and risk management run through this framework for Indian equities via Zerodha Kite Connect.
+
+### 11 Forecast Sources
+
+Every screened stock generates a combined forecast from 11 independent signal sources, each capped at ±20:
+
+| # | Source | Weight | Description |
+|---|--------|--------|-------------|
+| 1 | **EWMAC (16, 64)** | 14% | Fast swing — 16-day EMA minus 64-day EMA |
+| 2 | **EWMAC (32, 128)** | 11% | Medium-term trend confirmation |
+| 3 | **EWMAC (64, 256)** | 14% | Positional trend — 64-day EMA minus 256-day EMA |
+| 4 | **Carry Rule** | 14% | Dividend yield minus funding cost spread |
+| 5 | **Momentum (20d)** | 12% | 20-day price momentum |
+| 6 | **Mean Reversion** | 8% | Bollinger / Keltner oversold–overbought |
+| 7 | **Screener Score** | 8% | Technical + fundamental composite overlay |
+| 8 | **PEAD** | 5% | Post-earnings announcement drift |
+| 9 | **FII Flow Signal** | 5% | FII inflow rate convexity (z-score adaptive) |
+| 10 | **Options OI Signal** | 4% | Open interest distribution skew |
+| 11 | **Decision Engine** | 5% | Multi-layer integrated verdict |
+
+**Combination:**
+- Forecasts are combined via a **Forecast Diversification Multiplier (FDM)** ~1.35 (max 2.0), computed from the inter-forecast correlation matrix
+- Target average forecast magnitude: ~10
+- Trend vs. carry correlation: 0.25 (decorrelated)
+- Mean reversion vs. EWMAC: -0.15 to -0.30 (negatively correlated — diversification benefit)
+
+### Volatility-Targeted Position Sizing
+
+All positions are sized to a **20% annual volatility target** (Half-Kelly for SR ≈ 0.40):
+
+$$\text{Quantity} = \frac{\text{Daily Cash Vol Target}}{\text{Instrument Value Volatility} \times \text{Price}}$$
+
+- **Daily Cash Vol Target** = `(Current Capital × 20%) / √252`
+- **Current Capital** = Initial (₹500K default) + Realised P&L + Unrealised P&L
+- Recalculated daily with rolling capital
+
+### 6-Tier Drawdown Protection
+
+| Drawdown | Risk Level | Position Scale | Action |
+|----------|-----------|----------------|--------|
+| 0–5% | HEALTHY | 100% | Full size |
+| 5–7% | WARNING | 85% | Monitor closely |
+| 7–10% | CRITICAL | 70% | Scale down |
+| 10–15% | SEVERE | 50% | Halve all positions |
+| 15–20% | EXTREME | 25% | Minimal exposure |
+| >20% | **HALTED** | **0%** | **Block all new BUY orders** |
+
+### Risk Management Stack
+
+| Control | Value | Purpose |
+|---------|-------|---------|
+| Max risk per trade | 1–3% of capital | Kelly-criterion bounds |
+| Max open trades | 6 positions | Concentration limit |
+| Max per sector | 30% of capital | Diversification |
+| Max trades/sector | 3 open positions | Sector correlation cap |
+| Min R:R ratio | 2.5:1 | Risk/reward threshold |
+| VIX caution (>20) | Scale to 60% | Regime overlay |
+| VIX panic (>25) | Block BUY orders | Circuit breaker |
+| ADX choppy (<20) | Scale to 50% | Trend-quality filter |
+| Portfolio correlation | Reject if > 0.60 | Crowded-trade protection |
+
+### HMM Regime Detection
+
+A **3-state Gaussian Hidden Markov Model** provides regime-conditioned parameter adaptation:
+
+| State | Name | Characteristics | Position Scale |
+|-------|------|----------------|----------------|
+| S₀ | **BULL** | μ > 0, σ low, breadth positive | 1.0× |
+| S₁ | **BEAR** | μ < 0, σ high, breadth weak | 0.5× |
+| S₂ | **SIDEWAYS** | μ ≈ 0, σ medium, range-bound | 0.7× |
+
+- **Features (4D):** NIFTY daily log-returns, India VIX (normalised), market breadth (A/D ratio), delivery volume %
+- **Training:** EM (Baum-Welch) on 5 years of data; log-space forward-backward (prevents underflow for T > 200)
+- **Prediction:** 5-day ahead state probabilities via transition matrix
+- Falls back to 5-state rule-based `RegimeDetector` when HMM confidence < 0.6
+
+### Strategy Decay Monitor
+
+Rolling 63-day Sharpe is compared against walk-forward historical:
+
+| Status | Decay Ratio | Allocation | Action |
+|--------|------------|------------|--------|
+| HEALTHY | > 0.50× historical | 100% | Full weight |
+| DEGRADED | 0.25–0.50× | 50% | Halve, monitor |
+| DEAD | < 0.25× | 0% | Zero, re-calibrate |
+| INVERTED | Sharpe < 0 | 0% | Blacklist |
+
+### Options Overlay (Designed)
+
+Two systematic strategies for premium harvesting (not yet wired to live execution):
+
+| Strategy | Condition | Strike | Expiry | Roll Trigger |
+|----------|-----------|--------|--------|-------------|
+| **Covered Call** | IV rank > 50, forecast weakening | 30-delta OTM | 30–45 DTE | 50% max profit or 14 DTE |
+| **Cash-Secured Put** | IV rank > 40, positive forecast | 25-delta OTM | 30–45 DTE | 50% max profit or 14 DTE |
+
+### Walk-Forward Validation
+
+- **Training:** 252 days (1Y in-sample) → **Test:** 63 days (1Q out-of-sample)
+- **Folds:** 4 rolling quarterly windows
+- **Degradation ratio:** OOS Sharpe / IS Sharpe — reject if < 0.5 (overfit)
+- **Transaction cost:** 0.40% round-trip (STT + exchange + GST + slippage) deducted per OOS trade
+- **Cost speed limit:** Rejects forecasts where turnover cost exceeds vol-target benefit
+
+---
+
+## 3. Core Analysis Engine
 
 ### News Scraping
 
@@ -336,7 +462,7 @@ Five concurrent US scrapers + eleven Indian scrapers with 3-layer caching (sessi
 
 ### Decision Engine
 
-Weighted combination of three signal components:
+The decision engine provides the **base verdict** that feeds into the Carver forecast pipeline (see [Section 2](#2-carver-systematic-trading-framework)). It combines three signal components into a preliminary score:
 
 ```
 Combined Score = Sentiment × 0.4 + Fundamentals × 0.3 + Technicals × 0.3
@@ -350,13 +476,11 @@ Combined Score = Sentiment × 0.4 + Fundamentals × 0.3 + Technicals × 0.3
 | ≤ -0.4 | SELL |
 | else | HOLD |
 
-- Sentiment: raw score with 1.2x boost when confidence > 0.85, clamped to [-1, 1]
-- Fundamentals: averaged factor scores from PEG, ROE, EPS, and intrinsic/price ratio
-- Technicals: averaged factor scores from RSI, MACD histogram, Bollinger position, and drawdown
+This verdict is one of the 11 forecast sources (weight: 5%) in the Carver forecast combiner. The combined forecast (±20) then drives volatility-targeted position sizing and all downstream risk filters.
 
 ---
 
-## 3. Strategy Backtesting
+## 4. Strategy Backtesting
 
 ### Registered Strategies (11)
 
@@ -412,9 +536,9 @@ Full statistical arbitrage pipeline via the Binance public REST API (no API key 
 
 ---
 
-## 4. Live Trading — Zerodha Kite Connect
+## 5. Live Trading — Zerodha Kite Connect
 
-Streamlit dashboard for real-time Indian equity monitoring, order management, option chain analysis, and automated RSI trading.
+Streamlit dashboard for real-time Indian equity monitoring, order management, option chain analysis, and **Carver-pipeline automated trading**.
 
 ### Components
 
@@ -430,11 +554,28 @@ Streamlit dashboard for real-time Indian equity monitoring, order management, op
 | `nse/nse_universe.py` | NSE symbol list download (NIFTY50, BANKNIFTY, full NSE) |
 | `options/option_chain.py` | Concurrent option chain with OI, Greeks, and IV (ThreadPoolExecutor, 20 workers) |
 | `trading/order_service.py` | Market/Limit/SL/SL-M orders, CNC/MIS/NRML products, DAY/IOC validity — **auto-persists every order to DB** (`order_records` table) + **sends email confirmation** + **circuit breaker** (3 failures → 120s halt) |
-| `trading/auto_executor.py` | End-to-end execution engine: screen → signal-filter → risk-check → order → monitor |
-| `trading/risk_manager.py` | Position sizing (max 5% per position, max 25% total), SL/TP calculation (ATR-based), beta adjustment, earnings blackout detection, VIX/ADX regime scaling, sector limits (40% cap, 3 trades/sector) |
-| `trading/trade_monitor.py` | Post-trade SL/TP lifecycle — polls fill status, places SL-M/limit orders after entry fills, trailing stop support, **crash recovery** (SQLite WAL persistence, auto-restore on restart), corporate action adjustments |
-| `trading/paper_trader.py` | Virtual broker (Zerodha has no native paper trading) — simulates fills with live Kite LTP + slippage model, persists P&L & trades to SQLite; used for strategy validation before live deployment |
+| `trading/auto_executor.py` | End-to-end Carver pipeline: screen → score → forecast → vol-target size → risk-check → order → monitor |
+| `trading/risk_manager.py` | Vol-targeted position sizing, 6-tier drawdown protection, ATR-based SL/TP, VIX/ADX regime scaling, sector limits (30% cap, 3 trades/sector), portfolio correlation filter (reject > 0.60) |
+| `trading/trade_monitor.py` | Post-trade SL/TP lifecycle — SL-M + limit TP after entry fill, **trailing stop** (5% profit lock → 3% trail), **crash recovery** (SQLite WAL persistence, auto-restore on restart), corporate action adjustments, forced exit after max hold period |
+| `trading/paper_trader.py` | Virtual broker — simulates fills with live Kite LTP + slippage model, persists P&L & trades to SQLite |
 | `trading/rsi_strategy.py` | Live RSI scanner — BUY (RSI<30 + reversal), SELL (RSI>70 + reversal), auto-order placement |
+
+### Exit Management Lifecycle
+
+The `TradeMonitor` manages the full post-entry lifecycle:
+
+```
+Entry fill confirmed → place SL-M + limit TP orders
+  ├── SL triggered      → close trade, cancel orphaned TP, realise loss
+  ├── TP filled          → close trade, cancel orphaned SL, realise gain
+  ├── Trailing stop      → ratchet SL up after 5% profit (3% trail distance)
+  ├── Forced exit        → close at market after max hold (10d swing / 30d positional)
+  ├── Corporate action   → adjust quantity + SL/TP for split/bonus
+  ├── TP expiry (DAY)    → re-place next trading day
+  └── Crash recovery     → SQLite WAL persistence, auto-restore on restart
+```
+
+**Stop-Loss Methods (configurable):** MA50-based, swing-low (10d), ATR-based (2.0× ATR), or tightest-of-three. Min SL: 5%, Max SL: 8% + 1.5σ gap buffer for overnight NSE risk.
 
 ### Real-time Streaming Architecture
 
@@ -479,7 +620,7 @@ Push-based tick distribution via Kite WebSocket (KiteTicker) with an internal ev
 
 ---
 
-## 5. RAG Document Intelligence
+## 6. RAG Document Intelligence
 
 Retrieval-Augmented Generation pipeline for document Q&A with PDF ingestion, hybrid search, and multi-provider LLM generation.
 
@@ -517,7 +658,7 @@ Retrieval-Augmented Generation pipeline for document Q&A with PDF ingestion, hyb
 
 ---
 
-## 6. Database Layer
+## 7. Database Layer
 
 ### PostgreSQL Schema (14 tables)
 
@@ -578,7 +719,7 @@ The database connection layer supports direct `DATABASE_URL` connection strings 
 
 ---
 
-## 7. Object Storage (MinIO / Cloudflare R2)
+## 8. Object Storage (MinIO / Cloudflare R2)
 
 S3-compatible storage for backtest chart images. Supports **MinIO** (local development) and **Cloudflare R2** (production — free tier: 10 GB, zero egress fees):
 
@@ -601,7 +742,7 @@ details = minio.list_runs_detailed()         # metadata: size, chart count, stra
 
 ---
 
-## 8. Interactive Web Interface
+## 9. Interactive Web Interface
 
 ### Pages
 
@@ -659,7 +800,7 @@ A modern React-based frontend built with Next.js 14, Tailwind CSS, and TanStack 
 
 ---
 
-## 9. Financial ML & Test-and-Tune
+## 10. Financial ML & Test-and-Tune
 
 Two book-based quantitative research modules share the same UI pattern — tabbed chapter analyses, async background pre-computation, MinIO figure persistence, and PostgreSQL result storage.
 
@@ -705,7 +846,7 @@ Both modules follow the same pattern:
 
 ---
 
-## 10. Project Structure
+## 11. Project Structure
 
 ```
 centurion_core/
@@ -829,8 +970,13 @@ centurion_core/
 │
 ├── services/                     # Business logic & analysis services
 │   ├── analysis.py               # Analysis orchestration (async, Streamlit-free)
-│   ├── integrated_scorer.py      # 5-layer evaluation pipeline (core + strategy + ML + robustness + RAG)
-│   ├── regime_detector.py        # 5-state market regime (VIX, NIFTY returns, ADX); adaptive thresholds
+│   ├── integrated_scorer.py      # 2-layer evaluation pipeline (core 45% + strategy/robustness 55%)
+│   ├── forecast_combiner.py      # Carver 11-source forecast combination with FDM (~1.35)
+│   ├── volatility_target.py      # 20% annual vol target, Half-Kelly sizing, rolling capital
+│   ├── regime_hmm.py             # 3-state Gaussian HMM (Bull/Bear/Sideways); log-space forward-backward
+│   ├── regime_detector.py        # 5-state fallback regime (VIX, NIFTY returns, ADX); adaptive thresholds
+│   ├── strategy_decay.py         # 63-day rolling Sharpe monitor; auto-scale or blacklist degraded strategies
+│   ├── options_overlay.py        # Covered calls + cash-secured puts (IV rank, delta-based strike selection)
 │   ├── walk_forward.py           # Rolling walk-forward validation (1Y train / 1Q test)
 │   ├── corporate_actions.py      # NSE SPLIT/BONUS/DIVIDEND/RIGHTS handler
 │   ├── delivery_volume.py        # NSE delivery % analysis (≥60% = institutional conviction)
@@ -973,7 +1119,7 @@ centurion_core/
 
 ---
 
-## 11. Installation
+## 12. Installation
 
 Complete step-by-step setup guide for fresh machine deployment.
 
@@ -1403,7 +1549,7 @@ For detailed setup, see [deployment/DEPLOYMENT.md](deployment/DEPLOYMENT.md) and
 
 ---
 
-## 12. Usage Guide
+## 13. Usage Guide
 
 ### Quick Start
 
@@ -1462,7 +1608,7 @@ Tab-based sub-navigation per market section:
 
 ---
 
-## 13. API Reference
+## 14. API Reference
 
 ### REST API (FastAPI)
 
@@ -1576,7 +1722,7 @@ docker-compose down -v
 
 ---
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 ### Database
 
@@ -1604,7 +1750,7 @@ docker-compose down -v
 
 ---
 
-## 15. Dependencies
+## 16. Dependencies
 
 | Category | Packages |
 |---|---|
@@ -1629,7 +1775,7 @@ docker-compose down -v
 
 ---
 
-## 16. Cloud Infrastructure & Observability
+## 17. Cloud Infrastructure & Observability
 
 Production deployment uses a fully managed cloud stack with zero self-hosted servers.
 
@@ -1682,7 +1828,7 @@ User → Vercel (Next.js frontend)
 
 ---
 
-### 16.1 HF Spaces (Backend)
+### 17.1 HF Spaces (Backend)
 
 The FastAPI backend runs on Hugging Face Spaces using a Docker container.
 
@@ -1713,7 +1859,7 @@ The FastAPI backend runs on Hugging Face Spaces using a Docker container.
 
 ---
 
-### 16.2 Vercel (Frontend)
+### 17.2 Vercel (Frontend)
 
 The Next.js 14 frontend deploys to Vercel with API rewrites to the HF Spaces backend.
 
@@ -1728,7 +1874,7 @@ The Next.js 14 frontend deploys to Vercel with API rewrites to the HF Spaces bac
 
 ---
 
-### 16.3 Neon PostgreSQL (Database)
+### 17.3 Neon PostgreSQL (Database)
 
 Serverless PostgreSQL with auto-suspend and connection pooling.
 
@@ -1744,7 +1890,7 @@ Serverless PostgreSQL with auto-suspend and connection pooling.
 
 ---
 
-### 16.4 Upstash Redis (Caching)
+### 17.4 Upstash Redis (Caching)
 
 Dual-layer caching: L1 in-memory dict + L2 Upstash Redis for cross-restart persistence.
 
@@ -1768,7 +1914,7 @@ Dual-layer caching: L1 in-memory dict + L2 Upstash Redis for cross-restart persi
 
 ---
 
-### 16.5 Cloudflare R2 (Object Storage)
+### 17.5 Cloudflare R2 (Object Storage)
 
 S3-compatible storage for backtest charts, Financial ML figures, and nightly SQLite backups.
 
@@ -1793,7 +1939,7 @@ centurion-backtests/
 
 ---
 
-### 16.6 Sentry (Error Tracking)
+### 17.6 Sentry (Error Tracking)
 
 Automatic error capture and performance tracing for the FastAPI backend.
 
@@ -1817,7 +1963,7 @@ Automatic error capture and performance tracing for the FastAPI backend.
 
 ---
 
-### 16.7 Better Stack (Log Aggregation)
+### 17.7 Better Stack (Log Aggregation)
 
 Cloud log shipping via Logtail — all structured JSON logs are forwarded to Better Stack for search, alerting, and dashboards.
 
@@ -1838,7 +1984,7 @@ Cloud log shipping via Logtail — all structured JSON logs are forwarded to Bet
 
 ---
 
-### 16.8 Complete Cloud `.env` Reference
+### 17.8 Complete Cloud `.env` Reference
 
 All cloud-specific environment variables (add to `.env` locally and as HF Spaces secrets for production):
 

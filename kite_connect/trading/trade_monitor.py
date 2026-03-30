@@ -45,7 +45,10 @@ class MonitoredTrade:
     sl_triggered: bool = False
     tp_triggered: bool = False
     closed: bool = False
+    scaled_2r: bool = False    # G5: persisted scale-out state
+    scaled_3r: bool = False    # G5: persisted scale-out state
     opened_at: datetime = field(default_factory=datetime.now)
+    direction: str = "LONG"    # "LONG" or "SHORT" (Phase 2)
 
     @property
     def is_active(self) -> bool:
@@ -68,6 +71,9 @@ class TradeMonitor:
         self.kite = kite
         self._risk_config = risk_config  # RiskConfig for trailing SL params
         self._trades: Dict[str, MonitoredTrade] = {}  # keyed by entry_order_id
+        self._daily_sl_count: int = 0     # G14: SL hits today
+        self._daily_sl_date: Optional[str] = None  # G14: date tracker
+        self._halted: bool = False         # G14: True when max-loss-per-day breached
         self._init_state_db()
         self._restore_state()
 
@@ -162,6 +168,18 @@ class TradeMonitor:
         """
         if self.kite is None:
             return []
+
+        # G14: Reset daily SL counter on new trading day
+        today = datetime.now().strftime("%Y-%m-%d")
+        if self._daily_sl_date != today:
+            self._daily_sl_date = today
+            self._daily_sl_count = 0
+            self._halted = False
+
+        # G14: If 3+ SL hits today, halt all new monitoring (existing SL/TP still fire)
+        if self._halted:
+            logger.warning("TradeMonitor: HALTED — %d SL hits today, skipping poll", self._daily_sl_count)
+            return [{"type": "DAILY_HALT", "sl_count": self._daily_sl_count}]
 
         events: List[Dict] = []
 
@@ -266,6 +284,12 @@ class TradeMonitor:
                     })
                     logger.info("SL triggered: %s @ %.2f (P&L: %.2f)", trade.symbol, exit_price, realized_pnl)
                     self._roll_capital(realized_pnl)
+                    # G14: Track daily SL hits — halt at 3
+                    self._daily_sl_count += 1
+                    if self._daily_sl_count >= 3:
+                        self._halted = True
+                        logger.warning("G14: 3 SL hits today — HALTING new trades")
+                        events.append({"type": "DAILY_HALT", "sl_count": self._daily_sl_count})
                     # Cancel the orphaned TP order
                     self._cancel_order(trade.tp_order_id, trade.symbol, "TP")
 
@@ -308,6 +332,13 @@ class TradeMonitor:
                 if trail_event:
                     events.append(trail_event)
 
+            # ── Gap C7: Scale-out at 2R and 3R targets ─────────
+            # Sell partial position (33% at 2R, 33% at 3R) to lock profits
+            if trade.entry_filled and not trade.closed:
+                scaleout_event = self._check_scale_out(trade)
+                if scaleout_event:
+                    events.append(scaleout_event)
+
             # ── P0 fix: Time-based forced exit ─────────────────
             # Force close positions held beyond max hold days
             if trade.entry_filled and not trade.closed:
@@ -323,6 +354,9 @@ class TradeMonitor:
 
         # ── Desktop notifications for SL/TP events ────────────
         self._dispatch_notifications(events)
+
+        # ── G15: Sync unrealized P&L to vol target ──────────
+        self._sync_vol_target_unrealized()
 
         # ── Persist state after all mutations ─────────────────
         if events:
@@ -395,17 +429,41 @@ class TradeMonitor:
             if attempt < _MAX_SL_RETRIES - 1:
                 _time.sleep(1)  # 1s backoff between retries
 
-        # All retries exhausted — log critical alert
+        # All retries exhausted — EMERGENCY: place MARKET sell to close unprotected position
         logger.error(
             "CRITICAL: SL placement FAILED after %d retries for %s — "
-            "position is UNPROTECTED",
+            "placing emergency MARKET SELL to protect capital",
             _MAX_SL_RETRIES, trade.symbol,
         )
+        try:
+            emergency_resp = place_order(
+                kite=self.kite,
+                symbol=trade.symbol,
+                exchange="NSE",
+                transaction_type="SELL" if trade.side == "BUY" else "BUY",
+                quantity=trade.quantity,
+                order_type="MARKET",
+                product="CNC",
+            )
+            if emergency_resp.get("success"):
+                trade.closed = True
+                logger.warning(
+                    "Emergency MARKET SELL executed for %s qty=%d — position closed",
+                    trade.symbol, trade.quantity,
+                )
+            else:
+                logger.error(
+                    "Emergency MARKET SELL also FAILED for %s: %s — POSITION UNPROTECTED",
+                    trade.symbol, emergency_resp.get("error"),
+                )
+        except Exception as em_exc:
+            logger.error("Emergency MARKET SELL exception for %s: %s", trade.symbol, em_exc)
+
         try:
             from services.notifications.manager import NotificationManager
             NotificationManager().notify_critical(
                 f"SL FAILED for {trade.symbol} after {_MAX_SL_RETRIES} retries — "
-                f"position unprotected at entry={trade.entry_price}"
+                f"emergency sell {'executed' if trade.closed else 'ALSO FAILED'}"
             )
         except Exception:
             pass
@@ -439,7 +497,10 @@ class TradeMonitor:
             logger.error("TP exception for %s: %s", trade.symbol, exc)
 
     def _maybe_trail_sl(self, trade: MonitoredTrade) -> Optional[Dict]:
-        """Ratchet the stop-loss upward using Carver vol-based adaptive trailing.
+        """Ratchet the stop-loss using Carver vol-based adaptive trailing.
+
+        For LONG: ratchets UP (new_sl > old_sl).
+        For SHORT: ratchets DOWN (new_sl < old_sl).
 
         Uses vol_trailing_stop.compute_trailing_stop() which:
           - Scales stop distance by daily volatility (2.5σ swing, 3.5σ positional)
@@ -451,6 +512,9 @@ class TradeMonitor:
         """
         if not self.kite or not trade.sl_order_id:
             return None
+
+        is_short = getattr(trade, "direction", "LONG") == "SHORT"
+
         try:
             key = f"NSE:{trade.symbol}"
             ltp_data = self.kite.ltp([key])
@@ -474,32 +538,60 @@ class TradeMonitor:
                     daily_vol = 0.02  # 2% fallback
 
                 trade_horizon = getattr(Config, "CARVER_TRADE_HORIZON", "swing")
-                peak_price = max(getattr(trade, "_peak_price", trade.entry_price), ltp)
-                trade._peak_price = peak_price  # track peak on the trade object
 
-                state = compute_trailing_stop(
-                    entry_price=trade.entry_price,
-                    current_price=ltp,
-                    peak_price=peak_price,
-                    daily_price_vol=daily_vol,
-                    previous_stop=trade.stop_loss,
-                    trade_horizon=trade_horizon,
-                )
-                new_sl = state.current_stop
+                if is_short:
+                    # SHORT: track trough (lowest price since entry)
+                    trough_price = min(getattr(trade, "_trough_price", trade.entry_price), ltp)
+                    trade._trough_price = trough_price
+
+                    # Mirror: compute as if LONG from trough, then flip
+                    state = compute_trailing_stop(
+                        entry_price=trade.entry_price,
+                        current_price=trade.entry_price,  # dummy
+                        peak_price=trade.entry_price,      # dummy
+                        daily_price_vol=daily_vol,
+                        trade_horizon=trade_horizon,
+                    )
+                    # For SHORT stop: entry + stop_distance, trail downward from there
+                    stop_dist = trade.entry_price - state.current_stop
+                    new_sl = trough_price + stop_dist
+                else:
+                    peak_price = max(getattr(trade, "_peak_price", trade.entry_price), ltp)
+                    trade._peak_price = peak_price
+
+                    state = compute_trailing_stop(
+                        entry_price=trade.entry_price,
+                        current_price=ltp,
+                        peak_price=peak_price,
+                        daily_price_vol=daily_vol,
+                        previous_stop=trade.stop_loss,
+                        trade_horizon=trade_horizon,
+                    )
+                    new_sl = state.current_stop
             except Exception:
                 # Fallback: simple percentage trail
                 cfg = self._risk_config
                 activation_pct = getattr(cfg, "trailing_sl_activation_pct", 0.05) if cfg else 0.05
                 trail_pct = getattr(cfg, "trailing_sl_distance_pct", 0.03) if cfg else 0.03
 
-                profit_pct = (ltp - trade.entry_price) / trade.entry_price
-                if profit_pct < activation_pct:
-                    return None
-                new_sl = round(ltp * (1 - trail_pct), 2)
+                if is_short:
+                    profit_pct = (trade.entry_price - ltp) / trade.entry_price
+                    if profit_pct < activation_pct:
+                        return None
+                    new_sl = round(ltp * (1 + trail_pct), 2)
+                else:
+                    profit_pct = (ltp - trade.entry_price) / trade.entry_price
+                    if profit_pct < activation_pct:
+                        return None
+                    new_sl = round(ltp * (1 - trail_pct), 2)
 
-            # Only ratchet up, never down
-            if new_sl <= trade.stop_loss:
-                return None
+            # Direction-aware ratchet: LONG ratchets up, SHORT ratchets down
+            if is_short:
+                if new_sl >= trade.stop_loss:
+                    return None  # SHORT: only ratchet DOWN
+            else:
+                if new_sl <= trade.stop_loss:
+                    return None  # LONG: only ratchet UP
 
             new_sl = round(new_sl, 2)
 
@@ -508,15 +600,19 @@ class TradeMonitor:
             resp = modify_order(
                 self.kite, trade.sl_order_id,
                 trigger_price=new_sl,
-                price=round(new_sl * 0.99, 2),
+                price=round(new_sl * (1.01 if is_short else 0.99), 2),
             )
             if resp.get("success"):
                 old_sl = trade.stop_loss
                 trade.stop_loss = new_sl
-                profit_pct = (ltp - trade.entry_price) / trade.entry_price
+                if is_short:
+                    profit_pct = (trade.entry_price - ltp) / trade.entry_price
+                else:
+                    profit_pct = (ltp - trade.entry_price) / trade.entry_price
                 logger.info(
-                    "Trailing SL (vol-based): %s ratcheted %.2f → %.2f (LTP=%.2f, profit=%.1f%%)",
-                    trade.symbol, old_sl, new_sl, ltp, profit_pct * 100,
+                    "Trailing SL (vol-based): %s [%s] ratcheted %.2f → %.2f (LTP=%.2f, profit=%.1f%%)",
+                    trade.symbol, "SHORT" if is_short else "LONG",
+                    old_sl, new_sl, ltp, profit_pct * 100,
                 )
                 return {
                     "type": "TRAILING_SL_UPDATED",
@@ -531,8 +627,9 @@ class TradeMonitor:
         return None
 
     def _check_hold_time_exit(self, trade: MonitoredTrade) -> Optional[Dict]:
-        """Force exit positions held beyond max hold days (swing=10, positional=30).
+        """Gap C5: Force exit positions held beyond max hold days.
 
+        Uses Config values: MAX_HOLD_DAYS_SWING=15, MAX_HOLD_DAYS_POSITIONAL=60.
         Places a MARKET sell order and cancels existing SL/TP orders.
         """
         if not self.kite or trade.closed:
@@ -541,7 +638,7 @@ class TradeMonitor:
             from config import Config
             hold_days = (datetime.now() - trade.opened_at).days
             horizon = getattr(Config, "CARVER_TRADE_HORIZON", "swing")
-            max_days = 30 if horizon == "positional" else 10
+            max_days = getattr(Config, "MAX_HOLD_DAYS_POSITIONAL", 60) if horizon == "positional" else getattr(Config, "MAX_HOLD_DAYS_SWING", 15)
 
             if hold_days < max_days:
                 return None
@@ -578,6 +675,86 @@ class TradeMonitor:
             }
         except Exception as exc:
             logger.warning("Hold time exit check failed for %s: %s", trade.symbol, exc)
+        return None
+
+    def _check_scale_out(self, trade: MonitoredTrade) -> Optional[Dict]:
+        """Gap C7: Partial exit (scale-out) at 2R and 3R targets.
+
+        Sells 33% of position at 2R, another 33% at 3R.
+        Tracks scale-out state via trade attributes.
+        """
+        if not self.kite or trade.closed or trade.quantity <= 1:
+            return None
+        try:
+            # Get current price
+            key = f"NSE:{trade.symbol}"
+            ltp_data = self.kite.ltp([key])
+            current_price = ltp_data.get(key, {}).get("last_price", 0)
+            if current_price <= 0:
+                return None
+
+            # Risk distance (1R)
+            risk_1r = trade.entry_price - trade.stop_loss
+            if risk_1r <= 0:
+                return None
+
+            # Current R-multiple
+            profit = current_price - trade.entry_price
+            r_multiple = profit / risk_1r
+
+            # Track scale-out state (G5: persisted via dataclass fields)
+            scaled_at_2r = trade.scaled_2r
+            scaled_at_3r = trade.scaled_3r
+
+            sell_qty = 0
+            r_target = 0
+
+            if r_multiple >= 3.0 and not scaled_at_3r:
+                sell_qty = max(1, trade.quantity // 3)
+                r_target = 3
+                trade.scaled_3r = True
+            elif r_multiple >= 2.0 and not scaled_at_2r:
+                sell_qty = max(1, trade.quantity // 3)
+                r_target = 2
+                trade.scaled_2r = True
+
+            if sell_qty <= 0:
+                return None
+
+            # Place partial SELL order
+            from kite_connect.trading.order_service import place_order
+            resp = place_order(
+                kite=self.kite,
+                symbol=trade.symbol,
+                exchange="NSE",
+                transaction_type="SELL",
+                quantity=sell_qty,
+                order_type="MARKET",
+                product="CNC",
+            )
+
+            # Reduce monitored quantity
+            trade.quantity -= sell_qty
+            realized_pnl = (current_price - trade.entry_price) * sell_qty
+            self._roll_capital(realized_pnl)
+
+            logger.info(
+                "SCALE-OUT %dR: %s sold %d/%d @ %.2f (P&L: %.2f)",
+                r_target, trade.symbol, sell_qty,
+                trade.quantity + sell_qty, current_price, realized_pnl,
+            )
+            return {
+                "type": f"SCALE_OUT_{r_target}R",
+                "symbol": trade.symbol,
+                "quantity_sold": sell_qty,
+                "remaining_qty": trade.quantity,
+                "exit_price": current_price,
+                "r_multiple": round(r_multiple, 1),
+                "realized_pnl": round(realized_pnl, 2),
+                "order_id": resp.get("order_id") if resp.get("success") else None,
+            }
+        except Exception as exc:
+            logger.debug("Scale-out check failed for %s: %s", trade.symbol, exc)
         return None
 
     def _roll_capital(self, realized_pnl: float) -> None:
@@ -618,6 +795,36 @@ class TradeMonitor:
             )
         except Exception as exc:
             logger.debug("Capital rollup failed (non-fatal): %s", exc)
+
+    def _sync_vol_target_unrealized(self) -> None:
+        """G15: Sync unrealized P&L into VolatilityTarget for responsive sizing.
+
+        Computes total unrealized P&L across all active trades and feeds it
+        to the vol target so that the position sizer can shrink/grow positions
+        in real-time rather than waiting for trade closure.
+        """
+        active = self.active_trades
+        if not active or not self.kite:
+            return
+        try:
+            ltps = self.kite.ltp([f"NSE:{t.symbol}" for t in active])
+            total_unreal = 0.0
+            for t in active:
+                ltp_info = ltps.get(f"NSE:{t.symbol}", {})
+                cmp = ltp_info.get("last_price", t.entry_price)
+                if t.direction == "SHORT":
+                    pnl = (t.entry_price - cmp) * t.quantity
+                else:
+                    pnl = (cmp - t.entry_price) * t.quantity
+                total_unreal += pnl
+
+            from config import Config
+            capital = getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000)
+            realized = getattr(Config, "_CUMULATIVE_REALIZED_PNL", 0.0)
+            Config._CURRENT_EQUITY = capital + realized + total_unreal
+            logger.debug("Vol-target sync: unrealized=%.0f equity=%.0f", total_unreal, Config._CURRENT_EQUITY)
+        except Exception as exc:
+            logger.debug("Vol-target unrealized sync failed (non-fatal): %s", exc)
 
     def _cancel_order(self, order_id: Optional[str], symbol: str, label: str):
         """Cancel an orphaned order (SL when TP fills, or vice versa)."""

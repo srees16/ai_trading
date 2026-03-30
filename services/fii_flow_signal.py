@@ -91,17 +91,25 @@ def compute_fii_forecast(
     fii_latest = float(fii_arr[-1])
     dii_latest = float(dii_arr[-1])
 
+    # Adaptive z-score thresholds: use rolling std of FII flows
+    # so the signal auto-adjusts to current flow volatility regime
+    fii_std = float(np.std(fii_arr)) if len(fii_arr) >= 5 else abs(fii_bullish_threshold)
+    if fii_std < 100.0:
+        fii_std = abs(fii_bullish_threshold)  # floor to prevent micro-vol instability
+    z_bull = fii_3d / fii_std  # z-score relative to recent flow vol
+    z_bear = fii_3d / fii_std
+
     forecast = 0.0
     signal = "NEUTRAL"
 
-    # Strong FII buying
-    if fii_3d > fii_bullish_threshold:
-        strength = min(1.0, fii_3d / (fii_bullish_threshold * 3))
+    # Strong FII buying (z-score > 1.0)
+    if z_bull > 1.0:
+        strength = min(1.0, z_bull / 3.0)
         forecast = strength * FORECAST_CAP
         signal = "FII_BULLISH"
 
-    # Strong FII selling
-    elif fii_3d < fii_bearish_threshold:
+    # Strong FII selling (z-score < -1.0)
+    elif z_bear < -1.0:
         # For long-only: dampen to 0 instead of negative
         # But if DII is buying (accumulation), give mild positive
         if dii_3d > abs(fii_3d) * 0.5:
@@ -111,14 +119,14 @@ def compute_fii_forecast(
             forecast = 0.0
             signal = "FII_BEARISH"
 
-    # Moderate FII buying with trend
-    elif fii_3d > 0 and fii_5d > 0:
-        strength = min(1.0, fii_3d / fii_bullish_threshold)
+    # Moderate FII buying with trend (z-score > 0 and 5d positive)
+    elif z_bull > 0 and fii_5d > 0:
+        strength = min(1.0, z_bull / 1.0)
         forecast = strength * FORECAST_CAP * 0.5
         signal = "FII_MILD_BULLISH"
 
     # FII selling but DII strongly buying
-    elif fii_3d < 0 and dii_3d > fii_bullish_threshold:
+    elif fii_3d < 0 and dii_3d > fii_std:
         forecast = 4.0
         signal = "ACCUMULATION"
 
@@ -162,7 +170,27 @@ def get_fii_flow_forecasts(
     if snap.forecast == 0.0:
         return {}
 
-    return {sym: snap.forecast for sym in symbols}
+    # G17: Make stock-specific — weight by FII-sensitivity of sector
+    # Financials and IT are most affected by FII flows; defensive sectors less so.
+    _FII_SENSITIVITY = {
+        "Financials": 1.4, "IT": 1.3, "Consumer Tech": 1.2,
+        "Energy": 1.0, "Auto": 1.0, "Metals": 0.9,
+        "Pharma": 0.7, "Consumer": 0.6, "Telecom": 0.8,
+        "Infra": 0.8, "Retail": 0.7, "Chemicals": 0.7,
+    }
+    try:
+        from config import Config
+        sector_map = Config.NSE_SECTOR_MAP
+    except Exception:
+        sector_map = {}
+
+    result = {}
+    for sym in symbols:
+        sector = sector_map.get(sym, "")
+        sensitivity = _FII_SENSITIVITY.get(sector, 1.0)
+        adjusted = round(snap.forecast * sensitivity, 2)
+        result[sym] = max(-20.0, min(20.0, adjusted))
+    return result
 
 
 def fetch_nse_fii_data() -> tuple:

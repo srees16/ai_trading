@@ -262,11 +262,17 @@ def compute_handcrafted_weights(
     if total_sw > 0:
         sector_weights = {k: v / total_sw for k, v in sector_weights.items()}
 
-    # Level 2: within-sector equal weight
+    # Level 2: within-sector equal weight with minimum floor
+    MIN_WEIGHT = 0.02  # 2% floor per instrument
     weights: Dict[str, float] = {}
     for sec, syms in sector_groups.items():
         per_sym = sector_weights[sec] / len(syms)
         for sym in syms:
-            weights[sym] = round(per_sym, 6)
+            weights[sym] = round(max(per_sym, MIN_WEIGHT), 6)
+
+    # Re-normalise to sum to 1.0 after floor enforcement
+    total_w = sum(weights.values())
+    if total_w > 0 and abs(total_w - 1.0) > 1e-6:
+        weights = {k: round(v / total_w, 6) for k, v in weights.items()}
 
     return weights
