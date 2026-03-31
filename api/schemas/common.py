@@ -32,7 +32,7 @@ class HealthResponse(BaseModel):
     database: bool = False
     version: str = "1.0.0"
     timestamp: datetime = Field(default_factory=datetime.utcnow)
-    components: Dict[str, bool] = Field(default_factory=dict)
+    components: Dict[str, Any] = Field(default_factory=dict)
 
 
 class PaginationParams(BaseModel):

@@ -14,8 +14,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Health"])
 
 
-@router.get(
+@router.api_route(
     "/health",
+    methods=["GET", "HEAD"],
     response_model=HealthResponse,
     summary="System health check",
 )
