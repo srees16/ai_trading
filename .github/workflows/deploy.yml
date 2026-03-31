@@ -50,6 +50,10 @@ jobs:
             --exclude='_compare_*' \
             ./ /tmp/hf-space/
 
+          # Remove large dirs/files that rsync --exclude preserves from prior uploads
+          rm -rf /tmp/hf-space/rag_pipeline/ingest_docs
+          find /tmp/hf-space -not -path '*/.git/*' -name '*.pdf' -type f -delete
+
       - name: Inject credentials and HF-specific files
         env:
           CREDENTIALS_YAML: ${{ secrets.CREDENTIALS_YAML }}
