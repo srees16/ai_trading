@@ -575,3 +575,366 @@ def _check_us_carver_modules() -> Dict[str, bool]:
         except Exception:
             status[name] = False
     return status
+
+
+# -----------------------------------------------------------------------
+# Vince Metrics (Phase 5)
+# -----------------------------------------------------------------------
+
+@router.get("/vince/metrics", response_model=SuccessResponse)
+async def us_vince_metrics():
+    """Return Ralph Vince risk metrics for US stocks portfolio."""
+    try:
+        from services.vince_metrics import get_vince_tracker
+        tracker = get_vince_tracker()
+        data = tracker.to_dict()
+        return SuccessResponse(success=True, data=data)
+    except Exception as exc:
+        logger.error("US Vince metrics error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# -----------------------------------------------------------------------
+# Penfold Trend Analysis (manual order placement support)
+# -----------------------------------------------------------------------
+
+@router.post(
+    "/penfold/analysis",
+    summary="Penfold trend analysis for manual trading",
+    description=(
+        "Returns per-symbol Dow Theory trend, Turtle breakout, ATR band, "
+        "retracement signals, and combined Penfold forecast. "
+        "Use these signals to place manual orders on DriveWealth."
+    ),
+)
+async def us_penfold_analysis(tickers: Optional[List[str]] = None):
+    """Run Penfold trend tactics analysis on US stocks.
+
+    Returns actionable signals for manual order placement:
+    - Dow Theory daily/weekly trend direction + confidence
+    - Turtle 4W channel breakout entry/exit levels
+    - ATR band expansion signal
+    - Retracement (pullback-to-trend) entry signal
+    - Combined Penfold forecast (-20 to +20)
+    - Risk metrics: R² and UPI when equity history is available
+    """
+    try:
+        from utils import download_us_ohlcv
+        from services.us_carver_pipeline import DEFAULT_US_CARVER_TICKERS
+        from strategies.penfold_trend import (
+            compute_penfold_trend_analysis,
+            compute_weekly_dow_filter,
+            compute_turtle_breakout,
+            compute_atr_band_breakout,
+            compute_retracement_entry,
+            compute_dow_trend,
+            check_ror_gate,
+        )
+
+        syms = tickers or DEFAULT_US_CARVER_TICKERS
+        results = []
+
+        for sym in syms:
+            try:
+                df = download_us_ohlcv(sym, period="6mo")
+                if df is None or len(df) < 64:
+                    continue
+
+                # Combined Penfold analysis
+                penfold = compute_penfold_trend_analysis(df, sym)
+
+                # Daily Dow trend
+                dow = compute_dow_trend(df)
+
+                # Weekly Dow trend
+                weekly_dow = compute_weekly_dow_filter(df)
+
+                # Individual signals
+                turtle = compute_turtle_breakout(df, sym)
+                atr_band_fc = compute_atr_band_breakout(df, sym)
+                retracement = compute_retracement_entry(df, sym)
+
+                price = float(df["Close"].iloc[-1])
+
+                entry = {
+                    "symbol": sym,
+                    "current_price": round(price, 2),
+                    "combined_forecast": round(penfold.combined_forecast, 2),
+                    "dow_trend_daily": penfold.dow_trend_daily,
+                    "dow_confidence": round(penfold.dow_confidence, 2),
+                    "dow_trend_weekly": weekly_dow,
+                    "turtle": {
+                        "entry_side": turtle.entry_side if turtle else "",
+                        "forecast": round(turtle.forecast, 2) if turtle else 0.0,
+                        "channel_high": round(turtle.channel_high, 2) if turtle else 0.0,
+                        "channel_low": round(turtle.channel_low, 2) if turtle else 0.0,
+                        "stop_level": round(turtle.stop_level, 2) if turtle else 0.0,
+                    },
+                    "atr_band": {
+                        "forecast": round(atr_band_fc, 2) if atr_band_fc is not None else 0.0,
+                        "action": (
+                            "BUY" if atr_band_fc is not None and atr_band_fc > 10.0
+                            else "SELL" if atr_band_fc is not None and atr_band_fc < -10.0
+                            else "NEUTRAL"
+                        ),
+                    },
+                    "retracement": {
+                        "trend_direction": retracement.trend_direction if retracement else "",
+                        "forecast": round(retracement.forecast, 2) if retracement else 0.0,
+                        "entry_level": round(retracement.entry_level, 2) if retracement else 0.0,
+                        "stop_level": round(retracement.stop_level, 2) if retracement else 0.0,
+                    },
+                    "action": (
+                        "BUY" if penfold.combined_forecast > 5.0
+                        else "SELL" if penfold.combined_forecast < -5.0
+                        else "HOLD"
+                    ),
+                }
+                results.append(entry)
+            except Exception as exc:
+                logger.debug("Penfold analysis skipped for %s: %s", sym, exc)
+
+        # Sort by absolute forecast strength (strongest signals first)
+        results.sort(key=lambda x: abs(x["combined_forecast"]), reverse=True)
+
+        return {
+            "success": True,
+            "count": len(results),
+            "analysis": results,
+            "note": "Use combined_forecast > 5 as BUY threshold, < -5 as SELL. "
+                    "Weekly Dow trend alignment increases conviction.",
+        }
+    except Exception as exc:
+        logger.exception("US Penfold analysis failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ────────────────── Ehlers DSP Analysis ──────────────────────
+
+@router.post(
+    "/ehlers/analysis",
+    response_model=SuccessResponse,
+    summary="Ehlers DSP analysis for US stocks",
+    description="Computes Ehlers DSP indicators for US stocks. "
+                "Results displayed in UI for manual trading decisions.",
+)
+async def us_ehlers_analysis(tickers: Optional[List[str]] = None):
+    """Ehlers DSP analysis — displayed on US stocks UI."""
+    import asyncio
+
+    try:
+        from strategies.ehlers_dsp import compute_ehlers_analysis_batch
+        from utils import download_us_ohlcv
+
+        if not tickers:
+            tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA",
+                       "META", "TSLA", "AMD", "NFLX", "CRM"]
+
+        ohlcv_data = await asyncio.to_thread(
+            lambda: {s: download_us_ohlcv(s, period="6mo") for s in tickers}
+        )
+        ohlcv_data = {s: d for s, d in ohlcv_data.items() if d is not None and len(d) >= 50}
+        analysis = await asyncio.to_thread(compute_ehlers_analysis_batch, ohlcv_data)
+
+        results = []
+        for sym, ea in analysis.items():
+            if ea is None:
+                continue
+            results.append({
+                "symbol": sym,
+                "fisher_transform": round(ea.fisher_transform, 4),
+                "mama_fama_trend": "BULL" if ea.mama > ea.fama else "BEAR",
+                "snr_db": round(ea.snr, 2),
+                "adaptive_rsi": round(ea.adaptive_rsi, 2),
+                "dominant_cycle": round(ea.dominant_cycle, 1),
+                "composite_forecast": round(ea.composite_forecast, 2),
+                "action": "BUY" if ea.composite_forecast > 5 else "SELL" if ea.composite_forecast < -5 else "HOLD",
+            })
+
+        results.sort(key=lambda x: abs(x["composite_forecast"]), reverse=True)
+        return {"success": True, "count": len(results), "analysis": results,
+                "note": "Display in UI for manual trading. SNR > 6dB = high confidence."}
+    except Exception as exc:
+        logger.exception("US Ehlers analysis failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ────────────────── Ruggiero Cybernetic Analysis ─────────────
+
+@router.post(
+    "/cybernetic/analysis",
+    response_model=SuccessResponse,
+    summary="Ruggiero cybernetic analysis for US stocks",
+    description="Computes intermarket signals (VIX, DXY, yields), seasonal bias, "
+                "trend classification for US stocks.",
+)
+async def us_cybernetic_analysis(tickers: Optional[List[str]] = None):
+    """Ruggiero cybernetic analysis — displayed on US stocks UI."""
+    import asyncio
+
+    try:
+        from strategies.ruggiero_cybernetic import (
+            compute_cybernetic_analysis_batch, US_INTERMARKET_DRIVERS,
+        )
+        from utils import download_us_ohlcv
+        import yfinance as yf
+
+        if not tickers:
+            tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA",
+                       "META", "TSLA", "AMD", "NFLX", "CRM"]
+
+        ohlcv_data = await asyncio.to_thread(
+            lambda: {s: download_us_ohlcv(s, period="6mo") for s in tickers}
+        )
+        ohlcv_data = {s: d for s, d in ohlcv_data.items() if d is not None and len(d) >= 50}
+
+        driver_syms = list(US_INTERMARKET_DRIVERS.keys())
+        driver_dfs = await asyncio.to_thread(
+            lambda: {s: yf.download(s, period="6mo", progress=False) for s in driver_syms}
+        )
+        driver_dfs = {s: d for s, d in driver_dfs.items() if d is not None and len(d) > 20}
+
+        analysis = await asyncio.to_thread(
+            compute_cybernetic_analysis_batch, ohlcv_data, driver_dfs, US_INTERMARKET_DRIVERS
+        )
+
+        results = []
+        for sym, ca in analysis.items():
+            if ca is None:
+                continue
+            results.append({
+                "symbol": sym,
+                "intermarket_forecast": round(ca.intermarket_forecast, 2),
+                "seasonal_bias": round(ca.seasonal_bias.combined_bias, 4),
+                "trend_strength": ca.trend_class.trend_strength,
+                "adx": round(ca.trend_class.adx, 2),
+                "multi_tf_alignment": round(ca.multi_tf_alignment, 4),
+                "composite_forecast": round(ca.composite_forecast, 2),
+                "action": "BUY" if ca.composite_forecast > 5 else "SELL" if ca.composite_forecast < -5 else "HOLD",
+            })
+
+        results.sort(key=lambda x: abs(x["composite_forecast"]), reverse=True)
+        return {"success": True, "count": len(results), "analysis": results,
+                "note": "Intermarket signals from VIX/DXY/yields. Display in UI."}
+    except Exception as exc:
+        logger.exception("US Cybernetic analysis failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ────────────────── Vince Leverage Space ─────────────────────
+
+@router.post(
+    "/vince/leverage-space",
+    response_model=SuccessResponse,
+    summary="Vince Leverage Space analysis for US stocks",
+    description="Computes optimal-f, secure-f, and leverage recommendation. "
+                "Displayed in UI for manual position sizing decisions.",
+)
+async def us_vince_leverage_space(tickers: Optional[List[str]] = None):
+    """Vince Leverage Space — manual sizing guidance for US positions."""
+    import asyncio
+
+    try:
+        from strategies.vince_leverage import compute_vince_leverage_batch
+        from utils import download_us_ohlcv
+        from config import Config
+
+        if not tickers:
+            tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA",
+                       "META", "TSLA", "AMD", "NFLX", "CRM"]
+
+        ohlcv_data = await asyncio.to_thread(
+            lambda: {s: download_us_ohlcv(s, period="6mo") for s in tickers}
+        )
+        ohlcv_data = {s: d for s, d in ohlcv_data.items() if d is not None and len(d) >= 20}
+
+        capital = getattr(Config, "CARVER_US_INITIAL_CAPITAL", 10000)
+        hwm = getattr(Config, "_US_HWM", capital)
+        insurance = getattr(Config, "VINCE_INSURANCE_PCT_US", 0.10)
+        max_lev = getattr(Config, "CARVER_US_MAX_LEVERAGE", 1.0)
+
+        analysis = await asyncio.to_thread(
+            compute_vince_leverage_batch, ohlcv_data, capital, hwm,
+            0.15, insurance, max_lev, ""
+        )
+
+        results = []
+        for sym, va in analysis.items():
+            results.append({
+                "symbol": sym,
+                "optimal_f": va.optimal_f,
+                "secure_f": va.secure_f,
+                "kelly_fraction": va.kelly_fraction,
+                "win_rate": round(va.win_rate, 4),
+                "avg_win_loss_ratio": va.avg_win_loss_ratio,
+                "leverage_recommendation": va.leverage_recommendation,
+                "active_equity_ratio": va.active_equity_ratio,
+                "max_drawdown_at_f": va.max_drawdown_at_f,
+            })
+
+        results.sort(key=lambda x: x["leverage_recommendation"], reverse=True)
+        return {"success": True, "count": len(results), "analysis": results,
+                "note": "Use leverage_recommendation for manual position sizing on Drivewealth."}
+    except Exception as exc:
+        logger.exception("US Vince leverage space failed")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+# ────────────────── Masters Prediction Quality ───────────────
+
+@router.post(
+    "/prediction-quality",
+    response_model=SuccessResponse,
+    summary="Masters prediction quality for US stocks",
+    description="Assesses forecast quality via directional accuracy, IC, "
+                "Monte Carlo significance. Displayed in UI for confidence assessment.",
+)
+async def us_prediction_quality(tickers: Optional[List[str]] = None):
+    """Masters prediction quality — displayed on US stocks UI."""
+    import asyncio
+    import numpy as np
+
+    try:
+        from strategies.masters_prediction import compute_prediction_quality
+        from utils import download_us_ohlcv
+
+        if not tickers:
+            tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA",
+                       "META", "TSLA", "AMD", "NFLX", "CRM"]
+
+        ohlcv_data = await asyncio.to_thread(
+            lambda: {s: download_us_ohlcv(s, period="6mo") for s in tickers}
+        )
+
+        results = []
+        for sym, df in ohlcv_data.items():
+            if df is None or len(df) < 60:
+                continue
+            close = df["Close"].values.astype(float)
+            returns = np.diff(close[-60:]) / np.maximum(np.abs(close[-61:-1]), 1e-10)
+            sma10 = np.convolve(close, np.ones(10)/10, mode='valid')
+            sma20 = np.convolve(close, np.ones(20)/20, mode='valid')
+            min_len = min(len(sma10), len(sma20), len(returns))
+            forecasts = (sma10[-min_len:] - sma20[-min_len:])
+            acts = returns[-min_len:]
+
+            pq = compute_prediction_quality(sym, forecasts, acts, mc_permutations=500)
+            results.append({
+                "symbol": sym,
+                "directional_accuracy": pq.directional_accuracy,
+                "information_coefficient": pq.information_coefficient,
+                "r_squared": pq.r_squared,
+                "brier_score": pq.brier_score,
+                "monte_carlo_p_value": pq.monte_carlo_p_value,
+                "is_significant": pq.is_significant,
+                "quality_score": pq.quality_score,
+                "confidence_multiplier": pq.confidence_multiplier,
+                "action": "TRUST" if pq.quality_score > 0.5 else "CAUTION" if pq.quality_score > 0.3 else "SUPPRESS",
+            })
+
+        results.sort(key=lambda x: x["quality_score"], reverse=True)
+        return {"success": True, "count": len(results), "analysis": results,
+                "note": "quality_score > 0.5 = reliable signal. Display on UI for manual confidence."}
+    except Exception as exc:
+        logger.exception("US prediction quality failed")
+        raise HTTPException(status_code=500, detail=str(exc))

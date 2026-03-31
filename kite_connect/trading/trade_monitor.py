@@ -49,6 +49,7 @@ class MonitoredTrade:
     scaled_3r: bool = False    # G5: persisted scale-out state
     opened_at: datetime = field(default_factory=datetime.now)
     direction: str = "LONG"    # "LONG" or "SHORT" (Phase 2)
+    product: str = "CNC"       # "CNC", "NRML", or "MIS"
 
     @property
     def is_active(self) -> bool:
@@ -284,6 +285,7 @@ class TradeMonitor:
                     })
                     logger.info("SL triggered: %s @ %.2f (P&L: %.2f)", trade.symbol, exit_price, realized_pnl)
                     self._roll_capital(realized_pnl)
+                    self._record_vince_trade(trade.symbol, trade.entry_price, exit_price, trade.quantity)
                     # G14: Track daily SL hits — halt at 3
                     self._daily_sl_count += 1
                     if self._daily_sl_count >= 3:
@@ -310,6 +312,7 @@ class TradeMonitor:
                     })
                     logger.info("TP filled: %s @ %.2f (P&L: %.2f)", trade.symbol, exit_price, realized_pnl)
                     self._roll_capital(realized_pnl)
+                    self._record_vince_trade(trade.symbol, trade.entry_price, exit_price, trade.quantity)
                     # Cancel the orphaned SL order
                     self._cancel_order(trade.sl_order_id, trade.symbol, "SL")
 
@@ -401,11 +404,11 @@ class TradeMonitor:
                 resp = place_order(
                     kite=self.kite,
                     symbol=trade.symbol,
-                    exchange="NSE",
+                    exchange="NFO" if trade.product == "NRML" else "NSE",
                     transaction_type=sl_side,
                     quantity=trade.quantity,
                     order_type="SL",
-                    product="CNC",
+                    product=trade.product,
                     trigger_price=trade.stop_loss,
                     price=round(trade.stop_loss * 0.99, 2),
                 )
@@ -429,41 +432,20 @@ class TradeMonitor:
             if attempt < _MAX_SL_RETRIES - 1:
                 _time.sleep(1)  # 1s backoff between retries
 
-        # All retries exhausted — EMERGENCY: place MARKET sell to close unprotected position
+        # All retries exhausted — ALERT ONLY: do NOT auto-close position
+        # Emergency MARKET SELL removed (P0 fix) — closes profitable positions on network glitches
         logger.error(
             "CRITICAL: SL placement FAILED after %d retries for %s — "
-            "placing emergency MARKET SELL to protect capital",
+            "flagging for manual intervention (NOT auto-closing)",
             _MAX_SL_RETRIES, trade.symbol,
         )
-        try:
-            emergency_resp = place_order(
-                kite=self.kite,
-                symbol=trade.symbol,
-                exchange="NSE",
-                transaction_type="SELL" if trade.side == "BUY" else "BUY",
-                quantity=trade.quantity,
-                order_type="MARKET",
-                product="CNC",
-            )
-            if emergency_resp.get("success"):
-                trade.closed = True
-                logger.warning(
-                    "Emergency MARKET SELL executed for %s qty=%d — position closed",
-                    trade.symbol, trade.quantity,
-                )
-            else:
-                logger.error(
-                    "Emergency MARKET SELL also FAILED for %s: %s — POSITION UNPROTECTED",
-                    trade.symbol, emergency_resp.get("error"),
-                )
-        except Exception as em_exc:
-            logger.error("Emergency MARKET SELL exception for %s: %s", trade.symbol, em_exc)
+        trade.sl_failed = True  # Flag for dashboard/monitoring
 
         try:
             from services.notifications.manager import NotificationManager
             NotificationManager().notify_critical(
-                f"SL FAILED for {trade.symbol} after {_MAX_SL_RETRIES} retries — "
-                f"emergency sell {'executed' if trade.closed else 'ALSO FAILED'}"
+                f"🚨 SL FAILED for {trade.symbol} after {_MAX_SL_RETRIES} retries — "
+                f"POSITION UNPROTECTED — manual intervention required"
             )
         except Exception:
             pass
@@ -479,11 +461,11 @@ class TradeMonitor:
             resp = place_order(
                 kite=self.kite,
                 symbol=trade.symbol,
-                exchange="NSE",
+                exchange="NFO" if trade.product == "NRML" else "NSE",
                 transaction_type=tp_side,
                 quantity=trade.quantity,
                 order_type="LIMIT",
-                product="CNC",
+                product=trade.product,
                 price=trade.target_price,
             )
             time.sleep(0.15)
@@ -649,11 +631,11 @@ class TradeMonitor:
             resp = place_order(
                 kite=self.kite,
                 symbol=trade.symbol,
-                exchange="NSE",
+                exchange="NFO" if trade.product == "NRML" else "NSE",
                 transaction_type=exit_side,
                 quantity=trade.quantity,
                 order_type="MARKET",
-                product="CNC",
+                product=trade.product,
             )
 
             # Cancel existing SL and TP
@@ -726,17 +708,18 @@ class TradeMonitor:
             resp = place_order(
                 kite=self.kite,
                 symbol=trade.symbol,
-                exchange="NSE",
+                exchange="NFO" if trade.product == "NRML" else "NSE",
                 transaction_type="SELL",
                 quantity=sell_qty,
                 order_type="MARKET",
-                product="CNC",
+                product=trade.product,
             )
 
             # Reduce monitored quantity
             trade.quantity -= sell_qty
             realized_pnl = (current_price - trade.entry_price) * sell_qty
             self._roll_capital(realized_pnl)
+            self._record_vince_trade(trade.symbol, trade.entry_price, current_price, sell_qty)
 
             logger.info(
                 "SCALE-OUT %dR: %s sold %d/%d @ %.2f (P&L: %.2f)",
@@ -756,6 +739,17 @@ class TradeMonitor:
         except Exception as exc:
             logger.debug("Scale-out check failed for %s: %s", trade.symbol, exc)
         return None
+
+    @staticmethod
+    def _record_vince_trade(symbol: str, entry_price: float, exit_price: float, quantity: int) -> None:
+        """Record trade return to VinceTracker for geometric mean tracking."""
+        try:
+            from services.vince_metrics import get_vince_tracker
+            if entry_price > 0:
+                pnl_pct = (exit_price - entry_price) / entry_price
+                get_vince_tracker().record_trade(symbol, pnl_pct)
+        except Exception as exc:
+            logger.debug("Vince trade record failed for %s: %s", symbol, exc)
 
     def _roll_capital(self, realized_pnl: float) -> None:
         """Roll realized P&L into VolatilityTarget for dynamic position sizing.
@@ -847,11 +841,11 @@ class TradeMonitor:
             resp = place_order(
                 kite=self.kite,
                 symbol=trade.symbol,
-                exchange="NSE",
+                exchange="NFO" if trade.product == "NRML" else "NSE",
                 transaction_type=tp_side,
                 quantity=trade.quantity,
                 order_type="LIMIT",
-                product="CNC",
+                product=trade.product,
                 price=trade.target_price,
             )
             if resp.get("success"):

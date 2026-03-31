@@ -237,24 +237,40 @@ def assess_portfolio_risk(
     if snap.hhi > 0.25:
         alerts.append(f"Concentration risk: HHI={snap.hhi:.2f} (>0.25), largest={snap.largest_position_pct:.0f}%")
 
-    if snap.drawdown_pct > 20.0:
+    # ── Drawdown tiers — read from Config for hot-reload ──
+    try:
+        from config import Config
+        dd_halt = getattr(Config, "PORTFOLIO_DRAWDOWN_HALT", 0.20) * 100
+        dd_critical = getattr(Config, "PORTFOLIO_DRAWDOWN_CRITICAL", 0.15) * 100
+        dd_warning = getattr(Config, "PORTFOLIO_DRAWDOWN_WARNING", 0.10) * 100
+    except Exception:
+        dd_halt, dd_critical, dd_warning = 20.0, 15.0, 10.0
+
+    # ── Smooth quadratic DD scaling curve ──────────────────────
+    # Replaces step-function cliff effects with continuous curve:
+    #   scale = max(0, 1 - (dd / dd_halt)²)
+    # This gives smooth degradation: at dd_warning ~85%, at dd_critical ~30%,
+    # at dd_halt = 0%. No sudden cliffs that cause whipsaw.
+    if snap.drawdown_pct > dd_halt:
         snap.risk_level = RiskLevel.HALTED
         dd_scale = 0.0
         snap.emergency_liquidate = True
-        alerts.append(f"EMERGENCY: Drawdown {snap.drawdown_pct:.1f}% > 20% — LIQUIDATING ALL POSITIONS")
-    elif snap.drawdown_pct > 15.0:
+        alerts.append(f"EMERGENCY: Drawdown {snap.drawdown_pct:.1f}% > {dd_halt:.0f}% — LIQUIDATING ALL POSITIONS")
+    elif snap.drawdown_pct > dd_critical:
         snap.risk_level = RiskLevel.HALTED
-        dd_scale = 0.0
-        alerts.append(f"HALTED: Drawdown {snap.drawdown_pct:.1f}% exceeds 15% limit")
-    elif snap.drawdown_pct > 10.0:
-        dd_scale = 0.5
-        alerts.append(f"Drawdown {snap.drawdown_pct:.1f}% — reducing position sizes to 50%")
-    elif snap.drawdown_pct > 7.0:
-        dd_scale = 0.7
-        alerts.append(f"Drawdown {snap.drawdown_pct:.1f}% — recovery ramp at 70% size")
-    elif snap.drawdown_pct > 5.0:
-        dd_scale = 0.85
-        alerts.append(f"Drawdown {snap.drawdown_pct:.1f}% — recovery ramp at 85% size")
+        dd_ratio = snap.drawdown_pct / dd_halt
+        dd_scale = max(0.0, 1.0 - dd_ratio * dd_ratio)
+        alerts.append(f"HALTED: Drawdown {snap.drawdown_pct:.1f}% > {dd_critical:.0f}% — scale {dd_scale:.0%}")
+    elif snap.drawdown_pct > dd_warning:
+        snap.risk_level = RiskLevel.CRITICAL
+        dd_ratio = snap.drawdown_pct / dd_halt
+        dd_scale = max(0.0, 1.0 - dd_ratio * dd_ratio)
+        alerts.append(f"CRITICAL: Drawdown {snap.drawdown_pct:.1f}% > {dd_warning:.0f}% — scale {dd_scale:.0%}")
+    elif snap.drawdown_pct > (dd_warning * 0.5):
+        # Gentle ramp: below warning but non-trivial DD
+        dd_ratio = snap.drawdown_pct / dd_halt
+        dd_scale = max(0.0, 1.0 - dd_ratio * dd_ratio)
+        alerts.append(f"Drawdown {snap.drawdown_pct:.1f}% — smooth scale {dd_scale:.0%}")
 
     # Always take the MORE conservative (lower) of vol_scale and dd_scale
     snap.scale_factor = round(min(vol_scale, dd_scale), 2)

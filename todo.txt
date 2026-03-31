@@ -4,7 +4,30 @@ implement trading system compliant with systematic trading pdf in ingested docs
 also verify if monte carlo evaluation of trading system is implemented
 
 prompts:
-~~~~
+
+~~~~~~
+1. identify gaps to achieve 50% CAGR for Ind stocks and ensure to implement fixes required to meet the objective
+2. Analysis and clear signal for US stocks, however, analysis and trigger orders for Ind stocks since 
+~~~~~~
+/Godmode
+Goal: CAGR in excess of over 50% annually.
+Task: you are the best quantitative trader and strategist with 20 years of experience in renaissance technologies and Jane Street, world's 2 top-most quant trading firm. Quantify performance of centurion_core for Ind stocks and US stocks in terms of real-world returns, bull & bear markets, side-ways markets, generating alpha, order workflow for Kite, signal quality for buy/sell, risk management etc.,
+List out any critical gaps that need immediate resolution in achieving the stated goal.
+Intraday and automatic order setup for US stocks can be skipped since centurion_core is for swing, positional trades. Automated trading enabled for Ind stocks via kite.
+Verify if all the implemented strategies are integrated to the order workflow (Ind stocks).
+~~~~~~
+/godmode implemente below tasks:
+
+1. study attached pdf and understand the concepts explained regarding options volatility and its pricing
+2. compare & contrast the current implementation of options module of centurion_core with the pdf doc
+3. prepare action plan from top down level on how it can be incorporated to re-design options module of Ind stocks
+4. highlight before vs after results if we implement the options pricing techniques discussed in pdf doc
+
+Note: centurion_core is a platform for swing and positional trades and NOT for intraday trading. trades are automated for Ind stocks but not for US stocks due to Drivewealth platform limitations, hence provide analysis results on US stocks UI so that user can place orders manually.
+
+~~~~~~
+there are various strategies that are implemented using the techniques discussed in the pdf docs. evaluate which combination of strategies would result in a higher sustained CAGR in bull, bear and sideways regimes.
+~~~~~~
 /godmode you are the senior technical architect at THE most reputed quant trading firm in the world. However you are designing centurion_core for 1 or 2 retail traders, a trading platform that would automatically trigger buy/sell orders based on fundamental analysis, technical analysis, qualitative analysis, macro-economic head & tail winds and event-driven news updates. Considering these requirements, perform the below tasks:
 
 audit, investigate and analyze the characteristics of a trading terminal of a highly reputable quant firm. Compare & contrast that with the current implementation of centurion_core app with focus "ind stocks module". Remember that centurion_core app is to be used by 1-2 users only. List out the implementation gaps in high level system design & architecture, stock analysis methodology along with low level technical details. Give readable and crisp details.

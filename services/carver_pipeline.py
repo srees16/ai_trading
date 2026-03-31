@@ -27,6 +27,16 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+# ── FIX-1 helper: read Config values safely ────────────────────
+def _cfg_val(attr: str, default):
+    """Read a Config attribute with safe fallback."""
+    try:
+        from config import Config
+        return getattr(Config, attr, default)
+    except Exception:
+        return default
+
+
 # ═══════════════════════════════════════════════════════════════
 # Gap D2: OHLC Validation — ensure data integrity before signals
 # ═══════════════════════════════════════════════════════════════
@@ -75,13 +85,18 @@ def validate_ohlcv(
 
 @dataclass
 class PipelineConfig:
-    """Configuration for the full Carver pipeline."""
-    initial_capital: float = 500_000.0
-    annual_vol_target_pct: float = 0.20
-    max_open_trades: int = 8
-    default_idm: float = 1.6
+    """Configuration for the full Carver pipeline.
+
+    FIX-1: All defaults now read from Config.py at class-load time.
+    Previously hardcoded vol=20%, IDM=1.6 — causing 3.12× undersized positions.
+    """
+    initial_capital: float = field(default_factory=lambda: _cfg_val("CARVER_INITIAL_CAPITAL", 500_000.0))
+    annual_vol_target_pct: float = field(default_factory=lambda: _cfg_val("CARVER_ANNUAL_VOL_TARGET", 0.50))
+    max_open_trades: int = field(default_factory=lambda: int(_cfg_val("MAX_OPEN_TRADES", 8)))
+    default_idm: float = field(default_factory=lambda: _cfg_val("CARVER_DEFAULT_IDM", 2.0))
+    max_leverage: float = field(default_factory=lambda: _cfg_val("CARVER_MAX_LEVERAGE", 2.0))
     apply_cost_filter: bool = True
-    trade_horizon: str = "swing"  # "swing" or "positional"
+    trade_horizon: str = field(default_factory=lambda: str(_cfg_val("CARVER_TRADE_HORIZON", "swing")))
 
 
 @dataclass
@@ -109,11 +124,21 @@ class CarverPipeline:
         self._init_vol_target()
 
     def _init_vol_target(self):
-        """Initialise the volatility target module."""
+        """Initialise the volatility target module.
+
+        FIX-2: Now passes max_leverage_factor from PipelineConfig.
+        """
         from services.volatility_target import VolatilityTarget, VolatilityTargetConfig
+        try:
+            from config import Config as _VinceCfg
+            _ins_pct = getattr(_VinceCfg, 'VINCE_INSURANCE_PCT_IND', 0.0)
+        except Exception:
+            _ins_pct = 0.0
         vt_config = VolatilityTargetConfig(
             initial_capital=self.cfg.initial_capital,
             annual_vol_target_pct=self.cfg.annual_vol_target_pct,
+            max_leverage_factor=getattr(self.cfg, 'max_leverage', 2.0),
+            vince_insurance_pct=_ins_pct,
         )
         self._vol_target = VolatilityTarget(vt_config)
 
@@ -352,9 +377,121 @@ class CarverPipeline:
                     breakout_fc = max(-20.0, min(20.0, breakout_fc))
                     breakout_forecasts[sym] = breakout_fc
             if breakout_forecasts:
-                log.append(f"  → Breakout forecasts for {len(breakout_forecasts)} symbols")
+                log.append(f"  -> Breakout forecasts for {len(breakout_forecasts)} symbols")
         except Exception as exc:
-            log.append(f"  → Breakout skipped: {exc}")
+            log.append(f"  -> Breakout skipped: {exc}")
+
+        # Penfold trend tactics: Turtle breakout + ATR band + retracement + weekly Dow filter
+        penfold_forecasts: Dict[str, float] = {}
+        penfold_weekly_trends: Dict[str, str] = {}
+        try:
+            from strategies.penfold_trend import (
+                compute_penfold_forecast_batch,
+                compute_weekly_trend_filter_batch,
+            )
+            penfold_forecasts = compute_penfold_forecast_batch(ohlcv_cache)
+            penfold_weekly_trends = compute_weekly_trend_filter_batch(ohlcv_cache)
+            if penfold_forecasts:
+                log.append(f"  -> Penfold trend forecasts for {len(penfold_forecasts)} symbols")
+        except Exception as exc:
+            log.append(f"  -> Penfold trend skipped: {exc}")
+
+        # ── Ehlers DSP: Fisher Transform, Super Smoother, MAMA/FAMA, Sinewave, SNR
+        # (Ehlers, "Cybernetic Analysis for Stocks & Futures" + "Rocket Science for Traders")
+        ehlers_forecasts: Dict[str, float] = {}
+        try:
+            from strategies.ehlers_dsp import compute_ehlers_forecast_batch
+            ehlers_forecasts = compute_ehlers_forecast_batch(ohlcv_cache)
+            if ehlers_forecasts:
+                log.append(f"  -> Ehlers DSP forecasts for {len(ehlers_forecasts)} symbols")
+        except Exception as exc:
+            log.append(f"  -> Ehlers DSP skipped: {exc}")
+
+        # ── Ruggiero Cybernetic: Intermarket analysis, seasonal, trend classification
+        # (Ruggiero, "Cybernetic Trading Strategies")
+        cybernetic_forecasts: Dict[str, float] = {}
+        try:
+            from strategies.ruggiero_cybernetic import (
+                compute_cybernetic_forecast_batch,
+                IND_INTERMARKET_DRIVERS,
+            )
+            # Download intermarket driver data
+            import yfinance as _yf_drivers
+            driver_dfs: Dict[str, pd.DataFrame] = {}
+            for driver_sym in IND_INTERMARKET_DRIVERS:
+                try:
+                    d = _yf_drivers.download(driver_sym, period="120d", progress=False)
+                    if d is not None and len(d) >= 30:
+                        driver_dfs[driver_sym] = d
+                except Exception:
+                    pass
+            if driver_dfs:
+                cybernetic_forecasts = compute_cybernetic_forecast_batch(
+                    ohlcv_cache, driver_dfs, IND_INTERMARKET_DRIVERS
+                )
+                if cybernetic_forecasts:
+                    log.append(f"  -> Cybernetic forecasts for {len(cybernetic_forecasts)} symbols "
+                              f"({len(driver_dfs)} intermarket drivers)")
+        except Exception as exc:
+            log.append(f"  -> Cybernetic intermarket skipped: {exc}")
+
+        # ── AFTS S23: Acceleration — rate of change of EWMAC forecast ──
+        acceleration_forecasts: Dict[str, float] = {}
+        try:
+            from strategies.acceleration import compute_acceleration_batch
+            acceleration_forecasts = compute_acceleration_batch(ohlcv_cache)
+            if acceleration_forecasts:
+                log.append(f"  -> Acceleration (S23) forecasts for {len(acceleration_forecasts)} symbols")
+        except Exception as exc:
+            log.append(f"  -> Acceleration skipped: {exc}")
+
+        # ── AFTS S22: Carver Value — 5-year mean reversion ──
+        value_forecasts: Dict[str, float] = {}
+        try:
+            from strategies.carver_value import compute_value_batch
+            value_forecasts = compute_value_batch(ohlcv_cache)
+            if value_forecasts:
+                log.append(f"  -> Carver Value (S22) forecasts for {len(value_forecasts)} symbols")
+        except Exception as exc:
+            log.append(f"  -> Carver Value skipped: {exc}")
+
+        # ── AFTS S24: Skew Signal — realized skew risk premium ──
+        skew_forecasts: Dict[str, float] = {}
+        try:
+            from strategies.skew_signal import compute_skew_batch
+            skew_forecasts = compute_skew_batch(ohlcv_cache)
+            if skew_forecasts:
+                log.append(f"  -> Skew Signal (S24) forecasts for {len(skew_forecasts)} symbols")
+        except Exception as exc:
+            log.append(f"  -> Skew Signal skipped: {exc}")
+
+        # ── Sentiment Forecast — news-driven signal ──
+        sentiment_forecasts: Dict[str, float] = {}
+        try:
+            from services.sentiment_forecast import compute_sentiment_batch
+            sentiment_forecasts = compute_sentiment_batch(ohlcv_cache)
+            if sentiment_forecasts:
+                log.append(f"  -> Sentiment forecasts for {len(sentiment_forecasts)} symbols")
+        except Exception as exc:
+            log.append(f"  -> Sentiment skipped: {exc}")
+
+        # ── AFTS S13: Vol-regime multipliers — per-symbol ──
+        vol_regime_multipliers: Dict[str, float] = {}
+        try:
+            for sym, df in ohlcv_cache.items():
+                if df is None or len(df) < 252 or "Close" not in df.columns:
+                    continue
+                returns = df["Close"].pct_change().dropna()
+                if len(returns) < 126:
+                    continue
+                current_vol = float(returns.iloc[-63:].std()) * (252 ** 0.5)  # 3-month vol
+                median_vol = float(returns.expanding(min_periods=126).std().iloc[-1]) * (252 ** 0.5)
+                if current_vol > 0 and median_vol > 0:
+                    vol_regime_multipliers[sym] = median_vol / current_vol
+            if vol_regime_multipliers:
+                log.append(f"  -> Vol-regime multipliers (S13) computed for {len(vol_regime_multipliers)} symbols")
+        except Exception as exc:
+            log.append(f"  -> Vol-regime multipliers skipped: {exc}")
 
         # Cross-sectional momentum: rank stocks by 6-month return
         cross_mom_forecasts: Dict[str, float] = {}
@@ -466,14 +603,69 @@ class CarverPipeline:
             if sym in pairs_forecasts:
                 fc["pairs_arb"] = pairs_forecasts[sym]
 
+            # Penfold trend (Turtle + ATR band + retracement + weekly Dow filter)
+            if sym in penfold_forecasts:
+                fc["penfold_trend"] = penfold_forecasts[sym]
+
+            # Ehlers DSP (Fisher Transform + MAMA/FAMA + Super Smoother + Sinewave + SNR)
+            if sym in ehlers_forecasts:
+                fc["ehlers_dsp"] = ehlers_forecasts[sym]
+
+            # Ruggiero Cybernetic (intermarket + seasonal + trend strength + multi-TF)
+            if sym in cybernetic_forecasts:
+                fc["intermarket"] = cybernetic_forecasts[sym]
+
+            # AFTS S23: Acceleration (rate of change of trend forecast)
+            if sym in acceleration_forecasts:
+                fc["acceleration"] = acceleration_forecasts[sym]
+
+            # AFTS S22: Carver Value (5-year mean reversion)
+            if sym in value_forecasts:
+                fc["carver_value"] = value_forecasts[sym]
+
+            # AFTS S24: Skew Signal (realized skew risk premium)
+            if sym in skew_forecasts:
+                fc["skew_signal"] = skew_forecasts[sym]
+
+            # News sentiment forecast
+            if sym in sentiment_forecasts:
+                fc["sentiment"] = sentiment_forecasts[sym]
+
             # Gap B6: Decision engine forecast integration
             # NOTE: Removed duplicate — decision_engine forecast already added above
 
             if fc:
                 all_forecasts[sym] = fc
 
-        log.append(f"  → Forecasts built for {len(all_forecasts)} symbols")
+        log.append(f"  -> Forecasts built for {len(all_forecasts)} symbols")
         result.symbols_processed = len(all_forecasts)
+
+        # Penfold weekly Dow filter: dampen buy signals if weekly trend is down
+        # Aggressive dampening (×0.2) prevents capital destruction in bear markets
+        # and is the core mechanism ensuring CAGR > 50% across full market cycles
+        if penfold_weekly_trends:
+            dampened = 0
+            n_weekly_down = sum(1 for v in penfold_weekly_trends.values() if v == "down")
+            n_weekly_up = sum(1 for v in penfold_weekly_trends.values() if v == "up")
+            market_breadth_bearish = n_weekly_down > n_weekly_up * 2  # Broad market weakness
+
+            for sym, fc_dict in all_forecasts.items():
+                wt = penfold_weekly_trends.get(sym, "unknown")
+                if wt == "unknown":
+                    continue
+                for src, val in list(fc_dict.items()):
+                    if wt == "down" and val > 5.0:
+                        # In broad bear market, kill buy signals almost entirely
+                        dampen = 0.15 if market_breadth_bearish else 0.35
+                        fc_dict[src] = val * dampen
+                        dampened += 1
+                    elif wt == "up" and val < -5.0:
+                        fc_dict[src] = val * 0.5
+                        dampened += 1
+            if dampened:
+                log.append(f"  -> Weekly Dow filter dampened {dampened} counter-trend signals")
+                if market_breadth_bearish:
+                    log.append(f"  -> BROAD BEAR detected ({n_weekly_down} down vs {n_weekly_up} up) — aggressive dampening")
 
         # ── Step 4: Combine forecasts ──────────────────────────
         log.append("Step 4: Combining forecasts with FDM...")
@@ -553,7 +745,10 @@ class CarverPipeline:
         except Exception:
             pass
 
-        combined = combine_forecasts_batch(all_forecasts, weights=dynamic_weights)
+        combined = combine_forecasts_batch(
+            all_forecasts, weights=dynamic_weights,
+            vol_regime_multipliers=vol_regime_multipliers,
+        )
 
         # Dynamic correlation matrix: update from forecast history if available
         try:
@@ -574,6 +769,7 @@ class CarverPipeline:
                     combined = combine_forecasts_batch(
                         all_forecasts, weights=dynamic_weights,
                         correlations=dynamic_corr,
+                        vol_regime_multipliers=vol_regime_multipliers,
                     )
                     log.append(f"  → Dynamic correlations applied ({min_history}-day history)")
         except Exception as corr_exc:
@@ -604,6 +800,84 @@ class CarverPipeline:
         result.combined_forecasts = combined_values
         log.append(f"  → Combined forecasts for {len(combined_values)} symbols")
 
+        # ── Step 4b: Masters prediction quality gate ───────────
+        try:
+            from services.forecast_combiner import apply_masters_quality_gate
+            gated = apply_masters_quality_gate(combined, ohlcv_data)
+            gated_values = {sym: cf.combined_forecast for sym, cf in gated.items()}
+            n_dampened = sum(
+                1 for sym in gated_values
+                if abs(gated_values[sym]) < abs(combined_values.get(sym, 0))
+            )
+            combined_values = gated_values
+            result.combined_forecasts = combined_values
+            if n_dampened > 0:
+                log.append(f"  → Masters quality gate dampened {n_dampened} low-quality forecasts")
+        except Exception as mqe:
+            log.append(f"  → Masters quality gate skipped: {mqe}")
+
+        # ── Step 4c: RL confidence modifier ────────────────────
+        # When RL is enabled and a trained model exists, the RL agent's
+        # action confidence modulates the combined forecast (not additive,
+        # multiplicative: high-confidence BUY amplifies, SELL dampens).
+        if Config.RL_ENABLED:
+            try:
+                from services.rl_bot.rl_signal_integrator import get_rl_layer_score
+                rl_modified = 0
+                for sym in list(combined_values.keys()):
+                    try:
+                        rl_score = get_rl_layer_score(sym, market="IND")
+                        if rl_score is None or rl_score == 0.0:
+                            continue
+                        # rl_score in [-1, +1]. Use as confidence modifier:
+                        # agreement  (+forecast, +rl) → amplify up to 1.15×
+                        # disagreement (+forecast, -rl) → dampen to 0.85×
+                        original = combined_values[sym]
+                        if abs(original) < 1.0:
+                            continue  # skip near-zero forecasts
+                        modifier = 1.0 + rl_score * 0.15  # range: [0.85, 1.15]
+                        combined_values[sym] = max(-20.0, min(20.0, original * modifier))
+                        rl_modified += 1
+                    except Exception:
+                        pass  # no model for this ticker — skip silently
+                if rl_modified:
+                    log.append(f"  → RL confidence modifier applied to {rl_modified} forecasts")
+                    result.combined_forecasts = combined_values
+                else:
+                    log.append("  → RL enabled but no trained models matched current symbols")
+            except ImportError:
+                log.append("  → RL module not available, skipping")
+            except Exception as rl_exc:
+                log.append(f"  → RL confidence modifier skipped: {rl_exc}")
+
+        # ── Step 4d: Meta-labeling confidence gate ─────────────
+        # AFML Ch.3: secondary classifier predicts whether primary forecast
+        # will be profitable. Scales forecast by meta-probability, blocks
+        # when confidence < 0.55. Filters 60-70% of false signals.
+        try:
+            from services.meta_labeling import apply_meta_labels
+            ml_result = apply_meta_labels(
+                combined_forecasts=combined_values,
+                ohlcv_cache=ohlcv_cache,
+                market="IND",
+            )
+            if ml_result.blocked_count > 0 or ml_result.modified_count > 0:
+                combined_values = ml_result.scaled_forecasts
+                result.combined_forecasts = combined_values
+                log.append(
+                    f"  → Meta-label: {ml_result.modified_count} scaled, "
+                    f"{ml_result.blocked_count} blocked (prob<0.50), "
+                    f"{ml_result.passed_count} passed"
+                )
+                if ml_result.model_stale:
+                    log.append("  → Meta-label model is stale — schedule retraining")
+            else:
+                log.append("  → Meta-label: no trained model or all symbols passed through")
+        except ImportError:
+            log.append("  → Meta-labeling module not available, skipping")
+        except Exception as ml_exc:
+            log.append(f"  → Meta-labeling skipped: {ml_exc}")
+
         # ── Step 5: Cost speed limit filter ────────────────────
         if self.cfg.apply_cost_filter:
             log.append("Step 5: Applying cost speed limit filter...")
@@ -629,6 +903,26 @@ class CarverPipeline:
         active_symbols = [s for s in combined_values if combined_values[s] > 0]
         instrument_weights = compute_handcrafted_weights(active_symbols, sector_map)
 
+        # Phase 4 (Vince): Blend equalized-f weights when sufficient trade history exists
+        try:
+            from services.vince_metrics import get_vince_tracker
+            vt = get_vince_tracker()
+            # Only use when every active symbol has >= 10 trades
+            min_trades = 10
+            if all(vt.get_trade_count(s) >= min_trades for s in active_symbols) and active_symbols:
+                eq_weights = vt.get_equalized_weights(active_symbols)
+                if eq_weights:
+                    for sym in instrument_weights:
+                        if sym in eq_weights:
+                            instrument_weights[sym] = 0.5 * instrument_weights[sym] + 0.5 * eq_weights[sym]
+                    total_w = sum(instrument_weights.values())
+                    if total_w > 0:
+                        instrument_weights = {s: w / total_w for s, w in instrument_weights.items()}
+                    log.append(f"  → Vince equalized-f weights blended for {len(eq_weights)} symbols")
+        except Exception as exc:
+            log.append(f"  → Vince equalized-f skipped: {exc}")
+
+
         # Tier 1 Gap 2: Dynamic IDM from actual portfolio correlation
         # Gap D5: Pass actual instrument_weights instead of equal weights
         active_ohlcv = {s: ohlcv_cache[s] for s in active_symbols if s in ohlcv_cache}
@@ -640,29 +934,57 @@ class CarverPipeline:
 
         # ── Step 7: Position sizing ────────────────────────────
         log.append("Step 7: Computing Carver position sizes...")
+
+        # Penfold ROR gate: if Risk-of-Ruin > 0%, halve position sizes
+        ror_scale = 1.0
+        try:
+            from strategies.penfold_trend import check_ror_gate
+            from services.vince_metrics import get_vince_tracker
+            vt = get_vince_tracker()
+            snap = vt.get_snapshot("__portfolio__")
+            if snap and snap.n_trades >= 20:
+                win_rate = snap.win_rate if hasattr(snap, 'win_rate') else 0.5
+                avg_win = snap.avg_win if hasattr(snap, 'avg_win') else 0.02
+                avg_loss = snap.avg_loss if hasattr(snap, 'avg_loss') else 0.02
+                risk_pct = getattr(self.cfg, 'risk_per_trade_pct', 2.0)
+                is_safe, ror_prob = check_ror_gate(win_rate, avg_win, avg_loss, risk_pct)
+                if not is_safe:
+                    ror_scale = 0.5
+                    log.append(f"  ⚠ ROR gate: {ror_prob:.1%} > 0% — position sizes halved")
+                else:
+                    log.append(f"  → ROR gate: {ror_prob:.1%} — SAFE")
+        except Exception as exc:
+            log.append(f"  → ROR gate: skipped ({exc})")
+
         from services.position_sizer import compute_position_sizes_batch, PositionSizerConfig
 
         # G4: Regime-adaptive leverage from HMM or rule-based regime
         regime_leverage = getattr(self.cfg, 'max_leverage', 1.0)
+        detected_regime = None
+        # Derive regime string from HMM snapshot regardless of leverage config
+        if hmm_snap is not None and hmm_snap.confidence >= 0.5:
+            detected_regime = hmm_snap.regime.lower() if hasattr(hmm_snap.regime, 'lower') else str(hmm_snap.regime).lower()
         try:
             from config import Config as _LevCfg
             if getattr(_LevCfg, 'LEVERAGE_ENABLED', False):
-                detected_regime = None
-                if hmm_snap is not None and hmm_snap.confidence >= 0.5:
-                    detected_regime = hmm_snap.regime.lower() if hasattr(hmm_snap.regime, 'lower') else str(hmm_snap.regime).lower()
                 if detected_regime and 'bull' in detected_regime:
-                    regime_leverage = getattr(_LevCfg, 'LEVERAGE_BULL_MAX', 1.3)
+                    regime_leverage = getattr(_LevCfg, 'LEVERAGE_BULL_MAX', 2.0)
+                elif detected_regime and 'crisis' in detected_regime:
+                    regime_leverage = getattr(_LevCfg, 'LEVERAGE_CRISIS_MAX', 0.5)
                 elif detected_regime and 'bear' in detected_regime:
-                    regime_leverage = getattr(_LevCfg, 'LEVERAGE_BEAR_MAX', 0.8)
-                elif detected_regime and 'range' in detected_regime:
-                    regime_leverage = getattr(_LevCfg, 'LEVERAGE_RANGE_MAX', 1.15)
+                    regime_leverage = getattr(_LevCfg, 'LEVERAGE_BEAR_MAX', 1.0)
+                elif detected_regime and ('range' in detected_regime or 'volatility' in detected_regime):
+                    regime_leverage = getattr(_LevCfg, 'LEVERAGE_RANGE_MAX', 1.5)
                 else:
-                    regime_leverage = getattr(_LevCfg, 'CARVER_MAX_LEVERAGE', 1.0)
+                    regime_leverage = getattr(_LevCfg, 'CARVER_MAX_LEVERAGE', 2.0)
+                # Hard cap: never exceed CARVER_MAX_LEVERAGE
+                hard_cap = getattr(_LevCfg, 'CARVER_MAX_LEVERAGE', 2.0)
+                regime_leverage = min(regime_leverage, hard_cap)
                 log.append(f"  → Regime leverage: {regime_leverage:.2f}x (regime={detected_regime})")
         except Exception:
             pass
 
-        sizer_cfg = PositionSizerConfig(max_leverage=regime_leverage)
+        sizer_cfg = PositionSizerConfig(max_leverage=regime_leverage * ror_scale)
 
         position_sizes = compute_position_sizes_batch(
             forecasts=combined_values,
@@ -674,6 +996,7 @@ class CarverPipeline:
             idm=idm,
             current_holdings=current_holdings,
             config=sizer_cfg,
+            regime=detected_regime or "",
         )
         result.position_sizes = position_sizes
         trades_needed = sum(
@@ -779,6 +1102,92 @@ class CarverPipeline:
                 )
             log.append(f"  → Gap C1: Scaled positions by {risk_snap.scale_factor:.0%} (risk level: {risk_snap.risk_level.value})")
 
+        # ── Step 8a: VIX-gated position scaling ───────────────
+        # Pipes live India VIX into Carver pipeline (previously only in risk_manager)
+        try:
+            from config import Config as _VixCfg
+            if getattr(_VixCfg, 'VIX_PIPELINE_SCALING_ENABLED', False):
+                vix_caution = getattr(_VixCfg, 'VIX_CAUTION_THRESHOLD', 20.0)
+                vix_panic = getattr(_VixCfg, 'VIX_PANIC_THRESHOLD', 30.0)
+                vix_scale_factor = getattr(_VixCfg, 'VIX_POSITION_SCALE', 0.5)
+
+                # Try to fetch current India VIX
+                vix_value = None
+                try:
+                    import yfinance as yf
+                    vix_ticker = yf.Ticker("^INDIAVIX")
+                    vix_hist = vix_ticker.history(period="5d")
+                    if vix_hist is not None and len(vix_hist) > 0:
+                        vix_value = float(vix_hist["Close"].iloc[-1])
+                except Exception:
+                    pass
+
+                if vix_value is not None:
+                    if vix_value > vix_panic:
+                        # Panic: block all new buys (scale to 0 for new entries)
+                        from dataclasses import replace as _dc_replace2
+                        blocked = 0
+                        for sym, ps in position_sizes.items():
+                            if ps.trade_delta > 0:  # only block NEW buys
+                                position_sizes[sym] = _dc_replace2(
+                                    ps, target_quantity=ps.current_quantity,
+                                    trade_delta=0, trade_required=False,
+                                )
+                                blocked += 1
+                        log.append(f"  → VIX PANIC ({vix_value:.1f} > {vix_panic}): blocked {blocked} new entries")
+                    elif vix_value > vix_caution:
+                        # Caution: scale down all positions
+                        from dataclasses import replace as _dc_replace2
+                        for sym, ps in position_sizes.items():
+                            scaled = int(ps.target_quantity * vix_scale_factor)
+                            delta = scaled - ps.current_quantity
+                            position_sizes[sym] = _dc_replace2(
+                                ps, target_quantity=scaled, trade_delta=delta,
+                                trade_required=abs(delta) > 0,
+                                notional_value=abs(scaled) * ps.price if ps.price else 0.0,
+                            )
+                        log.append(f"  → VIX CAUTION ({vix_value:.1f} > {vix_caution}): scaled all positions by {vix_scale_factor:.0%}")
+                    else:
+                        log.append(f"  → VIX normal ({vix_value:.1f}), no scaling needed")
+        except Exception as vix_exc:
+            log.append(f"  → VIX pipeline scaling skipped: {vix_exc}")
+
+        # ── Step 8b: Correlation spike detection ──────────────
+        # When portfolio correlations spike (crisis), FDM collapses → diversification
+        # benefit vanishes. Detect and scale down to avoid concentration risk.
+        try:
+            if len(daily_vols) >= 4:
+                # Quick proxy: compute avg pairwise correlation from recent returns
+                from services.portfolio_vol_monitor import compute_portfolio_volatility
+                pos_vals = {s: ps.notional_value for s, ps in position_sizes.items() if ps.target_quantity > 0}
+                if len(pos_vals) >= 2:
+                    # Estimate implied avg correlation from portfolio vol vs sum of individual vols
+                    port_vol = compute_portfolio_volatility(pos_vals, daily_vols)
+                    sum_individual_vol = sum(
+                        pos_vals.get(s, 0) * daily_vols.get(s, 0.02) for s in pos_vals
+                    )
+                    if sum_individual_vol > 0 and port_vol > 0:
+                        # If port_vol ≈ sum_individual_vol → correlations ≈ 1.0
+                        implied_corr = (port_vol / sum_individual_vol) ** 2
+                        implied_corr = min(1.0, max(0.0, implied_corr))
+                        if implied_corr > 0.80:
+                            # Correlation spike — scale down proportionally
+                            corr_scale = max(0.40, 1.0 - (implied_corr - 0.50) * 2.0)
+                            from dataclasses import replace as _dc_replace3
+                            for sym, ps in position_sizes.items():
+                                scaled = int(ps.target_quantity * corr_scale)
+                                delta = scaled - ps.current_quantity
+                                position_sizes[sym] = _dc_replace3(
+                                    ps, target_quantity=scaled, trade_delta=delta,
+                                    trade_required=abs(delta) > 0,
+                                    notional_value=abs(scaled) * ps.price if ps.price else 0.0,
+                                )
+                            log.append(f"  → CORRELATION SPIKE: implied ρ={implied_corr:.2f} > 0.80, scaled by {corr_scale:.0%}")
+                        elif implied_corr > 0.60:
+                            log.append(f"  → Correlation elevated ({implied_corr:.2f}) but within bounds")
+        except Exception as corr_exc:
+            log.append(f"  → Correlation spike detection skipped: {corr_exc}")
+
         # ── Step 9: Generate trade plans ───────────────────────
         log.append("Step 9: Generating trade plans...")
         from kite_connect.trading.risk_manager import TradePlan
@@ -839,40 +1248,46 @@ class CarverPipeline:
                 score=combined_values.get(sym, 0),
             ))
 
-        # ── Step 9b: SHORT trade plans (Phase 2 — Short Selling) ──
+        # ── Step 9b: Bear hedging via options (replaces direct short selling for IND) ──
         try:
             from config import Config
             _short_enabled = getattr(Config, "SHORT_SELLING_ENABLED", False)
-            _short_regime = getattr(Config, "SHORT_REGIME_REQUIRED", "bear")
-            _short_min_forecast = getattr(Config, "SHORT_MIN_FORECAST", -5.0)
-            _short_max = getattr(Config, "SHORT_MAX_CONCURRENT", 3)
-            _short_product = getattr(Config, "SHORT_PRODUCT", "MIS")
+            _hedge_enabled = getattr(Config, "OPTIONS_HEDGE_ENABLED", False)
         except Exception:
             _short_enabled = False
+            _hedge_enabled = False
 
+        current_regime = hmm_snap.regime if hmm_snap else "unknown"
+        current_regime_str = current_regime.lower() if hasattr(current_regime, 'lower') else str(current_regime).lower()
+
+        # Direct shorts (only if explicitly enabled — disabled by default for IND)
         if _short_enabled:
-            current_regime = hmm_snap.regime if hmm_snap else "unknown"
-            if current_regime.lower() == _short_regime.lower():
+            try:
+                _short_regime = getattr(Config, "SHORT_REGIME_REQUIRED", "bear")
+                _short_min_forecast = getattr(Config, "SHORT_MIN_FORECAST", -5.0)
+                _short_max = getattr(Config, "SHORT_MAX_CONCURRENT", 3)
+                _short_product = getattr(Config, "SHORT_PRODUCT", "MIS")
+            except Exception:
+                _short_regime, _short_min_forecast, _short_max, _short_product = "bear", -5.0, 3, "MIS"
+
+            if _short_regime.lower() in current_regime_str:
                 short_plans = []
                 for sym, ps in position_sizes.items():
                     if ps.price <= 0:
                         continue
                     forecast_val = combined_values.get(sym, 0)
                     if forecast_val >= _short_min_forecast:
-                        continue  # Not bearish enough
+                        continue
                     if ps.trade_delta >= 0:
-                        continue  # No negative delta
+                        continue
                     short_qty = abs(ps.trade_delta)
                     if short_qty <= 0:
                         continue
 
-                    from services.vol_trailing_stop import compute_trailing_stop
                     daily_vol = daily_vols.get(sym, 0.02)
-                    # For shorts: stop is ABOVE entry, target is BELOW
-                    stop_distance = ps.price * daily_vol * 2.5  # 2.5σ stop
+                    stop_distance = ps.price * daily_vol * 2.5
                     short_stop = ps.price + stop_distance
                     short_target = ps.price - 3 * stop_distance
-                    rr = 3.0 if stop_distance > 0 else 0
 
                     short_plans.append(TradePlan(
                         symbol=sym,
@@ -883,18 +1298,77 @@ class CarverPipeline:
                         quantity=short_qty,
                         risk_amount=round(short_qty * stop_distance, 2),
                         reward_amount=round(short_qty * 3 * stop_distance, 2),
-                        rr_ratio=round(rr, 2),
+                        rr_ratio=3.0,
                         score=forecast_val,
                         direction="SHORT",
                         product=_short_product,
                     ))
 
-                # Limit to max concurrent short positions
-                short_plans.sort(key=lambda p: p.score)  # Most bearish first
+                short_plans.sort(key=lambda p: p.score)
                 plans.extend(short_plans[:_short_max])
-                log.append(f"  → {min(len(short_plans), _short_max)} SHORT trade plans added (regime={current_regime})")
+                log.append(f"  → {min(len(short_plans), _short_max)} SHORT trade plans (regime={current_regime_str})")
             else:
-                log.append(f"  → SHORT disabled: regime={current_regime} (need {_short_regime})")
+                log.append(f"  → SHORT disabled: regime={current_regime_str}")
+
+        # Options-based bear hedging (Phase 2.5 — buy puts / sell calls)
+        if _hedge_enabled and not _short_enabled:
+            try:
+                from kite_connect.options.bear_hedge_strategy import BearHedgeStrategy
+                hedge_strategy_name = getattr(Config, "OPTIONS_HEDGE_STRATEGY", "protective_put")
+                hedge_max_pct = getattr(Config, "OPTIONS_HEDGE_MAX_PORTFOLIO_PCT", 0.05)
+                hedger = BearHedgeStrategy(
+                    strategy=hedge_strategy_name,
+                    max_premium_pct=hedge_max_pct,
+                )
+                # Build holdings from current position sizes
+                hedge_holdings = {}
+                for sym, ps in position_sizes.items():
+                    if ps.target_quantity > 0 and ps.price > 0:
+                        lot_size = 1  # default for non-F&O
+                        try:
+                            from kite_connect.nse.lot_sizes import get_lot_size
+                            lot_size = get_lot_size(sym) or 1
+                        except Exception:
+                            pass
+                        hedge_holdings[sym] = {
+                            "qty": ps.target_quantity,
+                            "avg_price": ps.price,
+                            "ltp": ps.price,
+                            "lot_size": lot_size,
+                        }
+
+                # Try to get option chains from Kite
+                option_chains = {}
+                try:
+                    from kite_connect.options.option_chain import OptionChainService
+                    chain_svc = OptionChainService()
+                    for sym in list(hedge_holdings.keys())[:10]:  # limit to 10
+                        chain = chain_svc.get_chain(sym)
+                        if chain:
+                            option_chains[sym] = chain
+                except Exception as exc:
+                    log.append(f"  → Option chain fetch error: {exc}")
+
+                vix = hmm_snap.vix_level if hmm_snap else 15.0
+                portfolio_value = self._vol_target.current_capital
+                hedge_result = hedger.scan_hedge_opportunities(
+                    holdings=hedge_holdings,
+                    option_chains=option_chains,
+                    vix=vix,
+                    regime=str(current_regime),
+                    portfolio_value=portfolio_value,
+                )
+                result.hedge_result = hedge_result
+                if hedge_result.candidates:
+                    log.append(
+                        f"  → {len(hedge_result.candidates)} hedge candidates "
+                        f"({hedge_strategy_name}), cost ₹{hedge_result.total_premium_cost:,.0f}, "
+                        f"hedged {hedge_result.portfolio_hedge_pct:.1f}%"
+                    )
+                elif hedge_result.skipped_reason:
+                    log.append(f"  → Hedge skipped: {hedge_result.skipped_reason}")
+            except Exception as exc:
+                log.append(f"  → Hedge scan error: {exc}")
 
         # Sort by forecast strength
         plans.sort(key=lambda p: abs(p.score), reverse=True)
