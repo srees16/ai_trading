@@ -11,7 +11,7 @@
 $HF_USERNAME = "srees16"
 $SPACE_NAME  = "centurion-core"
 $GITHUB_REPO = "https://github.com/srees16/centurion_core.git"
-$GITHUB_BRANCH = "main"
+$GITHUB_BRANCH = "c.core/improvements"
 
 # Resolve project root (script lives in deployment/)
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -121,6 +121,11 @@ if (Test-Path $ENV_FILE) {
         "ANTHROPIC_API_KEY",
         "SENTRY_DSN",
         "LOGTAIL_TOKEN",
+        "ZERODHA_API_KEY",
+        "ZERODHA_API_SECRET",
+        "ZERODHA_USER_ID",
+        "ZERODHA_PASSWORD",
+        "ZERODHA_TOTP_SECRET",
         "MINIO_ENDPOINT",
         "MINIO_ACCESS_KEY",
         "MINIO_SECRET_KEY",
