@@ -1,5 +1,5 @@
-"""GODMODE Audit: IND + US backtests with regime breakdown."""
-import sys, io, os, warnings, json
+"""GODMODE Audit: IND + US backtests with regime breakdown & expanded universe."""
+import sys, io, os, warnings, json, time
 os.environ['PYTHONWARNINGS'] = 'ignore'
 warnings.filterwarnings('ignore')
 import logging; logging.disable(logging.CRITICAL)
@@ -11,14 +11,26 @@ sys.stderr = io.StringIO()
 from services.full_pipeline_backtest import run_full_backtest
 sys.stderr = sys.__stderr__
 
-# ── IND Backtest ──────────────────────────────────────────────
-ind_tickers = ['RELIANCE.NS', 'TCS.NS', 'INFY.NS', 'HDFCBANK.NS', 'ICICIBANK.NS',
-               'BHARTIARTL.NS', 'ITC.NS', 'SBIN.NS', 'LT.NS', 'TATAMOTORS.NS',
-               'AXISBANK.NS', 'WIPRO.NS', 'SUNPHARMA.NS', 'MARUTI.NS', 'ONGC.NS']
+# ── IND Backtest — Expanded universe across sectors ───────────
+# Broad Market (NIFTY50 large-cap) + Sectoral coverage + Midcap alpha
+ind_tickers = [
+    # Large-cap blue chips (NIFTY 50)
+    'RELIANCE.NS', 'TCS.NS', 'INFY.NS', 'HDFCBANK.NS', 'ICICIBANK.NS',
+    'BHARTIARTL.NS', 'ITC.NS', 'SBIN.NS', 'LT.NS', 'TATAMOTORS.NS',
+    'AXISBANK.NS', 'WIPRO.NS', 'SUNPHARMA.NS', 'MARUTI.NS', 'ONGC.NS',
+    # Sectoral coverage (Auto, Metal, Energy, FMCG, IT, Pharma, Realty, PSU Bank)
+    'M&M.NS', 'TATASTEEL.NS', 'HINDALCO.NS', 'NTPC.NS', 'POWERGRID.NS',
+    'HINDUNILVR.NS', 'NESTLEIND.NS', 'HCLTECH.NS', 'DRREDDY.NS', 'CIPLA.NS',
+    'DLF.NS', 'BANKBARODA.NS', 'COALINDIA.NS', 'BRITANNIA.NS', 'JSWSTEEL.NS',
+    # Midcap alpha generators
+    'TATAPOWER.NS', 'HAL.NS', 'CHOLAFIN.NS', 'POLYCAB.NS', 'ZOMATO.NS',
+    'PIDILITIND.NS', 'ABB.NS', 'SIEMENS.NS', 'GODREJCP.NS', 'JINDALSTEL.NS',
+]
 
 print("=" * 80)
-print("  GODMODE AUDIT — IND STOCKS (5Y)")
+print("  GODMODE AUDIT — IND STOCKS (5Y, 40 tickers)")
 print("=" * 80)
+t0 = time.time()
 sys.stderr = io.StringIO()
 ind = run_full_backtest(
     tickers=ind_tickers, capital=1_000_000, period='5y', market='IND',
@@ -26,14 +38,33 @@ ind = run_full_backtest(
     verbose=True,
 )
 sys.stderr = sys.__stderr__
+print(f"  [IND backtest completed in {time.time()-t0:.1f}s]")
 
-# ── US Backtest ───────────────────────────────────────────────
-us_tickers = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META",
-              "TSLA", "JPM", "V", "UNH", "HD", "PG", "XOM", "MA", "JNJ"]
+# ── Source Hit Rates (IND) ────────────────────────────────────
+if 'source_hit_rates' in ind:
+    print("\n  Source Hit Rates (IND):")
+    for src, rate in sorted(ind['source_hit_rates'].items(), key=lambda x: -x[1]):
+        print(f"    {src:25s}: {rate*100:5.1f}%")
+
+# ── US Backtest — Expanded to NASDAQ + S&P diversified ────────
+us_tickers = [
+    # Tech mega-cap
+    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
+    # Healthcare & Consumer
+    "JNJ", "UNH", "PG", "KO", "PEP", "COST", "HD",
+    # Financials & Energy
+    "JPM", "V", "MA", "BAC", "GS", "XOM", "CVX",
+    # Industrials & Communication
+    "BA", "CAT", "HON", "DIS", "NFLX", "CMCSA",
+    # Growth / Midcap
+    "CRM", "ADBE", "AMD", "AVGO", "ISRG", "PANW", "CRWD",
+    "SQ", "SHOP", "ABNB",
+]
 
 print("\n\n" + "=" * 80)
-print("  GODMODE AUDIT — US STOCKS (5Y)")
+print("  GODMODE AUDIT — US STOCKS (5Y, 37 tickers)")
 print("=" * 80)
+t0 = time.time()
 sys.stderr = io.StringIO()
 us = run_full_backtest(
     tickers=us_tickers, capital=10_000, period='5y', market='US',
@@ -41,6 +72,12 @@ us = run_full_backtest(
     verbose=True,
 )
 sys.stderr = sys.__stderr__
+print(f"  [US backtest completed in {time.time()-t0:.1f}s]")
+
+if 'source_hit_rates' in us:
+    print("\n  Source Hit Rates (US):")
+    for src, rate in sorted(us['source_hit_rates'].items(), key=lambda x: -x[1]):
+        print(f"    {src:25s}: {rate*100:5.1f}%")
 
 # ── Regime Breakdown for IND ──────────────────────────────────
 print("\n\n" + "=" * 80)
