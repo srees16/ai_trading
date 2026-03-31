@@ -105,6 +105,7 @@ class CarverPipeline:
         self.cfg = config or PipelineConfig()
         self._vol_target = None
         self._hmm_model = None
+        self._forecast_history = {}  # Rolling forecast history for dynamic correlations
         self._init_vol_target()
 
     def _init_vol_target(self):
@@ -267,32 +268,44 @@ class CarverPipeline:
         except Exception as exc:
             log.append(f"  → Carry rule skipped: {exc}")
 
-        # Gap A6: F&O Open Interest signals
+        # Gap A6: F&O Open Interest signals (real OI from NSE bhavcopy)
         oi_forecasts: Dict[str, float] = {}
         try:
             from services.oi_signal import compute_oi_signals_batch
 
-            # Build OI data from OHLCV price changes (actual OI requires Kite F&O data)
+            # Try real F&O bhavcopy OI data first
             oi_data = {}
-            for sym, df in ohlcv_cache.items():
-                if df is not None and len(df) >= 2:
-                    try:
-                        price_change_pct = float(
-                            (df["Close"].iloc[-1] / df["Close"].iloc[-2] - 1) * 100
-                        )
-                        # Use volume change as OI proxy when actual OI unavailable
-                        if "Volume" in df.columns and len(df) >= 5:
-                            avg_vol = float(df["Volume"].iloc[-5:].mean())
-                            last_vol = float(df["Volume"].iloc[-1])
-                            oi_change_pct = ((last_vol / avg_vol) - 1) * 100 if avg_vol > 0 else 0.0
-                        else:
-                            oi_change_pct = 0.0
-                        oi_data[sym] = {
-                            "oi_change_pct": oi_change_pct,
-                            "price_change_pct": price_change_pct,
-                        }
-                    except Exception:
-                        pass
+            try:
+                from services.nse_fo_bhavcopy import fetch_fo_oi_data
+                oi_data = fetch_fo_oi_data()
+                if oi_data:
+                    log.append(f"  → Real F&O OI data for {len(oi_data)} symbols")
+            except Exception as bkcp_exc:
+                log.append(f"  → F&O bhavcopy unavailable ({bkcp_exc}), falling back to volume proxy")
+
+            # Fallback: volume proxy for symbols not in F&O bhavcopy
+            if len(oi_data) < 10:
+                for sym, df in ohlcv_cache.items():
+                    if sym in oi_data:
+                        continue  # already have real OI
+                    if df is not None and len(df) >= 2:
+                        try:
+                            price_change_pct = float(
+                                (df["Close"].iloc[-1] / df["Close"].iloc[-2] - 1) * 100
+                            )
+                            if "Volume" in df.columns and len(df) >= 5:
+                                avg_vol = float(df["Volume"].iloc[-5:].mean())
+                                last_vol = float(df["Volume"].iloc[-1])
+                                oi_change_pct = ((last_vol / avg_vol) - 1) * 100 if avg_vol > 0 else 0.0
+                            else:
+                                oi_change_pct = 0.0
+                            oi_data[sym] = {
+                                "oi_change_pct": oi_change_pct,
+                                "price_change_pct": price_change_pct,
+                            }
+                        except Exception:
+                            pass
+
             if oi_data:
                 oi_forecasts = compute_oi_signals_batch(oi_data)
                 if oi_forecasts:
@@ -319,6 +332,79 @@ class CarverPipeline:
                     log.append(f"  → Event-driven forecasts for {len(event_forecasts)} symbols")
         except Exception as exc:
             log.append(f"  → Event-driven skipped: {exc}")
+
+        # Breakout signal: 20-day high/low channel (uncorrelated with EWMAC)
+        breakout_forecasts: Dict[str, float] = {}
+        try:
+            import numpy as _np
+            for sym, df in ohlcv_cache.items():
+                if df is None or len(df) < 22:
+                    continue
+                c = df["Close"]
+                if hasattr(c, "squeeze"):
+                    c = c.squeeze()
+                price_now = float(c.iloc[-1])
+                high_20 = float(c.iloc[-21:-1].max())
+                low_20 = float(c.iloc[-21:-1].min())
+                rng = high_20 - low_20
+                if rng > 0 and _np.isfinite(price_now):
+                    breakout_fc = ((price_now - low_20) / rng - 0.5) * 20.0
+                    breakout_fc = max(-20.0, min(20.0, breakout_fc))
+                    breakout_forecasts[sym] = breakout_fc
+            if breakout_forecasts:
+                log.append(f"  → Breakout forecasts for {len(breakout_forecasts)} symbols")
+        except Exception as exc:
+            log.append(f"  → Breakout skipped: {exc}")
+
+        # Cross-sectional momentum: rank stocks by 6-month return
+        cross_mom_forecasts: Dict[str, float] = {}
+        try:
+            import numpy as _np
+            xmom_returns = {}
+            for sym, df in ohlcv_cache.items():
+                if df is None:
+                    continue
+                c = df["Close"]
+                if hasattr(c, "squeeze"):
+                    c = c.squeeze()
+                if len(c) >= 126:
+                    ret = float(c.iloc[-1] / c.iloc[-126] - 1)
+                    if _np.isfinite(ret):
+                        xmom_returns[sym] = ret
+            if len(xmom_returns) >= 6:
+                sorted_syms = sorted(xmom_returns.keys(), key=lambda s: xmom_returns[s])
+                n_tercile = max(1, len(sorted_syms) // 3)
+                for sym in sorted_syms[:n_tercile]:
+                    cross_mom_forecasts[sym] = -8.0
+                for sym in sorted_syms[-n_tercile:]:
+                    cross_mom_forecasts[sym] = +8.0
+                log.append(f"  → Cross-momentum: {n_tercile} long, {n_tercile} short")
+        except Exception as exc:
+            log.append(f"  → Cross-momentum skipped: {exc}")
+
+        # Pairs arb: cointegrated pairs spread trading
+        pairs_forecasts: Dict[str, float] = {}
+        try:
+            import numpy as _np_pairs
+            from services.pairs_trading_live import scan_all_pairs
+            # scan_all_pairs expects Dict[str, np.ndarray] of close prices
+            close_arrays: Dict[str, Any] = {}
+            for sym, df in ohlcv_cache.items():
+                if df is not None and "Close" in df.columns:
+                    c = df["Close"]
+                    if hasattr(c, "to_numpy"):
+                        close_arrays[sym] = c.to_numpy()
+                    else:
+                        close_arrays[sym] = _np_pairs.array(c)
+            pairs_signals = scan_all_pairs(close_arrays)
+            for ps in pairs_signals:
+                if ps.forecast != 0 and ps.leg1 and ps.leg2:
+                    pairs_forecasts[ps.leg1] = pairs_forecasts.get(ps.leg1, 0) + ps.forecast * 0.5
+                    pairs_forecasts[ps.leg2] = pairs_forecasts.get(ps.leg2, 0) - ps.forecast * 0.5
+            if pairs_forecasts:
+                log.append(f"  → Pairs arb forecasts for {len(pairs_forecasts)} symbols")
+        except Exception as exc:
+            log.append(f"  → Pairs arb skipped: {exc}")
 
         all_forecasts: Dict[str, Dict[str, float]] = {}
         for sym in ohlcv_cache:
@@ -367,6 +453,18 @@ class CarverPipeline:
             # G9: Event-driven forecast
             if sym in event_forecasts:
                 fc["event_driven"] = event_forecasts[sym]
+
+            # Breakout channel forecast
+            if sym in breakout_forecasts:
+                fc["breakout"] = breakout_forecasts[sym]
+
+            # Cross-sectional momentum forecast
+            if sym in cross_mom_forecasts:
+                fc["cross_momentum"] = cross_mom_forecasts[sym]
+
+            # Pairs arbitrage forecast
+            if sym in pairs_forecasts:
+                fc["pairs_arb"] = pairs_forecasts[sym]
 
             # Gap B6: Decision engine forecast integration
             # NOTE: Removed duplicate — decision_engine forecast already added above
@@ -456,6 +554,31 @@ class CarverPipeline:
             pass
 
         combined = combine_forecasts_batch(all_forecasts, weights=dynamic_weights)
+
+        # Dynamic correlation matrix: update from forecast history if available
+        try:
+            from services.forecast_combiner import compute_rolling_correlations
+            forecast_history = getattr(self, '_forecast_history', {})
+            # Append today's forecasts to history (averaged across symbols)
+            for sym, fc_dict in all_forecasts.items():
+                for source, val in fc_dict.items():
+                    if source not in forecast_history:
+                        forecast_history[source] = []
+                    forecast_history[source].append(val)
+            self._forecast_history = forecast_history
+
+            min_history = min((len(v) for v in forecast_history.values()), default=0)
+            if min_history >= 60:
+                dynamic_corr = compute_rolling_correlations(forecast_history)
+                if dynamic_corr:
+                    combined = combine_forecasts_batch(
+                        all_forecasts, weights=dynamic_weights,
+                        correlations=dynamic_corr,
+                    )
+                    log.append(f"  → Dynamic correlations applied ({min_history}-day history)")
+        except Exception as corr_exc:
+            log.append(f"  → Dynamic correlations skipped: {corr_exc}")
+
         combined_values = {sym: cf.combined_forecast for sym, cf in combined.items()}
 
         # Gap B2: Apply Markov signal filter (transition-aware dampening)
@@ -517,7 +640,29 @@ class CarverPipeline:
 
         # ── Step 7: Position sizing ────────────────────────────
         log.append("Step 7: Computing Carver position sizes...")
-        from services.position_sizer import compute_position_sizes_batch
+        from services.position_sizer import compute_position_sizes_batch, PositionSizerConfig
+
+        # G4: Regime-adaptive leverage from HMM or rule-based regime
+        regime_leverage = getattr(self.cfg, 'max_leverage', 1.0)
+        try:
+            from config import Config as _LevCfg
+            if getattr(_LevCfg, 'LEVERAGE_ENABLED', False):
+                detected_regime = None
+                if hmm_snap is not None and hmm_snap.confidence >= 0.5:
+                    detected_regime = hmm_snap.regime.lower() if hasattr(hmm_snap.regime, 'lower') else str(hmm_snap.regime).lower()
+                if detected_regime and 'bull' in detected_regime:
+                    regime_leverage = getattr(_LevCfg, 'LEVERAGE_BULL_MAX', 1.3)
+                elif detected_regime and 'bear' in detected_regime:
+                    regime_leverage = getattr(_LevCfg, 'LEVERAGE_BEAR_MAX', 0.8)
+                elif detected_regime and 'range' in detected_regime:
+                    regime_leverage = getattr(_LevCfg, 'LEVERAGE_RANGE_MAX', 1.15)
+                else:
+                    regime_leverage = getattr(_LevCfg, 'CARVER_MAX_LEVERAGE', 1.0)
+                log.append(f"  → Regime leverage: {regime_leverage:.2f}x (regime={detected_regime})")
+        except Exception:
+            pass
+
+        sizer_cfg = PositionSizerConfig(max_leverage=regime_leverage)
 
         position_sizes = compute_position_sizes_batch(
             forecasts=combined_values,
@@ -528,6 +673,7 @@ class CarverPipeline:
             instrument_weights=instrument_weights,
             idm=idm,
             current_holdings=current_holdings,
+            config=sizer_cfg,
         )
         result.position_sizes = position_sizes
         trades_needed = sum(
@@ -566,6 +712,38 @@ class CarverPipeline:
                 log.append(f"  → Gap B8: Capacity check dampened {capacity_dampened} positions")
         except Exception as exc:
             log.append(f"  → Capacity check skipped: {exc}")
+
+        # Direction-aware regime scaling (aligns live with backtest)
+        # Bull: longs 1.3x / shorts 0.5x | Bear: shorts 1.3x / longs 0.5x
+        try:
+            detected_regime_str = None
+            if hmm_snap is not None and hmm_snap.confidence >= 0.5:
+                detected_regime_str = str(hmm_snap.regime).lower()
+            dir_adjusted = 0
+            if detected_regime_str and detected_regime_str in ('bull', 'bear'):
+                from dataclasses import replace as _dc_replace_dir
+                for sym, ps in list(position_sizes.items()):
+                    if ps.target_quantity == 0:
+                        continue
+                    is_long = ps.target_quantity > 0
+                    if detected_regime_str == 'bull':
+                        dir_mult = 1.3 if is_long else 0.5
+                    else:  # bear
+                        dir_mult = 0.5 if is_long else 1.3
+                    if dir_mult != 1.0:
+                        new_qty = int(ps.target_quantity * dir_mult)
+                        delta = new_qty - ps.current_quantity
+                        position_sizes[sym] = _dc_replace_dir(
+                            ps,
+                            target_quantity=new_qty,
+                            trade_delta=delta,
+                            trade_required=abs(delta) > 0,
+                            notional_value=abs(new_qty) * ps.price if ps.price else 0.0,
+                        )
+                        dir_adjusted += 1
+                log.append(f"  → Direction-aware scaling: adjusted {dir_adjusted} positions ({detected_regime_str})")
+        except Exception as exc:
+            log.append(f"  → Direction-aware scaling skipped: {exc}")
 
         # ── Step 8: Portfolio risk assessment ──────────────────
         log.append("Step 8: Assessing portfolio risk...")

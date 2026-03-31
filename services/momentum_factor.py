@@ -191,9 +191,35 @@ class MomentumFactor:
         """Return momentum forecasts in {symbol: forecast} format.
 
         Ready to feed into the Carver forecast combiner.
+        Includes momentum crash hedge: when 1-month return is deeply negative
+        (crash regime), the momentum forecast is dampened to avoid piling into
+        falling stocks.
         """
         result = self.rank_from_cache(ohlcv_cache)
-        return {s.ticker: s.forecast for s in result.scores if s.forecast != 0.0}
+        forecasts = {}
+        for s in result.scores:
+            if s.forecast == 0.0:
+                continue
+            # Momentum crash hedge: check 1-month return
+            df = ohlcv_cache.get(s.ticker)
+            hedge_factor = 1.0
+            if df is not None and len(df) >= 22:
+                try:
+                    close = df["Close"]
+                    if hasattr(close, "squeeze"):
+                        close = close.squeeze()
+                    ret_1m = float(close.iloc[-1] / close.iloc[-22] - 1)
+                    # If 1-month return < -15%, dampen positive momentum forecast
+                    # (crash regime — past winners crash hardest)
+                    if ret_1m < -0.15 and s.forecast > 0:
+                        hedge_factor = max(0.0, 1.0 + (ret_1m + 0.15) / 0.15)
+                    # If 1-month return < -25%, flip positive forecast to mild negative
+                    if ret_1m < -0.25 and s.forecast > 0:
+                        hedge_factor = -0.3  # reversal signal
+                except Exception:
+                    pass
+            forecasts[s.ticker] = round(s.forecast * hedge_factor, 2)
+        return {k: v for k, v in forecasts.items() if v != 0.0}
 
     @staticmethod
     def _return_to_forecast(

@@ -176,11 +176,15 @@ def generate_pairs_signal(
             signal.forecast = 0.0
         else:
             signal.action = "HOLD"
-            # Forecast proportional to expected reversion
+            # Forecast proportional to expected reversion, decaying toward stop
+            # At entry_z: full forecast; at max_z: forecast -> 0 (not peak)
+            z_abs = abs(z_score)
+            decay = max(0.0, (max_z - z_abs) / (max_z - entry_z)) if max_z > entry_z else 1.0
+            raw_fc = decay * z_abs * 5.0
             if current_direction == "LONG_LEG1":
-                signal.forecast = round(min(20.0, max(-20.0, -z_score * 5.0)), 2)
+                signal.forecast = round(min(20.0, max(-20.0, -raw_fc)), 2)
             else:
-                signal.forecast = round(min(20.0, max(-20.0, z_score * 5.0)), 2)
+                signal.forecast = round(min(20.0, max(-20.0, raw_fc)), 2)
     else:
         # Check for entry
         if z_score > entry_z:

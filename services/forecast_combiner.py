@@ -52,17 +52,20 @@ class ForecastWeight:
 # Updated Phase 1: Added momentum and pead sources
 # Updated Gap A2/A5/A6/B6: Added mean_reversion, fii_flow, oi_signal, decision_engine
 DEFAULT_FORECAST_WEIGHTS: List[ForecastWeight] = [
-    ForecastWeight("ewmac_16_64", 0.14),
-    ForecastWeight("ewmac_32_128", 0.11),
-    ForecastWeight("ewmac_64_256", 0.14),
-    ForecastWeight("carry", 0.05),          # G7: reduced from 14% — weak for equities
-    ForecastWeight("screener", 0.09),
-    ForecastWeight("momentum", 0.13),
-    ForecastWeight("pead", 0.08),           # G6: increased — highest-Sharpe academic signal
-    ForecastWeight("mean_reversion", 0.07),
-    ForecastWeight("fii_flow", 0.06),
-    ForecastWeight("decision_engine", 0.04),
-    ForecastWeight("oi_signal", 0.03),      # G19: Restored — OI provides vol expansion signal
+    ForecastWeight("ewmac_8_32", 0.10),     # fast swing: regime-change alpha
+    ForecastWeight("ewmac_16_64", 0.12),
+    ForecastWeight("ewmac_32_128", 0.10),
+    ForecastWeight("ewmac_64_256", 0.12),
+    ForecastWeight("carry", 0.04),          # G7: reduced from 14% — weak for equities
+    ForecastWeight("screener", 0.07),
+    ForecastWeight("momentum", 0.12),
+    ForecastWeight("pead", 0.06),           # G6: increased — highest-Sharpe academic signal
+    ForecastWeight("mean_reversion", 0.06),
+    ForecastWeight("fii_flow", 0.04),
+    ForecastWeight("decision_engine", 0.03),
+    ForecastWeight("oi_signal", 0.04),      # G19: OI provides vol expansion signal
+    ForecastWeight("breakout", 0.04),       # 20-day high/low breakout — uncorrelated
+    ForecastWeight("cross_momentum", 0.05), # Cross-sectional: long winners, short losers
     # Phase 4: Uncorrelated alpha sources
     ForecastWeight("pairs_arb", 0.03),      # G19: Activated — highly decorrelated
     ForecastWeight("event_driven", 0.03),   # G19: Activated — episodic alpha
@@ -160,6 +163,52 @@ DEFAULT_CORRELATION_MATRIX = {
     ("decision_engine", "oi_signal"): 0.15,
     ("pairs_arb", "oi_signal"): 0.05,
     ("event_driven", "oi_signal"): 0.10,
+    # EWMAC 8_32 correlations — fastest variation, high corr with 16_64
+    ("ewmac_8_32", "ewmac_16_64"): 0.90,
+    ("ewmac_8_32", "ewmac_32_128"): 0.60,
+    ("ewmac_8_32", "ewmac_64_256"): 0.40,
+    ("ewmac_8_32", "carry"): 0.20,
+    ("ewmac_8_32", "screener"): 0.40,
+    ("ewmac_8_32", "momentum"): 0.50,
+    ("ewmac_8_32", "pead"): 0.10,
+    ("ewmac_8_32", "mean_reversion"): -0.35,
+    ("ewmac_8_32", "fii_flow"): 0.30,
+    ("ewmac_8_32", "decision_engine"): 0.25,
+    ("ewmac_8_32", "oi_signal"): 0.30,
+    ("ewmac_8_32", "pairs_arb"): 0.05,
+    ("ewmac_8_32", "event_driven"): 0.10,
+    # Breakout correlations — 20-day high/low channel
+    ("breakout", "ewmac_8_32"): 0.55,
+    ("breakout", "ewmac_16_64"): 0.50,
+    ("breakout", "ewmac_32_128"): 0.40,
+    ("breakout", "ewmac_64_256"): 0.30,
+    ("breakout", "carry"): 0.15,
+    ("breakout", "screener"): 0.30,
+    ("breakout", "momentum"): 0.45,
+    ("breakout", "pead"): 0.10,
+    ("breakout", "mean_reversion"): -0.25,
+    ("breakout", "fii_flow"): 0.20,
+    ("breakout", "decision_engine"): 0.20,
+    ("breakout", "oi_signal"): 0.25,
+    ("breakout", "pairs_arb"): 0.05,
+    ("breakout", "event_driven"): 0.10,
+    # Cross-sectional momentum — ranks stocks by relative performance
+    ("cross_momentum", "ewmac_8_32"): 0.35,
+    ("cross_momentum", "ewmac_16_64"): 0.40,
+    ("cross_momentum", "ewmac_32_128"): 0.45,
+    ("cross_momentum", "ewmac_64_256"): 0.50,
+    ("cross_momentum", "carry"): 0.15,
+    ("cross_momentum", "screener"): 0.25,
+    ("cross_momentum", "momentum"): 0.60,
+    ("cross_momentum", "pead"): 0.15,
+    ("cross_momentum", "mean_reversion"): -0.30,
+    ("cross_momentum", "fii_flow"): 0.20,
+    ("cross_momentum", "decision_engine"): 0.20,
+    ("cross_momentum", "oi_signal"): 0.20,
+    ("cross_momentum", "breakout"): 0.45,
+    ("cross_momentum", "pairs_arb"): 0.10,
+    ("cross_momentum", "event_driven"): 0.10,
+    ("ewmac_8_32", "breakout"): 0.55,
 }
 
 
@@ -174,6 +223,72 @@ class CombinedForecast:
     weights_used: Dict[str, float] = field(default_factory=dict)
     sources_available: int = 0
     sources_total: int = 0
+
+
+def compute_rolling_correlations(
+    forecast_history: Dict[str, list],
+    lookback: int = 252,
+    shrinkage: float = 0.3,
+) -> Dict[tuple, float]:
+    """Compute rolling pairwise correlations from forecast history.
+
+    Uses shrinkage toward the static prior (DEFAULT_CORRELATION_MATRIX)
+    to stabilize estimates when history is short.
+
+    Parameters
+    ----------
+    forecast_history : dict[str, list[float]]
+        {source_name: [daily_forecast_values]}.
+    lookback : int
+        Rolling window in trading days.
+    shrinkage : float
+        Blend factor: (1-shrinkage)*empirical + shrinkage*prior.
+
+    Returns
+    -------
+    dict[tuple, float]
+        Pairwise correlations {(source_a, source_b): corr}.
+    """
+    sources = sorted(forecast_history.keys())
+    n = len(sources)
+    if n < 2:
+        return DEFAULT_CORRELATION_MATRIX
+
+    # Build matrix of recent forecasts
+    min_len = min(len(forecast_history[s]) for s in sources)
+    usable = min(min_len, lookback)
+    if usable < 30:
+        return DEFAULT_CORRELATION_MATRIX
+
+    data = np.column_stack([
+        np.array(forecast_history[s][-usable:], dtype=float) for s in sources
+    ])
+
+    # Empirical correlation
+    with np.errstate(divide='ignore', invalid='ignore'):
+        empirical = np.corrcoef(data.T)
+    if not np.all(np.isfinite(empirical)):
+        return DEFAULT_CORRELATION_MATRIX
+
+    # Shrink toward static prior
+    result = {}
+    for i in range(n):
+        for j in range(i + 1, n):
+            key = (sources[i], sources[j])
+            rev_key = (sources[j], sources[i])
+            prior = DEFAULT_CORRELATION_MATRIX.get(
+                key, DEFAULT_CORRELATION_MATRIX.get(rev_key, 0.0)
+            )
+            emp = float(empirical[i, j])
+            blended = (1 - shrinkage) * emp + shrinkage * prior
+            blended = max(-0.95, min(0.95, blended))
+            result[key] = round(blended, 3)
+
+    logger.info(
+        "Dynamic correlations computed: %d pairs from %d-day window (shrinkage=%.1f)",
+        len(result), usable, shrinkage,
+    )
+    return result
 
 
 def compute_fdm(
