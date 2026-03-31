@@ -168,9 +168,13 @@ class PEADStrategy:
         return forecasts
 
     def advance_day(self) -> None:
-        """Call once per trading day to advance the decay clock."""
+        """Call once per trading day to advance the decay clock.
+
+        FIX-8: Persist state after advancing so days_since survives restarts.
+        """
         for signal in self._active_signals.values():
             signal.days_since_announcement += 1
+        self._persist_active_signals()
 
     def _sue_to_forecast(self, sue: float) -> float:
         """Map SUE to Carver-scale forecast.

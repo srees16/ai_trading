@@ -387,6 +387,98 @@ def run_us_carver_pipeline(
     except Exception:
         result.pipeline_log.append("  Mean-reversion: unavailable (non-fatal)")
 
+    # ── Penfold trend tactics: Turtle + ATR band + retracement + weekly Dow ──
+    penfold_forecasts: Dict[str, float] = {}
+    penfold_weekly_trends: Dict[str, str] = {}
+    try:
+        from strategies.penfold_trend import (
+            compute_penfold_forecast_batch,
+            compute_weekly_trend_filter_batch,
+        )
+        penfold_forecasts = compute_penfold_forecast_batch(ohlcv_cache)
+        penfold_weekly_trends = compute_weekly_trend_filter_batch(ohlcv_cache)
+        if penfold_forecasts:
+            result.pipeline_log.append(f"  Penfold trend: {len(penfold_forecasts)} symbols")
+    except Exception as exc:
+        result.pipeline_log.append(f"  Penfold trend: skipped ({exc})")
+
+    # ── Ehlers DSP: Fisher Transform + MAMA/FAMA + Super Smoother + Sinewave ──
+    ehlers_forecasts: Dict[str, float] = {}
+    try:
+        from strategies.ehlers_dsp import compute_ehlers_forecast_batch
+        ehlers_forecasts = compute_ehlers_forecast_batch(ohlcv_cache)
+        if ehlers_forecasts:
+            result.pipeline_log.append(f"  Ehlers DSP: {len(ehlers_forecasts)} symbols")
+    except Exception as exc:
+        result.pipeline_log.append(f"  Ehlers DSP: skipped ({exc})")
+
+    # ── Ruggiero Cybernetic: intermarket + seasonal + trend strength + MTF ──
+    cybernetic_forecasts: Dict[str, float] = {}
+    try:
+        from strategies.ruggiero_cybernetic import (
+            compute_cybernetic_forecast_batch,
+            US_INTERMARKET_DRIVERS,
+        )
+        import yfinance as _yf_drivers
+        driver_dfs: Dict[str, pd.DataFrame] = {}
+        for driver_sym in US_INTERMARKET_DRIVERS:
+            try:
+                d = _yf_drivers.download(driver_sym, period="120d", progress=False)
+                if d is not None and len(d) >= 30:
+                    driver_dfs[driver_sym] = d
+            except Exception:
+                pass
+        if driver_dfs:
+            cybernetic_forecasts = compute_cybernetic_forecast_batch(
+                ohlcv_cache, driver_dfs, US_INTERMARKET_DRIVERS
+            )
+            if cybernetic_forecasts:
+                result.pipeline_log.append(
+                    f"  Cybernetic intermarket: {len(cybernetic_forecasts)} symbols "
+                    f"({len(driver_dfs)} drivers)")
+    except Exception as exc:
+        result.pipeline_log.append(f"  Cybernetic intermarket: skipped ({exc})")
+
+    # ── AFTS S23: Acceleration — rate of change of EWMAC forecast ──
+    acceleration_forecasts: Dict[str, float] = {}
+    try:
+        from strategies.acceleration import compute_acceleration_batch
+        acceleration_forecasts = compute_acceleration_batch(ohlcv_cache)
+        if acceleration_forecasts:
+            result.pipeline_log.append(f"  Acceleration (S23): {len(acceleration_forecasts)} symbols")
+    except Exception as exc:
+        result.pipeline_log.append(f"  Acceleration: skipped ({exc})")
+
+    # ── AFTS S22: Carver Value — 5-year mean reversion ──
+    value_forecasts: Dict[str, float] = {}
+    try:
+        from strategies.carver_value import compute_value_batch
+        value_forecasts = compute_value_batch(ohlcv_cache)
+        if value_forecasts:
+            result.pipeline_log.append(f"  Carver Value (S22): {len(value_forecasts)} symbols")
+    except Exception as exc:
+        result.pipeline_log.append(f"  Carver Value: skipped ({exc})")
+
+    # ── AFTS S24: Skew Signal — realized skew risk premium ──
+    skew_forecasts: Dict[str, float] = {}
+    try:
+        from strategies.skew_signal import compute_skew_batch
+        skew_forecasts = compute_skew_batch(ohlcv_cache)
+        if skew_forecasts:
+            result.pipeline_log.append(f"  Skew Signal (S24): {len(skew_forecasts)} symbols")
+    except Exception as exc:
+        result.pipeline_log.append(f"  Skew Signal: skipped ({exc})")
+
+    # ── Sentiment Forecast — news-driven signal ──
+    sentiment_forecasts: Dict[str, float] = {}
+    try:
+        from services.sentiment_forecast import compute_sentiment_batch
+        sentiment_forecasts = compute_sentiment_batch(ohlcv_cache)
+        if sentiment_forecasts:
+            result.pipeline_log.append(f"  Sentiment: {len(sentiment_forecasts)} symbols")
+    except Exception as exc:
+        result.pipeline_log.append(f"  Sentiment: skipped ({exc})")
+
     # ── Step 4: Build forecast dicts ─────────────────────────
     result.pipeline_log.append("Step 4: Building per-symbol forecast dicts")
     all_forecasts: Dict[str, Dict[str, float]] = {}
@@ -401,8 +493,45 @@ def run_us_carver_pipeline(
             fc["momentum"] = momentum_forecasts[sym]
         if sym in mean_rev_forecasts:
             fc["mean_reversion"] = mean_rev_forecasts[sym]
+        if sym in penfold_forecasts:
+            fc["penfold_trend"] = penfold_forecasts[sym]
+        # Ehlers DSP (Fisher Transform + MAMA/FAMA + Super Smoother + Sinewave + SNR)
+        if sym in ehlers_forecasts:
+            fc["ehlers_dsp"] = ehlers_forecasts[sym]
+        # Ruggiero Cybernetic (intermarket + seasonal + trend strength + multi-TF)
+        if sym in cybernetic_forecasts:
+            fc["intermarket"] = cybernetic_forecasts[sym]
+        # AFTS S23: Acceleration (rate of change of trend forecast)
+        if sym in acceleration_forecasts:
+            fc["acceleration"] = acceleration_forecasts[sym]
+        # AFTS S22: Carver Value (5-year mean reversion)
+        if sym in value_forecasts:
+            fc["carver_value"] = value_forecasts[sym]
+        # AFTS S24: Skew Signal (realized skew risk premium)
+        if sym in skew_forecasts:
+            fc["skew_signal"] = skew_forecasts[sym]
+        # News sentiment forecast
+        if sym in sentiment_forecasts:
+            fc["sentiment"] = sentiment_forecasts[sym]
         if fc:
             all_forecasts[sym] = fc
+
+    # Apply weekly Dow filter: dampen counter-trend signals
+    # Aggressive dampening (×0.15 in broad bear) preserves capital
+    if penfold_weekly_trends:
+        n_down = sum(1 for v in penfold_weekly_trends.values() if v == "down")
+        n_up = sum(1 for v in penfold_weekly_trends.values() if v == "up")
+        broad_bear = n_down > n_up * 2
+        for sym, fc in all_forecasts.items():
+            wt = penfold_weekly_trends.get(sym, "unknown")
+            for key in list(fc.keys()):
+                if wt == "down" and fc[key] > 5.0:
+                    dampen = 0.15 if broad_bear else 0.35
+                    fc[key] *= dampen
+                elif wt == "up" and fc[key] < -5.0:
+                    fc[key] *= 0.5
+                elif wt == "up" and fc[key] < -5.0:
+                    fc[key] *= 0.5  # dampen sell in weekly uptrend
 
     if not all_forecasts:
         result.pipeline_log.append("ABORT: No forecasts generated")
@@ -412,6 +541,71 @@ def run_us_carver_pipeline(
     result.pipeline_log.append("Step 5: Combining forecasts with FDM")
     combined = combine_forecasts_batch(all_forecasts)
     combined_values = {s: cf.combined_forecast for s, cf in combined.items()}
+
+    # ── Step 5b: Masters prediction quality gate ─────────────
+    try:
+        from services.forecast_combiner import apply_masters_quality_gate
+        gated = apply_masters_quality_gate(combined, ohlcv_data)
+        gated_values = {sym: cf.combined_forecast for sym, cf in gated.items()}
+        n_dampened = sum(
+            1 for sym in gated_values
+            if abs(gated_values[sym]) < abs(combined_values.get(sym, 0))
+        )
+        combined_values = gated_values
+        if n_dampened > 0:
+            result.pipeline_log.append(f"  → Masters quality gate dampened {n_dampened} low-quality forecasts")
+    except Exception as mqe:
+        result.pipeline_log.append(f"  → Masters quality gate skipped: {mqe}")
+
+    # ── Step 5b: RL confidence modifier ──────────────────────
+    if Config.RL_ENABLED:
+        try:
+            from services.rl_bot.rl_signal_integrator import get_rl_layer_score
+            rl_modified = 0
+            for sym in list(combined_values.keys()):
+                try:
+                    rl_score = get_rl_layer_score(sym, market="US")
+                    if rl_score is None or rl_score == 0.0:
+                        continue
+                    original = combined_values[sym]
+                    if abs(original) < 1.0:
+                        continue
+                    modifier = 1.0 + rl_score * 0.15
+                    combined_values[sym] = max(-20.0, min(20.0, original * modifier))
+                    rl_modified += 1
+                except Exception:
+                    pass
+            if rl_modified:
+                result.pipeline_log.append(f"  → RL confidence modifier applied to {rl_modified} forecasts")
+                result.combined_forecasts = combined_values
+            else:
+                result.pipeline_log.append("  → RL enabled but no trained models matched current symbols")
+        except ImportError:
+            result.pipeline_log.append("  → RL module not available, skipping")
+        except Exception as rl_exc:
+            result.pipeline_log.append(f"  → RL confidence modifier skipped: {rl_exc}")
+
+    # ── Step 5c: Meta-labeling confidence gate ───────────────
+    try:
+        from services.meta_labeling import apply_meta_labels
+        ml_result = apply_meta_labels(
+            combined_forecasts=combined_values,
+            ohlcv_cache=ohlcv_cache,
+            market="US",
+        )
+        if ml_result.blocked_count > 0 or ml_result.modified_count > 0:
+            combined_values = ml_result.scaled_forecasts
+            result.combined_forecasts = combined_values
+            result.pipeline_log.append(
+                f"  → Meta-label: {ml_result.modified_count} scaled, "
+                f"{ml_result.blocked_count} blocked, {ml_result.passed_count} passed"
+            )
+        else:
+            result.pipeline_log.append("  → Meta-label: no model or all passed through")
+    except ImportError:
+        result.pipeline_log.append("  → Meta-labeling module not available, skipping")
+    except Exception as ml_exc:
+        result.pipeline_log.append(f"  → Meta-labeling skipped: {ml_exc}")
 
     # ── Step 6: Cost speed limit (US costs) ──────────────────
     result.pipeline_log.append("Step 6: Applying cost speed limit (US cost config)")
@@ -494,6 +688,7 @@ def run_us_carver_pipeline(
         initial_capital=cap,
         annual_vol_target_pct=vol_tgt,
         max_leverage_factor=max_lev,
+        vince_insurance_pct=getattr(Config, 'VINCE_INSURANCE_PCT_US', 0.0),
     )
     vol_target = VolatilityTarget(vt_cfg)
 
@@ -555,6 +750,22 @@ def run_us_carver_pipeline(
 
     result.symbols_processed = len(ohlcv_cache)
     result.pipeline_log.append(f"  → {len(result.trade_plans)} trade plans generated")
+
+    # ── Step 10 (Vince): Attach risk metrics summary ─────────
+    try:
+        from services.vince_metrics import get_vince_tracker
+        vt = get_vince_tracker()
+        snap = vt.get_snapshot("__portfolio__")
+        if snap and snap.n_trades >= 5:
+            result.pipeline_log.append(
+                f"  Vince: G={snap.geometric_mean:.4f}, "
+                f"optimal_f={snap.optimal_f:.3f}, "
+                f"kelly_half={snap.kelly_half:.3f}, "
+                f"trades={snap.n_trades}"
+            )
+    except Exception:
+        pass
+
     return result
 
 

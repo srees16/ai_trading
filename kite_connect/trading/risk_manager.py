@@ -38,7 +38,7 @@ class RiskConfig:
     sl_method: str = "tighter"            # "ma50", "swing_low", "atr", "tighter"
     swing_lookback: int = 10              # Days for swing-low computation
     atr_multiplier: float = 2.0           # ATR × multiplier for ATR-based SL
-    min_rr_ratio: float = 2.5            # Higher R:R for fewer, better trades
+    min_rr_ratio: float = 1.5            # Balanced R:R — Carver framework allows tighter targets
     use_kelly_sizing: bool = True         # Scale risk by signal confidence (half-Kelly)
     kelly_floor_pct: float = 0.01         # Minimum risk (1%) for low-confidence
     kelly_cap_pct: float = 0.03           # Maximum risk (3%) for high-confidence
@@ -417,7 +417,7 @@ class RiskManager:
             candidates = [sl_ma50, sl_swing]
             if atr > 0:
                 candidates.append(sl_atr)
-            sl = max(candidates)
+            sl = min(candidates)
 
         # Clamp SL to [sl_min_pct, sl_max_pct] below entry
         # P0 fix: Add overnight gap buffer — NSE has 16h overnight exposure

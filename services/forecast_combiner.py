@@ -52,23 +52,31 @@ class ForecastWeight:
 # Updated Phase 1: Added momentum and pead sources
 # Updated Gap A2/A5/A6/B6: Added mean_reversion, fii_flow, oi_signal, decision_engine
 DEFAULT_FORECAST_WEIGHTS: List[ForecastWeight] = [
-    ForecastWeight("ewmac_8_32", 0.10),     # fast swing: regime-change alpha
-    ForecastWeight("ewmac_16_64", 0.12),
-    ForecastWeight("ewmac_32_128", 0.10),
-    ForecastWeight("ewmac_64_256", 0.12),
-    ForecastWeight("carry", 0.04),          # G7: reduced from 14% — weak for equities
-    ForecastWeight("screener", 0.07),
-    ForecastWeight("momentum", 0.12),
-    ForecastWeight("pead", 0.06),           # G6: increased — highest-Sharpe academic signal
-    ForecastWeight("mean_reversion", 0.06),
-    ForecastWeight("fii_flow", 0.04),
+    ForecastWeight("ewmac_8_32", 0.07),     # fast swing: regime-change alpha
+    ForecastWeight("ewmac_16_64", 0.07),
+    ForecastWeight("ewmac_32_128", 0.06),
+    ForecastWeight("ewmac_64_256", 0.06),
+    ForecastWeight("carry", 0.01),          # G7: weak for equities — minimal
+    ForecastWeight("screener", 0.04),
+    ForecastWeight("momentum", 0.08),       # Strong for IND equities (Jegadeesh-Titman)
+    ForecastWeight("pead", 0.06),           # G6: highest-Sharpe academic signal — boosted from 0.04
+    ForecastWeight("mean_reversion", 0.03), # Reduced: counter-trend drags CAGR in trending mkts
+    ForecastWeight("fii_flow", 0.03),
     ForecastWeight("decision_engine", 0.03),
-    ForecastWeight("oi_signal", 0.04),      # G19: OI provides vol expansion signal
-    ForecastWeight("breakout", 0.04),       # 20-day high/low breakout — uncorrelated
-    ForecastWeight("cross_momentum", 0.05), # Cross-sectional: long winners, short losers
-    # Phase 4: Uncorrelated alpha sources
-    ForecastWeight("pairs_arb", 0.03),      # G19: Activated — highly decorrelated
-    ForecastWeight("event_driven", 0.03),   # G19: Activated — episodic alpha
+    ForecastWeight("oi_signal", 0.02),      # G19: OI provides vol expansion signal
+    ForecastWeight("breakout", 0.00),       # Fully subsumed by penfold_trend — weight moved to PEAD
+    ForecastWeight("cross_momentum", 0.04), # Cross-sectional: long winners, short losers
+    ForecastWeight("pairs_arb", 0.02),      # Reduced: less relevant for CAGR maximisation
+    ForecastWeight("event_driven", 0.04),   # Episodic alpha
+    ForecastWeight("penfold_trend", 0.07),  # Penfold: Turtle(40%)+ATR(25%)+Retrace(20%)+Dow
+    ForecastWeight("ehlers_dsp", 0.08),     # Ehlers: Fisher+MAMA/FAMA+SuperSmoother+Sinewave+SNR
+    ForecastWeight("intermarket", 0.07),    # Ruggiero: intermarket+seasonal+trend+multi-TF
+    # --- AFTS new sources (S22, S23, S24) ---
+    ForecastWeight("acceleration", 0.05),   # S23: rate-of-change of trend forecast
+    ForecastWeight("carver_value", 0.02),   # S22: 5-year mean reversion
+    ForecastWeight("skew_signal", 0.03),    # S24: realized skew risk premium
+    # --- Sentiment (wired from FinBERT news analysis) ---
+    ForecastWeight("sentiment", 0.02),       # News sentiment: FinBERT z-scored → Carver scale
 ]
 
 # Rule-of-thumb correlations between forecast sources (Carver Appendix C):
@@ -209,6 +217,147 @@ DEFAULT_CORRELATION_MATRIX = {
     ("cross_momentum", "pairs_arb"): 0.10,
     ("cross_momentum", "event_driven"): 0.10,
     ("ewmac_8_32", "breakout"): 0.55,
+    # Penfold trend — composite: Turtle + ATR band + retracement + weekly Dow
+    ("penfold_trend", "ewmac_8_32"): 0.50,
+    ("penfold_trend", "ewmac_16_64"): 0.55,
+    ("penfold_trend", "ewmac_32_128"): 0.50,
+    ("penfold_trend", "ewmac_64_256"): 0.45,
+    ("penfold_trend", "carry"): 0.10,
+    ("penfold_trend", "screener"): 0.20,
+    ("penfold_trend", "momentum"): 0.45,
+    ("penfold_trend", "pead"): 0.10,
+    ("penfold_trend", "mean_reversion"): -0.20,
+    ("penfold_trend", "fii_flow"): 0.15,
+    ("penfold_trend", "decision_engine"): 0.15,
+    ("penfold_trend", "oi_signal"): 0.15,
+    ("penfold_trend", "breakout"): 0.65,
+    ("penfold_trend", "cross_momentum"): 0.50,
+    ("penfold_trend", "pairs_arb"): 0.05,
+    ("penfold_trend", "event_driven"): 0.05,
+    # Ehlers DSP — adaptive filters, low corr with EWMAC (different approach)
+    ("ehlers_dsp", "ewmac_8_32"): 0.35,
+    ("ehlers_dsp", "ewmac_16_64"): 0.30,
+    ("ehlers_dsp", "ewmac_32_128"): 0.25,
+    ("ehlers_dsp", "ewmac_64_256"): 0.20,
+    ("ehlers_dsp", "carry"): 0.10,
+    ("ehlers_dsp", "screener"): 0.25,
+    ("ehlers_dsp", "momentum"): 0.30,
+    ("ehlers_dsp", "pead"): 0.10,
+    ("ehlers_dsp", "mean_reversion"): -0.15,
+    ("ehlers_dsp", "fii_flow"): 0.15,
+    ("ehlers_dsp", "decision_engine"): 0.20,
+    ("ehlers_dsp", "oi_signal"): 0.20,
+    ("ehlers_dsp", "breakout"): 0.40,
+    ("ehlers_dsp", "cross_momentum"): 0.25,
+    ("ehlers_dsp", "pairs_arb"): 0.05,
+    ("ehlers_dsp", "event_driven"): 0.10,
+    ("ehlers_dsp", "penfold_trend"): 0.45,
+    # Intermarket (Ruggiero) — macro-driven, low corr with stock-specific signals
+    ("intermarket", "ewmac_8_32"): 0.15,
+    ("intermarket", "ewmac_16_64"): 0.15,
+    ("intermarket", "ewmac_32_128"): 0.15,
+    ("intermarket", "ewmac_64_256"): 0.20,
+    ("intermarket", "carry"): 0.20,
+    ("intermarket", "screener"): 0.15,
+    ("intermarket", "momentum"): 0.20,
+    ("intermarket", "pead"): 0.05,
+    ("intermarket", "mean_reversion"): 0.10,
+    ("intermarket", "fii_flow"): 0.40,
+    ("intermarket", "decision_engine"): 0.15,
+    ("intermarket", "oi_signal"): 0.20,
+    ("intermarket", "breakout"): 0.15,
+    ("intermarket", "cross_momentum"): 0.15,
+    ("intermarket", "pairs_arb"): 0.05,
+    ("intermarket", "event_driven"): 0.15,
+    ("intermarket", "penfold_trend"): 0.20,
+    ("intermarket", "ehlers_dsp"): 0.15,
+    # --- AFTS S23: Acceleration — derivative of EWMAC, high corr with trend ---
+    ("acceleration", "ewmac_8_32"): 0.55,
+    ("acceleration", "ewmac_16_64"): 0.50,
+    ("acceleration", "ewmac_32_128"): 0.45,
+    ("acceleration", "ewmac_64_256"): 0.35,
+    ("acceleration", "carry"): 0.10,
+    ("acceleration", "screener"): 0.25,
+    ("acceleration", "momentum"): 0.40,
+    ("acceleration", "pead"): 0.10,
+    ("acceleration", "mean_reversion"): -0.20,
+    ("acceleration", "fii_flow"): 0.15,
+    ("acceleration", "decision_engine"): 0.15,
+    ("acceleration", "oi_signal"): 0.20,
+    ("acceleration", "breakout"): 0.40,
+    ("acceleration", "cross_momentum"): 0.35,
+    ("acceleration", "pairs_arb"): 0.05,
+    ("acceleration", "event_driven"): 0.10,
+    ("acceleration", "penfold_trend"): 0.45,
+    ("acceleration", "ehlers_dsp"): 0.30,
+    ("acceleration", "intermarket"): 0.15,
+    # --- AFTS S22: Value — 5-year mean reversion, anti-correlated with trend ---
+    ("carver_value", "ewmac_8_32"): -0.10,
+    ("carver_value", "ewmac_16_64"): -0.05,
+    ("carver_value", "ewmac_32_128"): 0.00,
+    ("carver_value", "ewmac_64_256"): 0.10,
+    ("carver_value", "carry"): 0.25,
+    ("carver_value", "screener"): 0.15,
+    ("carver_value", "momentum"): -0.30,
+    ("carver_value", "pead"): 0.15,
+    ("carver_value", "mean_reversion"): 0.55,
+    ("carver_value", "fii_flow"): 0.05,
+    ("carver_value", "decision_engine"): 0.10,
+    ("carver_value", "oi_signal"): 0.05,
+    ("carver_value", "breakout"): -0.15,
+    ("carver_value", "cross_momentum"): -0.25,
+    ("carver_value", "pairs_arb"): 0.20,
+    ("carver_value", "event_driven"): 0.05,
+    ("carver_value", "penfold_trend"): -0.10,
+    ("carver_value", "ehlers_dsp"): -0.05,
+    ("carver_value", "intermarket"): 0.10,
+    ("carver_value", "acceleration"): -0.15,
+    # --- AFTS S24: Skew — structural risk premium, low corr with everything ---
+    ("skew_signal", "ewmac_8_32"): 0.10,
+    ("skew_signal", "ewmac_16_64"): 0.10,
+    ("skew_signal", "ewmac_32_128"): 0.10,
+    ("skew_signal", "ewmac_64_256"): 0.10,
+    ("skew_signal", "carry"): 0.15,
+    ("skew_signal", "screener"): 0.05,
+    ("skew_signal", "momentum"): 0.05,
+    ("skew_signal", "pead"): 0.05,
+    ("skew_signal", "mean_reversion"): 0.15,
+    ("skew_signal", "fii_flow"): 0.05,
+    ("skew_signal", "decision_engine"): 0.05,
+    ("skew_signal", "oi_signal"): 0.10,
+    ("skew_signal", "breakout"): 0.05,
+    ("skew_signal", "cross_momentum"): 0.05,
+    ("skew_signal", "pairs_arb"): 0.10,
+    ("skew_signal", "event_driven"): 0.05,
+    ("skew_signal", "penfold_trend"): 0.10,
+    ("skew_signal", "ehlers_dsp"): 0.05,
+    ("skew_signal", "intermarket"): 0.05,
+    ("skew_signal", "acceleration"): 0.10,
+    ("skew_signal", "carver_value"): 0.30,
+    # --- Sentiment correlations ---
+    # Sentiment is news-driven, low overlap with technical signals
+    ("sentiment", "ewmac_8_32"): 0.10,
+    ("sentiment", "ewmac_16_64"): 0.10,
+    ("sentiment", "ewmac_32_128"): 0.10,
+    ("sentiment", "ewmac_64_256"): 0.10,
+    ("sentiment", "carry"): 0.05,
+    ("sentiment", "screener"): 0.20,
+    ("sentiment", "momentum"): 0.15,
+    ("sentiment", "pead"): 0.30,       # High: both react to earnings/news events
+    ("sentiment", "mean_reversion"): 0.10,
+    ("sentiment", "fii_flow"): 0.20,   # Moderate: both reflect institutional views
+    ("sentiment", "decision_engine"): 0.15,
+    ("sentiment", "oi_signal"): 0.10,
+    ("sentiment", "breakout"): 0.10,
+    ("sentiment", "cross_momentum"): 0.10,
+    ("sentiment", "pairs_arb"): 0.05,
+    ("sentiment", "event_driven"): 0.35,  # High: both are event-driven
+    ("sentiment", "penfold_trend"): 0.10,
+    ("sentiment", "ehlers_dsp"): 0.05,
+    ("sentiment", "intermarket"): 0.15,
+    ("sentiment", "acceleration"): 0.10,
+    ("sentiment", "carver_value"): 0.10,
+    ("sentiment", "skew_signal"): 0.05,
 }
 
 
@@ -345,6 +494,7 @@ def combine_forecasts(
     forecasts: Dict[str, float],
     weights: Optional[List[ForecastWeight]] = None,
     correlations: Optional[Dict[tuple, float]] = None,
+    vol_regime_multiplier: Optional[float] = None,
 ) -> CombinedForecast:
     """Combine multiple forecast sources into a single combined forecast.
 
@@ -359,6 +509,11 @@ def combine_forecasts(
         Forecast weights.  Default: handcrafted NSE weights.
     correlations : dict | None
         Pairwise correlations.
+    vol_regime_multiplier : float | None
+        AFTS S13 — ratio of (median_vol / current_vol).  If >1, current vol
+        is below median → scale forecasts UP (calm markets = more signal).
+        If <1, current vol is above median → scale DOWN (volatile markets =
+        more noise).  Capped at [0.5, 1.5].  If None, no vol adjustment.
 
     Returns
     -------
@@ -391,6 +546,13 @@ def combine_forecasts(
         active_weights[k] * available[k] for k in available
     )
 
+    # --- AFTS S13: Vol-regime forecast magnitude adjustment ---
+    # In low-vol environments, scale forecasts UP (more signal content).
+    # In high-vol environments, scale forecasts DOWN (more noise).
+    if vol_regime_multiplier is not None:
+        vrm = max(0.5, min(1.5, vol_regime_multiplier))
+        raw_combined *= vrm
+
     # G20: Compute FDM per-symbol from AVAILABLE sources (Carver Ch.8).
     # When a source is missing, the reduced set has different correlations
     # and thus a different FDM. This avoids over-scaling thin-signal symbols.
@@ -416,6 +578,7 @@ def combine_forecasts_batch(
     all_forecasts: Dict[str, Dict[str, float]],
     weights: Optional[object] = None,
     correlations: Optional[Dict[tuple, float]] = None,
+    vol_regime_multipliers: Optional[Dict[str, float]] = None,
 ) -> Dict[str, CombinedForecast]:
     """Combine forecasts for all symbols.
 
@@ -426,6 +589,8 @@ def combine_forecasts_batch(
     weights : list[ForecastWeight] | dict[str, float] | None
         Forecast weights. Can be a list of ForecastWeight or a dict
         from HMM blending. Default: handcrafted NSE weights.
+    vol_regime_multipliers : dict[str, float] | None
+        AFTS S13 — per-symbol vol regime multiplier.
 
     Returns
     -------
@@ -440,7 +605,10 @@ def combine_forecasts_batch(
 
     results = {}
     for sym, fc_dict in all_forecasts.items():
-        results[sym] = combine_forecasts(sym, fc_dict, fw_list, correlations)
+        vrm = None
+        if vol_regime_multipliers:
+            vrm = vol_regime_multipliers.get(sym)
+        results[sym] = combine_forecasts(sym, fc_dict, fw_list, correlations, vrm)
 
     # Log summary
     avg_sources = (
@@ -456,3 +624,79 @@ def combine_forecasts_batch(
         len(results), avg_sources, avg_forecast,
     )
     return results
+
+
+def apply_masters_quality_gate(
+    combined_forecasts: Dict[str, CombinedForecast],
+    ohlcv_dict: Dict[str, "pd.DataFrame"],
+    forecast_history: Optional[Dict[str, Dict[str, "np.ndarray"]]] = None,
+) -> Dict[str, CombinedForecast]:
+    """Apply Masters prediction quality gating to combined forecasts.
+
+    For each symbol, assesses the quality of recent forecast vs actual
+    returns. Low-quality forecasts are dampened (multiplied by 0.3-1.0).
+
+    Masters Ch. 9: "Scale each forecast by its assessed quality.
+    This automatically de-weights unreliable signals."
+
+    Args:
+        combined_forecasts: {symbol: CombinedForecast} from combine_forecasts_batch
+        ohlcv_dict: {symbol: OHLCV DataFrame} for computing actual returns
+        forecast_history: optional {symbol: {date_idx: forecast}} for quality calc
+
+    Returns:
+        {symbol: CombinedForecast} with quality-gated forecasts
+    """
+    try:
+        from strategies.masters_prediction import compute_prediction_quality
+        import numpy as np
+        import pandas as pd
+    except ImportError:
+        logger.debug("masters_prediction not available — skipping quality gate")
+        return combined_forecasts
+
+    gated = {}
+    n_dampened = 0
+
+    for sym, cf in combined_forecasts.items():
+        df = ohlcv_dict.get(sym)
+        if df is None or len(df) < 30:
+            gated[sym] = cf
+            continue
+
+        try:
+            close = df["Close"].values.astype(float)
+            actual_returns = np.diff(close[-60:]) / np.maximum(
+                np.abs(close[-61:-1]), 1e-10
+            )
+
+            # Use forecast sign as daily prediction proxy
+            n_rets = len(actual_returns)
+            if n_rets < 20:
+                gated[sym] = cf
+                continue
+
+            # Build forecast array from current combined forecast direction
+            forecast_arr = np.full(n_rets, cf.combined_forecast)
+
+            quality = compute_prediction_quality(sym, forecast_arr, actual_returns)
+
+            if quality.confidence_multiplier < 1.0:
+                dampened_forecast = cf.combined_forecast * quality.confidence_multiplier
+                dampened_forecast = max(-20.0, min(20.0, dampened_forecast))
+                from dataclasses import replace as _dc_replace
+                gated[sym] = _dc_replace(cf, combined_forecast=dampened_forecast)
+                n_dampened += 1
+            else:
+                gated[sym] = cf
+        except Exception as e:
+            logger.debug("Quality gate skipped for %s: %s", sym, e)
+            gated[sym] = cf
+
+    if n_dampened > 0:
+        logger.info(
+            "Masters quality gate: %d/%d forecasts dampened",
+            n_dampened, len(combined_forecasts),
+        )
+
+    return gated

@@ -637,7 +637,11 @@ def run_full_backtest(
                 target_qty = round(position)
 
                 # Cap at max leverage (both long and short)
-                max_notional = abs(equity) * max_leverage * weight_per_sym
+                # FIX-6: Per-symbol cap should NOT double-apply weight.
+                # The Carver formula already factors weight_per_sym × IDM.
+                # Cap each position at (equity × max_leverage / n_active)
+                # so portfolio total can reach equity × max_leverage.
+                max_notional = abs(equity) * max_leverage / n_active
                 if abs(target_qty) * price > max_notional:
                     cap_qty = int(max_notional / price)
                     target_qty = cap_qty if target_qty > 0 else -cap_qty

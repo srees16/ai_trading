@@ -33,8 +33,10 @@ from kite_connect.trading.risk_manager import RiskManager, RiskConfig, TradePlan
 
 logger = logging.getLogger(__name__)
 
-# Allowed verdict tags for execution (strict BUY-only filter)
+# Allowed verdict tags for execution
+# When Carver pipeline is active, HOLD verdicts also pass through (Carver does its own signal gating)
 _BUY_TAGS = {"BUY", "STRONG_BUY"}
+_CARVER_ALLOWED_TAGS = {"BUY", "STRONG_BUY", "HOLD"}  # P1 fix: Carver pipeline generates its own forecasts
 
 # Rate-limiting: pause between Kite API calls (seconds)
 _ORDER_DELAY_S = 0.15
@@ -246,19 +248,22 @@ class AutoExecutor:
 
         if signal_verdicts:
             pre_filter = len(screened_df)
+            # P1 fix: use expanded tags when Carver pipeline is active
+            _active_tags = _CARVER_ALLOWED_TAGS if self._carver_enabled else _BUY_TAGS
             allowed = [
                 sym for sym in screened_df["symbol"].tolist()
-                if signal_verdicts.get(sym, "").upper() in _BUY_TAGS
+                if signal_verdicts.get(sym, "").upper() in _active_tags
             ]
             screened_df = screened_df[screened_df["symbol"].isin(allowed)]
             report.screened_df = screened_df
             report.signal_filtered_count = pre_filter - len(screened_df)
+            _tag_label = "/".join(sorted(_active_tags))
             _cb(
-                f"Signal filter: {len(allowed)} BUY/STRONG_BUY passed, "
-                f"{report.signal_filtered_count} non-BUY removed"
+                f"Signal filter: {len(allowed)} {_tag_label} passed, "
+                f"{report.signal_filtered_count} rejected"
             )
             if screened_df.empty:
-                _cb("No stocks have BUY/STRONG_BUY signal â€” skipping execution")
+                _cb(f"No stocks passed signal filter -- skipping execution")
                 return report
 
         _pre_ltp_closes = {}
@@ -1124,6 +1129,7 @@ class AutoExecutor:
 
             # G4 fix: All orders use CNC + TradeMonitor for SL/TP lifecycle.
             # Phase 2: SHORT trades use SELL-first with MIS/NRML product.
+            # Phase 3: LONG trades can use NRML (F&O) when plan.product is set.
             is_short = getattr(plan, "direction", "LONG") == "SHORT"
             if True:
                 if is_short:
@@ -1131,11 +1137,30 @@ class AutoExecutor:
                     product = getattr(plan, "product", "MIS")
                 else:
                     order_type = "MARKET" if plan.side == "SELL" else "LIMIT"
-                    product = "CNC"
+                    product = getattr(plan, "product", "CNC")
+
+                # Margin pre-check for leveraged (non-CNC) orders
+                if product != "CNC":
+                    try:
+                        from kite_connect.trading.margin_monitor import check_margin_before_order
+                        est_margin = plan.entry_price * plan.quantity * getattr(Config, "FUTURES_MARGIN_PCT", 0.12)
+                        if not check_margin_before_order(self.kite, est_margin):
+                            _cb(f"  Skipped {plan.symbol} \u2014 insufficient margin for {product}")
+                            results.append(OrderResult(
+                                symbol=plan.symbol, side=plan.side,
+                                quantity=plan.quantity, entry_price=plan.entry_price,
+                                stop_loss=plan.stop_loss, target_price=plan.target_price,
+                                success=False, error=f"Margin check failed for {product} order",
+                            ))
+                            continue
+                    except Exception as margin_exc:
+                        logger.warning("Margin pre-check error (non-blocking): %s", margin_exc)
+
+                exchange = "NFO" if product == "NRML" else "NSE"
                 order_kwargs = dict(
                     kite=self.kite,
                     symbol=plan.symbol,
-                    exchange="NSE",
+                    exchange=exchange,
                     transaction_type=plan.side,
                     quantity=plan.quantity,
                     order_type=order_type,
@@ -1179,6 +1204,7 @@ class AutoExecutor:
                         target_price=plan.target_price,
                         entry_order_id=result.order_id,
                         direction=getattr(plan, "direction", "LONG"),
+                        product=getattr(plan, "product", "CNC"),
                     ))
                 existing_symbols.add(plan.symbol)
 
