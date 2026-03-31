@@ -437,15 +437,28 @@ class AutoExecutor:
 
             symbols = screened_df["symbol"].tolist()
 
-            # Step 1: Fetch OHLCV for pipeline
+            # Step 1: Fetch OHLCV for pipeline (batch mode for large universes)
             ohlcv_cache = {}
-            for sym in symbols:
+            if len(symbols) > 30:
                 try:
-                    df = download_ind_ohlcv(sym, period="6mo")
-                    if df is not None and len(df) >= 64:
-                        ohlcv_cache[sym] = df
-                except Exception:
-                    pass
+                    from utils import download_ohlcv_batch_parallel
+                    ohlcv_cache = download_ohlcv_batch_parallel(
+                        symbols, market="IND", period="6mo",
+                    )
+                    ohlcv_cache = {s: d for s, d in ohlcv_cache.items() if len(d) >= 64}
+                    _cb(f"Batch OHLCV: {len(ohlcv_cache)}/{len(symbols)} tickers")
+                except Exception as exc:
+                    logger.warning("Batch OHLCV failed (%s), falling back to sequential", exc)
+                    ohlcv_cache = {}
+
+            if not ohlcv_cache:
+                for sym in symbols:
+                    try:
+                        df = download_ind_ohlcv(sym, period="6mo")
+                        if df is not None and len(df) >= 64:
+                            ohlcv_cache[sym] = df
+                    except Exception:
+                        pass
 
             if not ohlcv_cache:
                 logger.warning("Carver: no OHLCV data — falling back to legacy")

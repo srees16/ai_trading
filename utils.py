@@ -418,3 +418,162 @@ def _clear_yfinance_crumb_cache():
                 yf.data.YfData._cookie = None
     except Exception:
         pass  # best-effort cleanup
+
+
+# ═══════════════════════════════════════════════════════════════
+# Batch OHLCV Download — optimised for large universes (500-3000+)
+# ═══════════════════════════════════════════════════════════════
+
+def download_ohlcv_batch_parallel(
+    tickers: List[str],
+    *,
+    market: str = "IND",
+    period: str = "1y",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    batch_size: int = 50,
+    max_workers: int = 8,
+    progress_callback=None,
+) -> Dict[str, pd.DataFrame]:
+    """
+    Download OHLCV for a large list of tickers using yfinance batch
+    mode with multi-threaded fallback.
+
+    For IND: tries Bhavcopy first, then yfinance in batches of
+    ``batch_size`` tickers per ``yf.download()`` call.
+
+    For US: uses yfinance batch download directly (no suffix).
+
+    Parameters
+    ----------
+    tickers : list[str]
+        Stock symbols (plain, no suffix).
+    market : str
+        ``"IND"`` or ``"US"``.
+    period, start, end : str
+        Date range for yfinance.
+    batch_size : int
+        Number of tickers per yfinance batch call.
+    max_workers : int
+        Max threads for parallel batch processing.
+    progress_callback : callable | None
+        Called with (completed, total) for progress reporting.
+
+    Returns
+    -------
+    dict[str, pd.DataFrame]
+        Mapping symbol -> OHLCV DataFrame.
+    """
+    import yfinance as yf
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    try:
+        from config import Config
+        batch_size = getattr(Config, "OHLCV_DOWNLOAD_BATCH_SIZE", batch_size)
+        max_workers = getattr(Config, "PIPELINE_MAX_WORKERS", max_workers)
+    except Exception:
+        pass
+
+    results: Dict[str, pd.DataFrame] = {}
+
+    # For IND: try Bhavcopy first (fast, no rate limit)
+    remaining = list(tickers)
+    if market.upper() == "IND":
+        try:
+            from services.bhavcopy_fetcher import fetch_ohlcv_batch
+            from datetime import date as _date, timedelta, datetime as _dt
+
+            end_dt = _dt.strptime(end, "%Y-%m-%d").date() if end else _date.today()
+            _period_days = {
+                "1d": 1, "5d": 5, "1mo": 30, "3mo": 90, "6mo": 180,
+                "1y": 365, "2y": 730, "5y": 1825, "max": 3650,
+            }
+            start_dt = (
+                _dt.strptime(start, "%Y-%m-%d").date()
+                if start
+                else end_dt - timedelta(days=_period_days.get(period, 365))
+            )
+            bhav = fetch_ohlcv_batch(tickers, start=start_dt, end=end_dt)
+            for sym, df in bhav.items():
+                results[sym] = _normalize_ohlcv(df)
+            remaining = [t for t in tickers if t not in results]
+            logger.info("Bhavcopy: %d/%d tickers, %d remaining for yfinance",
+                        len(results), len(tickers), len(remaining))
+        except Exception as exc:
+            logger.debug("Bhavcopy batch failed: %s", exc)
+
+    if not remaining:
+        if progress_callback:
+            progress_callback(len(tickers), len(tickers))
+        return results
+
+    # Split remaining into batches for yfinance
+    suffix = ".NS" if market.upper() == "IND" else ""
+    batches = [remaining[i:i + batch_size] for i in range(0, len(remaining), batch_size)]
+
+    def _download_batch(batch: List[str]) -> Dict[str, pd.DataFrame]:
+        """Download a single batch of tickers via yfinance."""
+        yf_syms = [f"{t}{suffix}" for t in batch]
+        yf_str = " ".join(yf_syms)
+        batch_result: Dict[str, pd.DataFrame] = {}
+        try:
+            raw = yf.download(
+                yf_str, period=period, start=start, end=end,
+                progress=False, auto_adjust=True, threads=True,
+                group_by="ticker",
+            )
+            if raw is None or raw.empty:
+                return batch_result
+
+            if len(batch) == 1:
+                # Single ticker — yfinance returns flat columns
+                if isinstance(raw.columns, pd.MultiIndex):
+                    raw.columns = raw.columns.get_level_values(0)
+                if not raw.empty:
+                    batch_result[batch[0]] = _normalize_ohlcv(raw)
+            else:
+                # Multi-ticker — yfinance returns MultiIndex columns (ticker, field)
+                for plain, yf_sym in zip(batch, yf_syms):
+                    try:
+                        if yf_sym in raw.columns.get_level_values(0):
+                            df = raw[yf_sym].copy()
+                        elif plain in raw.columns.get_level_values(0):
+                            df = raw[plain].copy()
+                        else:
+                            continue
+                        df = df.dropna(how="all")
+                        if not df.empty and len(df) >= 5:
+                            batch_result[plain] = _normalize_ohlcv(df)
+                    except Exception:
+                        pass
+        except Exception as exc:
+            logger.warning("yfinance batch download failed (%d tickers): %s",
+                           len(batch), exc)
+        return batch_result
+
+    # Run batches in parallel threads
+    completed_count = len(results)
+    total = len(tickers)
+
+    with ThreadPoolExecutor(max_workers=min(max_workers, len(batches))) as executor:
+        futures = {
+            executor.submit(_download_batch, batch): batch
+            for batch in batches
+        }
+        for future in as_completed(futures):
+            batch = futures[future]
+            try:
+                batch_results = future.result()
+                results.update(batch_results)
+                completed_count += len(batch)
+                if progress_callback:
+                    progress_callback(min(completed_count, total), total)
+            except Exception as exc:
+                logger.warning("Batch download exception: %s", exc)
+                completed_count += len(batch)
+
+    logger.info(
+        "Batch OHLCV download complete: %d/%d tickers (%s, batches=%d, workers=%d)",
+        len(results), len(tickers), market, len(batches), max_workers,
+    )
+    return results
