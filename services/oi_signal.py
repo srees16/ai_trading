@@ -217,7 +217,9 @@ def compute_oi_signals_batch(
     forecasts: Dict[str, float] = {}
 
     for sym, data in oi_data.items():
-        if sym not in FNO_LOT_SIZES:
+        # Strip .NS/.BO suffix for FNO lookup
+        bare_sym = sym.replace('.NS', '').replace('.BO', '')
+        if bare_sym not in FNO_LOT_SIZES:
             continue  # Only F&O stocks
 
         oi_pct = data.get("oi_change_pct", 0.0)
@@ -240,9 +242,11 @@ def compute_oi_signals_batch(
 
 def is_fno_eligible(ticker: str) -> bool:
     """Check if a ticker is F&O eligible on NSE."""
-    return ticker in FNO_LOT_SIZES
+    bare = ticker.replace('.NS', '').replace('.BO', '')
+    return bare in FNO_LOT_SIZES
 
 
 def get_lot_size(ticker: str) -> int:
     """Get F&O lot size for a ticker."""
-    return FNO_LOT_SIZES.get(ticker, 0)
+    bare = ticker.replace('.NS', '').replace('.BO', '')
+    return FNO_LOT_SIZES.get(bare, 0)

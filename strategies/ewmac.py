@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 
 # Default variations suitable for swing/positional equity trading
 DEFAULT_VARIATIONS: List[Tuple[int, int]] = [
+    (8, 32),    # fast swing: ~1 week trends (catches regime changes early)
     (16, 64),   # swing: ~1–2 week trends
     (32, 128),  # positional: ~1–2 month trends
     (64, 256),  # slow positional: ~3–6 month trends

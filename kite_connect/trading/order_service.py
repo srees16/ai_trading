@@ -53,7 +53,7 @@ def _is_nse_market_open() -> bool:
 
 def place_order(kite, symbol, exchange, transaction_type, quantity,
                 order_type="MARKET", product="CNC", price=None,
-                trigger_price=None, validity="DAY"):
+                trigger_price=None, validity="DAY", tag=None):
     """
     Place an order on Zerodha via Kite Connect.
 
@@ -113,9 +113,12 @@ def place_order(kite, symbol, exchange, transaction_type, quantity,
             logger.warning("Order blocked for %s — NSE market is closed", symbol)
             return {"success": False, "error": "NSE market closed (9:15 AM – 3:30 PM IST, Mon-Fri)"}
 
-    # Generate idempotency tag from order parameters
-    tag_seed = f"{symbol}:{exchange}:{transaction_type}:{quantity}:{order_type}:{price}:{int(time.time()//60)}"
-    idempotency_tag = hashlib.sha256(tag_seed.encode()).hexdigest()[:20]
+    # Generate idempotency tag from order parameters (caller tag takes precedence)
+    if tag:
+        idempotency_tag = tag[:20]  # Kite tag max 20 chars
+    else:
+        tag_seed = f"{symbol}:{exchange}:{transaction_type}:{quantity}:{order_type}:{price}:{int(time.time()//60)}"
+        idempotency_tag = hashlib.sha256(tag_seed.encode()).hexdigest()[:20]
 
     expected_price = price  # Track for slippage measurement
 

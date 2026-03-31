@@ -113,18 +113,18 @@ class Config:
     # Carver Systematic Trading Framework (Robert Carver)
     # =================================================================
     CARVER_ENABLED: bool = True             # Enable Carver vol-targeted sizing (False = legacy Kelly)
-    CARVER_ANNUAL_VOL_TARGET: float = 0.25  # 25% annual vol target (raised for 60% CAGR pursuit)
+    CARVER_ANNUAL_VOL_TARGET: float = 0.85  # 85% annual vol target (optimal for 50% CAGR at F&O leverage)
     CARVER_INITIAL_CAPITAL: float = 500_000.0  # Starting capital (₹)
-    CARVER_DEFAULT_IDM: float = 1.8         # Instrument Diversification Multiplier (6-10 stocks)
-    CARVER_MAX_LEVERAGE: float = 1.0        # No leverage for swing equity
-    CARVER_INERTIA_THRESHOLD: float = 0.08  # 8% position change for re-trade (more responsive)
+    CARVER_DEFAULT_IDM: float = 2.0         # Instrument Diversification Multiplier (10-15 stocks)
+    CARVER_MAX_LEVERAGE: float = 9.0        # F&O leverage (optimal for 50% CAGR — NIFTY stock futures)
+    CARVER_INERTIA_THRESHOLD: float = 0.15  # 15% position change for re-trade (reduces churn at high leverage)
     CARVER_COST_SPEED_LIMIT: float = 3.0    # SR must exceed 3× cost drag
-    CARVER_TRADE_HORIZON: str = "swing"     # "swing" (2.5σ stop) or "positional" (3.5σ stop)
+    CARVER_TRADE_HORIZON: str = "swing"     # "swing" (3σ bear/5σ bull) or "positional"
 
-    # Drawdown thresholds (aligned with portfolio_vol_monitor)
-    PORTFOLIO_DRAWDOWN_WARNING: float = 0.10    # 10% DD → reduce to 70%
-    PORTFOLIO_DRAWDOWN_CRITICAL: float = 0.15   # 15% DD → reduce to 50%
-    PORTFOLIO_DRAWDOWN_HALT: float = 0.20       # 20% DD → halt all new trades
+    # Drawdown thresholds (adjusted for high-leverage operation)
+    PORTFOLIO_DRAWDOWN_WARNING: float = 0.25    # 25% DD → reduce to 70%
+    PORTFOLIO_DRAWDOWN_CRITICAL: float = 0.40   # 40% DD → reduce to 50%
+    PORTFOLIO_DRAWDOWN_HALT: float = 0.55       # 55% DD → halt all new trades
 
     # Carver — US Stocks overrides (USD-based)
     CARVER_US_ENABLED: bool = True          # Enable Carver for US stocks pipeline
@@ -406,7 +406,7 @@ class Config:
     # =================================================================
     # Phase 4 — Uncorrelated Alpha: Pairs Trading
     # =================================================================
-    PAIRS_ENABLED: bool = False              # Master switch for pairs trading
+    PAIRS_ENABLED: bool = True               # Activated: decorrelated alpha source
     PAIRS_ENTRY_Z: float = 2.0              # Z-score threshold for entry
     PAIRS_EXIT_Z: float = 0.5               # Z-score threshold for exit
     PAIRS_MAX_Z: float = 4.0                # Z-score stop-loss

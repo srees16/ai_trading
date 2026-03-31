@@ -73,8 +73,8 @@ def compute_mean_reversion_forecast(
     rsi_period: int = 14,
     bb_period: int = 20,
     bb_std: float = 2.0,
-    oversold_rsi: float = 25.0,
-    overbought_rsi: float = 75.0,
+    oversold_rsi: float = 30.0,
+    overbought_rsi: float = 70.0,
 ) -> MeanReversionSignal:
     """Compute mean-reversion forecast for one stock.
 
@@ -127,27 +127,27 @@ def compute_mean_reversion_forecast(
     signal_type = "NONE"
 
     # OVERSOLD BOUNCE: RSI < threshold AND price near/below lower BB
-    if current_rsi < oversold_rsi and bb_pctile < 0.15:
+    if current_rsi < oversold_rsi and bb_pctile < 0.25:
         # Stronger signal for more extreme oversold
         rsi_strength = (oversold_rsi - current_rsi) / oversold_rsi  # 0 to ~1
-        bb_strength = max(0, 0.15 - bb_pctile) / 0.15               # 0 to 1
+        bb_strength = max(0, 0.25 - bb_pctile) / 0.25               # 0 to 1
         raw = (rsi_strength * 0.6 + bb_strength * 0.4) * FORECAST_CAP
         forecast = min(FORECAST_CAP, max(0.0, raw))
         signal_type = "OVERSOLD_BOUNCE"
 
-    elif current_rsi < (oversold_rsi + 10) and bb_pctile < 0.25:
+    elif current_rsi < (oversold_rsi + 10) and bb_pctile < 0.35:
         # Moderate oversold — weaker signal (within 10pts above oversold threshold)
         moderate_threshold = oversold_rsi + 10
         rsi_strength = (moderate_threshold - current_rsi) / moderate_threshold
-        bb_strength = max(0, 0.25 - bb_pctile) / 0.25
+        bb_strength = max(0, 0.35 - bb_pctile) / 0.35
         raw = (rsi_strength * 0.6 + bb_strength * 0.4) * FORECAST_CAP * 0.5
         forecast = min(FORECAST_CAP, max(0.0, raw))
         signal_type = "OVERSOLD_BOUNCE"
 
     # G18: Overbought = negative forecast (SHORT signal for Carver combiner)
-    elif current_rsi > overbought_rsi and bb_pctile > 0.85:
+    elif current_rsi > overbought_rsi and bb_pctile > 0.75:
         rsi_strength = (current_rsi - overbought_rsi) / (100 - overbought_rsi)
-        bb_strength = max(0, bb_pctile - 0.85) / 0.15
+        bb_strength = max(0, bb_pctile - 0.75) / 0.25
         raw = -(rsi_strength * 0.6 + bb_strength * 0.4) * FORECAST_CAP
         forecast = max(-FORECAST_CAP, min(0.0, raw))
         signal_type = "OVERBOUGHT_FADE"
