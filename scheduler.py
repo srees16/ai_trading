@@ -243,6 +243,54 @@ def _tracked_job(job_id: str, job_name: str):
 
 
 # ═══════════════════════════════════════════════════════════════
+# Scheduler-local Kite session (Docker / HF-safe — no Selenium)
+# ═══════════════════════════════════════════════════════════════
+
+_scheduler_kite = None
+_scheduler_kite_ts: float = 0.0
+_KITE_SESSION_TTL = 5 * 3600  # re-auth after 5 h (Kite tokens last ~6 h)
+
+
+def _get_scheduler_kite(force_refresh: bool = False):
+    """Return an authenticated KiteConnect instance for the scheduler process.
+
+    Tries the stored token first, then falls back to headless HTTP login
+    (TOTP-based, no browser).  Caches the instance for up to 5 hours.
+    """
+    global _scheduler_kite, _scheduler_kite_ts
+    import time as _time
+
+    # Return cached instance if still fresh
+    if (
+        not force_refresh
+        and _scheduler_kite is not None
+        and (_time.time() - _scheduler_kite_ts) < _KITE_SESSION_TTL
+    ):
+        return _scheduler_kite
+
+    try:
+        from kite_connect.auth.kite_session import try_stored_token, http_login_kite
+
+        kite = try_stored_token()
+        if kite is None:
+            logger.info("Scheduler Kite: stored token invalid, trying HTTP login")
+            kite = http_login_kite()
+
+        if kite is not None:
+            _scheduler_kite = kite
+            _scheduler_kite_ts = _time.time()
+            logger.info("Scheduler Kite session established")
+        else:
+            logger.warning("Scheduler Kite: all auth methods failed")
+            _scheduler_kite = None
+
+        return _scheduler_kite
+    except Exception as exc:
+        logger.warning("Scheduler Kite session error: %s", exc)
+        return None
+
+
+# ═══════════════════════════════════════════════════════════════
 # Proactive Kite token refresh
 # ═══════════════════════════════════════════════════════════════
 
@@ -251,23 +299,24 @@ def refresh_kite_token_if_needed():
     """Re-authenticate Kite if the access token is expiring soon.
 
     Called every 30 min during market hours by the scheduler.
-    Uses the same TOTP auto-auth path as the pipeline.
+    Uses the headless HTTP login path (no Selenium).
     """
+    import time as _time
+    global _scheduler_kite_ts
+
     try:
-        from api.dependencies import is_kite_token_expiring_soon, get_kite_session, set_kite_session
+        if _scheduler_kite is None:
+            # First call — try to establish a session
+            _get_scheduler_kite()
+            return
 
-        kite = get_kite_session()
-        if kite is None:
-            return  # not logged in — nothing to refresh
-
-        if not is_kite_token_expiring_soon():
+        elapsed = _time.time() - _scheduler_kite_ts
+        if elapsed < _KITE_SESSION_TTL:
             return  # still fresh
 
         logger.info("Kite token expiring soon — proactive re-authentication")
-        from kite_connect.auth.kite_session import create_kite_session
-        new_kite = create_kite_session()
+        new_kite = _get_scheduler_kite(force_refresh=True)
         if new_kite:
-            set_kite_session(new_kite)
             logger.info("Kite token refreshed successfully")
         else:
             logger.warning("Kite re-auth returned None — token may expire")
@@ -539,12 +588,7 @@ def _paper_trade_orders(verdicts: list, screened_df):
             return
 
         # Try to get Kite for LTP (optional; PaperTrader uses yfinance fallback)
-        kite = None
-        try:
-            from kite_connect.auth.kite_session import create_kite_session
-            kite = create_kite_session()
-        except Exception:
-            pass
+        kite = _get_scheduler_kite()
 
         pt = PaperTrader(kite=kite, initial_capital=100_000)
         results = pt.execute_plans(plans)
@@ -601,9 +645,10 @@ def _auto_place_orders(verdicts: list, screened_df):
         return
 
     try:
-        from kite_connect.auth.kite_session import create_kite_session
         logger.info("Auto-authenticating Kite for STRONG_BUY order placementâ€¦")
-        kite = create_kite_session()
+        kite = _get_scheduler_kite()
+        if kite is None:
+            raise RuntimeError("Scheduler Kite session unavailable")
     except Exception as exc:
         logger.error("Kite auto-auth failed: %s â€” orders skipped", exc)
         try:
@@ -1162,13 +1207,12 @@ def _run_trade_monitor_poll():
       - Capital rollup & peak equity persistence
     """
     try:
-        from kite_connect.auth.kite_session import create_kite_session
-        kite = create_kite_session()
+        kite = _get_scheduler_kite()
         if kite is None:
-            logger.debug("TradeMonitor poll skipped — no Kite session")
+            logger.debug("TradeMonitor poll skipped - no Kite session")
             return
     except Exception as exc:
-        logger.debug("TradeMonitor poll skipped — Kite auth failed: %s", exc)
+        logger.debug("TradeMonitor poll skipped - Kite auth failed: %s", exc)
         return
 
     try:
@@ -1545,8 +1589,7 @@ def _run_options_monitor():
 
     logger.info("=== Options Monitor Poll ===")
     try:
-        from auth.shared_session import get_shared_kite
-        kite = get_shared_kite()
+        kite = _get_scheduler_kite()
         if kite is None:
             logger.warning("Options monitor: no Kite session")
             return
@@ -1568,8 +1611,7 @@ def _run_margin_monitor():
 
     logger.info("=== Margin Monitor Poll ===")
     try:
-        from auth.shared_session import get_shared_kite
-        kite = get_shared_kite()
+        kite = _get_scheduler_kite()
         if kite is None:
             logger.warning("Margin monitor: no Kite session")
             return
@@ -1643,8 +1685,7 @@ def _run_futures_monitor():
 
     logger.info("=== Futures Monitor ===")
     try:
-        from auth.shared_session import get_shared_kite
-        kite = get_shared_kite()
+        kite = _get_scheduler_kite()
         if kite is None:
             logger.warning("Futures monitor: no Kite session")
             return
@@ -1779,8 +1820,7 @@ def _execute_tail_hedge_if_needed(kite):
 def _execute_pairs_signals(signals):
     """G5: Execute pairs trading signals via SpreadExecutor."""
     try:
-        from auth.shared_session import get_shared_kite
-        kite = get_shared_kite()
+        kite = _get_scheduler_kite()
         if kite is None:
             logger.warning("G5: No Kite session for pairs execution")
             return
@@ -1885,208 +1925,6 @@ def _get_current_expiry_suffix():
     suffix = today.strftime("%y%b").upper() + "FUT"
     return suffix
 
-
-# =================================================================
-# G4/G5/G6/G10: Execution Helper Functions
-# =================================================================
-
-def _execute_options_overlay(kite):
-    """G4: Execute options overlay - covered calls + CSPs."""
-    try:
-        from config import Config
-        if not getattr(Config, "OPTIONS_ENABLED", False):
-            return
-
-        from kite_connect.options.options_executor import OptionsExecutor
-        from services.options_overlay import scan_covered_call_candidates, scan_csp_candidates
-
-        executor = OptionsExecutor(kite)
-
-        # Covered calls on existing long positions
-        try:
-            cc_candidates = scan_covered_call_candidates(kite)
-            if cc_candidates:
-                results = executor.execute_covered_calls(cc_candidates)
-                logger.info("G4: Covered calls executed: %d orders", len(results))
-        except Exception as exc:
-            logger.warning("G4: Covered calls failed: %s", exc)
-
-        # Cash-secured puts on high-conviction BUY signals
-        try:
-            csp_candidates = scan_csp_candidates(kite)
-            if csp_candidates:
-                results = executor.execute_cash_secured_puts(csp_candidates)
-                logger.info("G4: CSPs executed: %d orders", len(results))
-        except Exception as exc:
-            logger.warning("G4: CSPs failed: %s", exc)
-
-    except Exception as exc:
-        logger.debug("G4: Options overlay skipped: %s", exc)
-
-
-def _execute_tail_hedge_if_needed(kite):
-    """G10: Auto-execute tail hedge when drawdown is critical."""
-    try:
-        from config import Config
-        if not getattr(Config, "OPTIONS_TAIL_HEDGE_ENABLED", False):
-            return
-
-        from services.tail_risk_hedge import TailRiskHedge
-        from kite_connect.options.options_executor import OptionsExecutor
-
-        # Get current portfolio state
-        capital = getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000)
-        realized = getattr(Config, "_CUMULATIVE_REALIZED_PNL", 0.0)
-        equity = getattr(Config, "_CURRENT_EQUITY", capital + realized)
-        peak = getattr(Config, "_PEAK_EQUITY", capital)
-        dd_pct = ((peak - equity) / peak * 100) if peak > 0 else 0
-
-        # Get VIX
-        try:
-            import yfinance as yf
-            vix_data = yf.download("^INDIAVIX", period="5d", progress=False)
-            vix = float(vix_data["Close"].iloc[-1]) if len(vix_data) > 0 else 15.0
-            vix_3d = float(vix_data["Close"].iloc[-4]) if len(vix_data) >= 4 else vix
-        except Exception:
-            vix, vix_3d = 15.0, 15.0
-
-        # Get NIFTY spot
-        try:
-            ltp = kite.ltp(["NSE:NIFTY 50"])
-            nifty_spot = ltp.get("NSE:NIFTY 50", {}).get("last_price", 0)
-        except Exception:
-            nifty_spot = 0
-
-        hedger = TailRiskHedge()
-        assessment = hedger.assess(
-            portfolio_value=equity,
-            drawdown_pct=dd_pct,
-            vix=vix,
-            vix_3d_ago=vix_3d,
-            nifty_spot=nifty_spot,
-        )
-
-        if assessment.hedge_urgency in ("HIGH", "CRITICAL") and assessment.recommendation:
-            executor = OptionsExecutor(kite)
-            result = executor.execute_tail_hedge(assessment.recommendation)
-            logger.info("G10: Tail hedge executed: urgency=%s result=%s",
-                        assessment.hedge_urgency, result)
-        else:
-            logger.info("G10: Tail hedge not needed: urgency=%s dd=%.1f%%",
-                        assessment.hedge_urgency, dd_pct)
-
-    except Exception as exc:
-        logger.debug("G10: Tail hedge check skipped: %s", exc)
-
-
-def _execute_pairs_signals(signals):
-    """G5: Execute pairs trading signals via SpreadExecutor."""
-    try:
-        from auth.shared_session import get_shared_kite
-        kite = get_shared_kite()
-        if kite is None:
-            logger.warning("G5: No Kite session for pairs execution")
-            return
-
-        from kite_connect.trading.spread_executor import SpreadExecutor, LegOrder
-        spread_exec = SpreadExecutor(kite)
-
-        for sig in signals:
-            if not hasattr(sig, "action") or sig.action not in ("ENTER_LONG", "ENTER_SHORT"):
-                continue
-
-            # Build leg orders based on signal direction
-            if sig.action == "ENTER_LONG":
-                leg1 = LegOrder(symbol=sig.leg1, side="BUY", quantity=1, exchange="NSE")
-                leg2 = LegOrder(symbol=sig.leg2, side="SELL", quantity=1, exchange="NSE")
-            else:  # ENTER_SHORT
-                leg1 = LegOrder(symbol=sig.leg1, side="SELL", quantity=1, exchange="NSE")
-                leg2 = LegOrder(symbol=sig.leg2, side="BUY", quantity=1, exchange="NSE")
-
-            result = spread_exec.execute_pair(leg1, leg2)
-            logger.info("G5: Pair %s/%s %s: success=%s",
-                        sig.leg1, sig.leg2, sig.action, result.success)
-
-    except Exception as exc:
-        logger.warning("G5: Pairs execution failed: %s", exc)
-
-
-def _execute_futures_overlay(kite):
-    """G6: Execute futures overlay signal for regime-adaptive leverage."""
-    try:
-        from config import Config
-        if not getattr(Config, "LEVERAGE_ENABLED", False):
-            return
-
-        from services.futures_overlay import compute_futures_overlay
-        from services.regime_detector import get_current_regime
-        from kite_connect.trading.order_service import place_order
-
-        # Get current state
-        capital = getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000)
-        realized = getattr(Config, "_CUMULATIVE_REALIZED_PNL", 0.0)
-        equity = capital + realized
-
-        regime_info = get_current_regime()
-        regime = regime_info.get("regime", "range")
-        confidence = regime_info.get("confidence", 0.5)
-
-        # Get NIFTY spot/futures price
-        try:
-            ltp = kite.ltp(["NSE:NIFTY 50"])
-            nifty_spot = ltp.get("NSE:NIFTY 50", {}).get("last_price", 0)
-        except Exception:
-            nifty_spot = 0
-
-        signal = compute_futures_overlay(
-            portfolio_value=equity,
-            current_futures_notional=0.0,
-            nifty_spot=nifty_spot,
-            regime=regime,
-            regime_confidence=confidence,
-        )
-
-        if signal.action == "BUY_FUT" and signal.lots > 0:
-            lot_size = getattr(Config, "FUTURES_LOT_SIZE", 25)
-            result = place_order(
-                kite,
-                tradingsymbol="NIFTY" + _get_current_expiry_suffix(),
-                exchange="NFO",
-                transaction_type="BUY",
-                quantity=signal.lots * lot_size,
-                product="NRML",
-                order_type="MARKET",
-            )
-            logger.info("G6: BUY_FUT %d lots, order=%s", signal.lots, result)
-
-        elif signal.action == "SELL_FUT" and signal.lots > 0:
-            lot_size = getattr(Config, "FUTURES_LOT_SIZE", 25)
-            result = place_order(
-                kite,
-                tradingsymbol="NIFTY" + _get_current_expiry_suffix(),
-                exchange="NFO",
-                transaction_type="SELL",
-                quantity=signal.lots * lot_size,
-                product="NRML",
-                order_type="MARKET",
-            )
-            logger.info("G6: SELL_FUT %d lots, order=%s", signal.lots, result)
-
-        else:
-            logger.debug("G6: Futures overlay action=%s lots=%d (no trade)",
-                         signal.action, signal.lots)
-
-    except Exception as exc:
-        logger.debug("G6: Futures overlay skipped: %s", exc)
-
-
-def _get_current_expiry_suffix():
-    """Get current month NIFTY futures expiry suffix (e.g. '25JUN' for Jun 2025)."""
-    from datetime import date
-    today = date.today()
-    # NFO convention: YYMMMFUT e.g. NIFTY25JUNFUT
-    suffix = today.strftime("%y%b").upper() + "FUT"
-    return suffix
 
 def start_scheduler():
     """Start the APScheduler background scheduler with IST-aware jobs.
