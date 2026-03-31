@@ -67,6 +67,17 @@ def _init_cache_db():
             status      TEXT DEFAULT 'success'
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS job_log (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id      TEXT NOT NULL,
+            job_name    TEXT NOT NULL,
+            started_at  TEXT NOT NULL,
+            finished_at TEXT,
+            status      TEXT DEFAULT 'running',
+            detail      TEXT
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -120,6 +131,57 @@ def get_latest_run(run_type: Optional[str] = None) -> Optional[dict]:
     return dict(row)
 
 
+def _log_job_start(job_id: str, job_name: str) -> int:
+    """Record that a scheduler job started. Returns the row id."""
+    try:
+        conn = sqlite3.connect(str(_DB_PATH))
+        cur = conn.execute(
+            "INSERT INTO job_log (job_id, job_name, started_at, status) VALUES (?, ?, ?, 'running')",
+            (job_id, job_name, datetime.now(_IST).isoformat()),
+        )
+        row_id = cur.lastrowid
+        conn.commit()
+        conn.close()
+        return row_id
+    except Exception:
+        return -1
+
+
+def _log_job_end(row_id: int, status: str = "ok", detail: str = ""):
+    """Mark a scheduler job as finished."""
+    if row_id < 0:
+        return
+    try:
+        conn = sqlite3.connect(str(_DB_PATH))
+        conn.execute(
+            "UPDATE job_log SET finished_at=?, status=?, detail=? WHERE id=?",
+            (datetime.now(_IST).isoformat(), status, detail[:500] if detail else "", row_id),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def get_job_log(limit: int = 50, job_id: str | None = None) -> list:
+    """Return the most recent job log entries, optionally filtered by job_id."""
+    if not _DB_PATH.exists():
+        return []
+    conn = sqlite3.connect(str(_DB_PATH))
+    conn.row_factory = sqlite3.Row
+    if job_id:
+        rows = conn.execute(
+            "SELECT * FROM job_log WHERE job_id = ? ORDER BY id DESC LIMIT ?",
+            (job_id, limit),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM job_log ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 # ═══════════════════════════════════════════════════════════════
 # Verdict caching helpers
 # ═══════════════════════════════════════════════════════════════
@@ -160,10 +222,31 @@ def get_cached_verdict(ticker: str):
         return None
 
 
+import functools
+
+
+def _tracked_job(job_id: str, job_name: str):
+    """Decorator that logs job start/end to the job_log table."""
+    def decorator(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            row_id = _log_job_start(job_id, job_name)
+            try:
+                result = fn(*args, **kwargs)
+                _log_job_end(row_id, status="ok")
+                return result
+            except Exception as exc:
+                _log_job_end(row_id, status="error", detail=str(exc))
+                raise
+        return wrapper
+    return decorator
+
+
 # ═══════════════════════════════════════════════════════════════
 # Proactive Kite token refresh
 # ═══════════════════════════════════════════════════════════════
 
+@_tracked_job("kite_refresh", "Kite Token Refresh")
 def refresh_kite_token_if_needed():
     """Re-authenticate Kite if the access token is expiring soon.
 
@@ -196,6 +279,7 @@ def refresh_kite_token_if_needed():
 # Pipeline runner (headless â€” no Streamlit, no Kite orders)
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
+@_tracked_job("pre_market_scan", "Pre-Market Full Scan")
 def run_pipeline(run_type: str = "pre_market"):
     """Execute the full screening + scoring pipeline headless.
 
@@ -583,6 +667,7 @@ def _auto_place_orders(verdicts: list, screened_df):
 # Walk-Forward Audit (weekly)
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
+@_tracked_job("walk_forward_audit", "Walk-Forward Audit")
 def run_walk_forward_audit():
     """Run walk-forward validation on all registered strategies.
 
@@ -675,6 +760,7 @@ def run_walk_forward_audit():
 # Unified Backtest â†” Paper â†” Live Reconciliation
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
+@_tracked_job("paper_live_recon", "Paper vs Live Reconciliation")
 def _run_paper_live_reconciliation():
     """Unified 3-leg parity check: backtest â†” paper â†” live.
 
@@ -1061,6 +1147,7 @@ def _restore_portfolio_state():
         logger.warning("Portfolio state restore failed (non-fatal): %s", e)
 
 
+@_tracked_job("trade_monitor", "Trade Monitor Poll")
 def _run_trade_monitor_poll():
     """Poll TradeMonitor for SL/TP fills, trailing-SL updates, and time exits.
 
@@ -1107,6 +1194,7 @@ def _run_trade_monitor_poll():
         logger.exception("TradeMonitor poll failed: %s", exc)
 
 
+@_tracked_job("forecast_calibration", "Forecast Calibration")
 def _run_forecast_calibration():
     """Auto-calibrate forecast scalars from recent OHLCV data.
 
@@ -1155,6 +1243,7 @@ def _run_forecast_calibration():
 # Phase 2 Gap B1: Monthly HMM Regime Re-fit
 # ═══════════════════════════════════════════════════════════════
 
+@_tracked_job("hmm_refit", "HMM Regime Re-fit")
 def _run_hmm_refit():
     """Monthly re-fit of the HMM regime model on 5 years of NIFTY data.
 
@@ -1225,6 +1314,7 @@ def _run_hmm_refit():
         logger.exception("HMM re-fit failed: %s", exc)
 
 
+@_tracked_job("strategy_tournament", "Strategy Tournament")
 def _run_strategy_tournament():
     """Monthly strategy tournament to rank and auto-allocate strategies.
 
@@ -1280,6 +1370,7 @@ def _run_strategy_tournament():
         logger.exception("Strategy tournament failed: %s", exc)
 
 
+@_tracked_job("nightly_backup", "Nightly Backup")
 def _run_nightly_backup():
     """Upload SQLite databases to R2/MinIO storage."""
     try:
@@ -1290,6 +1381,7 @@ def _run_nightly_backup():
         logger.error("Nightly backup failed: %s", e)
 
 
+@_tracked_job("pead_earnings", "PEAD Earnings Feed")
 def _run_pead_earnings_feed():
     """G6: Fetch recent earnings data and feed into PEAD strategy.
 
@@ -1340,6 +1432,7 @@ def _run_pead_earnings_feed():
         logger.exception("PEAD earnings feed failed: %s", exc)
 
 
+@_tracked_job("meta_label_retrain", "Meta-Label Retrain")
 def _run_meta_label_retrain():
     """AFML Ch.3: Retrain the meta-labeling classifier.
 
@@ -1406,6 +1499,7 @@ def _run_meta_label_retrain():
         logger.exception("Meta-label retrain failed: %s", exc)
 
 
+@_tracked_job("us_pre_market", "US Pre-Market Pipeline")
 def _run_us_pre_market():
     """G11: Run US stocks pre-market analysis pipeline.
 
@@ -1439,6 +1533,7 @@ def _run_us_pre_market():
 # Phase 1-4: Advanced strategy job handlers
 # ===================================================================
 
+@_tracked_job("options_monitor", "Options Monitor")
 def _run_options_monitor():
     """Job 13: Poll open options positions for profit-take / roll / expiry."""
     try:
@@ -1461,6 +1556,7 @@ def _run_options_monitor():
         logger.exception("Options monitor failed: %s", exc)
 
 
+@_tracked_job("margin_monitor", "Margin Monitor")
 def _run_margin_monitor():
     """Job 14: Check margin utilisation and alert if thresholds breached."""
     try:
@@ -1489,6 +1585,7 @@ def _run_margin_monitor():
         logger.exception("Margin monitor failed: %s", exc)
 
 
+@_tracked_job("pairs_scanner", "Pairs Scanner")
 def _run_pairs_scanner():
     """Job 15: Scan configured pairs for mean-reversion signals."""
     try:
@@ -1534,6 +1631,7 @@ def _run_pairs_scanner():
         logger.exception("Pairs scanner failed: %s", exc)
 
 
+@_tracked_job("futures_monitor", "Futures Monitor")
 def _run_futures_monitor():
     """Job 16: Monitor futures positions for rollover and de-leveraging."""
     try:
@@ -1562,6 +1660,7 @@ def _run_futures_monitor():
         logger.exception("Futures monitor failed: %s", exc)
 
 
+@_tracked_job("event_calendar", "Event Calendar Seed")
 def _run_event_calendar_seed():
     """Job 17: Seed fixed events (RBI, rebalance) into the calendar DB."""
     try:

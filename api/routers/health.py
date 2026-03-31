@@ -113,3 +113,20 @@ async def infra_health():
         "latency": latency_data,
         "monitoring": monitoring_data,
     }
+
+
+@router.get(
+    "/health/scheduler",
+    summary="Scheduler job execution log",
+)
+async def scheduler_job_log(limit: int = 50, job_id: str | None = None):
+    """
+    Return recent scheduler job executions with status, timing, and error details.
+
+    - **limit**: max rows to return (default 50)
+    - **job_id**: optional filter by job id (e.g. ``pre_market_pipeline``)
+    """
+    from scheduler import get_job_log
+
+    rows = get_job_log(limit=limit, job_id=job_id)
+    return {"jobs": rows, "count": len(rows)}
