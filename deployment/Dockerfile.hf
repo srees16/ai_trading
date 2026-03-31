@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y \
     g++ \
     build-essential \
     curl \
+    dos2unix \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
@@ -29,8 +30,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create writable directories for the non-root user
-RUN mkdir -p /app/data/chroma_db /app/data/rag_uploads /app/data/bhavcopy_cache /app/data/event_logs \
+# Fix Windows CRLF line endings in shell scripts & create writable dirs
+RUN dos2unix /app/deployment/start.sh 2>/dev/null || sed -i 's/\r$//' /app/deployment/start.sh \
+    && cp /app/deployment/start.sh /app/start.sh \
+    && chmod +x /app/start.sh \
+    && mkdir -p /app/data/chroma_db /app/data/rag_uploads /app/data/bhavcopy_cache /app/data/event_logs \
     && chown -R user:user /app
 
 # Switch to non-root user (HF Spaces requirement)
@@ -40,8 +44,6 @@ USER user
 EXPOSE 7860
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-    CMD curl --fail http://localhost:7860/api/v1/health || exit 1
-
-COPY deployment/start.sh /app/start.sh
+    CMD curl --fail http://localhost:7860/health || exit 1
 
 CMD ["bash", "/app/start.sh"]
