@@ -105,7 +105,7 @@ class Config:
     # =================================================================
     # Paper Trading Mode
     # =================================================================
-    PAPER_TRADE_MODE: bool = True           # Tier 1: Paper mode ON for 4-week validation
+    PAPER_TRADE_MODE: bool = os.getenv("CENTURION_PAPER_TRADE", "true").lower() in ("true", "1", "yes")  # FIX-4: env-toggleable
     KILL_SWITCH: bool = False               # G2: Emergency halt — blocks ALL order placement
     SIGNAL_FRESHNESS_MAX_HOURS: int = 4      # Tier 1 Gap 5: reject OHLCV older than N hours
 
@@ -113,18 +113,25 @@ class Config:
     # Carver Systematic Trading Framework (Robert Carver)
     # =================================================================
     CARVER_ENABLED: bool = True             # Enable Carver vol-targeted sizing (False = legacy Kelly)
-    CARVER_ANNUAL_VOL_TARGET: float = 0.85  # 85% annual vol target (optimal for 50% CAGR at F&O leverage)
+    CARVER_ANNUAL_VOL_TARGET: float = 0.75  # 75% annual vol target — targets 50%+ CAGR with DD mitigation
     CARVER_INITIAL_CAPITAL: float = 500_000.0  # Starting capital (₹)
     CARVER_DEFAULT_IDM: float = 2.0         # Instrument Diversification Multiplier (10-15 stocks)
-    CARVER_MAX_LEVERAGE: float = 9.0        # F&O leverage (optimal for 50% CAGR — NIFTY stock futures)
-    CARVER_INERTIA_THRESHOLD: float = 0.15  # 15% position change for re-trade (reduces churn at high leverage)
+    CARVER_MAX_LEVERAGE: float = 7.0        # 7× hard cap — high vol needs leverage headroom, regime caps limit actual use
+    CARVER_INERTIA_THRESHOLD: float = 0.15  # 15% position change for re-trade (reduces churn)
     CARVER_COST_SPEED_LIMIT: float = 3.0    # SR must exceed 3× cost drag
     CARVER_TRADE_HORIZON: str = "swing"     # "swing" (3σ bear/5σ bull) or "positional"
 
-    # Drawdown thresholds (adjusted for high-leverage operation)
-    PORTFOLIO_DRAWDOWN_WARNING: float = 0.25    # 25% DD → reduce to 70%
-    PORTFOLIO_DRAWDOWN_CRITICAL: float = 0.40   # 40% DD → reduce to 50%
-    PORTFOLIO_DRAWDOWN_HALT: float = 0.55       # 55% DD → halt all new trades
+    # Vince Money Management — active/inactive equity insurance
+    # Floor = HWM × insurance_pct.  0.15 = protect 15% of HWM as floor.
+    # At HWM: full sizing.  At floor (15% DD): sizing → 0 (smooth halt).
+    VINCE_INSURANCE_PCT_IND: float = 0.20   # IND: 20% floor (smooth halt at 20% DD from HWM)
+    VINCE_INSURANCE_PCT_US: float = 0.10    # US: 10% floor (more conservative for manual)
+    VINCE_REGIME_SHRINK_ENABLED: bool = True  # Enable Vince shrink/stretch per regime
+
+    # Drawdown thresholds — graduated for 75% vol target
+    PORTFOLIO_DRAWDOWN_WARNING: float = 0.15    # 15% DD → smooth scale-down begins
+    PORTFOLIO_DRAWDOWN_CRITICAL: float = 0.25   # 25% DD → aggressive scale-down
+    PORTFOLIO_DRAWDOWN_HALT: float = 0.30       # 30% DD → halt all new trades
 
     # Carver — US Stocks overrides (USD-based)
     CARVER_US_ENABLED: bool = True          # Enable Carver for US stocks pipeline
@@ -174,15 +181,16 @@ class Config:
     # =================================================================
     # VIX Regime Gate — Gap C4: Unified thresholds
     # =================================================================
-    VIX_CAUTION_THRESHOLD: float = 18.0    # India VIX > 18 → reduce position sizes
-    VIX_PANIC_THRESHOLD: float = 25.0      # India VIX > 25 → suppress new BUY signals
+    VIX_CAUTION_THRESHOLD: float = 20.0    # India VIX > 20 → reduce position sizes (raised for 75% vol)
+    VIX_PANIC_THRESHOLD: float = 30.0      # India VIX > 30 → suppress new BUY signals
     VIX_POSITION_SCALE: float = 0.5        # Scale factor when VIX in caution zone
+    VIX_PIPELINE_SCALING_ENABLED: bool = True  # Enable VIX scaling in Carver pipeline (not just risk_manager)
     NIFTY_BENCHMARK_TICKER: str = "^NSEI"  # NIFTY 50 index ticker for benchmarking
 
     # =================================================================
     # Gap C3: Unified max open trades (single source of truth)
     # =================================================================
-    MAX_OPEN_TRADES: int = 8               # Max concurrent positions
+    MAX_OPEN_TRADES: int = 12              # Max concurrent positions (12 for diversification at 75% vol)
 
     # =================================================================
     # Gap C5: Time-based exit enforcement
@@ -348,7 +356,7 @@ class Config:
     # =================================================================
     # RL Bot Configuration
     # =================================================================
-    RL_ENABLED: bool = os.getenv("CENTURION_RL_ENABLED", "false").lower() == "true"
+    RL_ENABLED: bool = os.getenv("CENTURION_RL_ENABLED", "true").lower() == "true"
     RL_ALGORITHM: str = os.getenv("CENTURION_RL_ALGORITHM", "PPO")  # DQN | PPO | A2C
     RL_REWARD_TYPE: str = os.getenv("CENTURION_RL_REWARD_TYPE", "hybrid")
     RL_TOTAL_TIMESTEPS: int = int(os.getenv("CENTURION_RL_TIMESTEPS", "500000"))
@@ -384,7 +392,7 @@ class Config:
     # =================================================================
     # Phase 1 — Options Income
     # =================================================================
-    OPTIONS_ENABLED: bool = False           # Master switch for options strategies
+    OPTIONS_ENABLED: bool = True            # Master switch for options strategies (CSP + covered calls)
     OPTIONS_MAX_PORTFOLIO_PCT: float = 0.15  # Max 15% of portfolio in options premium
     OPTIONS_MAX_CONCURRENT: int = 5          # Max concurrent options positions
     OPTIONS_PROFIT_TARGET_PCT: float = 0.50  # Close at 50% of premium earned
@@ -398,21 +406,30 @@ class Config:
     # =================================================================
     # Phase 2 — Short Selling
     # =================================================================
-    SHORT_SELLING_ENABLED: bool = True       # G8: Enabled — regime-gated to bear only
+    SHORT_SELLING_ENABLED: bool = False      # DISABLED: IND equities cannot be shorted directly
     SHORT_MAX_PORTFOLIO_PCT: float = 0.20    # Max 20% of portfolio short
     SHORT_MAX_CONCURRENT: int = 3            # Max concurrent short positions
     SHORT_REGIME_REQUIRED: str = "bear"      # Only short in bear regime
     SHORT_MIN_FORECAST: float = -5.0         # Min forecast to trigger short trade plan
     SHORT_PRODUCT: str = "MIS"               # MIS (intraday) or NRML (overnight F&O)
 
+    # Options-Based Bear Hedging (replaces direct shorting for IND)
+    OPTIONS_HEDGE_ENABLED: bool = True       # Enable put-buying / call-selling in bear regime
+    OPTIONS_HEDGE_MAX_PORTFOLIO_PCT: float = 0.05  # Max 5% of portfolio for hedge premium
+    OPTIONS_HEDGE_STRATEGY: str = "protective_put"  # protective_put | covered_call | collar
+    OPTIONS_HEDGE_REGIME_REQUIRED: str = "bear"     # Activate hedges only in bear/crisis regime
+    OPTIONS_HEDGE_MIN_VIX: float = 18.0      # Min VIX to consider hedges (cheap vol = buy puts)
+    OPTIONS_HEDGE_MAX_VIX: float = 35.0      # Max VIX: don't buy expensive puts above this
+
     # =================================================================
     # Phase 3 — Leverage via Futures
     # =================================================================
     LEVERAGE_ENABLED: bool = True            # G11: Enabled — regime-adaptive leverage
-    LEVERAGE_MAX: float = 1.5               # Absolute max leverage
-    LEVERAGE_BULL_MAX: float = 1.3           # G11: Conservative 1.3x in bull regime
-    LEVERAGE_RANGE_MAX: float = 1.15         # G11: Mild 1.15x in range-bound regime
-    LEVERAGE_BEAR_MAX: float = 0.8           # Max leverage in bear regime
+    LEVERAGE_MAX: float = 7.0               # Absolute max leverage (hard cap — matches CARVER_MAX_LEVERAGE)
+    LEVERAGE_BULL_MAX: float = 7.0           # Full 7× in strong bull — 50%+ CAGR engine
+    LEVERAGE_RANGE_MAX: float = 5.0          # 5× in range-bound — higher alpha capture with DD layers
+    LEVERAGE_BEAR_MAX: float = 2.0           # 2× in bear — moderate, stops+VIX gate provide DD protection
+    LEVERAGE_CRISIS_MAX: float = 0.5         # 50% sizing in crisis — near-cash (VIX panic gate also blocks entries)
     FUTURES_INSTRUMENT: str = "NIFTY"        # NIFTY or BANKNIFTY
     FUTURES_LOT_SIZE: int = 25               # NIFTY lot size
     FUTURES_ROLLOVER_DAYS_BEFORE: int = 3    # Roll N days before expiry

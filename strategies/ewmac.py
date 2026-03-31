@@ -16,11 +16,21 @@ Recommended variations for swing / positional trading:
 
 Faster variations (2/8, 4/16, 8/32) are excluded because NSE
 equity CNC trades have too-high costs for sub-weekly turnover.
+
+AFTS Enhancements:
+  - S12 (Adjusted Trend): For slow filters (64,256), cap raw forecast at
+    ±15 then multiply by 1.25.  Large slow forecasts are usually driven by
+    low-vol environments, not genuinely strong trends, so this cap-and-scale
+    improves the forecast distribution and raises SR by ~0.02.
+  - S17 (Normalised Trend): Maps the EWMAC forecast to its percentile rank
+    within its own history.  Produces a uniform forecast distribution — more
+    robust across regimes and avoids extreme forecasts in trending markets.
 """
 
 from __future__ import annotations
 
 import logging
+from collections import deque
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -40,6 +50,16 @@ DEFAULT_VARIATIONS: List[Tuple[int, int]] = [
     (64, 256),  # slow positional: ~3–6 month trends
 ]
 
+# --- S12: Adjusted Trend parameters ---
+# Variations considered "slow" — adjusted trend capping applied
+ADJUSTED_SLOW_VARIATIONS = {(64, 256)}
+ADJUSTED_FORECAST_CAP = 15.0   # cap raw forecast at ±15 before scaling
+ADJUSTED_SCALE_FACTOR = 1.25   # then multiply by 1.25
+
+# --- S17: Normalised Trend parameters ---
+NORMALISED_LOOKBACK = 2520  # 10 years of history for percentile ranking
+NORMALISED_MIN_HISTORY = 504  # minimum 2 years for meaningful ranking
+
 
 @dataclass
 class EWMACForecast:
@@ -57,6 +77,9 @@ def compute_ewmac(
     close: pd.Series,
     fast: int,
     slow: int,
+    adjusted_trend: bool = True,
+    normalised: bool = False,
+    forecast_history: Optional[deque] = None,
 ) -> Optional[EWMACForecast]:
     """Compute a single EWMAC forecast for one close series.
 
@@ -66,6 +89,16 @@ def compute_ewmac(
         Daily closing prices, chronological.
     fast, slow : int
         Look-back periods for the fast and slow EWMAs.
+    adjusted_trend : bool
+        If True and (fast,slow) is in ADJUSTED_SLOW_VARIATIONS, apply
+        S12 capping: cap at ±15 then ×1.25.
+    normalised : bool
+        If True, return a normalised (percentile-ranked) forecast (S17)
+        instead of the raw scaled forecast.
+    forecast_history : deque | None
+        If normalised=True, supply a deque of recent forecast values to
+        compute the percentile rank.  The caller should maintain this
+        across calls (one per variation-symbol pair).
 
     Returns
     -------
@@ -86,6 +119,23 @@ def compute_ewmac(
     daily_vol_price = price * daily_vol_pct if daily_vol_pct > 0 else 1.0
 
     forecast = ewmac_to_forecast(raw_crossover, daily_vol_price, fast, slow)
+
+    # --- S12: Adjusted Trend for slow variations ---
+    if adjusted_trend and (fast, slow) in ADJUSTED_SLOW_VARIATIONS:
+        capped = max(-ADJUSTED_FORECAST_CAP, min(ADJUSTED_FORECAST_CAP, forecast))
+        forecast = capped * ADJUSTED_SCALE_FACTOR
+        forecast = cap_forecast(forecast)  # final ±20 cap
+
+    # --- S17: Normalised Trend (percentile ranking) ---
+    if normalised and forecast_history is not None:
+        forecast_history.append(forecast)
+        if len(forecast_history) >= NORMALISED_MIN_HISTORY:
+            arr = np.array(forecast_history)
+            # Percentile rank: what fraction of history is <= current?
+            rank = float(np.searchsorted(np.sort(arr), forecast)) / len(arr)
+            # Map [0,1] → [−20, +20] maintaining sign
+            forecast = (rank - 0.5) * 40.0  # range: -20 to +20
+            forecast = cap_forecast(forecast)
 
     return EWMACForecast(
         symbol="",  # caller fills this

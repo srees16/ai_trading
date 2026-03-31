@@ -66,7 +66,7 @@ class RiskEngine:
         total_capital: float = 500_000.0,
         risk_per_trade_pct: float = 2.0,
         max_open_positions: int = 10,
-        max_portfolio_drawdown_pct: float = 15.0,
+        max_portfolio_drawdown_pct: float = 25.0,
         max_deployment_cap: float = 20_000.0,
         volatility_target=None,
     ):

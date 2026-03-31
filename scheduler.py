@@ -1340,6 +1340,72 @@ def _run_pead_earnings_feed():
         logger.exception("PEAD earnings feed failed: %s", exc)
 
 
+def _run_meta_label_retrain():
+    """AFML Ch.3: Retrain the meta-labeling classifier.
+
+    Aggregates OHLCV data for all tracked symbols and trains the
+    secondary classifier that predicts forecast correctness using
+    triple-barrier labels.
+    """
+    logger.info("=== Meta-Label Retrain started ===")
+    try:
+        from services.meta_labeling import train_meta_labeler
+        import yfinance as yf
+
+        # Gather OHLCV for IND symbols
+        from config import Config
+        tickers = getattr(Config, "MONITORED_TICKERS", [])
+        if not tickers:
+            # Fallback: read from sample_tickers.csv
+            from pathlib import Path
+            csv_path = Path(__file__).parent / "sample_tickers.csv"
+            if csv_path.exists():
+                import csv
+                with open(csv_path) as f:
+                    reader = csv.reader(f)
+                    tickers = [row[0].strip() for row in reader if row]
+
+        if not tickers:
+            logger.warning("Meta-label retrain: no tickers configured")
+            return
+
+        # Download 2 years of data
+        ohlcv_cache = {}
+        for ticker in tickers[:50]:  # cap at 50 symbols
+            try:
+                df = yf.download(ticker, period="2y", progress=False)
+                if df is not None and len(df) > 252:
+                    ohlcv_cache[ticker] = df
+            except Exception:
+                continue
+
+        if len(ohlcv_cache) < 5:
+            logger.warning("Meta-label retrain: insufficient data (%d symbols)", len(ohlcv_cache))
+            return
+
+        # Train IND model
+        result_ind = train_meta_labeler(ohlcv_cache, market="IND")
+        logger.info("Meta-label IND: %s", result_ind.get("status", "unknown"))
+
+        # Train US model (if US tickers configured)
+        us_tickers = getattr(Config, "US_MONITORED_TICKERS", [])
+        if us_tickers:
+            us_cache = {}
+            for ticker in us_tickers[:30]:
+                try:
+                    df = yf.download(ticker, period="2y", progress=False)
+                    if df is not None and len(df) > 252:
+                        us_cache[ticker] = df
+                except Exception:
+                    continue
+            if len(us_cache) >= 3:
+                result_us = train_meta_labeler(us_cache, market="US")
+                logger.info("Meta-label US: %s", result_us.get("status", "unknown"))
+
+    except Exception as exc:
+        logger.exception("Meta-label retrain failed: %s", exc)
+
+
 def _run_us_pre_market():
     """G11: Run US stocks pre-market analysis pipeline.
 
@@ -2131,6 +2197,18 @@ def start_scheduler():
     logger.info("  Pairs scanner   : */30 min, 09-15 IST, Mon-Fri")
     logger.info("  Futures monitor : 14:00 IST, Mon-Fri")
     logger.info("  Event calendar  : 07:00 IST, Mon-Fri")
+
+    # Job 18: Meta-Label Retraining — 02:00 IST, 1st/15th of month (semi-monthly)
+    # AFML Ch.3: Retrain the meta-labeling classifier on accumulated trade outcomes
+    scheduler.add_job(
+        _run_meta_label_retrain,
+        CronTrigger(hour=2, minute=0, day="1,15", timezone="Asia/Kolkata"),
+        id="meta_label_retrain",
+        name="Meta-Label Model Retrain",
+        misfire_grace_time=3600,
+    )
+
+    logger.info("  Meta-label train: 02:00 IST, 1st & 15th of month")
 
     try:
         scheduler.start()

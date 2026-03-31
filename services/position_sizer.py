@@ -32,6 +32,23 @@ FORECAST_SCALAR = 10.0          # Carver: forecast is expressed in units of 10
 INERTIA_THRESHOLD = 0.10        # Only re-trade if target changes > 10%
 MAX_FORECAST_ABS = 20.0         # Hard cap on forecast magnitude
 
+# Vince regime shrink/stretch multipliers (Vince Ch.8: rotating markets)
+# DISABLED: Set to 1.0 for all regimes.  Regime de-risking is handled by:
+#   1) Carver vol targeting (auto-shrinks when instrument vol rises)
+#   2) Regime-adaptive leverage caps (Bull=7x, Range=5x, Bear=2x, Crisis=0.5x)
+#   3) Portfolio vol monitor (smooth quadratic DD curve)
+#   4) VIX pipeline scaling (caution/panic gates)
+#   5) Correlation spike detection
+#   6) Vince insurance floor (20% DD smooth halt)
+# Multiplied regime adjustments on top of these 6 layers over-constrains CAGR.
+VINCE_REGIME_MULTIPLIERS = {
+    "TRENDING_BULL":  1.00,     # full — all regimes at 1.0, regime caps do the work
+    "TRENDING_BEAR":  1.00,     # leverage cap limits to 2x (29% of max)
+    "RANGE_BOUND":    1.00,     # leverage cap limits to 5x (71% of max)
+    "HIGH_VOLATILITY": 1.00,    # vol targeting auto-shrinks + leverage cap at 2x
+    "CRISIS":         1.00,     # leverage cap limits to 0.5x (7% of max) + VIX panic gate
+}
+
 # G12: Read max leverage from Config; fallback to 1.0 (not 2.0)
 try:
     from config import Config as _Cfg
@@ -82,6 +99,7 @@ def compute_position_size(
     current_quantity: int = 0,
     inertia_threshold: float = INERTIA_THRESHOLD,
     max_leverage: float = MAX_LEVERAGE,
+    regime: str = "",
 ) -> PositionSize:
     """Compute Carver-style position size for a single instrument.
 
@@ -141,6 +159,17 @@ def compute_position_size(
 
     # Step 3: portfolio position = subsystem × weight × IDM
     portfolio_position = subsystem_position * instrument_weight * idm
+
+    # Step 3b: Vince regime shrink/stretch adjustment
+    if regime:
+        try:
+            from config import Config
+            if getattr(Config, "VINCE_REGIME_SHRINK_ENABLED", False):
+                regime_key = regime.upper().replace(" ", "_")
+                regime_mult = VINCE_REGIME_MULTIPLIERS.get(regime_key, 1.0)
+                portfolio_position *= regime_mult
+        except Exception:
+            pass
 
     # Step 4: Round to whole shares
     target_quantity = round(portfolio_position)
@@ -213,6 +242,7 @@ def compute_position_sizes_batch(
     idm: float = 1.6,
     current_holdings: Optional[Dict[str, int]] = None,
     config: Optional[PositionSizerConfig] = None,
+    regime: str = "",
 ) -> Dict[str, PositionSize]:
     """Batch position sizing for all instruments.
 
@@ -272,13 +302,19 @@ def compute_position_sizes_batch(
             current_quantity=current_qty,
             inertia_threshold=cfg.inertia_threshold,
             max_leverage=cfg.max_leverage,
+            regime=regime,
         )
         results[sym] = ps
         total_notional += ps.notional_value
 
-    # ── Tier 1 Gap 3: Gross notional ceiling (2× capital) ──
-    # FIX: Scale proportionally by forecast strength (weakest conviction cut most)
-    max_notional = 2.0 * capital
+    # ── Tier 1 Gap 3: Gross notional ceiling ──
+    # FIX-6A: Read max leverage from Config — was hardcoded 2.0, blocked 50%+ CAGR.
+    try:
+        from config import Config as _GrossCfg
+        gross_cap_multiplier = getattr(_GrossCfg, 'CARVER_MAX_LEVERAGE', 2.0)
+    except Exception:
+        gross_cap_multiplier = 2.0
+    max_notional = gross_cap_multiplier * capital
     if capital > 0 and total_notional > max_notional:
         excess_ratio = total_notional / max_notional  # e.g. 1.5 = 50% over
         logger.warning(
@@ -307,6 +343,46 @@ def compute_position_sizes_batch(
         total_notional = sum(
             ps.notional_value for ps in results.values()
         )
+
+    # ── Vince Leverage Space Cap ──────────────────────────────
+    # Apply Vince secure_f as an additional leverage ceiling.
+    # If secure_f recommends lower leverage than Carver sizing,
+    # scale positions down to respect drawdown constraints.
+    try:
+        from config import Config as _VCfg
+        if getattr(_VCfg, 'VINCE_REGIME_SHRINK_ENABLED', False) and capital > 0:
+            from strategies.vince_leverage import (
+                compute_active_equity_ratio,
+                compute_leverage_from_vince,
+            )
+            hwm = getattr(_VCfg, '_HWM', capital)  # HWM tracked externally
+            insurance = getattr(
+                _VCfg, 'VINCE_INSURANCE_PCT_IND', 0.15
+            )
+            active_ratio, _ = compute_active_equity_ratio(
+                capital, hwm, insurance
+            )
+            if active_ratio < 1.0:
+                # Equity is below HWM — scale all positions by active ratio
+                from dataclasses import replace as _dc_replace2
+                scale = max(0.0, active_ratio)
+                for sym, ps in results.items():
+                    scaled_qty = max(0, int(ps.target_quantity * scale))
+                    results[sym] = _dc_replace2(
+                        ps,
+                        target_quantity=scaled_qty,
+                        trade_delta=scaled_qty - ps.current_quantity,
+                        trade_required=abs(scaled_qty - ps.current_quantity) > 0,
+                        notional_value=abs(scaled_qty) * ps.price if ps.price else 0.0,
+                    )
+                logger.info(
+                    "Vince active equity %.2f (HWM=%.0f, floor=%.0f) → scaled by %.1f%%",
+                    active_ratio, hwm, hwm * (1 - insurance), scale * 100,
+                )
+    except ImportError:
+        pass
+    except Exception as _ve:
+        logger.warning("Vince leverage cap skipped: %s", _ve)
 
     # Log summary
     trades_needed = sum(1 for ps in results.values() if ps.trade_required and ps.trade_delta != 0)

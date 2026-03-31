@@ -47,6 +47,12 @@ class MonteCarloResult:
     optimal_kelly: float = 0.0
     cvar_5pct: float = 0.0
 
+    # Vince geometric mean metrics
+    geometric_mean: float = 1.0       # G = TWR^(1/N) at half-Kelly
+    vince_optimal_f: float = 0.0      # optimal f from exhaustive search
+    fundamental_eq_A: float = 1.0     # arithmetic mean HPR
+    fundamental_eq_SD: float = 0.0    # std of returns
+
     # Portfolio statistics
     n_simulations: int = 0
     n_trades_per_sim: int = 0
@@ -132,6 +138,9 @@ class TradeBootstrapMonteCarlo:
         # CVaR from trade returns
         cvar_5 = self._compute_cvar(trades, alpha=0.05)
 
+        # Vince geometric mean metrics
+        gm, opt_f, fund_A, fund_SD = self._compute_vince_metrics(trades)
+
         return MonteCarloResult(
             median_cagr_pct=round(float(np.median(cagrs)), 2),
             p5_cagr_pct=round(float(np.percentile(cagrs, 5)), 2),
@@ -143,6 +152,10 @@ class TradeBootstrapMonteCarlo:
             probability_of_ruin_pct=round(p_ruin, 2),
             optimal_kelly=round(optimal_kelly, 4),
             cvar_5pct=round(cvar_5 * 100, 4),
+            geometric_mean=round(gm, 6),
+            vince_optimal_f=round(opt_f, 4),
+            fundamental_eq_A=round(fund_A, 6),
+            fundamental_eq_SD=round(fund_SD, 6),
             n_simulations=self.n_sims,
             n_trades_per_sim=self.n_trades,
             input_trades=n_input,
@@ -186,6 +199,8 @@ class TradeBootstrapMonteCarlo:
         min_eq = equity_curves.min(axis=1)
         p_ruin = (min_eq < (1.0 - self.ruin_threshold)).sum() / self.n_sims * 100
 
+        gm, opt_f, fund_A, fund_SD = self._compute_vince_metrics(trades)
+
         return MonteCarloResult(
             median_cagr_pct=round(float(np.median(cagrs)), 2),
             p5_cagr_pct=round(float(np.percentile(cagrs, 5)), 2),
@@ -197,6 +212,10 @@ class TradeBootstrapMonteCarlo:
             probability_of_ruin_pct=round(p_ruin, 2),
             optimal_kelly=round(self._compute_optimal_kelly(trades), 4),
             cvar_5pct=round(self._compute_cvar(trades, 0.05) * 100, 4),
+            geometric_mean=round(gm, 6),
+            vince_optimal_f=round(opt_f, 4),
+            fundamental_eq_A=round(fund_A, 6),
+            fundamental_eq_SD=round(fund_SD, 6),
             n_simulations=self.n_sims,
             n_trades_per_sim=self.n_trades,
             input_trades=len(trades),
@@ -246,3 +265,35 @@ class TradeBootstrapMonteCarlo:
         if cutoff < 1:
             cutoff = 1
         return float(np.mean(sorted_trades[:cutoff]))
+
+    @staticmethod
+    def _compute_vince_metrics(trades: np.ndarray):
+        """Compute Vince geometric mean, optimal f, and Fundamental Equation.
+
+        Returns (geometric_mean, optimal_f, A, SD).
+        """
+        import math
+
+        if len(trades) < 10:
+            A = 1.0 + float(np.mean(trades)) if len(trades) > 0 else 1.0
+            SD = float(np.std(trades, ddof=0)) if len(trades) > 0 else 0.0
+            return 1.0, 0.0, A, SD
+
+        biggest_loss = abs(float(np.min(trades)))
+        best_f, best_gm = 0.01, 0.0
+
+        if biggest_loss > 1e-9:
+            for step in range(1, 501):
+                f = step / 500
+                hprs = 1.0 + f * (trades / biggest_loss)
+                if np.any(hprs <= 0):
+                    break
+                twr = float(np.prod(hprs))
+                gm = twr ** (1.0 / len(trades))
+                if gm > best_gm:
+                    best_gm = gm
+                    best_f = f
+
+        A = 1.0 + float(np.mean(trades))
+        SD = float(np.std(trades, ddof=0))
+        return best_gm, best_f, A, SD

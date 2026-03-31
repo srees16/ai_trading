@@ -49,6 +49,16 @@ class VolatilityTargetConfig:
     # Maximum leverage factor (for cash equities = 1.0, no leverage).
     max_leverage_factor: float = 1.0
 
+    # Vince active/inactive equity insurance.
+    # Floor = HWM × insurance_pct.  At HWM: active = (1-ins_pct) of equity.
+    # As DD deepens, active_frac → 0 smoothly.  0.0 = disabled (use legacy tiers).
+    vince_insurance_pct: float = 0.0
+
+    # Vince active/inactive equity insurance.
+    # Floor = HWM × insurance_pct.  At HWM: active = (1-ins_pct) of equity.
+    # As DD deepens, active_frac → 0 smoothly.  0.0 = disabled (use legacy tiers).
+    vince_insurance_pct: float = 0.0
+
 
 class VolatilityTarget:
     """Portfolio-level volatility target with daily capital rolling.
@@ -66,6 +76,7 @@ class VolatilityTarget:
         self._initial_capital = self.cfg.initial_capital
         self._realized_pnl: float = 0.0
         self._unrealized_pnl: float = 0.0
+        self._high_water_mark: float = self.cfg.initial_capital
 
     # ── Capital tracking ──────────────────────────────────────
 
@@ -87,10 +98,12 @@ class VolatilityTarget:
         """Update cumulative P&L for capital rolling."""
         self._realized_pnl = realized
         self._unrealized_pnl = unrealized
+        self._high_water_mark = max(self._high_water_mark, self.current_capital)
 
     def add_realized(self, amount: float) -> None:
         """Incrementally add a realized trade result."""
         self._realized_pnl += amount
+        self._high_water_mark = max(self._high_water_mark, self.current_capital)
 
     def set_unrealized(self, amount: float) -> None:
         """Set current mark-to-market unrealized P&L."""
@@ -107,9 +120,11 @@ class VolatilityTarget:
     def daily_cash_vol_target(self) -> float:
         """Daily cash volatility target = annual / 16.
 
-        This is the single number that drives ALL position sizing
-        in the Carver framework.
+        When Vince insurance is enabled, uses active_equity instead of
+        current_capital — providing smooth position scale-down as DD deepens.
         """
+        if self.cfg.vince_insurance_pct > 0:
+            return self.active_equity * self.cfg.annual_vol_target_pct / ANNUALISATION_FACTOR
         return self.annual_cash_vol_target / ANNUALISATION_FACTOR
 
     # ── Safety checks ─────────────────────────────────────────
@@ -139,9 +154,14 @@ class VolatilityTarget:
     def risk_scale_factor(self) -> float:
         """Graduated position scale factor based on drawdown.
 
-        Returns 1.0 (full size) when healthy, scaling down as drawdown
-        increases, reaching 0.0 (halted) at the halt threshold.
+        When Vince insurance is enabled: returns active_equity_fraction
+        (smooth continuous curve, no cliff effects).
+
+        Legacy mode: returns step-function tiers.
         """
+        if self.cfg.vince_insurance_pct > 0:
+            return self.active_equity_fraction
+
         dd = self.drawdown_pct / 100.0  # fraction
         if dd < 0.0501:
             return 1.0
@@ -170,8 +190,13 @@ class VolatilityTarget:
             "realized_pnl": self._realized_pnl,
             "unrealized_pnl": self._unrealized_pnl,
             "current_capital": self.current_capital,
+            "high_water_mark": self._high_water_mark,
+            "active_equity": self.active_equity,
+            "active_equity_fraction": round(self.active_equity_fraction, 4),
+            "vince_insurance_pct": self.cfg.vince_insurance_pct,
             "annual_vol_target_pct": self.cfg.annual_vol_target_pct,
             "annual_cash_vol_target": self.annual_cash_vol_target,
             "daily_cash_vol_target": self.daily_cash_vol_target,
+            "risk_scale_factor": round(self.risk_scale_factor, 4),
             "is_halted": self.is_halted,
         }
