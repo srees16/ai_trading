@@ -367,6 +367,61 @@ async def macro_fear_greed():
         return {"score": None, "label": "N/A"}
 
 
+@router.get("/macro/portfolio-risk")
+async def macro_portfolio_risk(market: str = "IND"):
+    """Get portfolio risk snapshot (drawdown, vol, concentration)."""
+    try:
+        from services.portfolio_vol_monitor import assess_portfolio_risk
+
+        # Attempt to gather live position data from Kite (IND) or DriveWealth (US)
+        position_values: dict = {}
+        instrument_vols: dict = {}
+        total_capital = 500_000.0
+        peak_equity = None
+
+        if market == "IND":
+            try:
+                from auth.shared_session import get_kite
+                kite = get_kite()
+                if kite:
+                    positions = kite.positions().get("net", [])
+                    for p in positions:
+                        sym = p.get("tradingsymbol", "")
+                        qty = p.get("quantity", 0)
+                        ltp = p.get("last_price", 0)
+                        if qty != 0 and ltp > 0:
+                            position_values[sym] = abs(qty * ltp)
+                            instrument_vols[sym] = 0.02  # ~32% annual vol default
+            except Exception:
+                pass
+
+        snap = await asyncio.to_thread(
+            assess_portfolio_risk,
+            position_values=position_values,
+            instrument_daily_vols=instrument_vols,
+            total_capital=total_capital,
+            peak_equity=peak_equity,
+        )
+        return {
+            "timestamp": snap.timestamp,
+            "portfolio_daily_vol": snap.portfolio_daily_vol,
+            "portfolio_annual_vol_pct": snap.portfolio_annual_vol_pct,
+            "target_annual_vol_pct": snap.target_annual_vol_pct,
+            "vol_ratio": snap.vol_ratio,
+            "hhi": snap.hhi,
+            "largest_position_pct": snap.largest_position_pct,
+            "peak_equity": snap.peak_equity,
+            "current_equity": snap.current_equity,
+            "drawdown_pct": snap.drawdown_pct,
+            "risk_level": snap.risk_level.value if hasattr(snap.risk_level, 'value') else str(snap.risk_level),
+            "scale_factor": snap.scale_factor,
+            "emergency_liquidate": snap.emergency_liquidate,
+            "alerts": snap.alerts,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── Backtest ────────────────────────────────────────────────────────────
 
 @router.get("/backtest/strategies")

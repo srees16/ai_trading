@@ -136,6 +136,23 @@ class Config:
     CARVER_US_SPREAD_SLIPPAGE_PCT: float = 0.0005  # 5 bps spread+slippage (US large-cap)
 
     # =================================================================
+    # Stock Universe Configuration
+    # =================================================================
+    # IND universe tier: "DEFAULT" (~100 NIFTY50+NEXT50),
+    #   "NIFTY500" (~500), "BROAD" (~800-1200 all NSE indices)
+    NSE_UNIVERSE_TIER: str = "BROAD"
+    # Max symbols to process per pipeline run (0 = no limit)
+    NSE_UNIVERSE_MAX_SYMBOLS: int = 0
+    # OHLCV download batch size for yfinance (higher = faster but may rate-limit)
+    OHLCV_DOWNLOAD_BATCH_SIZE: int = 50
+    # Max parallel workers for CPU-bound signal computation
+    PIPELINE_MAX_WORKERS: int = 8
+
+    # US universe mode: "DEFAULT" (top-20), "NASDAQ100" (~100),
+    #   "SP500" (~500), "NASDAQ_FULL" (~3000+)
+    US_UNIVERSE_MODE: str = "NASDAQ_FULL"
+
+    # =================================================================
     # Signal Freshness (data staleness gate)
     # =================================================================
     SIGNAL_FRESHNESS_MAX_HOURS: int = 4    # Discard signals older than 4 hours

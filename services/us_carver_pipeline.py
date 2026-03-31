@@ -75,6 +75,172 @@ DEFAULT_US_CARVER_TICKERS: List[str] = [
 ]
 
 
+def get_us_universe(mode: Optional[str] = None) -> List[str]:
+    """
+    Return the US stock universe based on mode.
+
+    Parameters
+    ----------
+    mode : str | None
+        ``"DEFAULT"`` (top-20), ``"NASDAQ100"`` (~100),
+        ``"SP500"`` (~500), ``"NASDAQ_FULL"`` (~3000+).
+        If ``None``, reads from ``Config.US_UNIVERSE_MODE``.
+
+    Returns
+    -------
+    list[str]
+        US ticker symbols.
+    """
+    if mode is None:
+        try:
+            from config import Config
+            mode = getattr(Config, "US_UNIVERSE_MODE", "NASDAQ_FULL")
+        except Exception:
+            mode = "NASDAQ_FULL"
+
+    mode = mode.upper().strip()
+
+    if mode == "DEFAULT":
+        return list(DEFAULT_US_CARVER_TICKERS)
+
+    if mode == "NASDAQ100":
+        tickers = _fetch_nasdaq100()
+        return tickers if tickers else list(DEFAULT_US_CARVER_TICKERS)
+
+    if mode == "SP500":
+        tickers = _fetch_sp500()
+        return tickers if tickers else _fetch_nasdaq100() or list(DEFAULT_US_CARVER_TICKERS)
+
+    # NASDAQ_FULL — get all NASDAQ-listed stocks
+    tickers = _fetch_nasdaq_full()
+    if len(tickers) >= 100:
+        return tickers
+    # Fallback chain
+    tickers = _fetch_sp500()
+    if tickers:
+        return tickers
+    tickers = _fetch_nasdaq100()
+    return tickers if tickers else list(DEFAULT_US_CARVER_TICKERS)
+
+
+def _fetch_nasdaq100() -> List[str]:
+    """Fetch NASDAQ-100 constituents from Wikipedia."""
+    try:
+        import io, requests
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+        }
+        resp = requests.get(
+            "https://en.wikipedia.org/wiki/Nasdaq-100",
+            headers=headers, timeout=15,
+        )
+        resp.raise_for_status()
+        tables = pd.read_html(io.StringIO(resp.text), match="Ticker")
+        if tables:
+            df = tables[0]
+            col = "Ticker" if "Ticker" in df.columns else df.columns[1]
+            tickers = sorted(df[col].dropna().str.strip().unique().tolist())
+            logger.info("Fetched %d NASDAQ-100 tickers", len(tickers))
+            return tickers
+    except Exception as exc:
+        logger.warning("NASDAQ-100 fetch failed: %s", exc)
+    return []
+
+
+def _fetch_sp500() -> List[str]:
+    """Fetch S&P 500 constituents from Wikipedia."""
+    try:
+        import io, requests
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+        }
+        resp = requests.get(
+            "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies",
+            headers=headers, timeout=15,
+        )
+        resp.raise_for_status()
+        tables = pd.read_html(io.StringIO(resp.text), match="Symbol")
+        if tables:
+            df = tables[0]
+            col = "Symbol" if "Symbol" in df.columns else df.columns[0]
+            tickers = sorted(
+                df[col].dropna().str.strip().str.replace(".", "-", regex=False)
+                .unique().tolist()
+            )
+            logger.info("Fetched %d S&P 500 tickers", len(tickers))
+            return tickers
+    except Exception as exc:
+        logger.warning("S&P 500 fetch failed: %s", exc)
+    return []
+
+
+def _fetch_nasdaq_full() -> List[str]:
+    """
+    Fetch all NASDAQ-listed stocks via the NASDAQ screener API.
+
+    Filters to common stocks only (no ETFs, warrants, rights).
+    Applies minimum market cap ($100M) and price ($5) filters
+    to exclude penny stocks and illiquid micro-caps.
+    """
+    import requests
+
+    try:
+        # NASDAQ screener API — returns JSON with all listed securities
+        api_url = (
+            "https://api.nasdaq.com/api/screener/stocks"
+            "?tableonly=true&limit=25&offset=0&download=true"
+        )
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json",
+        }
+        resp = requests.get(api_url, headers=headers, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+
+        rows = data.get("data", {}).get("rows", [])
+        if not rows:
+            logger.warning("NASDAQ screener returned empty rows")
+            return []
+
+        tickers = []
+        for row in rows:
+            symbol = row.get("symbol", "").strip()
+            if not symbol or "/" in symbol or "^" in symbol:
+                continue
+            # Filter: market cap >= $100M, price >= $5
+            try:
+                mcap_str = row.get("marketCap", "0").replace(",", "")
+                price_str = row.get("lastsale", "$0").replace("$", "").replace(",", "")
+                mcap = float(mcap_str) if mcap_str else 0
+                price = float(price_str) if price_str else 0
+                if mcap < 100_000_000 or price < 5.0:
+                    continue
+            except (ValueError, TypeError):
+                continue
+            tickers.append(symbol)
+
+        tickers = sorted(set(tickers))
+        logger.info("Fetched %d NASDAQ stocks (filtered: mcap>$100M, price>$5)", len(tickers))
+        return tickers
+
+    except Exception as exc:
+        logger.warning("NASDAQ full fetch failed: %s", exc)
+        return []
+
+
 @dataclass
 class USCostConfig:
     """Cost parameters for US equity trades (zero-commission brokers)."""
@@ -152,13 +318,29 @@ def run_us_carver_pipeline(
     # ── Step 1: Download OHLCV ───────────────────────────────
     result.pipeline_log.append(f"Step 1: Downloading OHLCV for {len(tickers)} US tickers")
     ohlcv_cache: Dict[str, pd.DataFrame] = {}
-    for sym in tickers:
+
+    # Use batch parallel download for large universes
+    if len(tickers) > 30:
         try:
-            df = download_us_ohlcv(sym, period="6mo")
-            if df is not None and len(df) >= 64:
-                ohlcv_cache[sym] = df
-        except Exception:
-            pass
+            from utils import download_ohlcv_batch_parallel
+            ohlcv_cache = download_ohlcv_batch_parallel(
+                tickers, market="US", period="6mo",
+            )
+            # Filter to minimum bar count
+            ohlcv_cache = {s: d for s, d in ohlcv_cache.items() if len(d) >= 64}
+        except Exception as exc:
+            result.pipeline_log.append(f"  → Batch download failed ({exc}), falling back to sequential")
+            ohlcv_cache = {}
+
+    # Fallback: sequential download for remaining
+    if not ohlcv_cache:
+        for sym in tickers:
+            try:
+                df = download_us_ohlcv(sym, period="6mo")
+                if df is not None and len(df) >= 64:
+                    ohlcv_cache[sym] = df
+            except Exception:
+                pass
 
     result.pipeline_log.append(f"  → {len(ohlcv_cache)}/{len(tickers)} tickers have sufficient data")
     if not ohlcv_cache:
