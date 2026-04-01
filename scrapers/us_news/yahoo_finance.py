@@ -75,12 +75,12 @@ class YahooFinanceScraper(BaseNewsScraper):
                         if isinstance(pub_date, str):
                             try:
                                 timestamp = datetime.fromisoformat(pub_date.replace('Z', '+00:00'))
-                            except:
+                            except (ValueError, TypeError):
                                 pass
                         elif isinstance(pub_date, (int, float)):
                             try:
                                 timestamp = datetime.fromtimestamp(pub_date)
-                            except:
+                            except (ValueError, OSError, OverflowError):
                                 pass
                     
                     # Categorize

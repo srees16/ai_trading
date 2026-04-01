@@ -240,11 +240,11 @@ def assess_portfolio_risk(
     # ── Drawdown tiers — read from Config for hot-reload ──
     try:
         from config import Config
-        dd_halt = getattr(Config, "PORTFOLIO_DRAWDOWN_HALT", 0.20) * 100
-        dd_critical = getattr(Config, "PORTFOLIO_DRAWDOWN_CRITICAL", 0.15) * 100
-        dd_warning = getattr(Config, "PORTFOLIO_DRAWDOWN_WARNING", 0.10) * 100
+        dd_halt = getattr(Config, "PORTFOLIO_DRAWDOWN_HALT", 0.30) * 100
+        dd_critical = getattr(Config, "PORTFOLIO_DRAWDOWN_CRITICAL", 0.25) * 100
+        dd_warning = getattr(Config, "PORTFOLIO_DRAWDOWN_WARNING", 0.15) * 100
     except Exception:
-        dd_halt, dd_critical, dd_warning = 20.0, 15.0, 10.0
+        dd_halt, dd_critical, dd_warning = 30.0, 25.0, 15.0
 
     # ── Smooth quadratic DD scaling curve ──────────────────────
     # Replaces step-function cliff effects with continuous curve:

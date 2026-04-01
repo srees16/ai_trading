@@ -54,14 +54,24 @@ class RiskConfig:
     # P7: Swing exit timing
     swing_max_hold_days: int = 15         # Force exit after 15 trading days (swing)
     positional_max_hold_days: int = 60    # Force exit after 60 trading days (positional)
-    # R4: Market regime (VIX / ADX) scaling — unified with Config (Gap C4 fix)
-    vix_caution_threshold: float = 18.0   # VIX > 18 → scale position to vix_caution_scale
-    vix_panic_threshold: float = 25.0     # VIX > 25 → block all new BUY orders
+    # R4: Market regime (VIX / ADX) scaling — unified with Config
+    # GAP-4 FIX: Read from Config to ensure single source of truth
+    vix_caution_threshold: float = 20.0   # VIX > 20 → scale position (synced with Config)
+    vix_panic_threshold: float = 30.0     # VIX > 30 → block all new BUY orders (synced with Config)
     vix_caution_scale: float = 0.60       # 60% position size during caution
     adx_choppy_threshold: float = 20.0    # ADX < 20 → market choppy, scale down
     adx_choppy_scale: float = 0.50        # 50% position size in choppy market
     # Slippage buffer
     slippage_buffer_pct: float = 0.002    # 0.2% buffer for fill price uncertainty
+
+    def __post_init__(self):
+        """GAP-4: Sync VIX thresholds from Config (single source of truth)."""
+        try:
+            from config import Config
+            self.vix_caution_threshold = getattr(Config, 'VIX_CAUTION_THRESHOLD', self.vix_caution_threshold)
+            self.vix_panic_threshold = getattr(Config, 'VIX_PANIC_THRESHOLD', self.vix_panic_threshold)
+        except Exception:
+            pass
 
 
 # ═══════════════════════════════════════════════════════════════

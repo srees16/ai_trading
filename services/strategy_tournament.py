@@ -43,6 +43,8 @@ class TournamentEntry:
     composite_score: float = 0.0
     rank: int = 0
     allocation_status: str = "ACTIVE"  # ACTIVE / REDUCED / DISABLED
+    dsr_pvalue: float = 0.0            # FIX-08: Deflated Sharpe Ratio p-value
+    dsr_significant: bool = False
 
 
 @dataclass
@@ -267,6 +269,21 @@ class StrategyTournament:
 
         # Sort by composite score descending
         entries.sort(key=lambda e: e.composite_score, reverse=True)
+
+        # FIX-08: Compute Deflated Sharpe Ratio (de Prado AFML Ch.14)
+        try:
+            from services.deflated_sharpe import deflated_sharpe_ratio
+            n_trials = len(entries)
+            for entry in entries:
+                n_obs = max(entry.n_trades * 5, 252)  # rough observation count
+                entry.dsr_pvalue = deflated_sharpe_ratio(
+                    observed_sr=entry.sharpe,
+                    n_obs=n_obs,
+                    n_trials=n_trials,
+                )
+                entry.dsr_significant = entry.dsr_pvalue >= 0.95
+        except Exception as exc:
+            logger.warning("DSR computation failed: %s", exc)
 
         for rank, entry in enumerate(entries, 1):
             entry.rank = rank

@@ -12,7 +12,6 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-import yfinance as yf
 
 from strategies.utils import calculate_rsi
 
@@ -77,6 +76,7 @@ class DataService:
 
         # Quick probe: try the bare ticker first
         try:
+            import yfinance as yf
             info = yf.Ticker(ticker).fast_info
             if info and getattr(info, 'timezone', None):
                 return ticker  # bare symbol works (US stock, etc.)
@@ -87,6 +87,7 @@ class DataService:
         from utils import yf_nse_symbol
         ns_ticker = yf_nse_symbol(ticker)
         try:
+            import yfinance as yf
             info = yf.Ticker(ns_ticker).fast_info
             if info and getattr(info, 'timezone', None):
                 logger.info("DataService: Resolved %s %s", ticker, ns_ticker)
@@ -170,6 +171,7 @@ class DataService:
         last_exc = None
         for attempt in range(2):
             try:
+                import yfinance as yf
                 df = yf.download(
                     ticker,
                     start=start_date,

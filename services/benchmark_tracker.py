@@ -173,8 +173,8 @@ def compare_to_benchmark(
         calmar = RiskMetrics.calmar_ratio(port_ret)
         omega = RiskMetrics.omega_ratio(port_ret)
         cvar95 = RiskMetrics.cvar(port_ret, alpha=0.05)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Advanced risk metrics unavailable: %s", exc)
 
     return BenchmarkComparison(
         ticker=ticker,

@@ -7,6 +7,7 @@ the CENTURION_ prefix.
 """
 
 import os
+from pathlib import Path
 from urllib.parse import quote_plus as _url_quote
 from typing import Dict, List
 from dotenv import load_dotenv
@@ -160,11 +161,6 @@ class Config:
     US_UNIVERSE_MODE: str = "NASDAQ_FULL"
 
     # =================================================================
-    # Signal Freshness (data staleness gate)
-    # =================================================================
-    SIGNAL_FRESHNESS_MAX_HOURS: int = 4    # Discard signals older than 4 hours
-    
-    # =================================================================
     # Earnings Blackout Window
     # =================================================================
     EARNINGS_BLACKOUT_DAYS_BEFORE: int = 2  # Suppress BUY signals 2 days before
@@ -174,8 +170,6 @@ class Config:
     # NSE Circuit Breaker
     # =================================================================
     CIRCUIT_BREAKER_PCT: float = 0.20      # 20% daily move → circuit limit hit
-    # Gap C6: Circuit breaker durations for all NSE tiers
-    CIRCUIT_BREAKER_TIERS: list = [0.01, 0.02, 0.05, 0.10, 0.20]  # 1-20%
     CIRCUIT_BREAKER_RESET_SECONDS: int = 2700  # 45 min (NSE standard)
 
     # =================================================================
@@ -197,13 +191,6 @@ class Config:
     # =================================================================
     MAX_HOLD_DAYS_SWING: int = 15          # Max holding period for swing trades
     MAX_HOLD_DAYS_POSITIONAL: int = 60     # Max holding period for positional trades
-
-    # =================================================================
-    # Gap D3: Dynamic slippage model by market cap tier
-    # =================================================================
-    SLIPPAGE_LARGECAP_BPS: float = 5.0     # Large-cap (NIFTY 50) slippage
-    SLIPPAGE_MIDCAP_BPS: float = 20.0      # Mid-cap (NIFTY Next 50) slippage
-    SLIPPAGE_SMALLCAP_BPS: float = 50.0    # Small-cap slippage
 
     # =================================================================
     # HMM Regime Detection (Gap B1)
@@ -257,57 +244,10 @@ class Config:
     
     # =================================================================
     # NSE Sector Mapping (NIFTY 50 + NIFTY Next 50 constituents)
+    # Loaded from data/nse_sector_map.json — editable without code changes.
     # Shared across risk_engine, portfolio_analyzer, and screener.
     # =================================================================
-    NSE_SECTOR_MAP: Dict[str, str] = {
-        # IT
-        "TCS": "IT", "INFY": "IT", "HCLTECH": "IT", "WIPRO": "IT",
-        "TECHM": "IT", "LTIM": "IT", "COFORGE": "IT", "MPHASIS": "IT",
-        "PERSISTENT": "IT", "LTTS": "IT",
-        # Financials — Banks
-        "HDFCBANK": "Financials", "ICICIBANK": "Financials", "SBIN": "Financials",
-        "KOTAKBANK": "Financials", "AXISBANK": "Financials", "INDUSINDBK": "Financials",
-        "BANKBARODA": "Financials", "PNB": "Financials", "IDFCFIRSTB": "Financials",
-        "FEDERALBNK": "Financials", "CANBK": "Financials", "AUBANK": "Financials",
-        "BANDHANBNK": "Financials",
-        # Financials — NBFC / Insurance
-        "BAJFINANCE": "Financials", "BAJAJFINSV": "Financials",
-        "HDFCLIFE": "Financials", "SBILIFE": "Financials", "ICICIGI": "Financials",
-        "CHOLAFIN": "Financials", "SHRIRAMFIN": "Financials",
-        # Energy / O&G
-        "RELIANCE": "Energy", "ONGC": "Energy", "NTPC": "Energy",
-        "POWERGRID": "Energy", "ADANIGREEN": "Energy", "ADANIENSOL": "Energy",
-        "TATAPOWER": "Energy", "BPCL": "Energy", "IOC": "Energy",
-        "ADANIENT": "Energy", "COALINDIA": "Energy", "GAIL": "Energy",
-        "HINDPETRO": "Energy", "JSWENERGY": "Energy",
-        # Auto
-        "MARUTI": "Auto", "M&M": "Auto", "TATAMOTORS": "Auto",
-        "BAJAJ-AUTO": "Auto", "HEROMOTOCO": "Auto", "EICHERMOT": "Auto",
-        "BOSCHLTD": "Auto", "TVSMOTOR": "Auto",
-        # Consumer / FMCG
-        "HINDUNILVR": "Consumer", "ITC": "Consumer", "NESTLEIND": "Consumer",
-        "TITAN": "Consumer", "BRITANNIA": "Consumer", "DABUR": "Consumer",
-        "GODREJCP": "Consumer", "COLPAL": "Consumer", "TRENT": "Consumer",
-        "MARICO": "Consumer", "UNITDSPR": "Consumer",
-        # Pharma / Healthcare
-        "SUNPHARMA": "Pharma", "DRREDDY": "Pharma", "CIPLA": "Pharma",
-        "DIVISLAB": "Pharma", "APOLLOHOSP": "Pharma", "MAXHEALTH": "Pharma",
-        "TORNTPHARM": "Pharma",
-        # Metals / Materials
-        "TATASTEEL": "Metals", "JSWSTEEL": "Metals", "HINDALCO": "Metals",
-        "VEDL": "Metals", "ULTRACEMCO": "Metals", "GRASIM": "Metals",
-        "SHREECEM": "Metals", "AMBUJACEM": "Metals", "ADANIPORTS": "Metals",
-        # Telecom
-        "BHARTIARTL": "Telecom",
-        # Infra / Capital Goods
-        "LT": "Infra", "SIEMENS": "Infra", "ABB": "Infra",
-        "HAL": "Infra", "BEL": "Infra",
-        # Consumer Tech
-        "ZOMATO": "Consumer Tech", "PAYTM": "Consumer Tech",
-        "DMART": "Retail", "NAUKRI": "Consumer Tech",
-        # Chemicals
-        "PIDILITIND": "Chemicals", "SRF": "Chemicals",
-    }
+    NSE_SECTOR_MAP: Dict[str, str] = {}  # populated below class body
 
     # =================================================================
     # News Keywords for Categorization
@@ -457,7 +397,7 @@ class Config:
     # =================================================================
     # Phase 4 — Uncorrelated Alpha: Event-Driven
     # =================================================================
-    EVENT_DRIVEN_ENABLED: bool = False       # Master switch for event-driven signals
+    EVENT_DRIVEN_ENABLED: bool = True        # Master switch for event-driven signals
     EVENT_LOOKFORWARD_DAYS: int = 7          # Look-ahead window for events
     EVENT_EARNINGS_IV_LOW_RATIO: float = 0.8  # IV ratio below which vol expansion expected
     EVENT_EARNINGS_IV_HIGH_RATIO: float = 1.3  # IV ratio above which earnings priced in
@@ -500,3 +440,15 @@ class Config:
         )
         has_password = bool(cls.DB_PASSWORD)
         return has_url or has_password
+
+
+# ── Populate NSE_SECTOR_MAP from external JSON ──────────────────────
+def _load_nse_sector_map() -> Dict[str, str]:
+    import json
+    _path = Path(__file__).parent / "data" / "nse_sector_map.json"
+    try:
+        return json.loads(_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+Config.NSE_SECTOR_MAP = _load_nse_sector_map()

@@ -222,7 +222,10 @@ def walk_forward_validate(
     while cursor + timedelta(days=train_days + test_days) <= end_date:
         train_start = cursor
         train_end = cursor + timedelta(days=train_days)
-        test_start = train_end + timedelta(days=1)
+        # Embargo: gap between IS and OOS to prevent feature leakage.
+        # Set to 5 business days (≈ minimum positional holding period).
+        embargo_days = 5
+        test_start = train_end + timedelta(days=embargo_days)
         test_end = test_start + timedelta(days=test_days)
         fold_windows.append((fold_idx, train_start, train_end, test_start, test_end))
         fold_idx += 1

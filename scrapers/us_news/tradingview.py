@@ -64,8 +64,7 @@ class TradingViewScraper(BaseNewsScraper):
                                         if pub_time:
                                             try:
                                                 timestamp = datetime.fromtimestamp(pub_time)
-                                            except:
-                                                pass
+                                        except (ValueError, OSError, OverflowError, TypeError):
                                         
                                         category = self._categorize_news(title + " " + summary)
                                         
