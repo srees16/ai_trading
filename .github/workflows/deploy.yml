@@ -53,6 +53,8 @@ jobs:
           # Remove large dirs/files that rsync --exclude preserves from prior uploads
           rm -rf /tmp/hf-space/rag_pipeline/ingest_docs
           find /tmp/hf-space -not -path '*/.git/*' -name '*.pdf' -type f -delete
+          find /tmp/hf-space -not -path '*/.git/*' -name '*_original.png' -type f -delete
+          find /tmp/hf-space -not -path '*/.git/*' -name '*_original.jpg' -type f -delete
 
       - name: Inject credentials and HF-specific files
         env:
