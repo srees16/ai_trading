@@ -607,7 +607,7 @@ async def backtest_run(req: BacktestRunRequest):
         db = get_db_service()
         if db:
             try:
-                db.save_backtest_result(req.market, response)
+                db.save_backtest_result(result=response, market=req.market)
             except Exception as e:
                 logger.warning("Failed to save backtest: %s", e)
 

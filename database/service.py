@@ -618,7 +618,60 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"Failed to save backtest result: {e}")
             return False
-    
+
+    def get_backtest_result(self, backtest_id: str) -> Optional[Dict[str, Any]]:
+        """Return a single backtest result as a dictionary.
+
+        Args:
+            backtest_id: UUID string of the backtest to retrieve.
+
+        Returns:
+            Dict with backtest fields, or ``None`` if not found / DB unavailable.
+        """
+        if not self.is_available:
+            return None
+        try:
+            from uuid import UUID as _UUID
+            bid = _UUID(str(backtest_id))
+            with self.session_scope() as session:
+                repo = BacktestRepository(session)
+                bt = repo.get_by_id(bid)
+                if bt is None:
+                    return None
+                return {
+                    "id": str(bt.id),
+                    "market": bt.market,
+                    "strategy_id": bt.strategy_id,
+                    "strategy_name": bt.strategy_name,
+                    "tickers": bt.tickers or [],
+                    "start_date": bt.start_date.isoformat() if bt.start_date else None,
+                    "end_date": bt.end_date.isoformat() if bt.end_date else None,
+                    "initial_capital": float(bt.initial_capital) if bt.initial_capital else None,
+                    "total_return": bt.total_return,
+                    "annualized_return": bt.annualized_return,
+                    "sharpe_ratio": bt.sharpe_ratio,
+                    "sortino_ratio": bt.sortino_ratio,
+                    "max_drawdown": bt.max_drawdown,
+                    "calmar_ratio": bt.calmar_ratio,
+                    "win_rate": bt.win_rate,
+                    "profit_factor": bt.profit_factor,
+                    "total_trades": bt.total_trades,
+                    "winning_trades": bt.winning_trades,
+                    "losing_trades": bt.losing_trades,
+                    "avg_win": bt.avg_win,
+                    "avg_loss": bt.avg_loss,
+                    "parameters": bt.parameters or {},
+                    "metrics": bt.metrics or {},
+                    "success": bt.success,
+                    "created_at": bt.created_at.isoformat() if bt.created_at else None,
+                }
+        except (ValueError, AttributeError) as e:
+            logger.warning("Invalid backtest_id %r: %s", backtest_id, e)
+            return None
+        except Exception as e:
+            logger.error("Failed to fetch backtest result %s: %s", backtest_id, e)
+            return None
+
     # =================================================================
     # Pre-Aggregated Summary Refresh
     # =================================================================
