@@ -81,7 +81,7 @@ class FinvizScraper(BaseNewsScraper):
         if self.driver:
             try:
                 self.driver.quit()
-            except:
+            except Exception:
                 pass
     
     async def fetch_news(self, ticker: str) -> List[NewsItem]:
@@ -161,7 +161,7 @@ class FinvizScraper(BaseNewsScraper):
                 if parts:
                     # Try to parse, fallback to now
                     return now - timedelta(days=1)
-        except:
+        except (ValueError, TypeError):
             pass
         
         return datetime.now()

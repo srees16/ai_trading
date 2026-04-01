@@ -47,6 +47,7 @@ class MonitoredTrade:
     closed: bool = False
     scaled_2r: bool = False    # G5: persisted scale-out state
     scaled_3r: bool = False    # G5: persisted scale-out state
+    sl_failed: bool = False    # GAP-10: persisted SL failure flag for crash recovery
     opened_at: datetime = field(default_factory=datetime.now)
     direction: str = "LONG"    # "LONG" or "SHORT" (Phase 2)
     product: str = "CNC"       # "CNC", "NRML", or "MIS"

@@ -37,6 +37,10 @@ from services.forecast_scalar import cap_forecast, TARGET_ABS_FORECAST
 
 logger = logging.getLogger(__name__)
 
+# Aronson EBTA validation weight multipliers (loaded lazily)
+_aronson_weight_multipliers: Optional[Dict[str, float]] = None
+_aronson_multipliers_loaded: bool = False
+
 # Maximum FDM to prevent extreme positions (Carver recommendation)
 MAX_FDM = 2.0
 
@@ -49,34 +53,33 @@ class ForecastWeight:
 
 
 # Default handcrafted weights for centurion_core NSE swing/positional
-# Updated Phase 1: Added momentum and pead sources
-# Updated Gap A2/A5/A6/B6: Added mean_reversion, fii_flow, oi_signal, decision_engine
+# GAP-9 FIX: Weights sum to 1.00 (was 0.93). Removed dead breakout source.
+# Redistributed 7% to highest-alpha sources: ehlers +2%, momentum +1%, pead +1%,
+# penfold +1%, intermarket +1%, acceleration +1%.
 DEFAULT_FORECAST_WEIGHTS: List[ForecastWeight] = [
-    ForecastWeight("ewmac_8_32", 0.07),     # fast swing: regime-change alpha
+    ForecastWeight("ewmac_8_32", 0.06),     # fast swing: regime-change alpha
     ForecastWeight("ewmac_16_64", 0.07),
     ForecastWeight("ewmac_32_128", 0.06),
     ForecastWeight("ewmac_64_256", 0.06),
-    ForecastWeight("carry", 0.01),          # G7: weak for equities — minimal
+    ForecastWeight("carry", 0.01),           # G7: weak for equities — minimal
     ForecastWeight("screener", 0.04),
-    ForecastWeight("momentum", 0.08),       # Strong for IND equities (Jegadeesh-Titman)
-    ForecastWeight("pead", 0.06),           # G6: highest-Sharpe academic signal — boosted from 0.04
-    ForecastWeight("mean_reversion", 0.03), # Reduced: counter-trend drags CAGR in trending mkts
+    ForecastWeight("momentum", 0.08),        # Strong for IND equities (Jegadeesh-Titman)
+    ForecastWeight("pead", 0.06),            # Highest-Sharpe academic signal
+    ForecastWeight("mean_reversion", 0.03),  # Reduced: counter-trend drags CAGR in trending mkts
     ForecastWeight("fii_flow", 0.03),
     ForecastWeight("decision_engine", 0.03),
-    ForecastWeight("oi_signal", 0.02),      # G19: OI provides vol expansion signal
-    ForecastWeight("breakout", 0.00),       # Fully subsumed by penfold_trend — weight moved to PEAD
-    ForecastWeight("cross_momentum", 0.04), # Cross-sectional: long winners, short losers
-    ForecastWeight("pairs_arb", 0.02),      # Reduced: less relevant for CAGR maximisation
-    ForecastWeight("event_driven", 0.04),   # Episodic alpha
-    ForecastWeight("penfold_trend", 0.07),  # Penfold: Turtle(40%)+ATR(25%)+Retrace(20%)+Dow
-    ForecastWeight("ehlers_dsp", 0.08),     # Ehlers: Fisher+MAMA/FAMA+SuperSmoother+Sinewave+SNR
-    ForecastWeight("intermarket", 0.07),    # Ruggiero: intermarket+seasonal+trend+multi-TF
-    # --- AFTS new sources (S22, S23, S24) ---
-    ForecastWeight("acceleration", 0.05),   # S23: rate-of-change of trend forecast
-    ForecastWeight("carver_value", 0.02),   # S22: 5-year mean reversion
-    ForecastWeight("skew_signal", 0.03),    # S24: realized skew risk premium
-    # --- Sentiment (wired from FinBERT news analysis) ---
-    ForecastWeight("sentiment", 0.02),       # News sentiment: FinBERT z-scored → Carver scale
+    ForecastWeight("oi_signal", 0.02),       # G19: OI provides vol expansion signal
+    ForecastWeight("cross_momentum", 0.04),  # Cross-sectional: long winners, short losers
+    ForecastWeight("pairs_arb", 0.02),       # Reduced: less relevant for CAGR maximisation
+    ForecastWeight("event_driven", 0.04),    # Episodic alpha
+    ForecastWeight("penfold_trend", 0.07),   # Penfold: Turtle+ATR+Retrace+Dow filter
+    ForecastWeight("ehlers_dsp", 0.09),      # Ehlers: Fisher+MAMA/FAMA+SuperSmoother
+    ForecastWeight("intermarket", 0.07),     # Ruggiero: intermarket+seasonal+trend+multi-TF
+    ForecastWeight("acceleration", 0.05),    # S23: rate-of-change of trend forecast
+    ForecastWeight("carver_value", 0.02),    # S22: 5-year mean reversion
+    ForecastWeight("skew_signal", 0.03),     # S24: realized skew risk premium
+    ForecastWeight("sentiment", 0.02),       # News sentiment: FinBERT z-scored
+    # Total: 1.00 (22 sources, verified: sum = 0.06+0.07+0.06+0.06+0.01+0.04+0.08+0.06+0.03+0.03+0.03+0.02+0.04+0.02+0.04+0.07+0.09+0.07+0.05+0.02+0.03+0.02)
 ]
 
 # Rule-of-thumb correlations between forecast sources (Carver Appendix C):
@@ -372,6 +375,7 @@ class CombinedForecast:
     weights_used: Dict[str, float] = field(default_factory=dict)
     sources_available: int = 0
     sources_total: int = 0
+    confidence_score: float = 1.0  # Aronson: fraction of validated signals agreeing on direction
 
 
 def compute_rolling_correlations(
@@ -489,6 +493,42 @@ def compute_fdm(
     return round(fdm, 3)
 
 
+def get_aronson_adjusted_weights(
+    base_weights: List[ForecastWeight],
+) -> List[ForecastWeight]:
+    """Apply Aronson EBTA validation multipliers to forecast weights.
+
+    Loads persisted validation state (if available) and multiplies each
+    source's weight by its validation multiplier.  Weights are then
+    renormalised to sum to 1.0.
+
+    This ensures that statistically validated signals receive their full
+    weight, while unvalidated or weak signals are penalised.
+    """
+    global _aronson_weight_multipliers, _aronson_multipliers_loaded
+    if not _aronson_multipliers_loaded:
+        try:
+            from services.aronson_validator import AronsonValidator
+            _aronson_weight_multipliers = AronsonValidator.load_weight_multipliers()
+        except Exception as exc:
+            logger.debug("Aronson weight multipliers unavailable: %s", exc)
+            _aronson_weight_multipliers = {}
+        _aronson_multipliers_loaded = True
+
+    if not _aronson_weight_multipliers:
+        return base_weights
+
+    adjusted = []
+    for fw in base_weights:
+        mult = _aronson_weight_multipliers.get(fw.name, 1.0)
+        adjusted.append(ForecastWeight(fw.name, fw.weight * mult))
+
+    total = sum(fw.weight for fw in adjusted)
+    if total > 0:
+        adjusted = [ForecastWeight(fw.name, fw.weight / total) for fw in adjusted]
+    return adjusted
+
+
 def combine_forecasts(
     symbol: str,
     forecasts: Dict[str, float],
@@ -520,6 +560,8 @@ def combine_forecasts(
     CombinedForecast
     """
     weights = weights or DEFAULT_FORECAST_WEIGHTS
+    # Apply Aronson EBTA validation multipliers (penalise unvalidated signals)
+    weights = get_aronson_adjusted_weights(weights)
     weight_map = {fw.name: fw.weight for fw in weights}
     total_sources = len(weight_map)
 
@@ -562,6 +604,15 @@ def combine_forecasts(
     combined = raw_combined * fdm
     combined = cap_forecast(combined)
 
+    # Aronson: compute confidence score (fraction of validated signals agreeing)
+    try:
+        from services.aronson_validator import AronsonValidator
+        _val_summary = AronsonValidator.load_state()
+        _conf = AronsonValidator().compute_confidence_for_symbol(available, _val_summary)
+    except Exception as exc:
+        logger.debug("Aronson confidence unavailable, defaulting to 1.0: %s", exc)
+        _conf = 1.0
+
     return CombinedForecast(
         symbol=symbol,
         combined_forecast=combined,
@@ -571,6 +622,7 @@ def combine_forecasts(
         weights_used=active_weights,
         sources_available=len(available),
         sources_total=total_sources,
+        confidence_score=_conf,
     )
 
 

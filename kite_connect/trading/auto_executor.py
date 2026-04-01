@@ -97,6 +97,10 @@ class ExecutionReport:
     screened_df: pd.DataFrame = field(default_factory=pd.DataFrame)
     trade_plans: List[TradePlan] = field(default_factory=list)
     order_results: List[OrderResult] = field(default_factory=list)
+    options_placed: int = 0
+    options_failed: int = 0
+    aronson_validated_signals: int = 0   # Aronson EBTA: count of statistically validated signals
+    aronson_confidence_skipped: int = 0  # Aronson EBTA: trades skipped by confidence gate
 
 
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
@@ -409,6 +413,22 @@ class AutoExecutor:
             )
             # M2 fix: persist orders to database
             self._persist_orders(report.order_results, plans)
+
+            # ── GAP-2: Execute options overlay (covered calls + CSP) via Kite NFO ──
+            if hasattr(self, '_last_pipe_result') and self._last_pipe_result is not None:
+                opt_placed, opt_failed = self._execute_options_overlay(
+                    self._last_pipe_result, _cb
+                )
+                report.options_placed = opt_placed
+                report.options_failed = opt_failed
+
+                # ── FIX-05: Execute bear hedge orders when available ──
+                hedge_placed, hedge_failed = self._execute_bear_hedges(
+                    self._last_pipe_result, _cb
+                )
+                if hedge_placed > 0:
+                    report.options_placed += hedge_placed
+                    report.options_failed += hedge_failed
         else:
             _cb(
                 f"Dry run â€” {len(plans)} plans generated "
@@ -525,6 +545,16 @@ class AutoExecutor:
                     logger.debug("TradePlan conversion failed for %s: %s", tp.symbol, exc)
 
             _cb(f"Full Carver pipeline: {len(plans)} trade plans from {pipe_result.symbols_processed} symbols")
+
+            # Aronson EBTA: log validation stats from pipeline result
+            _vstats = getattr(pipe_result, 'validation_stats', {})
+            if _vstats:
+                _skipped = _vstats.get('skipped_count', 0)
+                if _skipped > 0:
+                    _cb(f"Aronson: {_skipped} symbols skipped by confidence gate")
+
+            # Store pipeline result for options overlay access
+            self._last_pipe_result = pipe_result
             return plans
 
         except Exception as exc:
@@ -662,7 +692,163 @@ class AutoExecutor:
             db.save_orders(order_results, trade_plans)
         except Exception as exc:
             logger.warning("Order persistence failed (non-fatal): %s", exc)
-    # â”€â”€ Order book depth: illiquidity filter (#11) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    def _execute_options_overlay(self, pipe_result, _cb) -> tuple:
+        """GAP-2: Execute options overlay orders via Kite NFO.
+
+        Reads OptionOrder objects from pipe_result.options_overlay and places
+        them as NRML LIMIT orders on the NFO exchange for covered calls and
+        cash-secured puts.
+
+        Returns (placed_count, failed_count).
+        """
+        placed = 0
+        failed = 0
+        try:
+            overlay = getattr(pipe_result, 'options_overlay', None)
+            if overlay is None:
+                return (0, 0)
+
+            all_orders = []
+            if hasattr(overlay, 'covered_call_orders'):
+                all_orders.extend(overlay.covered_call_orders or [])
+            if hasattr(overlay, 'put_write_orders'):
+                all_orders.extend(overlay.put_write_orders or [])
+
+            if not all_orders:
+                logger.info("Options overlay: no orders to execute")
+                return (0, 0)
+
+            from kite_connect.trading.order_service import place_order
+
+            _cb(f"Options overlay: {len(all_orders)} NFO orders to place")
+
+            for opt in all_orders:
+                try:
+                    bare = opt.symbol.replace('.NS', '').replace('.BO', '')
+                    from datetime import datetime as _dt
+                    exp = _dt.strptime(opt.expiry_date, "%Y-%m-%d")
+                    exp_str = exp.strftime("%y%b").upper() + exp.strftime("%d")
+                    strike_str = str(int(opt.strike))
+                    nfo_symbol = f"{bare}{exp_str}{strike_str}{opt.option_type}"
+
+                    qty = opt.lots * opt.lot_size
+                    tx_type = opt.action
+
+                    logger.info(
+                        "Options overlay: %s %s x %d @ %.2f (%s)",
+                        tx_type, nfo_symbol, qty, opt.premium, opt.strategy,
+                    )
+
+                    result = place_order(
+                        kite=self.kite,
+                        symbol=nfo_symbol,
+                        exchange="NFO",
+                        transaction_type=tx_type,
+                        quantity=qty,
+                        order_type="LIMIT",
+                        product="NRML",
+                        price=round(opt.premium, 2),
+                        tag=f"OPT_{opt.strategy[:3]}",
+                    )
+
+                    if result and result.get("success", True):
+                        placed += 1
+                        _cb(f"  Options placed: {tx_type} {nfo_symbol} x {qty}")
+                    else:
+                        failed += 1
+                        err = result.get("error", "unknown") if result else "no result"
+                        _cb(f"  Options failed: {nfo_symbol}: {err}")
+
+                except Exception as exc:
+                    failed += 1
+                    logger.warning("Options order failed for %s: %s",
+                                   getattr(opt, 'symbol', '?'), exc)
+
+            _cb(f"Options overlay: {placed} placed, {failed} failed")
+
+        except Exception as exc:
+            logger.warning("Options overlay execution failed: %s", exc)
+
+        return (placed, failed)
+
+    def _execute_bear_hedges(self, pipe_result, _cb) -> tuple:
+        """FIX-05: Execute bear hedge protective put orders via Kite NFO.
+
+        Reads BearHedgeResult candidates from pipe_result.hedge_result and
+        places protective put orders.  Only runs in BEAR/CRISIS regime.
+
+        Returns (placed_count, failed_count).
+        """
+        placed = 0
+        failed = 0
+        try:
+            hedge_result = getattr(pipe_result, 'hedge_result', None)
+            if hedge_result is None:
+                return (0, 0)
+
+            candidates = getattr(hedge_result, 'candidates', [])
+            if not candidates:
+                return (0, 0)
+
+            from kite_connect.trading.order_service import place_order
+
+            _cb(f"Bear hedge: {len(candidates)} protective put orders to place")
+
+            for cand in candidates:
+                try:
+                    orders = getattr(cand, 'orders', [])
+                    if not orders:
+                        continue
+                    for opt in orders:
+                        bare = opt.symbol.replace('.NS', '').replace('.BO', '')
+                        from datetime import datetime as _dt
+                        exp = _dt.strptime(opt.expiry_date, "%Y-%m-%d")
+                        exp_str = exp.strftime("%y%b").upper() + exp.strftime("%d")
+                        strike_str = str(int(opt.strike))
+                        nfo_symbol = f"{bare}{exp_str}{strike_str}{opt.option_type}"
+
+                        qty = opt.lots * opt.lot_size
+                        tx_type = opt.action
+
+                        logger.info(
+                            "Bear hedge: %s %s x %d @ %.2f",
+                            tx_type, nfo_symbol, qty, opt.premium,
+                        )
+
+                        result = place_order(
+                            kite=self.kite,
+                            symbol=nfo_symbol,
+                            exchange="NFO",
+                            transaction_type=tx_type,
+                            quantity=qty,
+                            order_type="LIMIT",
+                            product="NRML",
+                            price=round(opt.premium, 2),
+                            tag="HEDGE_PUT",
+                        )
+
+                        if result and result.get("success", True):
+                            placed += 1
+                            _cb(f"  Hedge placed: {tx_type} {nfo_symbol} x {qty}")
+                        else:
+                            failed += 1
+                            err = result.get("error", "unknown") if result else "no result"
+                            _cb(f"  Hedge failed: {nfo_symbol}: {err}")
+
+                except Exception as exc:
+                    failed += 1
+                    logger.warning("Bear hedge order failed: %s", exc)
+
+            if placed > 0:
+                _cb(f"Bear hedge: {placed} placed, {failed} failed")
+
+        except Exception as exc:
+            logger.warning("Bear hedge execution failed: %s", exc)
+
+        return (placed, failed)
+
+#11) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _filter_by_spread(self, screened_df: pd.DataFrame, _cb) -> pd.DataFrame:
         """Remove stocks with bid-ask spread > 0.5%. Reduce position for 0.3-0.5%."""

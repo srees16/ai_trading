@@ -48,6 +48,8 @@ class DecayStatus:
     days_in_current_state: int = 0
     last_healthy_date: str = ""
     action_needed: str = ""
+    equity_above_ma: bool = True        # FIX-09: equity curve filter (Penfold/Ruggiero)
+    equity_ma_period: int = 63          # 63-day (~3 month) SMA
 
 
 @dataclass
@@ -96,6 +98,21 @@ class StrategyDecayMonitor:
     dead_threshold : float
         Fraction below which strategy is considered dead.
     """
+
+    @staticmethod
+    def equity_curve_filter(equity_series, ma_period: int = 63) -> bool:
+        """FIX-09: Penfold/Ruggiero equity curve filter.
+
+        Returns True if current equity is above its SMA(ma_period).
+        When False, strategy should suppress new trades.
+        """
+        import numpy as np
+        arr = np.asarray(equity_series, dtype=float)
+        arr = arr[np.isfinite(arr)]
+        if len(arr) < ma_period:
+            return True  # insufficient data, assume OK
+        ma = float(np.mean(arr[-ma_period:]))
+        return float(arr[-1]) >= ma
 
     def __init__(
         self,

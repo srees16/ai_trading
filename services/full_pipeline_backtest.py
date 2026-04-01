@@ -1,14 +1,24 @@
 """
-Full 13-Source Pipeline Backtester.
+Full 23-Source Pipeline Backtester.
 
 Expanding-window daily simulation using ALL offline-capable forecast
 sources through the real Carver forecast combiner and position sizer.
 
-Sources tested (10 offline, 3 stubbed):
-  OFFLINE:  ewmac_16_64, ewmac_32_128, ewmac_64_256, carry,
-            momentum, mean_reversion, oi_signal, pairs_arb
-  PROXIED:  fii_flow (random-walk proxy — captures weight drag only)
-  STUBBED:  screener, decision_engine, event_driven (omitted; weights renormalized)
+Sources tested (23 total, matching live CarverPipeline):
+  TREND:      ewmac_8_32, ewmac_16_64, ewmac_32_128, ewmac_64_256
+  TREND+:     penfold_trend, acceleration
+  ADAPTIVE:   ehlers_dsp
+  INTERMARKET: intermarket (Ruggiero cybernetic)
+  VALUE:      carry, carver_value
+  MOMENTUM:   momentum, cross_momentum
+  MEAN-REV:   mean_reversion
+  DERIVATIVES: oi_signal, skew_signal
+  EVENT:      pead, event_driven
+  FLOW/MACRO: fii_flow
+  SENTIMENT:  sentiment (FinBERT proxy)
+  COMPOSITE:  screener, decision_engine
+  STAT-ARB:   pairs_arb
+  CHANNEL:    breakout (0% weight, included for completeness)
 
 Usage:
     from services.full_pipeline_backtest import run_full_backtest
@@ -65,6 +75,12 @@ class BacktestResult:
     source_hit_rates: Dict[str, float] = field(default_factory=dict)
     daily_equity: List[float] = field(default_factory=list)
     report: str = ""
+    # Aronson EBTA enrichment fields
+    detrended_sharpe: float = 0.0
+    trimmed_sharpe: float = 0.0
+    per_signal_tstats: Dict[str, float] = field(default_factory=dict)
+    dm_bias_estimate: float = 0.0
+    bootstrap_ci_sharpe: tuple = (0.0, 0.0)
 
 
 # ── Helpers ───────────────────────────────────────────────────
@@ -218,6 +234,17 @@ def run_full_backtest(
         DEFAULT_FORECAST_WEIGHTS, DEFAULT_CORRELATION_MATRIX,
     )
     from services.volatility_target import VolatilityTarget, VolatilityTargetConfig
+    # GAP-1: Import all 12 previously missing forecast sources
+    from strategies.penfold_trend import compute_penfold_forecast_batch
+    from strategies.ehlers_dsp import compute_ehlers_forecast_batch
+    from strategies.ruggiero_cybernetic import compute_cybernetic_forecast_batch
+    from strategies.acceleration import compute_acceleration_batch
+    from strategies.carver_value import compute_value_batch
+    from strategies.skew_signal import compute_skew_batch
+    from services.pead_strategy import PEADStrategy
+    from services.fii_flow_signal import compute_fii_forecast
+    from services.event_strategy import generate_event_forecasts
+    from services.sentiment_forecast import compute_sentiment_batch
 
     # ── Default tickers ────────────────────────────────────────
     if tickers is None:
@@ -279,6 +306,8 @@ def run_full_backtest(
     available_sources = {
         "ewmac_8_32", "ewmac_16_64", "ewmac_32_128", "ewmac_64_256",
         "momentum", "mean_reversion", "oi_signal", "breakout", "cross_momentum",
+        "penfold_trend", "ehlers_dsp", "intermarket", "acceleration",
+        "carver_value", "skew_signal",
     }
     if include_carry:
         available_sources.add("carry")
@@ -546,6 +575,133 @@ def run_full_backtest(
             for sym in top:
                 all_forecasts[sym]["cross_momentum"] = +8.0
 
+        # ── 2i. Penfold Trend (Turtle + ATR + Retracement + Dow filter) ──
+        try:
+            penfold_fc = compute_penfold_forecast_batch(ohlcv_slice)
+            for sym, fc in penfold_fc.items():
+                if sym in all_forecasts:
+                    all_forecasts[sym]["penfold_trend"] = fc
+        except Exception as e:
+            logger.debug("Penfold failed at day %d: %s", day_idx, e)
+
+        # ── 2j. Ehlers DSP (Fisher, MAMA/FAMA, SuperSmoother) ──
+        try:
+            ehlers_fc = compute_ehlers_forecast_batch(ohlcv_slice)
+            for sym, fc in ehlers_fc.items():
+                if sym in all_forecasts:
+                    all_forecasts[sym]["ehlers_dsp"] = fc
+        except Exception as e:
+            logger.debug("Ehlers DSP failed at day %d: %s", day_idx, e)
+
+        # ── 2k. Ruggiero Cybernetic (intermarket + seasonal + multi-TF) ──
+        try:
+            intermarket_fc = compute_cybernetic_forecast_batch(ohlcv_slice)
+            for sym, fc in intermarket_fc.items():
+                if sym in all_forecasts:
+                    all_forecasts[sym]["intermarket"] = fc
+        except Exception as e:
+            logger.debug("Intermarket failed at day %d: %s", day_idx, e)
+
+        # ── 2l. Acceleration (AFTS S23: rate-of-change of EWMAC) ──
+        try:
+            accel_fc = compute_acceleration_batch(ohlcv_slice)
+            for sym, fc in accel_fc.items():
+                if sym in all_forecasts:
+                    all_forecasts[sym]["acceleration"] = fc
+        except Exception as e:
+            logger.debug("Acceleration failed at day %d: %s", day_idx, e)
+
+        # ── 2m. Carver Value (AFTS S22: 5-year mean reversion) ──
+        try:
+            value_fc = compute_value_batch(ohlcv_slice)
+            for sym, fc in value_fc.items():
+                if sym in all_forecasts:
+                    all_forecasts[sym]["carver_value"] = fc
+        except Exception as e:
+            logger.debug("Carver value failed at day %d: %s", day_idx, e)
+
+        # ── 2n. Skew Signal (AFTS S24: realized skew risk premium) ──
+        try:
+            skew_fc = compute_skew_batch(ohlcv_slice)
+            for sym, fc in skew_fc.items():
+                if sym in all_forecasts:
+                    all_forecasts[sym]["skew_signal"] = fc
+        except Exception as e:
+            logger.debug("Skew signal failed at day %d: %s", day_idx, e)
+
+        # ── 2o. PEAD (Post-Earnings Announcement Drift) ──
+        try:
+            pead = PEADStrategy()
+            for sym in symbols:
+                if sym not in all_forecasts:
+                    continue
+                pead_fc = pead.get_forecast(sym)
+                if pead_fc is not None and np.isfinite(pead_fc):
+                    all_forecasts[sym]["pead"] = pead_fc
+        except Exception as e:
+            logger.debug("PEAD failed at day %d: %s", day_idx, e)
+
+        # ── 2p. FII Flow (institutional net buy/sell) ──
+        try:
+            fii_fc = compute_fii_forecast()
+            if fii_fc is not None and np.isfinite(fii_fc):
+                for sym in symbols:
+                    if sym in all_forecasts:
+                        all_forecasts[sym]["fii_flow"] = fii_fc
+        except Exception as e:
+            logger.debug("FII flow failed at day %d: %s", day_idx, e)
+
+        # ── 2q. Event-Driven (earnings/RBI/expiry/rebalance) ──
+        try:
+            event_fcs = generate_event_forecasts(symbols)
+            if isinstance(event_fcs, dict):
+                for sym, fc_val in event_fcs.items():
+                    if sym in all_forecasts and fc_val is not None:
+                        f_v = fc_val.forecast if hasattr(fc_val, 'forecast') else fc_val
+                        if np.isfinite(f_v):
+                            all_forecasts[sym]["event_driven"] = f_v
+        except Exception as e:
+            logger.debug("Event-driven failed at day %d: %s", day_idx, e)
+
+        # ── 2r. Sentiment (FinBERT news-based) ──
+        try:
+            sent_fc = compute_sentiment_batch(symbols)
+            for sym, fc in sent_fc.items():
+                if sym in all_forecasts:
+                    all_forecasts[sym]["sentiment"] = fc
+        except Exception as e:
+            logger.debug("Sentiment failed at day %d: %s", day_idx, e)
+
+        # ── 2s. Screener + Decision Engine (composite technical/fundamental) ──
+        # In backtest mode these use simplified technical proxies
+        # (the live pipeline uses NSEScreener + IntegratedScorer which need real-time data)
+        for sym, df in ohlcv_slice.items():
+            if sym not in all_forecasts:
+                continue
+            c = df["Close"]
+            if hasattr(c, "squeeze"):
+                c = c.squeeze()
+            if len(c) < 50:
+                continue
+            # Screener proxy: RSI(14) + 50-day MA slope composite
+            delta = c.diff()
+            gain = delta.where(delta > 0, 0.0).ewm(span=14).mean()
+            loss = (-delta).where(delta < 0, 0.0).ewm(span=14).mean()
+            rs = gain / (loss + 1e-10)
+            rsi = float(100 - (100 / (1 + rs.iloc[-1])))
+            ma50 = c.rolling(50).mean()
+            ma_slope = float((ma50.iloc[-1] - ma50.iloc[-5]) / (ma50.iloc[-5] + 1e-10)) * 100
+            screener_fc = ((rsi - 50) / 5.0) + ma_slope * 2.0
+            screener_fc = max(-20.0, min(20.0, screener_fc))
+            all_forecasts[sym]["screener"] = screener_fc
+            # Decision engine proxy: blend of technical + fundamental-ish signals
+            # Uses available forecast average as a simple proxy
+            existing_fcs = [v for v in all_forecasts[sym].values() if np.isfinite(v)]
+            if existing_fcs:
+                de_fc = np.mean(existing_fcs) * 0.3  # dampened consensus
+                de_fc = max(-20.0, min(20.0, de_fc))
+                all_forecasts[sym]["decision_engine"] = de_fc
+
         # ── 3. Combine forecasts + size positions ──────────────
         # Update daily cash target based on current equity (compounding)
         dynamic_daily_target = max(equity, capital * 0.5) * annual_vol_target / 16.0
@@ -775,6 +931,67 @@ def run_full_backtest(
     if daily_position_counts:
         result.avg_positions = round(np.mean(daily_position_counts), 1)
 
+    # ── 5b. Aronson EBTA enrichment metrics ─────────────────
+    try:
+        from services.aronson_validator import (
+            detrend_returns, trimmed_sharpe as _trimmed_sharpe,
+            compute_signal_tstat, estimate_data_mining_bias,
+        )
+        _ret_series = pd.Series(daily_returns)
+
+        # Detrended Sharpe: subtract rolling mean to isolate timing skill
+        _detrended = detrend_returns(_ret_series, window=252)
+        _dt_arr = _detrended.dropna().values
+        if len(_dt_arr) > 10:
+            _dt_mean = float(np.mean(_dt_arr))
+            _dt_std = float(np.std(_dt_arr, ddof=1))
+            if _dt_std > 0:
+                result.detrended_sharpe = round(_dt_mean / _dt_std * 16.0, 3)
+
+        # Trimmed Sharpe (5% winsorized)
+        result.trimmed_sharpe = round(_trimmed_sharpe(ret_arr, trim_pct=0.05), 3)
+
+        # Per-signal t-statistics (from source_daily_returns if available)
+        if source_total:
+            n_sigs = len(source_total)
+            best_std = 0.0
+            for src in source_total:
+                total = source_total[src]
+                hits = source_hits.get(src, 0)
+                if total > 10:
+                    # Approximate signal returns: hit contributes +mean, miss contributes -mean
+                    _hit_r = hits / total if total > 0 else 0.5
+                    _sim_rets = np.array([1.0] * hits + [-1.0] * (total - hits))
+                    _ts, _pv = compute_signal_tstat(_sim_rets)
+                    result.per_signal_tstats[src] = round(_ts, 3)
+                    _src_std = float(np.std(_sim_rets, ddof=1)) if len(_sim_rets) > 1 else 1.0
+                    if _src_std > best_std:
+                        best_std = _src_std
+            # DM bias estimate
+            if n_sigs >= 2 and best_std > 0:
+                result.dm_bias_estimate = round(
+                    estimate_data_mining_bias(n_sigs, best_std) * 100, 2  # as percentage
+                )
+
+        # Bootstrap CI for Sharpe (quick: 1000 resamples)
+        if len(ret_arr) > 30:
+            rng = np.random.RandomState(42)
+            boot_sharpes = []
+            for _ in range(1000):
+                idx = rng.randint(0, len(ret_arr), size=len(ret_arr))
+                _b = ret_arr[idx]
+                _bm = float(np.mean(_b))
+                _bs = float(np.std(_b, ddof=1))
+                if _bs > 0:
+                    boot_sharpes.append(_bm / _bs * 16.0)
+            if boot_sharpes:
+                result.bootstrap_ci_sharpe = (
+                    round(float(np.percentile(boot_sharpes, 5)), 3),
+                    round(float(np.percentile(boot_sharpes, 95)), 3),
+                )
+    except Exception as _aronson_exc:
+        logger.debug("Aronson enrichment skipped: %s", _aronson_exc)
+
     # ── 6. Build report ────────────────────────────────────────
     lines = [
         f"\n{'='*70}",
@@ -808,6 +1025,20 @@ def run_full_backtest(
     lines.append(f"  Transaction cost: {cost_pct*100:.2f}% round-trip")
     lines.append(f"  Regime-adaptive stop: 3.0-5.0σ  |  Inertia: 15%  |  Cooldown: 5d")
     lines.append(f"  Position sizing: Vol-target  |  IDM=dynamic  |  MaxLev={max_leverage:.1f}x")
+
+    # Aronson EBTA enrichment
+    if result.detrended_sharpe or result.trimmed_sharpe:
+        lines.append(f"")
+        lines.append(f"  {'─'*40}")
+        lines.append(f"  Aronson EBTA Metrics:")
+        lines.append(f"  Detrended Sharpe:  {result.detrended_sharpe:>10.3f}")
+        lines.append(f"  Trimmed Sharpe:    {result.trimmed_sharpe:>10.3f}")
+        lines.append(f"  DM Bias Est (%):   {result.dm_bias_estimate:>10.2f}")
+        if result.bootstrap_ci_sharpe != (0.0, 0.0):
+            lines.append(f"  Sharpe 90% CI:     [{result.bootstrap_ci_sharpe[0]:.3f}, {result.bootstrap_ci_sharpe[1]:.3f}]")
+        if result.per_signal_tstats:
+            lines.append(f"  Signals t≥2.0:     {sum(1 for t in result.per_signal_tstats.values() if abs(t) >= 2.0)}/{len(result.per_signal_tstats)}")
+
     lines.append(f"{'='*70}\n")
 
     result.report = "\n".join(lines)
@@ -829,4 +1060,10 @@ def run_full_backtest(
         "source_hit_rates": result.source_hit_rates,
         "daily_equity": result.daily_equity,
         "report": result.report,
+        # Aronson EBTA enrichment
+        "detrended_sharpe": result.detrended_sharpe,
+        "trimmed_sharpe": result.trimmed_sharpe,
+        "per_signal_tstats": result.per_signal_tstats,
+        "dm_bias_estimate": result.dm_bias_estimate,
+        "bootstrap_ci_sharpe": result.bootstrap_ci_sharpe,
     }
