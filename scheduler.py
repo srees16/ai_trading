@@ -1425,6 +1425,26 @@ def _run_nightly_backup():
         logger.error("Nightly backup failed: %s", e)
 
 
+@_tracked_job("intraday_rescan", "Intraday Re-Scan")
+def _run_intraday_rescan():
+    """Lighter intraday re-scan for momentum shifts during market hours.
+
+    Runs at 10:30, 12:30, 14:30 IST. Uses the same pipeline but tagged
+    as 'intraday' so results are distinguishable from the pre-market scan.
+    """
+    run_pipeline("intraday")
+
+
+@_tracked_job("eod_scan", "End-of-Day Scan")
+def _run_eod_scan():
+    """End-of-day scan at 15:20 IST (10 min before close).
+
+    Captures late-day signals and prepares exit decisions before
+    the 15:30 market close.
+    """
+    run_pipeline("eod")
+
+
 @_tracked_job("pead_earnings", "PEAD Earnings Feed")
 def _run_pead_earnings_feed():
     """G6: Fetch recent earnings data and feed into PEAD strategy.
@@ -1932,9 +1952,12 @@ def start_scheduler():
     Jobs
     ----
     1. **pre_market_scan** â€” 9:20 AM IST, Mon-Fri
-       Full pipeline run before market opens (NSE opens 9:15).
+       Full pipeline run after market opens (NSE opens 9:15).
+    1b. **intraday_rescan** â€” 10:30, 12:30, 14:30 IST, Mon-Fri
        Lighter re-scan for intraday momentum shifts.
-    3. **walk_forward_audit** â€” Saturday 6:00 AM IST
+    1c. **eod_scan** â€” 15:20 IST, Mon-Fri
+       End-of-day scan 10 min before market close.
+    2. **walk_forward_audit** â€” Saturday 6:00 AM IST
        Weekly walk-forward validation of registered strategies.
     """
     try:
@@ -1962,6 +1985,23 @@ def start_scheduler():
         misfire_grace_time=600,
     )
 
+    # Job 1b: Intraday re-scan at 10:30, 12:30, 14:30 IST, weekdays
+    scheduler.add_job(
+        _run_intraday_rescan,
+        CronTrigger(hour="10,12,14", minute=30, day_of_week="mon-fri", timezone="Asia/Kolkata"),
+        id="intraday_rescan",
+        name="Intraday Re-Scan",
+        misfire_grace_time=600,
+    )
+
+    # Job 1c: End-of-day scan at 15:20 IST (10 min before market close)
+    scheduler.add_job(
+        _run_eod_scan,
+        CronTrigger(hour=15, minute=20, day_of_week="mon-fri", timezone="Asia/Kolkata"),
+        id="eod_scan",
+        name="End-of-Day Scan",
+        misfire_grace_time=300,
+    )
 
     # Job 2: Weekly walk-forward strategy audit â€” Saturday 6 AM IST
     scheduler.add_job(
@@ -2030,6 +2070,8 @@ def start_scheduler():
 
     logger.info("Scheduler started â€” press Ctrl+C to stop")
     logger.info("  Pre-market scan : 09:20 IST, Mon-Fri")
+    logger.info("  Intraday re-scan: 10:30, 12:30, 14:30 IST, Mon-Fri")
+    logger.info("  EOD scan        : 15:20 IST, Mon-Fri")
     logger.info("  Trade monitor   : every 3 min, 09:00-15:59 IST, Mon-Fri")
     logger.info("  Walk-forward    : 06:00 IST, Saturday")
     logger.info("  Reconciliation  : 07:00 IST, Saturday")
