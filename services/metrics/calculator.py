@@ -472,7 +472,7 @@ class MetricsCalculator:
             rsi = 100 - (100 / (1 + rs))
             
             return float(rsi.iloc[-1]) if not rsi.empty else None
-        except:
+        except (ValueError, IndexError, TypeError):
             return None
     
     def _calculate_macd(
@@ -495,7 +495,7 @@ class MetricsCalculator:
                 'signal': float(signal_line.iloc[-1]),
                 'histogram': float(histogram.iloc[-1])
             }
-        except:
+        except (ValueError, IndexError, TypeError):
             return {'macd': None, 'signal': None, 'histogram': None}
     
     def _calculate_bollinger_bands(
@@ -517,7 +517,7 @@ class MetricsCalculator:
                 'middle': float(sma.iloc[-1]),
                 'lower': float(lower_band.iloc[-1])
             }
-        except:
+        except (ValueError, IndexError, TypeError):
             return {'upper': None, 'middle': None, 'lower': None}
     
     def _calculate_fibonacci(self, hist: pd.DataFrame) -> Dict[str, float]:
@@ -539,14 +539,14 @@ class MetricsCalculator:
             
             return levels
         
-        except:
+        except (ValueError, IndexError, TypeError):
             return {}
     
     def _calculate_max_drawdown(self, hist: pd.DataFrame) -> Optional[float]:
         """Calculate maximum drawdown percentage — delegates to shared utility."""
         try:
             return calculate_max_drawdown(hist['Close'])
-        except:
+        except (ValueError, IndexError, KeyError):
             return None
 
     def _calculate_adx(self, hist: pd.DataFrame, period: int = 14) -> Optional[float]:

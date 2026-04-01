@@ -77,8 +77,8 @@ def _get_session() -> requests.Session:
     try:
         # Hit the main NSE page to get CSRF / session cookies
         sess.get("https://www.nseindia.com", timeout=10)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("NSE session cookie pre-fetch failed: %s", exc)
     _SESSION = sess
     return sess
 

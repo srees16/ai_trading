@@ -375,10 +375,17 @@ def _train_model(
     X_train, X_test = X[:split_idx], X[split_idx:]
     y_train, y_test = y[:split_idx], y[split_idx:]
 
-    # Purge: remove 5 observations at the boundary (avoid label leakage)
-    purge_window = min(5, len(X_train) // 10)
+    # Purge: remove observations at boundary to prevent label leakage.
+    # AFML Ch.7: purge window >= max_hold_days (label horizon).
+    purge_window = min(META_LABEL_MAX_HOLD_DAYS, len(X_train) // 5)
+    # Embargo: additional buffer after purge (1% of training set).
+    embargo_window = max(5, int(0.01 * split_idx))
     X_train = X_train[:-purge_window] if purge_window > 0 else X_train
     y_train = y_train[:-purge_window] if purge_window > 0 else y_train
+    # Drop early test observations within embargo window
+    if embargo_window > 0 and len(X_test) > embargo_window + 10:
+        X_test = X_test[embargo_window:]
+        y_test = y_test[embargo_window:]
 
     if len(X_train) < META_LABEL_MIN_SAMPLES:
         return None, 0.0, 0.0, {}

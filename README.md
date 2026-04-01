@@ -157,9 +157,23 @@ Jump to **Section 15: Troubleshooting** or **Section 12: Installation** for deta
 
 ---
 
-## Changelog (March 2026)
+## Changelog
 
-### Forecast Engine: 11 → 23 Sources
+### April 2026
+
+**Signal Quality Evaluator** — New `services/signal_quality_evaluator.py` provides regime-conditioned signal analysis with CAGR estimation, stress testing, and auto-generated documentation.
+
+**Aronson EBTA Validation** — New `services/aronson_validator.py` implements statistical validation: detrended returns, signal t-statistics, Benjamini-Hochberg FDR, White's Reality Check, and Deflated Sharpe Ratio.
+
+**Full Pipeline Backtest Fixes** — Fixed 3 incorrect import names in `services/full_pipeline_backtest.py` (`compute_fii_forecast`, `generate_event_forecasts`, `compute_sentiment_batch`) and enabled 6 previously omitted offline sources (penfold_trend, ehlers_dsp, intermarket, acceleration, carver_value, skew_signal) bringing active backtest sources from 11 to 17.
+
+**New Services** — `services/hrp_allocator.py` (Hierarchical Risk Parity), `services/deflated_sharpe.py` (Bailey-López de Prado DSR).
+
+**Cleanup** — Removed session-generated test scaffolds (3 files, 58 tests), dead code (`_fetch_sentry.py`, `services/portfolio_correlation.py`, unused `CIRCUIT_BREAKER_TIERS` config), and 9 audit-session docs.
+
+### March 2026
+
+#### Forecast Engine: 11 → 23 Sources
 
 Expanded from 11 to 23 independent forecast signals. New additions:
 
@@ -224,14 +238,53 @@ Forecast (23 sources) → RL Modifier (±15%) → Meta-Label Gate (prob>0.50)
   → Cost Filter → Vol-Targeted Sizing → Regime Leverage Cap → DD Scale → Execute
 ```
 
-### Backtest Validation (Apr 2024 – Mar 2026)
+### Backtest Validation (Apr 2021 – Mar 2026, 5-Year Walk-Forward)
 
-Walk-forward backtest on 89 NIFTY50+Next50 stocks, 9 OHLCV-based signals:
-- Market context: NIFTY50 returned -0.8% CAGR (bear period)
-- Meta-label F1: 0.40 (walk-forward), accuracy: 51%
-- System correctly activated DD halt at 30%, preserving capital
-- Crisis alpha: +16.3% CAGR (Sharpe 2.10) during vol spikes
-- Production with 23 signals estimated at 25-65% CAGR depending on regime mix
+Full pipeline backtest on 14 NIFTY50 stocks, 17 offline-capable forecast sources, 75% vol target, 7× leverage:
+
+| Metric | Value |
+|--------|-------|
+| **Annual Return (CAGR)** | **+45.9%** |
+| **Total Return** | +330.7% (500K → 2.15M) |
+| **Sharpe Ratio** | 1.064 |
+| **Sortino Ratio** | 1.456 |
+| **Calmar Ratio** | 1.004 |
+| **Max Drawdown** | 45.7% |
+| **Total Trades** | 2,185 |
+| **Avg Positions** | 8.2 |
+
+**Regime-Conditioned Performance:**
+
+| Regime | CAGR | Sharpe | Max DD |
+|--------|------|--------|--------|
+| BULL (41%) | +61.0% | 1.31 | 33.4% |
+| SIDEWAYS (40%) | +44.0% | 1.05 | 29.7% |
+| BEAR (19%) | +22.2% | 0.65 | 32.5% |
+
+**CAGR Estimates (with overfitting adjustments):**
+- Ideal: +45.9% | Realistic: +45.6% | Conservative: +8.9%
+- 90% Bootstrap CI: [+4.8%, +122.0%]
+- Aronson EBTA: 9/16 signals with t ≥ 2.0; Trimmed Sharpe 1.589
+
+### Signal Quality Evaluator (April 2026)
+
+New `services/signal_quality_evaluator.py` provides regime-conditioned signal analysis:
+- **Regime segmentation**: HMM + ADX + trend slope → BULL / BEAR / SIDEWAYS classification
+- **Signal metrics**: Per-source hit rate, Sharpe, profit factor, expectancy by regime
+- **Backtest**: Delegates to production `full_pipeline_backtest.py` (17 sources, vol-targeted)
+- **CAGR estimation**: Ideal / realistic / conservative with block bootstrap CI
+- **Stress testing**: High-vol, extreme bear, low-confidence, first-year, last-year scenarios
+- **Auto-generated docs**: `docs/signal_quality_by_regime.md`, `regime_performance.md`, `cagr_estimation.md`, `signal_insights.md`
+
+### Aronson EBTA Statistical Validation (April 2026)
+
+New `services/aronson_validator.py` implements Evidence-Based Technical Analysis (Aronson, 2007):
+- **Detrended returns**: Remove market beta before evaluating signal performance
+- **Signal t-statistics**: Per-signal statistical significance testing
+- **Benjamini-Hochberg**: FDR-controlled p-value adjustment for multiple comparisons
+- **White's Reality Check**: Bootstrap data-mining bias estimation
+- **Deflated Sharpe Ratio**: Bailey-López de Prado DSR (corrects for trial multiplicity)
+- **Walk-forward degradation**: OOS/IS ratio with automatic overfit detection
 
 ---
 
@@ -340,7 +393,11 @@ services/
   ├── SectorRotation       NIFTY sector 1-month momentum; top 3 bonus, bottom 3 penalty
   ├── SurvivorshipFilter   Detects delisted/suspended/dead stocks (4 methods, 1-hour cache)
   ├── FundamentalFreshness Intra-quarter freshness via bulk deals, promoter pledges, MF holdings
-  └── IntegratedScorer     2-layer eval: Core 45% → Strategy + Robustness 55%
+  ├── IntegratedScorer     2-layer eval: Core 45% → Strategy + Robustness 55%
+  ├── SignalQualityEval    Regime-conditioned signal analysis, CAGR estimation, stress testing
+  ├── AronsonValidator     EBTA statistical validation (detrend, t-stats, BH, White's RC, DSR)
+  ├── HRPAllocator         Hierarchical Risk Parity (López de Prado) portfolio allocation
+  └── DeflatedSharpe       Bailey-López de Prado deflated Sharpe ratio (trial multiplicity correction)
 ```
 
 ### Infrastructure Layer

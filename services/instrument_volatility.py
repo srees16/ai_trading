@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # Gap D5 FIX: Use halflife=20 for proper 20-day half-life decay.
 # span=35 gives effective lookback of ~10 days; halflife=20 gives ~20 days.
 DEFAULT_VOL_HALFLIFE = 20
-ANNUALISATION_FACTOR = 16  # sqrt(256 trading days) ≈ 16
+ANNUALISATION_FACTOR = 15.874507866387544  # sqrt(252 trading days)
 
 
 def daily_price_volatility(

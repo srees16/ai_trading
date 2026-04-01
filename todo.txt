@@ -6,27 +6,81 @@ also verify if monte carlo evaluation of trading system is implemented
 prompts:
 
 ~~~~~~
-1. identify gaps to achieve 50% CAGR for Ind stocks and ensure to implement fixes required to meet the objective
-2. Analysis and clear signal for US stocks, however, analysis and trigger orders for Ind stocks since 
+identify gaps to achieve 60+% CAGR for Ind stocks and ensure to implement fixes required to meet the objective
 ~~~~~~
 /Godmode
-Goal: CAGR in excess of over 50% annually.
-Task: you are the best quantitative trader and strategist with 20 years of experience in renaissance technologies and Jane Street, world's 2 top-most quant trading firm. Quantify performance of centurion_core for Ind stocks and US stocks in terms of real-world returns, bull & bear markets, side-ways markets, generating alpha, order workflow for Kite, signal quality for buy/sell, risk management etc.,
+Goal: CAGR in excess of 60% annually.
+Task: you are the best quantitative trader and strategist with 20 years of experience in renaissance technologies and Jane Street, world's 2 top-most quant trading firm. Quantify performance of centurion_core for Ind stocks and US stocks in terms of real-world returns, bull & bear markets, range-bound markets, generating alpha, order workflow for Kite, signal quality for buy/sell, risk management etc.,
 List out any critical gaps that need immediate resolution in achieving the stated goal.
 Intraday and automatic order setup for US stocks can be skipped since centurion_core is for swing, positional trades. Automated trading enabled for Ind stocks via kite.
 Verify if all the implemented strategies are integrated to the order workflow (Ind stocks).
 ~~~~~~
-/godmode implemente below tasks:
 
-1. study attached pdf and understand the concepts explained regarding options volatility and its pricing
-2. compare & contrast the current implementation of options module of centurion_core with the pdf doc
-3. prepare action plan from top down level on how it can be incorporated to re-design options module of Ind stocks
-4. highlight before vs after results if we implement the options pricing techniques discussed in pdf doc
+/godmode Execute the following tasks in order:
 
-Note: centurion_core is a platform for swing and positional trades and NOT for intraday trading. trades are automated for Ind stocks but not for US stocks due to Drivewealth platform limitations, hence provide analysis results on US stocks UI so that user can place orders manually.
+1. Knowledge Extraction
+- Parse and study: centurion_core/rag_pipeline/ingest_docs/Evidence-Based Technical Analysis - David R. Aronson.pdf
+- Extract ONLY actionable concepts relevant to:
+  a) technical indicators
+  b) strategy validation (statistical significance, overfitting control)
+  c) signal generation improvements
+  d) risk & performance evaluation
+
+2. Relevance Assessment
+- Evaluate applicability of extracted concepts to:
+  a) Indian stocks module (Kite - automated execution)
+  b) US stocks module (DriveWealth via Vested/INDmoney - manual execution)
+- Output: docs/aronson_enhancements.md with concrete, implementable ideas
+
+3. Gap Analysis
+- Compare current centurion_core pipeline vs Aronson concepts:
+  - signal generation
+  - backtesting rigor
+  - feature engineering
+  - statistical validation
+- Output: docs/gap_analysis.md (current vs proposed)
+
+4. Action Plan (Top-Down Architecture)
+- Design integration plan covering:
+  - data layer changes
+  - feature engineering updates
+  - model/signal layer upgrades
+  - validation & backtesting improvements
+  - execution pipeline impact
+- Output: docs/integration_plan.md with module-level changes
+
+5. Impact Estimation
+- Define BEFORE vs AFTER improvements:
+  - signal quality (precision/recall proxies)
+  - drawdown reduction
+  - Sharpe/Sortino improvement (estimated)
+  - false signal reduction
+- Output: docs/expected_impact.md
+
+6. Implementation (Priority Order)
+- Implement high-impact, low-complexity improvements first:
+  a) statistical validation layer (avoid overfitting)
+  b) improved signal filtering
+  c) feature enrichment
+- Integrate into:
+  - Indian stocks → order execution pipeline (auto-trading via Kite)
+  - US stocks → analysis output layer (UI insights for manual execution)
+
+7. Integration Rules
+- DO NOT introduce intraday logic (platform is swing/positional only)
+- Ensure:
+  - US module → analysis-only outputs
+  - Indian module → executable signals
+
+8. Cleanup
+- Remove all temporary/test scripts
+- Keep production-ready, modular, well-documented code only
+
+Final Goal:
+Upgrade centurion_core to a statistically robust, evidence-based trading system with improved signal reliability and reduced overfitting.
 
 ~~~~~~
-there are various strategies that are implemented using the techniques discussed in the pdf docs. evaluate which combination of strategies would result in a higher sustained CAGR in bull, bear and sideways regimes.
+there are various strategies that are implemented using the techniques discussed in the pdf docs. evaluate which combination of strategies would result in a higher sustained CAGR in bull, bear and range-bound regimes.
 ~~~~~~
 /godmode you are the senior technical architect at THE most reputed quant trading firm in the world. However you are designing centurion_core for 1 or 2 retail traders, a trading platform that would automatically trigger buy/sell orders based on fundamental analysis, technical analysis, qualitative analysis, macro-economic head & tail winds and event-driven news updates. Considering these requirements, perform the below tasks:
 

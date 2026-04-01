@@ -111,6 +111,7 @@ class PipelineResult:
     symbols_with_trades: int = 0
     cost_filtered_count: int = 0
     pipeline_log: List[str] = field(default_factory=list)
+    validation_stats: Dict = field(default_factory=dict)  # Aronson EBTA per-symbol confidence scores
 
 
 class CarverPipeline:
@@ -776,6 +777,7 @@ class CarverPipeline:
             log.append(f"  → Dynamic correlations skipped: {corr_exc}")
 
         combined_values = {sym: cf.combined_forecast for sym, cf in combined.items()}
+        combined_forecast_objs = combined  # Aronson: keep CombinedForecast objs for confidence gate
 
         # Gap B2: Apply Markov signal filter (transition-aware dampening)
         if hmm_snap is not None and hmm_snap.confidence >= 0.5:
@@ -803,7 +805,7 @@ class CarverPipeline:
         # ── Step 4b: Masters prediction quality gate ───────────
         try:
             from services.forecast_combiner import apply_masters_quality_gate
-            gated = apply_masters_quality_gate(combined, ohlcv_data)
+            gated = apply_masters_quality_gate(combined, ohlcv_cache)
             gated_values = {sym: cf.combined_forecast for sym, cf in gated.items()}
             n_dampened = sum(
                 1 for sym in gated_values
@@ -902,6 +904,22 @@ class CarverPipeline:
 
         active_symbols = [s for s in combined_values if combined_values[s] > 0]
         instrument_weights = compute_handcrafted_weights(active_symbols, sector_map)
+
+        # FIX-07: Blend HRP weights when sufficient instruments (de Prado AFML Ch.16)
+        try:
+            if len(active_symbols) >= 5:
+                from services.hrp_allocator import hrp_instrument_weights
+                active_rets = pd.DataFrame({
+                    s: ohlcv_cache[s]['Close'].pct_change().dropna()
+                    for s in active_symbols if s in ohlcv_cache
+                }).dropna()
+                if len(active_rets) >= 63:
+                    instrument_weights = hrp_instrument_weights(
+                        active_rets, instrument_weights, blend_ratio=0.5
+                    )
+                    log.append(f"  → HRP weights blended for {len(active_symbols)} instruments")
+        except Exception as exc:
+            log.append(f"  → HRP blending skipped: {exc}")
 
         # Phase 4 (Vince): Blend equalized-f weights when sufficient trade history exists
         try:
@@ -1192,11 +1210,29 @@ class CarverPipeline:
         log.append("Step 9: Generating trade plans...")
         from kite_connect.trading.risk_manager import TradePlan
 
+        # Aronson EBTA: confidence gate — only trade when validated signals agree
+        _aronson_confidence_threshold = 0.5
+        _aronson_skipped = 0
+        _aronson_confidence_map = {}
+
         plans = []
         for sym, ps in position_sizes.items():
             if not ps.trade_required or ps.trade_delta <= 0:
                 continue
             if ps.price <= 0:
+                continue
+
+            # Aronson confidence check: skip if too few validated signals agree
+            _sym_conf = 1.0
+            try:
+                _cf_obj = combined_forecast_objs.get(sym)
+                if _cf_obj and hasattr(_cf_obj, 'confidence_score'):
+                    _sym_conf = _cf_obj.confidence_score
+            except Exception:
+                pass
+            _aronson_confidence_map[sym] = _sym_conf
+            if _sym_conf < _aronson_confidence_threshold and _sym_conf > 0:
+                _aronson_skipped += 1
                 continue
 
             # BUG-1 FIX: scale_factor already applied in Step 8 (Gap C1 block).
@@ -1375,7 +1411,16 @@ class CarverPipeline:
         # Limit to max_open_trades
         plans = plans[:self.cfg.max_open_trades]
         result.trade_plans = plans
+        if _aronson_skipped > 0:
+            log.append(f"  → Aronson confidence gate: {_aronson_skipped} symbols skipped (conf < {_aronson_confidence_threshold})")
         log.append(f"  → {len(plans)} final trade plans generated")
+
+        # Aronson: persist per-symbol confidence scores
+        result.validation_stats = {
+            "confidence_scores": _aronson_confidence_map,
+            "confidence_threshold": _aronson_confidence_threshold,
+            "skipped_count": _aronson_skipped,
+        }
 
         # ── Step 10: Options overlay scan (Gap A1) ─────────────
         try:

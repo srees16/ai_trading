@@ -261,6 +261,8 @@ class USCarverResult:
     symbols_processed: int = 0
     symbols_filtered_by_cost: int = 0
     pipeline_log: List[str] = field(default_factory=list)
+    # Aronson EBTA: analysis-only validation stats for US module
+    validation_stats: Dict[str, Any] = field(default_factory=dict)
 
 
 def run_us_carver_pipeline(

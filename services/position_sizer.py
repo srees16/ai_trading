@@ -175,8 +175,22 @@ def compute_position_size(
     target_quantity = round(portfolio_position)
 
     # Step 5: Leverage limit — cap notional at max_leverage × capital
+    # GAP-3 FIX: Apply regime-adaptive leverage cap before position sizing
+    # so max_leverage respects bull/bear/crisis limits from Config.
     if capital > 0:
-        max_notional = capital * max_leverage
+        try:
+            from config import Config as _LevCfg
+            regime_upper = (regime or "").upper().replace(" ", "_")
+            if regime_upper in ("BEAR", "HIGH_VOLATILITY"):
+                regime_lev_cap = getattr(_LevCfg, 'LEVERAGE_BEAR_MAX', 2.0)
+            elif regime_upper == "CRISIS":
+                regime_lev_cap = getattr(_LevCfg, 'LEVERAGE_CRISIS_MAX', 0.5)
+            else:
+                regime_lev_cap = getattr(_LevCfg, 'LEVERAGE_BULL_MAX', max_leverage)
+            effective_leverage = min(max_leverage, regime_lev_cap)
+        except Exception:
+            effective_leverage = max_leverage
+        max_notional = capital * effective_leverage
         max_qty_by_leverage = int(max_notional / price)
         target_quantity = max(-max_qty_by_leverage, min(target_quantity, max_qty_by_leverage))
 
@@ -312,14 +326,24 @@ def compute_position_sizes_batch(
     try:
         from config import Config as _GrossCfg
         gross_cap_multiplier = getattr(_GrossCfg, 'CARVER_MAX_LEVERAGE', 2.0)
+        # GAP-3: Apply regime-adaptive leverage cap to batch sizing too
+        _regime_hint = getattr(_GrossCfg, '_CURRENT_REGIME', '')
+        if _regime_hint:
+            _ru = _regime_hint.upper().replace(' ', '_')
+            if _ru in ('BEAR', 'HIGH_VOLATILITY'):
+                gross_cap_multiplier = min(gross_cap_multiplier,
+                                           getattr(_GrossCfg, 'LEVERAGE_BEAR_MAX', 2.0))
+            elif _ru == 'CRISIS':
+                gross_cap_multiplier = min(gross_cap_multiplier,
+                                           getattr(_GrossCfg, 'LEVERAGE_CRISIS_MAX', 0.5))
     except Exception:
         gross_cap_multiplier = 2.0
     max_notional = gross_cap_multiplier * capital
     if capital > 0 and total_notional > max_notional:
         excess_ratio = total_notional / max_notional  # e.g. 1.5 = 50% over
         logger.warning(
-            "Gross notional ₹%.0f exceeds 2× capital ₹%.0f — scaling by forecast strength",
-            total_notional, capital,
+            "Gross notional %.0f exceeds %.1fx capital %.0f -- scaling by forecast strength",
+            total_notional, gross_cap_multiplier, capital,
         )
         from dataclasses import replace as _dc_replace
         # Compute per-instrument scale: weaker forecasts get cut more

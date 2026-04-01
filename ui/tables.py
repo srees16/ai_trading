@@ -11,7 +11,6 @@ from typing import Any, Dict, List
 
 import pandas as pd
 import streamlit as st
-import yfinance as yf
 
 from ui.components import get_decision_emoji
 from ui.styles import get_decision_style, get_signal_style
@@ -23,6 +22,7 @@ logger = logging.getLogger(__name__)
 def _get_stock_name(ticker: str) -> str:
     """Look up the company name for a ticker symbol via yfinance (cached 24h)."""
     try:
+        import yfinance as yf
         yf_sym = ticker
         if "." not in ticker:
             from utils import yf_nse_symbol

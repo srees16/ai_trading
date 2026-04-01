@@ -98,7 +98,8 @@ def parse_ticker_csv(file_content: str) -> List[str]:
                 if ticker and len(ticker) <= 15 and ticker.replace('.', '').replace('-', '').isalnum():
                     tickers.append(ticker)
             return list(set(tickers))
-        except:
+        except Exception as exc:
+            logger.debug("Failed to parse tickers from CSV: %s", exc)
             return []
 
 

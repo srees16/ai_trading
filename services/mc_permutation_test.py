@@ -140,6 +140,56 @@ class WalkForwardPermResult:
         }
 
 
+# ── Serial Correlation Test (Wald-Wolfowitz Runs Test) ──────────────
+
+def runs_test(positions: np.ndarray) -> Tuple[float, bool]:
+    """Wald-Wolfowitz runs test for serial independence in positions.
+
+    FIX-10: Vince Math of MM — tests whether trade positions are serially
+    correlated.  When positions are correlated (p < 0.05), the standard
+    Fisher-Yates permutation destroys this structure, yielding biased
+    p-values.  In that case, block permutation should be used instead.
+
+    Parameters
+    ----------
+    positions : 1D array of position signs (+1, 0, -1)
+
+    Returns
+    -------
+    (p_value, is_serially_correlated)
+    """
+    arr = np.asarray(positions, dtype=float)
+    arr = arr[arr != 0]  # exclude flat periods
+    if len(arr) < 20:
+        return 1.0, False
+
+    signs = np.sign(arr)
+    n = len(signs)
+    n_pos = int(np.sum(signs > 0))
+    n_neg = n - n_pos
+
+    if n_pos == 0 or n_neg == 0:
+        return 1.0, False
+
+    # Count runs (consecutive sequences of same sign)
+    runs = 1
+    for i in range(1, n):
+        if signs[i] != signs[i - 1]:
+            runs += 1
+
+    # Expected runs and variance under H0 (independence)
+    e_runs = 1.0 + (2.0 * n_pos * n_neg) / n
+    var_runs = (2.0 * n_pos * n_neg * (2.0 * n_pos * n_neg - n)) / (n * n * (n - 1.0))
+
+    if var_runs <= 0:
+        return 1.0, False
+
+    z = (runs - e_runs) / np.sqrt(var_runs)
+    from scipy import stats as _sp
+    p_value = float(2.0 * _sp.norm.sf(abs(z)))
+    return p_value, p_value < 0.05
+
+
 # ── Core Engine ─────────────────────────────────────────────────────
 
 class MCPermutationTest:

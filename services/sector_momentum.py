@@ -72,14 +72,14 @@ def _resolve_sector(ticker: str) -> Optional[str]:
             stock = db.get_stock_info(clean)
             if stock and hasattr(stock, "sector"):
                 return stock.sector
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("DB sector lookup failed for %s: %s", ticker, exc)
 
     # Fallback: use NSE sector mapping if available
     try:
         from kite_connect.nse.sector_map import get_sector_for_symbol
         return get_sector_for_symbol(clean)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Sector map lookup failed for %s: %s", ticker, exc)
 
     return None
