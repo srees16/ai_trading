@@ -26,9 +26,11 @@ FDM Calculation:
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -40,6 +42,14 @@ logger = logging.getLogger(__name__)
 # Aronson EBTA validation weight multipliers (loaded lazily)
 _aronson_weight_multipliers: Optional[Dict[str, float]] = None
 _aronson_multipliers_loaded: bool = False
+
+# Strategy decay state — lazy-loaded, maps source → status/sharpe
+_decay_state: Optional[Dict[str, Dict]] = None
+_decay_state_loaded: bool = False
+_DECAY_STATE_PATH = Path(__file__).resolve().parent.parent / "data" / "strategy_decay_state.json"
+
+# Statuses that should receive zero weight (actively losing money)
+_DEAD_STATUSES = {"INVERTED", "DEAD"}
 
 # Maximum FDM to prevent extreme positions (Carver recommendation)
 MAX_FDM = 2.0
@@ -53,7 +63,7 @@ class ForecastWeight:
 
 
 # Default handcrafted weights for centurion_core NSE swing/positional
-# GAP-9 FIX: Weights sum to 1.00 (was 0.93). Removed dead breakout source.
+# GAP-9 FIX: Weights sum to 1.00.  P5: breakout re-added as 23rd source (0.03).
 # Redistributed 7% to highest-alpha sources: ehlers +2%, momentum +1%, pead +1%,
 # penfold +1%, intermarket +1%, acceleration +1%.
 DEFAULT_FORECAST_WEIGHTS: List[ForecastWeight] = [
@@ -63,23 +73,25 @@ DEFAULT_FORECAST_WEIGHTS: List[ForecastWeight] = [
     ForecastWeight("ewmac_64_256", 0.06),
     ForecastWeight("carry", 0.01),           # G7: weak for equities — minimal
     ForecastWeight("screener", 0.04),
-    ForecastWeight("momentum", 0.08),        # Strong for IND equities (Jegadeesh-Titman)
+    ForecastWeight("momentum", 0.07),        # Strong for IND equities (Jegadeesh-Titman) — P5: -0.01 for breakout
     ForecastWeight("pead", 0.06),            # Highest-Sharpe academic signal
-    ForecastWeight("mean_reversion", 0.03),  # Reduced: counter-trend drags CAGR in trending mkts
+    ForecastWeight("mean_reversion", 0.02),  # Reduced: counter-trend drags CAGR in trending mkts
     ForecastWeight("fii_flow", 0.03),
     ForecastWeight("decision_engine", 0.03),
     ForecastWeight("oi_signal", 0.02),       # G19: OI provides vol expansion signal
     ForecastWeight("cross_momentum", 0.04),  # Cross-sectional: long winners, short losers
     ForecastWeight("pairs_arb", 0.02),       # Reduced: less relevant for CAGR maximisation
     ForecastWeight("event_driven", 0.04),    # Episodic alpha
-    ForecastWeight("penfold_trend", 0.07),   # Penfold: Turtle+ATR+Retrace+Dow filter
-    ForecastWeight("ehlers_dsp", 0.09),      # Ehlers: Fisher+MAMA/FAMA+SuperSmoother
+    ForecastWeight("penfold_trend", 0.06),   # Penfold: Turtle+ATR+Retrace+Dow filter — P5: -0.01 for breakout
+    ForecastWeight("ehlers_dsp", 0.08),      # Ehlers: Fisher+MAMA/FAMA+SuperSmoother — P5: -0.01 for breakout
     ForecastWeight("intermarket", 0.07),     # Ruggiero: intermarket+seasonal+trend+multi-TF
-    ForecastWeight("acceleration", 0.05),    # S23: rate-of-change of trend forecast
+    ForecastWeight("acceleration", 0.04),    # S23: rate-of-change of trend forecast (T1-6: -0.01)
     ForecastWeight("carver_value", 0.02),    # S22: 5-year mean reversion
     ForecastWeight("skew_signal", 0.03),     # S24: realized skew risk premium
     ForecastWeight("sentiment", 0.02),       # News sentiment: FinBERT z-scored
-    # Total: 1.00 (22 sources, verified: sum = 0.06+0.07+0.06+0.06+0.01+0.04+0.08+0.06+0.03+0.03+0.03+0.02+0.04+0.02+0.04+0.07+0.09+0.07+0.05+0.02+0.03+0.02)
+    ForecastWeight("breakout", 0.03),        # P5: 20-day channel breakout — diversifies trend styles
+    ForecastWeight("order_flow", 0.02),      # T1-6: OBV+CVD+MFI microstructure signal
+    # Total: 1.00 (24 sources)
 ]
 
 # Rule-of-thumb correlations between forecast sources (Carver Appendix C):
@@ -493,6 +505,108 @@ def compute_fdm(
     return round(fdm, 3)
 
 
+def _load_decay_state() -> Dict[str, Dict]:
+    """Lazy-load strategy decay state from data/strategy_decay_state.json.
+
+    Returns a dict like {"ewmac": {"status": "INVERTED", "recent_sharpe": -0.306}, ...}.
+    Empty dict on failure.
+    """
+    global _decay_state, _decay_state_loaded
+    if _decay_state_loaded:
+        return _decay_state or {}
+    _decay_state_loaded = True
+    try:
+        if _DECAY_STATE_PATH.exists():
+            _decay_state = json.loads(_DECAY_STATE_PATH.read_text())
+            logger.info(
+                "Loaded strategy decay state: %d entries (%s)",
+                len(_decay_state),
+                ", ".join(f"{k}={v.get('status')}" for k, v in _decay_state.items()),
+            )
+        else:
+            _decay_state = {}
+    except Exception as exc:
+        logger.warning("Failed to load strategy decay state: %s", exc)
+        _decay_state = {}
+    return _decay_state
+
+
+def apply_decay_state_filter(
+    base_weights: List[ForecastWeight],
+) -> List[ForecastWeight]:
+    """G1 FIX (revised P1): Regime-conditional decay filtering.
+
+    Instead of blanket-zeroing all EWMAC variations when the generic "ewmac"
+    key is INVERTED, this now:
+    1. Only zeroes sources whose EXACT name matches a decay key (e.g. "carry")
+    2. For prefix matches (e.g. "ewmac" → "ewmac_8_32"), DOWNGRADES weight
+       to 25% instead of zeroing — lets regime_strategy_mix handle the rest
+    3. DEAD status still gets full zero (strategy is truly broken, not just
+       regime-inappropriate)
+
+    This fixes the ~10% CAGR loss from zeroing 25% of forecast weight when
+    trend-following is merely in a range-bound regime (not actually broken).
+    """
+    decay = _load_decay_state()
+    if not decay:
+        return base_weights
+
+    adjusted = []
+    zeroed_sources: List[str] = []
+    downgraded_sources: List[str] = []
+    for fw in base_weights:
+        source_status = None
+        match_type = None  # "exact" or "prefix"
+        for decay_key, decay_info in decay.items():
+            if fw.name == decay_key:
+                source_status = decay_info.get("status", "").upper()
+                match_type = "exact"
+                break
+            elif fw.name.startswith(decay_key + "_"):
+                source_status = decay_info.get("status", "").upper()
+                match_type = "prefix"
+                break
+
+        if source_status == "DEAD":
+            # Truly broken — full zero regardless of match type
+            adjusted.append(ForecastWeight(fw.name, 0.0))
+            zeroed_sources.append(fw.name)
+        elif source_status == "INVERTED" and match_type == "exact":
+            # Exact match INVERTED (e.g. "carry") — zero it
+            adjusted.append(ForecastWeight(fw.name, 0.0))
+            zeroed_sources.append(fw.name)
+        elif source_status == "INVERTED" and match_type == "prefix":
+            # Prefix match INVERTED (e.g. "ewmac" → "ewmac_8_32")
+            # Downgrade to 25% weight — let regime_strategy_mix dynamically adjust
+            adjusted.append(ForecastWeight(fw.name, fw.weight * 0.25))
+            downgraded_sources.append(fw.name)
+        else:
+            adjusted.append(ForecastWeight(fw.name, fw.weight))
+
+    # Renormalise non-zero weights to sum to 1.0
+    total = sum(fw.weight for fw in adjusted)
+    if total > 0:
+        adjusted = [
+            ForecastWeight(fw.name, fw.weight / total) if fw.weight > 0
+            else fw
+            for fw in adjusted
+        ]
+
+    if zeroed_sources:
+        logger.warning(
+            "G1: Zeroed %d inverted/dead forecast sources: %s",
+            len(zeroed_sources), zeroed_sources,
+        )
+    if downgraded_sources:
+        logger.info(
+            "P1: Downgraded %d INVERTED prefix-matched sources to 25%% weight "
+            "(regime_strategy_mix will further adjust): %s",
+            len(downgraded_sources), downgraded_sources,
+        )
+
+    return adjusted
+
+
 def get_aronson_adjusted_weights(
     base_weights: List[ForecastWeight],
 ) -> List[ForecastWeight]:
@@ -560,6 +674,8 @@ def combine_forecasts(
     CombinedForecast
     """
     weights = weights or DEFAULT_FORECAST_WEIGHTS
+    # G1 FIX: Zero-weight inverted/dead strategies BEFORE Aronson adjustment
+    weights = apply_decay_state_filter(weights)
     # Apply Aronson EBTA validation multipliers (penalise unvalidated signals)
     weights = get_aronson_adjusted_weights(weights)
     weight_map = {fw.name: fw.weight for fw in weights}

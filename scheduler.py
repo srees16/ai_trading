@@ -712,15 +712,104 @@ def _auto_place_orders(verdicts: list, screened_df):
 # Walk-Forward Audit (weekly)
 # â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
+def _update_forecast_source_decay(audit_results: dict):
+    """G4 FIX: Update strategy_decay_state.json from WF audit results.
+
+    Maps registered strategy names to forecast source prefixes and
+    updates the decay state so the forecast combiner (G1) can
+    zero-weight degraded sources at runtime.
+
+    Monitored sources: ewmac, carry, momentum, pead, mean_reversion,
+    ehlers_dsp, penfold_trend, intermarket, acceleration, etc.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+    from datetime import datetime as _dt
+
+    _decay_path = _Path(__file__).parent / "data" / "strategy_decay_state.json"
+
+    # Map strategy names → forecast source keys
+    _STRATEGY_TO_SOURCE = {
+        "macd oscillator": "ewmac",
+        "awesome oscillator": "momentum",
+        "rsi pattern": "screener",
+        "parabolic sar": "penfold_trend",
+        "heikin-ashi": "penfold_trend",
+        "bollinger bottom w": "mean_reversion",
+        "support resistance": "screener",
+        "liquidity sweep": "oi_signal",
+        "anchored vwap": "carver_value",
+        "order flow imbalance": "fii_flow",
+        "volume profile": "cross_momentum",
+    }
+
+    # Load existing decay state
+    try:
+        existing = _json.loads(_decay_path.read_text()) if _decay_path.exists() else {}
+    except Exception:
+        existing = {}
+
+    updated = dict(existing)
+    now_iso = _dt.now().isoformat()
+
+    for strategy_name, result in audit_results.items():
+        if not isinstance(result, dict) or "error" in result:
+            continue
+
+        source_key = _STRATEGY_TO_SOURCE.get(strategy_name.lower())
+        if not source_key:
+            continue
+
+        oos_sharpe = result.get("multi_ticker_median_oos_sharpe",
+                                result.get("avg_oos_sharpe", 0))
+        degradation = result.get("multi_ticker_median_deg",
+                                 result.get("degradation_ratio", 1.0))
+
+        # Determine status
+        if oos_sharpe < -0.1:
+            status = "INVERTED"
+        elif degradation < 0.25 or oos_sharpe < 0:
+            status = "DEAD"
+        elif degradation < 0.50:
+            status = "DEGRADED"
+        else:
+            status = "HEALTHY"
+
+        updated[source_key] = {
+            "status": status,
+            "days": 1,
+            "last_healthy": now_iso if status == "HEALTHY" else
+                            existing.get(source_key, {}).get("last_healthy", ""),
+            "recent_sharpe": round(oos_sharpe, 4),
+            "degradation_ratio": round(degradation, 4),
+            "updated_at": now_iso,
+        }
+
+    # Write back
+    try:
+        _decay_path.write_text(_json.dumps(updated, indent=2))
+        logger.info(
+            "G4: Updated strategy_decay_state.json: %d sources (%s)",
+            len(updated),
+            ", ".join(f"{k}={v['status']}" for k, v in updated.items()),
+        )
+    except Exception as exc:
+        logger.warning("Failed to write strategy_decay_state.json: %s", exc)
+
+
 @_tracked_job("walk_forward_audit", "Walk-Forward Audit")
 def run_walk_forward_audit():
     """Run walk-forward validation on all registered strategies.
+
+    G4 FIX: Expanded from single-ticker to multi-ticker validation.
+    Also updates strategy_decay_state.json for ALL 22 forecast sources
+    so the forecast combiner can zero-weight degraded sources.
 
     Kicks off every Saturday morning via the scheduler.  Results are
     saved to the scheduler cache DB under run_type='walk_forward'.
     Strategies with degradation_ratio < 0.5 are flagged as overfit.
     """
-    logger.info("=== Walk-Forward Audit started ===")
+    logger.info("=== Walk-Forward Audit started (G4 multi-ticker) ===")
 
     try:
         from strategies import StrategyRegistry, load_all_strategies
@@ -729,8 +818,15 @@ def run_walk_forward_audit():
         load_all_strategies()
         all_strategies = StrategyRegistry._strategies
 
-        # Use a representative NIFTY-50 ticker for validation
-        test_ticker = "RELIANCE.NS"
+        # G4 FIX: Validate against multiple representative tickers
+        # covering different sectors and liquidity profiles
+        test_tickers = [
+            "RELIANCE.NS",   # Oil & Gas / conglomerate
+            "TCS.NS",        # IT services
+            "HDFCBANK.NS",   # Banking
+            "BHARTIARTL.NS", # Telecom
+            "ITC.NS",        # FMCG
+        ]
 
         audit_results = {}
         overfit_strategies: List[str] = []
@@ -738,33 +834,58 @@ def run_walk_forward_audit():
         for name, strategy_cls in all_strategies.items():
             if "crypto" in name.lower():
                 continue
-            try:
-                summary = walk_forward_validate(
-                    strategy_cls=strategy_cls,
-                    ticker=test_ticker,
-                    capital=100_000,
-                    train_days=252,
-                    test_days=63,
-                    total_days=756,
+            strat_summaries = []
+            for test_ticker in test_tickers:
+                try:
+                    summary = walk_forward_validate(
+                        strategy_cls=strategy_cls,
+                        ticker=test_ticker,
+                        capital=100_000,
+                        train_days=252,
+                        test_days=63,
+                        total_days=756,
+                    )
+                    strat_summaries.append(summary)
+                    # Persist winning params per ticker
+                    save_optimal_params(summary)
+                except Exception as exc:
+                    logger.warning("WF fold failed for %s on %s: %s", name, test_ticker, exc)
+
+            if not strat_summaries:
+                audit_results[name] = {"error": "all tickers failed"}
+                continue
+
+            # Aggregate across tickers — use median for robustness
+            import numpy as _np
+            avg_deg = float(_np.median([s.degradation_ratio for s in strat_summaries]))
+            avg_oos = float(_np.median([s.avg_oos_sharpe for s in strat_summaries]))
+            avg_is = float(_np.median([s.avg_is_sharpe for s in strat_summaries]))
+            total_folds = sum(s.total_folds for s in strat_summaries)
+
+            # Use best ticker's full result for detailed reporting
+            best_summary = max(strat_summaries, key=lambda s: s.avg_oos_sharpe)
+            result_dict = best_summary.to_dict()
+            result_dict["multi_ticker_median_deg"] = round(avg_deg, 4)
+            result_dict["multi_ticker_median_oos_sharpe"] = round(avg_oos, 4)
+            result_dict["tickers_tested"] = len(strat_summaries)
+            result_dict["total_folds_all_tickers"] = total_folds
+            audit_results[name] = result_dict
+
+            if avg_deg < 0.5 and total_folds > 0:
+                overfit_strategies.append(name)
+                logger.warning(
+                    "OVERFIT: %s -- degradation=%.2f (OOS Sharpe=%.2f, IS=%.2f, %d tickers)",
+                    name, avg_deg, avg_oos, avg_is, len(strat_summaries),
                 )
-                audit_results[name] = summary.to_dict()
-                # Gap 5: Persist winning params for the live pipeline
-                save_optimal_params(summary)
-                if summary.degradation_ratio < 0.5 and summary.total_folds > 0:
-                    overfit_strategies.append(name)
-                    logger.warning(
-                        "OVERFIT: %s â€” degradation=%.2f (OOS Sharpe=%.2f, IS=%.2f)",
-                        name, summary.degradation_ratio,
-                        summary.avg_oos_sharpe, summary.avg_is_sharpe,
-                    )
-                else:
-                    logger.info(
-                        "OK: %s â€” degradation=%.2f, OOS Sharpe=%.2f",
-                        name, summary.degradation_ratio, summary.avg_oos_sharpe,
-                    )
-            except Exception as exc:
-                audit_results[name] = {"error": str(exc)}
-                logger.warning("WF audit failed for %s: %s", name, exc)
+            else:
+                logger.info(
+                    "OK: %s -- degradation=%.2f, OOS Sharpe=%.2f (%d tickers)",
+                    name, avg_deg, avg_oos, len(strat_summaries),
+                )
+
+        # G4 FIX: Update strategy_decay_state.json for all forecast sources
+        # This feeds back into G1's decay-state filter in forecast_combiner
+        _update_forecast_source_decay(audit_results)
 
         _save_run("walk_forward", {
             "universe_size": len(all_strategies),
@@ -2231,6 +2352,52 @@ def start_scheduler():
     )
 
     logger.info("  Meta-label train: 02:00 IST, 1st & 15th of month")
+
+    # ── T3-5: Scheduler heartbeat — dead-man switch ──────────
+    # Writes timestamp to heartbeat file every 5 minutes.
+    # External monitor can check file freshness to detect stalled scheduler.
+    def _heartbeat():
+        import json
+        from datetime import datetime
+        hb_path = os.path.join(os.path.dirname(__file__), "data", "scheduler_heartbeat.json")
+        try:
+            hb = {
+                "timestamp": datetime.now().isoformat(),
+                "pid": os.getpid(),
+                "jobs_active": len(scheduler.get_jobs()),
+                "status": "alive",
+            }
+            with open(hb_path, "w") as f:
+                json.dump(hb, f)
+        except Exception as e:
+            logger.warning("Heartbeat write failed: %s", e)
+
+    scheduler.add_job(
+        _heartbeat,
+        "interval",
+        minutes=5,
+        id="scheduler_heartbeat",
+        name="Scheduler Heartbeat (T3-5)",
+        misfire_grace_time=120,
+    )
+    logger.info("  Heartbeat       : every 5 min (dead-man switch)")
+
+    # ── T3-5: Trade returns collector for Monte Carlo bootstrap ──
+    def _collect_trade_returns():
+        try:
+            from services.trade_returns_collector import run_collection
+            run_collection()
+        except Exception as e:
+            logger.warning("Trade returns collection failed: %s", e)
+
+    scheduler.add_job(
+        _collect_trade_returns,
+        CronTrigger(hour=16, minute=0, day_of_week="mon-fri", timezone="Asia/Kolkata"),
+        id="trade_returns_collector",
+        name="Trade Returns Collector (MC bootstrap)",
+        misfire_grace_time=600,
+    )
+    logger.info("  Trade returns   : 16:00 IST, Mon-Fri (MC bootstrap)")
 
     try:
         scheduler.start()

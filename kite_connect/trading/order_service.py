@@ -258,6 +258,31 @@ def _persist_to_db(symbol, exchange, side, quantity, order_type, product,
     except Exception as exc:
         logger.debug("Order DB persist failed (non-fatal): %s", exc)
 
+    # T3-4: Persist slippage to analytics log for aggregate tracking
+    if slippage_bps > 0 and success:
+        try:
+            import json, os
+            from datetime import datetime
+            _data_dir = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                "data",
+            )
+            os.makedirs(_data_dir, exist_ok=True)
+            slip_path = os.path.join(_data_dir, "slippage_log.jsonl")
+            entry = {
+                "ts": datetime.now().isoformat(),
+                "symbol": symbol,
+                "side": side,
+                "qty": quantity,
+                "expected": price,
+                "filled": fill_price,
+                "slippage_bps": round(slippage_bps, 2),
+            }
+            with open(slip_path, "a") as f:
+                f.write(json.dumps(entry) + "\n")
+        except Exception:
+            pass  # Non-critical
+
 
 def _send_order_email(symbol, exchange, side, quantity, price, order_id,
                       status, error=None):

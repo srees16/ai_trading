@@ -551,7 +551,10 @@ def _run_layer_strategy(
                     if sig == "BUY":
                         weighted_buy += w
                     elif sig == "SELL":
-                        weighted_sell += w
+                        # G2 FIX: Dampen SELL votes — SELL signals have 39%
+                        # hit rate and -0.82 Sharpe at 20D.  Apply 0.3x weight
+                        # to prevent false SELL consensus from dragging scores.
+                        weighted_sell += w * 0.3
                     total_weight += w
             if total_weight > 0:
                 weighted_consensus = (weighted_buy - weighted_sell) / total_weight
@@ -1371,16 +1374,50 @@ class IntegratedScorer:
             if freshness_info:
                 layer_details_out["freshness"] = freshness_info
 
+            # G3 FIX (revised P3): BEAR regime BUY suppression — softened.
+            # Previous: TRENDING_BEAR=0.10 (90% suppression) — too aggressive.
+            # With P3 source-selective bear cap in carver_pipeline, the signals
+            # reaching the scorer are already filtered. Double-suppression was
+            # killing ~4-5% CAGR from legitimate mean-reversion/PEAD alpha.
+            _current_regime = regime_info.get("regime", "")
+            if _current_regime in ("CRISIS",) and final_score > 0:
+                logger.info(
+                    "G3: CRISIS regime — suppressing %s BUY score from %.3f to 0.0",
+                    ticker, final_score,
+                )
+                final_score = 0.0  # full block in crisis
+            elif _current_regime in ("TRENDING_BEAR", "HIGH_VOLATILITY") and final_score > 0:
+                _bear_scale = 0.35 if _current_regime == "TRENDING_BEAR" else 0.50  # P3: was 0.10/0.30
+                _old_score = final_score
+                final_score = final_score * _bear_scale
+                final_score = _clamp(final_score)
+                logger.info(
+                    "G3: %s regime — scaled %s BUY score from %.3f to %.3f (×%.0f%%)",
+                    _current_regime, ticker, _old_score, final_score, _bear_scale * 100,
+                )
+
             # Confidence = fraction of layers that returned data
             active_layers = sum(1 for s in layer_scores.values() if s is not None)
             total_layers = len(effective_weights)
             confidence = active_layers / total_layers if total_layers else 0.0
 
+            classification = _classify(final_score)
+
+            # G2/G5 FIX: Low-confidence signal filter
+            # Signals with confidence < 0.4 show -0.33 Sharpe — worse than
+            # random.  Demote to HOLD to prevent noise trades.
+            if confidence < 0.4 and classification != "HOLD":
+                logger.info(
+                    "G5: Demoting %s from %s to HOLD (confidence=%.2f < 0.4)",
+                    ticker, classification, confidence,
+                )
+                classification = "HOLD"
+
             verdict = StockVerdict(
                 ticker=ticker,
                 market=market,
                 final_score=round(final_score, 4),
-                classification=_classify(final_score),
+                classification=classification,
                 layer_scores=layer_scores,
                 layer_details=layer_details_out,
                 confidence=round(confidence, 2),

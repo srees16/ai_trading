@@ -1204,6 +1204,53 @@ class AutoExecutor:
 
         results: List[OrderResult] = []
 
+        # ── T5-4: KILL SWITCH check — block all orders if activated ──
+        try:
+            from config import Config as _KillCfg
+            if getattr(_KillCfg, 'KILL_SWITCH', False):
+                _cb("⛔ KILL SWITCH is active — all order placement blocked")
+                logger.critical("_place_orders: KILL_SWITCH=True, blocking %d plans", len(plans))
+                for plan in plans:
+                    results.append(OrderResult(
+                        symbol=plan.symbol, side=plan.side,
+                        quantity=plan.quantity, entry_price=plan.entry_price,
+                        stop_loss=plan.stop_loss, target_price=plan.target_price,
+                        success=False, error="KILL SWITCH active — orders blocked",
+                    ))
+                return results
+        except Exception as ks_exc:
+            logger.warning("Kill switch check error (non-blocking): %s", ks_exc)
+
+        # ── T5-4: Daily loss limit pre-check ──
+        try:
+            from kite_connect.trading.risk_manager import RiskManager as _DLRisk
+            from config import Config as _DLCfg
+            capital = getattr(_DLCfg, 'CARVER_INITIAL_CAPITAL', 500_000)
+            # Estimate today's realized P&L from positions
+            daily_pnl = 0.0
+            try:
+                positions = self.kite.positions()
+                day_positions = positions.get("day", []) if positions else []
+                daily_pnl = sum(float(p.get("pnl", 0)) for p in day_positions)
+            except Exception as pos_exc:
+                # T6-6: Conservative fallback — assume loss at limit threshold
+                # rather than permissively assuming pnl=0
+                daily_pnl = -(capital * 0.03)
+                logger.warning("Daily P&L fetch failed — conservative estimate ₹%.0f: %s", daily_pnl, pos_exc)
+            if _DLRisk.check_daily_loss_limit(capital, daily_pnl):
+                _cb(f"⛔ Daily loss limit breached (P&L: ₹{daily_pnl:,.0f}) — orders blocked")
+                logger.critical("_place_orders: Daily loss limit hit, blocking %d plans", len(plans))
+                for plan in plans:
+                    results.append(OrderResult(
+                        symbol=plan.symbol, side=plan.side,
+                        quantity=plan.quantity, entry_price=plan.entry_price,
+                        stop_loss=plan.stop_loss, target_price=plan.target_price,
+                        success=False, error=f"Daily loss limit breached (P&L: ₹{daily_pnl:,.0f})",
+                    ))
+                return results
+        except Exception as dl_exc:
+            logger.warning("Daily loss limit check error (non-blocking): %s", dl_exc)
+
         # â”€â”€ L1 fix: session expiry fast-fail â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         try:
             self.kite.profile()
@@ -1355,13 +1402,49 @@ class AutoExecutor:
                 if order_type == "LIMIT":
                     order_kwargs["price"] = plan.entry_price
 
-                try:
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                        future = pool.submit(place_order, **order_kwargs)
-                        resp = future.result(timeout=_ORDER_TIMEOUT_S)
-                except concurrent.futures.TimeoutError:
-                    resp = {"success": False, "error": f"Order timed out after {_ORDER_TIMEOUT_S}s"}
-                    logger.error("Order timeout for %s", plan.symbol)
+                # T5-6: Route TWAP-tagged orders through algo executor
+                _algo = getattr(plan, 'execution_algo', None)
+                if _algo and _algo.upper() in ("TWAP", "VWAP"):
+                    try:
+                        from services.twap_vwap_executor import TWAPExecutor
+                        _twap = TWAPExecutor(self.kite)
+                        resp = _twap.execute(
+                            symbol=plan.symbol,
+                            exchange=exchange,
+                            side=plan.side,
+                            total_quantity=plan.quantity,
+                            price=plan.entry_price,
+                            product=product,
+                            algo=_algo.upper(),
+                        )
+                        logger.info("TWAP execution for %s: %s", plan.symbol, resp)
+                    except Exception as twap_exc:
+                        logger.warning("TWAP execution failed for %s, falling back to direct: %s", plan.symbol, twap_exc)
+                        _algo = None  # Fall through to direct order below
+
+                if not _algo or _algo.upper() not in ("TWAP", "VWAP"):
+                    # T5-5: Retry with exponential backoff (max 3 attempts)
+                    resp = None
+                    for _attempt in range(3):
+                        try:
+                            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                                future = pool.submit(place_order, **order_kwargs)
+                                resp = future.result(timeout=_ORDER_TIMEOUT_S)
+                            if resp and resp.get("success"):
+                                break  # Success — exit retry loop
+                            if resp and "insufficient" in str(resp.get("error", "")).lower():
+                                break  # Don't retry margin errors
+                        except concurrent.futures.TimeoutError:
+                            resp = {"success": False, "error": f"Order timed out after {_ORDER_TIMEOUT_S}s"}
+                            logger.error("Order timeout for %s (attempt %d/3)", plan.symbol, _attempt + 1)
+                        except Exception as order_exc:
+                            resp = {"success": False, "error": str(order_exc)}
+                            logger.error("Order error for %s (attempt %d/3): %s", plan.symbol, _attempt + 1, order_exc)
+                        if _attempt < 2:
+                            _backoff = (2 ** _attempt) * 0.5  # 0.5s, 1.0s
+                            time.sleep(_backoff)
+                    if resp is None:
+                        resp = {"success": False, "error": "All 3 order attempts failed"}
                 time.sleep(_ORDER_DELAY_S)
 
                 result = OrderResult(
@@ -1566,6 +1649,11 @@ class AutoExecutor:
     ) -> List[OrderResult]:
         """Automated exit: match SELL/STRONG_SELL verdicts against holdings.
 
+        G2 FIX: SELL signals are value-destructive (39% hit rate, -0.82
+        Sharpe at 20D).  Only execute SELL exits when confidence >= 0.7
+        or the verdict is STRONG_SELL.  Low-confidence SELL verdicts are
+        demoted and skipped.
+
         Parameters
         ----------
         sell_verdicts : list[StockVerdict]
@@ -1581,19 +1669,47 @@ class AutoExecutor:
         _cb = progress_callback or (lambda m: None)
 
         if self.kite is None:
-            _cb("Kite not authenticated â€” cannot place SELL orders")
+            _cb("Kite not authenticated -- cannot place SELL orders")
+            return []
+
+        # G2 FIX: Gate SELL verdicts -- only allow high-confidence exits
+        # SELL signals have 39% hit rate and -0.82 Sharpe at 20D horizon.
+        # Only STRONG_SELL (extreme conviction) or high-confidence SELL pass.
+        qualified_sells = []
+        skipped_sells = []
+        for v in sell_verdicts:
+            confidence = getattr(v, "confidence", 0.0)
+            classification = getattr(v, "classification", "SELL")
+            if classification == "STRONG_SELL" or confidence >= 0.7:
+                qualified_sells.append(v)
+            else:
+                skipped_sells.append(v)
+
+        if skipped_sells:
+            skipped_tickers = [getattr(v, "ticker", "?") for v in skipped_sells]
+            _cb(
+                f"G2: Filtered {len(skipped_sells)} low-confidence SELL signals "
+                f"(conf < 0.7): {skipped_tickers}"
+            )
+            logger.info(
+                "G2: Skipped %d low-confidence SELL signals: %s",
+                len(skipped_sells), skipped_tickers,
+            )
+
+        if not qualified_sells:
+            _cb("No SELL verdicts passed G2 confidence gate -- no exits")
             return []
 
         # Fetch current holdings
         from kite_connect.trading.order_service import get_holdings
         holdings = get_holdings(self.kite)
         if not holdings:
-            _cb("No holdings found â€” nothing to exit")
+            _cb("No holdings found -- nothing to exit")
             return []
 
         sell_syms = [
             v.ticker.replace(".NS", "").replace(".BO", "")
-            for v in sell_verdicts
+            for v in qualified_sells
         ]
 
         # Build SELL plans
@@ -1602,5 +1718,5 @@ class AutoExecutor:
             _cb("No SELL verdicts match current holdings")
             return []
 
-        _cb(f"Placing {len(plans)} SELL orders â€¦")
+        _cb(f"Placing {len(plans)} SELL orders ...")
         return self._place_orders(plans, _cb)

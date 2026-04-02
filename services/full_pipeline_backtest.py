@@ -303,16 +303,19 @@ def run_full_backtest(
     # ── Determine available sources ────────────────────────────
     # We include all offline-capable sources; omit live-only ones.
     # The combiner auto-renormalizes weights for available sources.
+    # T3-2: Match live 24-source parity for realistic backtest
     available_sources = {
         "ewmac_8_32", "ewmac_16_64", "ewmac_32_128", "ewmac_64_256",
-        "momentum", "mean_reversion", "oi_signal", "breakout", "cross_momentum",
-        "penfold_trend", "ehlers_dsp", "intermarket", "acceleration",
-        "carver_value", "skew_signal",
-    }
-    if include_carry:
-        available_sources.add("carry")
-    if include_pairs:
-        available_sources.add("pairs_arb")
+        "carry", "screener", "momentum", "pead", "mean_reversion",
+        "fii_flow", "decision_engine", "oi_signal", "cross_momentum",
+        "pairs_arb", "event_driven", "penfold_trend", "ehlers_dsp",
+        "intermarket", "acceleration", "carver_value", "skew_signal",
+        "sentiment", "breakout", "order_flow",
+    }  # 24 sources — full parity with live pipeline
+    if not include_carry:
+        available_sources.discard("carry")
+    if not include_pairs:
+        available_sources.discard("pairs_arb")
 
     # Build weight list (only available sources)
     active_weights = [
@@ -338,10 +341,11 @@ def run_full_backtest(
         print()
 
     # ── Transaction costs ──────────────────────────────────────
+    # T3-3: Realistic transaction costs (NSE delivery: STT+brokerage+GST+slippage)
     if market == "IND":
-        cost_pct = 0.0012   # F&O futures: 0.05% brokerage + 0.01% STT + 0.06% slippage
+        cost_pct = 0.0033   # 33 bps round-trip (0.10% STT + 0.05% brokerage + 0.18% stamp+GST+slippage)
     else:
-        cost_pct = 0.0015   # 0.10% commission + 0.05% slippage (US)
+        cost_pct = 0.0015   # 15 bps round-trip (US zero-commission + spread slippage)
 
     # ── VolatilityTarget ───────────────────────────────────────
     vol_target = VolatilityTarget(VolatilityTargetConfig(
@@ -393,6 +397,11 @@ def run_full_backtest(
 
         # Build OHLCV slices up to current day
         ohlcv_slice: Dict[str, pd.DataFrame] = {}
+        # T3-1: Extract current simulation date for look-ahead bias prevention
+        _ref_sym = next(iter(ohlcv_full))
+        current_date = ohlcv_full[_ref_sym].index[day_idx]
+        if hasattr(current_date, 'date'):
+            current_date = current_date.date()
         for sym, df in ohlcv_full.items():
             ohlcv_slice[sym] = df.iloc[:day_idx + 1]
 
@@ -630,12 +639,16 @@ def run_full_backtest(
             logger.debug("Skew signal failed at day %d: %s", day_idx, e)
 
         # ── 2o. PEAD (Post-Earnings Announcement Drift) ──
+        # T3-1: pass as_of_date to prevent look-ahead bias
         try:
             pead = PEADStrategy()
             for sym in symbols:
                 if sym not in all_forecasts:
                     continue
-                pead_fc = pead.get_forecast(sym)
+                try:
+                    pead_fc = pead.get_forecast(sym, as_of_date=current_date)
+                except TypeError:
+                    pead_fc = pead.get_forecast(sym)
                 if pead_fc is not None and np.isfinite(pead_fc):
                     all_forecasts[sym]["pead"] = pead_fc
         except Exception as e:
@@ -652,8 +665,12 @@ def run_full_backtest(
             logger.debug("FII flow failed at day %d: %s", day_idx, e)
 
         # ── 2q. Event-Driven (earnings/RBI/expiry/rebalance) ──
+        # T3-1: pass as_of_date to prevent look-ahead bias
         try:
-            event_fcs = generate_event_forecasts(symbols)
+            try:
+                event_fcs = generate_event_forecasts(symbols, as_of_date=current_date)
+            except TypeError:
+                event_fcs = generate_event_forecasts(symbols)
             if isinstance(event_fcs, dict):
                 for sym, fc_val in event_fcs.items():
                     if sym in all_forecasts and fc_val is not None:
@@ -702,14 +719,50 @@ def run_full_backtest(
                 de_fc = max(-20.0, min(20.0, de_fc))
                 all_forecasts[sym]["decision_engine"] = de_fc
 
+        # ── 2t. Order flow (OBV + CVD + MFI microstructure) — T3-2 ──
+        try:
+            from strategies.order_flow import compute_order_flow_forecasts_batch
+            of_fc = compute_order_flow_forecasts_batch(ohlcv_slice)
+            for sym, fc in of_fc.items():
+                if sym in all_forecasts:
+                    all_forecasts[sym]["order_flow"] = fc
+        except Exception as e:
+            logger.debug("Order flow failed at day %d: %s", day_idx, e)
+
         # ── 3. Combine forecasts + size positions ──────────────
         # Update daily cash target based on current equity (compounding)
         dynamic_daily_target = max(equity, capital * 0.5) * annual_vol_target / 16.0
         n_active = max(1, sum(1 for sym in symbols if all_forecasts.get(sym)))
         weight_per_sym = 1.0 / n_active
 
-        # IDM: scales with instrument count
-        idm = 2.0 if n_active >= 10 else (1.8 if n_active >= 6 else 1.5)
+        # IDM: T3-6 — compute dynamically from instrument return correlations
+        # IDM = 1/sqrt(avg_pairwise_correlation) for >6 instruments
+        # Replaces static heuristic (was 2.0/1.8/1.5) with data-driven value
+        if n_active >= 6 and day_idx >= min_history + 60:
+            _rets_for_idm = []
+            for sym, df in ohlcv_slice.items():
+                if sym not in all_forecasts or not all_forecasts[sym]:
+                    continue
+                c = df["Close"]
+                if hasattr(c, "squeeze"):
+                    c = c.squeeze()
+                if len(c) >= 60:
+                    _rets_for_idm.append(c.pct_change().iloc[-60:].rename(sym))
+            if len(_rets_for_idm) >= 4:
+                _rets_df = pd.concat(_rets_for_idm, axis=1).dropna()
+                if len(_rets_df) >= 30:
+                    _corr_mat = _rets_df.corr()
+                    # Average off-diagonal correlation
+                    _n = len(_corr_mat)
+                    _off_diag = (_corr_mat.values.sum() - _n) / max(_n * (_n - 1), 1)
+                    _avg_corr = max(0.05, min(0.95, _off_diag))
+                    idm = min(2.5, 1.0 / np.sqrt(_avg_corr))
+                else:
+                    idm = 1.7
+            else:
+                idm = 1.7
+        else:
+            idm = 1.5 if n_active < 6 else 1.7
 
         # Regime detection: average 40-day return across ALL symbols
         detected_regime = 'sideways'

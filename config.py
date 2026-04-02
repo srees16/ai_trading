@@ -108,15 +108,17 @@ class Config:
     # =================================================================
     PAPER_TRADE_MODE: bool = os.getenv("CENTURION_PAPER_TRADE", "true").lower() in ("true", "1", "yes")  # FIX-4: env-toggleable
     KILL_SWITCH: bool = False               # G2: Emergency halt — blocks ALL order placement
+    KILL_SWITCH_AUTO_ENABLED: bool = True    # T0-2: Auto-trigger kill switch on DD>30% or VIX>40
+    KILL_SWITCH_VIX_THRESHOLD: float = 40.0 # T0-2: VIX level that auto-triggers kill switch
     SIGNAL_FRESHNESS_MAX_HOURS: int = 4      # Tier 1 Gap 5: reject OHLCV older than N hours
 
     # =================================================================
     # Carver Systematic Trading Framework (Robert Carver)
     # =================================================================
     CARVER_ENABLED: bool = True             # Enable Carver vol-targeted sizing (False = legacy Kelly)
-    CARVER_ANNUAL_VOL_TARGET: float = 0.75  # 75% annual vol target — targets 50%+ CAGR with DD mitigation
+    CARVER_ANNUAL_VOL_TARGET: float = 0.95  # A1: 95% annual vol target — targets 65%+ CAGR; A4 regime scaling prevents naked bear exposure
     CARVER_INITIAL_CAPITAL: float = 500_000.0  # Starting capital (₹)
-    CARVER_DEFAULT_IDM: float = 2.0         # Instrument Diversification Multiplier (10-15 stocks)
+    CARVER_DEFAULT_IDM: float = 2.3         # A2: IDM for 17 active sources at avg corr ~0.15-0.20 (Carver: 1/sqrt(avg_corr) ≈ 2.2-2.6)
     CARVER_MAX_LEVERAGE: float = 7.0        # 7× hard cap — high vol needs leverage headroom, regime caps limit actual use
     CARVER_INERTIA_THRESHOLD: float = 0.15  # 15% position change for re-trade (reduces churn)
     CARVER_COST_SPEED_LIMIT: float = 3.0    # SR must exceed 3× cost drag
@@ -125,7 +127,7 @@ class Config:
     # Vince Money Management — active/inactive equity insurance
     # Floor = HWM × insurance_pct.  0.15 = protect 15% of HWM as floor.
     # At HWM: full sizing.  At floor (15% DD): sizing → 0 (smooth halt).
-    VINCE_INSURANCE_PCT_IND: float = 0.20   # IND: 20% floor (smooth halt at 20% DD from HWM)
+    VINCE_INSURANCE_PCT_IND: float = 0.12   # IND: 12% floor (P4: was 20%, freed 8pp active equity → +2-3pp CAGR)
     VINCE_INSURANCE_PCT_US: float = 0.10    # US: 10% floor (more conservative for manual)
     VINCE_REGIME_SHRINK_ENABLED: bool = True  # Enable Vince shrink/stretch per regime
 
@@ -137,9 +139,9 @@ class Config:
     # Carver — US Stocks overrides (USD-based)
     CARVER_US_ENABLED: bool = True          # Enable Carver for US stocks pipeline
     CARVER_US_INITIAL_CAPITAL: float = 10_000.0  # Starting capital ($USD)
-    CARVER_US_ANNUAL_VOL_TARGET: float = 0.20    # 20% annual vol target
-    CARVER_US_DEFAULT_IDM: float = 1.5      # IDM for US diversified basket
-    CARVER_US_MAX_LEVERAGE: float = 1.0     # No leverage for swing equity
+    CARVER_US_ANNUAL_VOL_TARGET: float = 0.55    # 55% annual vol target (T2-1: raised from 20%)
+    CARVER_US_DEFAULT_IDM: float = 2.0      # IDM for US diversified basket (T2: raised from 1.5)
+    CARVER_US_MAX_LEVERAGE: float = 2.0     # 2× leverage for active equity (T2-1: raised from 1.0)
     CARVER_US_COST_ROUND_TRIP_PCT: float = 0.0010  # 10 bps round-trip (US zero-commission)
     CARVER_US_SPREAD_SLIPPAGE_PCT: float = 0.0005  # 5 bps spread+slippage (US large-cap)
 
@@ -189,8 +191,25 @@ class Config:
     # =================================================================
     # Gap C5: Time-based exit enforcement
     # =================================================================
-    MAX_HOLD_DAYS_SWING: int = 15          # Max holding period for swing trades
+    MAX_HOLD_DAYS_SWING: int = 15          # Max holding period for swing trades (default, overridden per-regime)
     MAX_HOLD_DAYS_POSITIONAL: int = 60     # Max holding period for positional trades
+
+    # A5: Regime-adaptive hold days — faster exits in bear/crisis, longer holds in bull
+    REGIME_HOLD_DAYS_SWING: dict = None  # populated below
+
+    @staticmethod
+    def get_regime_hold_days(regime: str, horizon: str = "swing") -> int:
+        """A5: Return max hold days for given regime and horizon."""
+        if horizon != "swing":
+            return 60
+        _HOLD = {
+            "trending_bull":    18,
+            "trending_bear":     7,
+            "range_bound":      10,
+            "high_volatility":   5,
+            "crisis":            3,
+        }
+        return _HOLD.get((regime or "").lower().strip(), 15)
 
     # =================================================================
     # HMM Regime Detection (Gap B1)

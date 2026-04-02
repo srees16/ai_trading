@@ -183,6 +183,25 @@ class TradeMonitor:
             logger.warning("TradeMonitor: HALTED — %d SL hits today, skipping poll", self._daily_sl_count)
             return [{"type": "DAILY_HALT", "sl_count": self._daily_sl_count}]
 
+        # T1-5 / R-6: Check daily notional loss limit (3% of capital)
+        try:
+            from kite_connect.trading.risk_manager import RiskManager
+            from config import Config
+            capital = getattr(Config, 'CARVER_INITIAL_CAPITAL', 500_000)
+            daily_pnl = sum(
+                getattr(t, 'realized_pnl', 0.0) for t in self._trades.values()
+                if not t.closed and getattr(t, 'realized_pnl', None)
+            )
+            if RiskManager.check_daily_loss_limit(daily_pnl, capital):
+                self._halted = True
+                logger.warning(
+                    "TradeMonitor: DAILY LOSS LIMIT hit (P&L: ₹%.0f, capital: ₹%.0f)",
+                    daily_pnl, capital,
+                )
+                return [{"type": "DAILY_LOSS_HALT", "daily_pnl": daily_pnl}]
+        except Exception:
+            pass  # Non-fatal, continue polling
+
         events: List[Dict] = []
 
         try:
@@ -621,7 +640,17 @@ class TradeMonitor:
             from config import Config
             hold_days = (datetime.now() - trade.opened_at).days
             horizon = getattr(Config, "CARVER_TRADE_HORIZON", "swing")
-            max_days = getattr(Config, "MAX_HOLD_DAYS_POSITIONAL", 60) if horizon == "positional" else getattr(Config, "MAX_HOLD_DAYS_SWING", 15)
+            # A5: Use regime-adaptive hold days if available
+            if horizon == "swing" and hasattr(Config, 'get_regime_hold_days'):
+                try:
+                    from services.regime_detector import get_current_regime
+                    _regime = get_current_regime()
+                    _regime_str = getattr(_regime, 'regime', '') if _regime else ''
+                    max_days = Config.get_regime_hold_days(str(_regime_str), horizon)
+                except Exception:
+                    max_days = getattr(Config, "MAX_HOLD_DAYS_SWING", 15)
+            else:
+                max_days = getattr(Config, "MAX_HOLD_DAYS_POSITIONAL", 60) if horizon == "positional" else getattr(Config, "MAX_HOLD_DAYS_SWING", 15)
 
             if hold_days < max_days:
                 return None
