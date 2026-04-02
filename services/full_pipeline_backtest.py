@@ -85,8 +85,9 @@ class BacktestResult:
 
 # ── Helpers ───────────────────────────────────────────────────
 
-def _download(sym: str, period: str, market: str) -> Optional[pd.DataFrame]:
-    """Download OHLCV via yfinance."""
+def _download(sym: str, period: str, market: str,
+              start: str = "", end: str = "") -> Optional[pd.DataFrame]:
+    """Download OHLCV via yfinance.  Prefers start/end dates over period."""
     try:
         import yfinance as yf
         import warnings
@@ -94,7 +95,13 @@ def _download(sym: str, period: str, market: str) -> Optional[pd.DataFrame]:
         ticker = f"{sym}{suffix}"
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            df = yf.download(ticker, period=period, auto_adjust=True, progress=False)
+            if start:
+                df = yf.download(ticker, start=start,
+                                 end=end or None,
+                                 auto_adjust=True, progress=False)
+            else:
+                df = yf.download(ticker, period=period,
+                                 auto_adjust=True, progress=False)
         if df is not None and len(df) >= 120:
             # Flatten multi-level columns if present
             if isinstance(df.columns, pd.MultiIndex):
@@ -199,6 +206,8 @@ def run_full_backtest(
     include_carry: bool = True,
     include_pairs: bool = True,
     verbose: bool = True,
+    start_date: str = "",
+    end_date: str = "",
 ) -> Dict:
     """Run a full 13-source pipeline backtest.
 
@@ -206,7 +215,7 @@ def run_full_backtest(
     ----------
     tickers : list of symbols (with .NS suffix for IND if needed)
     capital : initial capital
-    period : yfinance period string (1y, 2y, 5y, max)
+    period : yfinance period string (1y, 2y, 5y, max). Ignored if start_date is set.
     market : "US" or "IND"
     annual_vol_target : decimal (0.20 = 20%)
     min_history : minimum bars before trading starts
@@ -214,6 +223,8 @@ def run_full_backtest(
     include_carry : whether to compute carry (needs yfinance dividend data)
     include_pairs : whether to compute pairs_arb
     verbose : print progress
+    start_date : ISO date string e.g. "2012-01-01". Overrides period if set.
+    end_date : ISO date string e.g. "2025-12-31". Empty = latest available.
 
     Returns
     -------
@@ -266,15 +277,16 @@ def run_full_backtest(
 
     # ── Download data ──────────────────────────────────────────
     if verbose:
+        date_label = f"{start_date} to {end_date or 'latest'}" if start_date else period
         print(f"\n{'='*70}")
-        print(f"  FULL PIPELINE BACKTEST — {market} ({len(tickers)} tickers, {period})")
+        print(f"  FULL PIPELINE BACKTEST — {market} ({len(tickers)} tickers, {date_label})")
         print(f"  Capital: {capital:,.0f}  |  Vol Target: {annual_vol_target*100:.0f}%")
         print(f"{'='*70}\n")
         print("Downloading OHLCV data...")
 
     ohlcv_full: Dict[str, pd.DataFrame] = {}
     for sym in tickers:
-        df = _download(sym, period, market)
+        df = _download(sym, period, market, start=start_date, end=end_date)
         if df is not None:
             ohlcv_full[sym] = df
             if verbose:
