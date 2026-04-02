@@ -33,20 +33,16 @@ INERTIA_THRESHOLD = 0.10        # Only re-trade if target changes > 10%
 MAX_FORECAST_ABS = 20.0         # Hard cap on forecast magnitude
 
 # Vince regime shrink/stretch multipliers (Vince Ch.8: rotating markets)
-# DISABLED: Set to 1.0 for all regimes.  Regime de-risking is handled by:
-#   1) Carver vol targeting (auto-shrinks when instrument vol rises)
-#   2) Regime-adaptive leverage caps (Bull=7x, Range=5x, Bear=2x, Crisis=0.5x)
-#   3) Portfolio vol monitor (smooth quadratic DD curve)
-#   4) VIX pipeline scaling (caution/panic gates)
-#   5) Correlation spike detection
-#   6) Vince insurance floor (20% DD smooth halt)
-# Multiplied regime adjustments on top of these 6 layers over-constrains CAGR.
+# P2: REVERTED to 1.0 — triple regime dampening (REGIME_VOL_SCALE × VINCE_MULT × leverage cap)
+# was compressing effective sizing to ~26% in bear and ~48% in range, destroying alpha.
+# REGIME_VOL_SCALE in volatility_target.py is the single dampening layer (Carver's approach).
+# Leverage caps provide the hard safety net. Position-level multipliers on top over-constrain.
 VINCE_REGIME_MULTIPLIERS = {
-    "TRENDING_BULL":  1.00,     # full — all regimes at 1.0, regime caps do the work
-    "TRENDING_BEAR":  1.00,     # leverage cap limits to 2x (29% of max)
-    "RANGE_BOUND":    1.00,     # leverage cap limits to 5x (71% of max)
-    "HIGH_VOLATILITY": 1.00,    # vol targeting auto-shrinks + leverage cap at 2x
-    "CRISIS":         1.00,     # leverage cap limits to 0.5x (7% of max) + VIX panic gate
+    "TRENDING_BULL":  1.00,
+    "TRENDING_BEAR":  1.00,     # P2: vol target already scales to 65%; leverage cap at 2x
+    "RANGE_BOUND":    1.00,     # P2: vol target scales to 85%; mean-reversion alpha here
+    "HIGH_VOLATILITY": 1.00,    # P2: vol target scales to 50%; auto-shrinks via instrument vol
+    "CRISIS":         0.00,     # Keep: belt+suspenders — crisis must have zero positions
 }
 
 # G12: Read max leverage from Config; fallback to 1.0 (not 2.0)
@@ -172,7 +168,14 @@ def compute_position_size(
             pass
 
     # Step 4: Round to whole shares
-    target_quantity = round(portfolio_position)
+    # A6: Guarantee at least 1 share when forecast produces a fractional position.
+    # round(0.3) = 0 silently kills ~15-20% of legitimate small-cap signals.
+    if portfolio_position > 0:
+        target_quantity = max(1, round(portfolio_position))
+    elif portfolio_position < 0:
+        target_quantity = min(-1, round(portfolio_position))
+    else:
+        target_quantity = 0
 
     # Step 5: Leverage limit — cap notional at max_leverage × capital
     # GAP-3 FIX: Apply regime-adaptive leverage cap before position sizing
@@ -181,10 +184,14 @@ def compute_position_size(
         try:
             from config import Config as _LevCfg
             regime_upper = (regime or "").upper().replace(" ", "_")
-            if regime_upper in ("BEAR", "HIGH_VOLATILITY"):
+            # T0-1 FIX: regime detector outputs 'TRENDING_BEAR' not 'BEAR'.
+            # Must match both forms.  Previous code only checked 'BEAR' — NEVER matched.
+            if regime_upper in ("BEAR", "TRENDING_BEAR", "HIGH_VOLATILITY", "HIGH_VOL"):
                 regime_lev_cap = getattr(_LevCfg, 'LEVERAGE_BEAR_MAX', 2.0)
-            elif regime_upper == "CRISIS":
+            elif regime_upper in ("CRISIS",):
                 regime_lev_cap = getattr(_LevCfg, 'LEVERAGE_CRISIS_MAX', 0.5)
+            elif regime_upper in ("RANGE_BOUND", "RANGE"):
+                regime_lev_cap = getattr(_LevCfg, 'LEVERAGE_RANGE_MAX', 5.0)
             else:
                 regime_lev_cap = getattr(_LevCfg, 'LEVERAGE_BULL_MAX', max_leverage)
             effective_leverage = min(max_leverage, regime_lev_cap)
@@ -330,12 +337,16 @@ def compute_position_sizes_batch(
         _regime_hint = getattr(_GrossCfg, '_CURRENT_REGIME', '')
         if _regime_hint:
             _ru = _regime_hint.upper().replace(' ', '_')
-            if _ru in ('BEAR', 'HIGH_VOLATILITY'):
+            # T0-1 FIX: match TRENDING_BEAR / RANGE_BOUND regime names
+            if _ru in ('BEAR', 'TRENDING_BEAR', 'HIGH_VOLATILITY', 'HIGH_VOL'):
                 gross_cap_multiplier = min(gross_cap_multiplier,
                                            getattr(_GrossCfg, 'LEVERAGE_BEAR_MAX', 2.0))
-            elif _ru == 'CRISIS':
+            elif _ru in ('CRISIS',):
                 gross_cap_multiplier = min(gross_cap_multiplier,
                                            getattr(_GrossCfg, 'LEVERAGE_CRISIS_MAX', 0.5))
+            elif _ru in ('RANGE_BOUND', 'RANGE'):
+                gross_cap_multiplier = min(gross_cap_multiplier,
+                                           getattr(_GrossCfg, 'LEVERAGE_RANGE_MAX', 5.0))
     except Exception:
         gross_cap_multiplier = 2.0
     max_notional = gross_cap_multiplier * capital

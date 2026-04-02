@@ -481,6 +481,69 @@ def run_us_carver_pipeline(
     except Exception as exc:
         result.pipeline_log.append(f"  Sentiment: skipped ({exc})")
 
+    # ── T2-2: Screener forecasts (decision engine → forecast scalar) ──
+    screener_forecasts: Dict[str, float] = {}
+    try:
+        from services.forecast_scalar import screener_to_forecast
+        screener_forecasts = screener_to_forecast(list(ohlcv_cache.keys()), market="US")
+        if screener_forecasts:
+            result.pipeline_log.append(f"  Screener: {len(screener_forecasts)} symbols")
+    except Exception as exc:
+        result.pipeline_log.append(f"  Screener: skipped ({exc})")
+
+    # ── T2-2: Cross-momentum (cross-sectional winners/losers) ──
+    cross_mom_forecasts: Dict[str, float] = {}
+    try:
+        from strategies.cross_momentum import compute_cross_momentum_batch
+        cross_mom_forecasts = compute_cross_momentum_batch(ohlcv_cache)
+        if cross_mom_forecasts:
+            result.pipeline_log.append(f"  Cross-momentum: {len(cross_mom_forecasts)} symbols")
+    except Exception as exc:
+        result.pipeline_log.append(f"  Cross-momentum: skipped ({exc})")
+
+    # ── T2-2: Event-driven forecasts ──
+    event_forecasts: Dict[str, float] = {}
+    try:
+        from strategies.event_driven import compute_event_driven_batch
+        event_forecasts = compute_event_driven_batch(ohlcv_cache, market="US")
+        if event_forecasts:
+            result.pipeline_log.append(f"  Event-driven: {len(event_forecasts)} symbols")
+    except Exception as exc:
+        result.pipeline_log.append(f"  Event-driven: skipped ({exc})")
+
+    # ── T2-2: Breakout (20-day channel breakout) ──
+    breakout_forecasts: Dict[str, float] = {}
+    try:
+        from strategies.breakout import compute_breakout_batch
+        breakout_forecasts = compute_breakout_batch(ohlcv_cache)
+        if breakout_forecasts:
+            result.pipeline_log.append(f"  Breakout: {len(breakout_forecasts)} symbols")
+    except Exception as exc:
+        result.pipeline_log.append(f"  Breakout: skipped ({exc})")
+
+    # ── T2-2: Order flow (OBV + CVD + MFI microstructure) ──
+    order_flow_forecasts: Dict[str, float] = {}
+    try:
+        from strategies.order_flow import compute_order_flow_forecasts_batch
+        order_flow_forecasts = compute_order_flow_forecasts_batch(ohlcv_cache)
+        if order_flow_forecasts:
+            result.pipeline_log.append(f"  Order flow: {len(order_flow_forecasts)} symbols")
+    except Exception as exc:
+        result.pipeline_log.append(f"  Order flow: skipped ({exc})")
+
+    # ── T2-3: Regime detection for US pipeline ──
+    us_regime = "TRENDING_BULL"
+    try:
+        from services.regime_detector import detect_regime
+        import yfinance as _yf_regime
+        spy_df = _yf_regime.download("SPY", period="200d", progress=False)
+        if spy_df is not None and len(spy_df) >= 60:
+            regime_result = detect_regime(spy_df)
+            us_regime = getattr(regime_result, 'regime', us_regime) if regime_result else us_regime
+            result.pipeline_log.append(f"  US Regime: {us_regime}")
+    except Exception as exc:
+        result.pipeline_log.append(f"  US Regime detection skipped ({exc}): defaulting to {us_regime}")
+
     # ── Step 4: Build forecast dicts ─────────────────────────
     result.pipeline_log.append("Step 4: Building per-symbol forecast dicts")
     all_forecasts: Dict[str, Dict[str, float]] = {}
@@ -515,6 +578,17 @@ def run_us_carver_pipeline(
         # News sentiment forecast
         if sym in sentiment_forecasts:
             fc["sentiment"] = sentiment_forecasts[sym]
+        # T2-2: Additional sources for parity with IND pipeline (24 sources)
+        if sym in screener_forecasts:
+            fc["screener"] = screener_forecasts[sym]
+        if sym in cross_mom_forecasts:
+            fc["cross_momentum"] = cross_mom_forecasts[sym]
+        if sym in event_forecasts:
+            fc["event_driven"] = event_forecasts[sym]
+        if sym in breakout_forecasts:
+            fc["breakout"] = breakout_forecasts[sym]
+        if sym in order_flow_forecasts:
+            fc["order_flow"] = order_flow_forecasts[sym]
         if fc:
             all_forecasts[sym] = fc
 
@@ -532,12 +606,41 @@ def run_us_carver_pipeline(
                     fc[key] *= dampen
                 elif wt == "up" and fc[key] < -5.0:
                     fc[key] *= 0.5
-                elif wt == "up" and fc[key] < -5.0:
-                    fc[key] *= 0.5  # dampen sell in weekly uptrend
+
+        # G3 FIX: In broad bear, cap ALL positive forecasts at +3
+        if broad_bear:
+            _g3_capped = 0
+            for sym, fc in all_forecasts.items():
+                for key in list(fc.keys()):
+                    if fc[key] > 3.0:
+                        fc[key] = 3.0
+                        _g3_capped += 1
+            if _g3_capped:
+                result.pipeline_log.append(
+                    f"  -> G3: Broad bear — capped {_g3_capped} forecasts at +3"
+                )
 
     if not all_forecasts:
         result.pipeline_log.append("ABORT: No forecasts generated")
         return result
+
+    # ── T2-4: Source-selective bear cap (P3 equivalent) ──────
+    # In bear/crisis regimes, cap positive forecasts from trend sources
+    # but allow mean-reversion + event sources to retain signal
+    if us_regime in ("TRENDING_BEAR", "HIGH_VOLATILITY", "CRISIS"):
+        _bear_exempt = {"mean_reversion", "pairs_arb", "event_driven", "carver_value", "skew_signal"}
+        _bear_cap_count = 0
+        cap_val = 5.0 if us_regime == "TRENDING_BEAR" else 2.0
+        for sym, fc in all_forecasts.items():
+            for key in list(fc.keys()):
+                if key not in _bear_exempt and fc[key] > cap_val:
+                    fc[key] = cap_val
+                    _bear_cap_count += 1
+        if _bear_cap_count > 0:
+            result.pipeline_log.append(
+                f"  T2-4: Source-selective bear cap ({us_regime}): "
+                f"{_bear_cap_count} forecasts capped at {cap_val}"
+            )
 
     # ── Step 5: Combine forecasts ────────────────────────────
     result.pipeline_log.append("Step 5: Combining forecasts with FDM")

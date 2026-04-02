@@ -279,4 +279,30 @@ def assess_portfolio_risk(
     for alert in alerts:
         logger.warning("Portfolio risk: %s", alert)
 
+    # ── T0-2: Auto kill switch ──
+    # Trigger on DD > halt threshold OR VIX > 40
+    try:
+        from config import Config as _KSCfg
+        if getattr(_KSCfg, 'KILL_SWITCH_AUTO_ENABLED', True):
+            should_kill = False
+            if snap.emergency_liquidate or snap.drawdown_pct > dd_halt:
+                should_kill = True
+                logger.critical("AUTO KILL SWITCH: DD %.1f%% > halt %.0f%%", snap.drawdown_pct, dd_halt)
+            # Check VIX
+            try:
+                from services.regime_detector import get_current_vix
+                current_vix = get_current_vix()
+                vix_kill_threshold = getattr(_KSCfg, 'KILL_SWITCH_VIX_THRESHOLD', 40.0)
+                if current_vix and current_vix > vix_kill_threshold:
+                    should_kill = True
+                    logger.critical("AUTO KILL SWITCH: VIX %.1f > threshold %.0f", current_vix, vix_kill_threshold)
+            except Exception as vix_exc:
+                logger.warning("T5-8: VIX fetch failed for kill switch check: %s — proceeding without VIX guard", vix_exc)
+            if should_kill and not getattr(_KSCfg, 'KILL_SWITCH', False):
+                _KSCfg.KILL_SWITCH = True
+                logger.critical("KILL SWITCH ACTIVATED — all order placement blocked. Manual reset required.")
+                snap.alerts.append("KILL SWITCH ACTIVATED — manual reset required via Config.KILL_SWITCH = False")
+    except Exception as e:
+        logger.warning("Auto kill switch check failed: %s", e)
+
     return snap

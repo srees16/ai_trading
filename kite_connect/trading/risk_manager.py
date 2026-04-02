@@ -34,7 +34,7 @@ class RiskConfig:
 
     total_capital: float = float(os.getenv("CENTURION_TOTAL_CAPITAL", "500000"))  # from env or ₹5L default
     risk_per_trade_pct: float = 0.02      # Max 2 % of capital per trade
-    max_open_trades: int = 8              # Unified with Config.MAX_OPEN_TRADES (Gap C3 fix)
+    max_open_trades: int = 12             # C4: Synced with Config.MAX_OPEN_TRADES=12
     sl_method: str = "tighter"            # "ma50", "swing_low", "atr", "tighter"
     swing_lookback: int = 10              # Days for swing-low computation
     atr_multiplier: float = 2.0           # ATR × multiplier for ATR-based SL
@@ -47,10 +47,16 @@ class RiskConfig:
     # R1: Sector concentration limits
     max_sector_exposure_pct: float = 0.30 # Max 30% capital in one sector (aligned with RiskEngine)
     max_trades_per_sector: int = 3        # Max 3 open trades per sector
-    # R3: Trailing stop-loss
+    # R3: Trailing stop-loss — T1-4: ATR-scaled instead of fixed %
     trailing_sl_enabled: bool = True      # Enable trailing stop once profit > threshold
     trailing_sl_activation_pct: float = 0.05  # Activate trailing SL after 5% profit
-    trailing_sl_distance_pct: float = 0.03    # Trail SL 3% below current price
+    trailing_sl_distance_pct: float = 0.03    # Trail SL 3% below current price (fallback if ATR unavailable)
+    trailing_sl_atr_enabled: bool = True      # T1-4: Use ATR-based trailing SL
+    trailing_sl_atr_period: int = 14          # T1-4: ATR lookback period
+    trailing_sl_atr_multiplier_bull: float = 2.5  # T1-4: N×ATR distance in bull regime
+    trailing_sl_atr_multiplier_bear: float = 1.5  # T1-4: N×ATR distance in bear regime (tighter)
+    # T1-5: Daily notional loss limit
+    daily_notional_loss_limit_pct: float = 0.03  # T1-5: Halt if intraday P&L < -3% of capital
     # P7: Swing exit timing
     swing_max_hold_days: int = 15         # Force exit after 15 trading days (swing)
     positional_max_hold_days: int = 60    # Force exit after 60 trading days (positional)
@@ -92,6 +98,7 @@ class TradePlan:
     score: float             # from screener
     direction: str = "LONG"  # "LONG" or "SHORT"
     product: str = "CNC"     # "CNC", "MIS", "NRML"
+    execution_algo: Optional[str] = None  # T5-3: "TWAP", "VWAP", or None for direct
 
     def to_dict(self) -> dict:
         return {
@@ -107,6 +114,7 @@ class TradePlan:
             "score": round(self.score, 2),
             "direction": self.direction,
             "product": self.product,
+            "execution_algo": self.execution_algo,
         }
 
 
@@ -367,9 +375,10 @@ class RiskManager:
                     logger.info("VIX=%.1f (caution) — scaling positions to %.0f%%",
                                 vix, scale * 100)
         except Exception as exc:
-            # G9 fail-safe: default to caution scale when VIX data unavailable
-            scale = min(scale, self.cfg.vix_caution_scale)
-            logger.warning("VIX regime check failed — defaulting to caution scale %.0f%%: %s",
+            # P1-2 FIX: Do NOT penalize to caution_scale on API failure —
+            # that punishes normal-market positions when the data source is simply down.
+            # Keep scale=1.0 (unchanged) and log a warning.
+            logger.warning("VIX regime check failed — keeping current scale %.0f%% (no penalty): %s",
                            scale * 100, exc)
 
         try:
@@ -698,6 +707,17 @@ class RiskManager:
             if trade_horizon == "swing"
             else self.cfg.positional_max_hold_days
         )
+        # A5: Use regime-adaptive hold days for swing
+        if trade_horizon == "swing":
+            try:
+                from config import Config as _HoldCfg
+                if hasattr(_HoldCfg, 'get_regime_hold_days'):
+                    from services.regime_detector import get_current_regime
+                    _regime = get_current_regime()
+                    _regime_str = getattr(_regime, 'regime', '') if _regime else ''
+                    max_days = _HoldCfg.get_regime_hold_days(str(_regime_str), "swing")
+            except Exception:
+                pass
 
         plans: List[TradePlan] = []
         now = datetime.utcnow()
@@ -748,3 +768,84 @@ class RiskManager:
             )
 
         return plans
+
+    # ── T1-4: ATR-based trailing stop-loss ──────────────────
+    @staticmethod
+    def compute_atr_trailing_sl(
+        current_price: float,
+        ohlcv_df,
+        regime: str = "bull",
+        atr_period: int = 14,
+        atr_mult_bull: float = 2.5,
+        atr_mult_bear: float = 1.5,
+        fallback_pct: float = 0.03,
+    ) -> float:
+        """Compute ATR-scaled trailing stop distance.
+
+        Returns the stop-loss price (for long positions).
+        For volatile stocks, the trail is wider; for calm stocks, tighter.
+        In bear regime, use tighter multiplier to protect capital faster.
+        """
+        try:
+            import pandas as pd
+            if ohlcv_df is not None and len(ohlcv_df) >= atr_period and "High" in ohlcv_df.columns:
+                high = ohlcv_df["High"].tail(atr_period + 1)
+                low = ohlcv_df["Low"].tail(atr_period + 1)
+                close = ohlcv_df["Close"].tail(atr_period + 1)
+                tr = pd.concat([
+                    high - low,
+                    (high - close.shift(1)).abs(),
+                    (low - close.shift(1)).abs(),
+                ], axis=1).max(axis=1)
+                atr = float(tr.tail(atr_period).mean())
+                # P1-3 FIX: Validate regime string against known values
+                _VALID_REGIMES = {"bull", "trending_bull", "bear", "trending_bear",
+                                  "crisis", "high_volatility", "range_bound", "range"}
+                regime_lower = (regime or "").lower().strip()
+                if regime_lower and regime_lower not in _VALID_REGIMES:
+                    logger.warning("ATR trailing SL: unknown regime '%s' — defaulting to bull multiplier", regime)
+                if "bear" in regime_lower or "crisis" in regime_lower or "high_volatility" in regime_lower:
+                    mult = atr_mult_bear
+                else:
+                    mult = atr_mult_bull
+                sl_distance = atr * mult
+                sl_price = current_price - sl_distance
+                return max(sl_price, current_price * (1 - 0.10))  # Never wider than 10%
+        except Exception:
+            pass
+        # Fallback: fixed percentage
+        return current_price * (1 - fallback_pct)
+
+    # ── T1-5: Daily notional loss limit check ──────────────
+    @staticmethod
+    def check_daily_loss_limit(
+        total_capital: float,
+        daily_pnl: float,
+        limit_pct: float = 0.03,
+    ) -> bool:
+        """Return True if daily loss exceeds limit (should halt trading).
+
+        Parameters
+        ----------
+        total_capital : float
+            Total portfolio capital.
+        daily_pnl : float
+            Today's realized + unrealized P&L (negative = loss).
+        limit_pct : float
+            Max allowed loss as fraction of capital.
+
+        Returns
+        -------
+        bool
+            True if loss limit breached — caller should halt all new orders.
+        """
+        if total_capital <= 0:
+            return False
+        loss_threshold = -abs(total_capital * limit_pct)
+        if daily_pnl < loss_threshold:
+            logger.critical(
+                "T1-5: Daily loss limit breached! P&L=%.0f < threshold=%.0f (%.1f%% of %.0f)",
+                daily_pnl, loss_threshold, limit_pct * 100, total_capital,
+            )
+            return True
+        return False

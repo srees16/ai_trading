@@ -19,12 +19,16 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import pandas as pd
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# C3: Persistent forecast history for dynamic correlations
+_FORECAST_HISTORY_PATH = Path(__file__).resolve().parent.parent / "data" / "forecast_history.json"
 
 
 # ── FIX-1 helper: read Config values safely ────────────────────
@@ -107,11 +111,25 @@ class PipelineResult:
     position_sizes: Dict = field(default_factory=dict)
     risk_snapshot: Optional[object] = None
     options_overlay: Optional[object] = None   # Gap A1: OverlayResult
+    mc_result: Optional[object] = None         # T5-2: MC Kelly bootstrap result
+    hedge_result: Optional[object] = None      # T5-2: Hedge scan result
+    iron_condor_result: Optional[object] = None  # T5-2: Iron condor overlay result
     symbols_processed: int = 0
     symbols_with_trades: int = 0
     cost_filtered_count: int = 0
     pipeline_log: List[str] = field(default_factory=list)
     validation_stats: Dict = field(default_factory=dict)  # Aronson EBTA per-symbol confidence scores
+
+
+# T1-2: Module-level accessor for the current pipeline's vol target instance
+_active_pipeline_instance: Optional["CarverPipeline"] = None
+
+
+def _get_vol_target_instance():
+    """Return the active pipeline's VolatilityTarget, or None."""
+    if _active_pipeline_instance is not None:
+        return _active_pipeline_instance._vol_target
+    return None
 
 
 class CarverPipeline:
@@ -121,8 +139,36 @@ class CarverPipeline:
         self.cfg = config or PipelineConfig()
         self._vol_target = None
         self._hmm_model = None
-        self._forecast_history = {}  # Rolling forecast history for dynamic correlations
+        self._forecast_history = self._load_forecast_history()  # C3: persist across runs
         self._init_vol_target()
+
+    # ── C3: Forecast history persistence ──────────────────────
+
+    @staticmethod
+    def _load_forecast_history() -> Dict[str, list]:
+        """Load persisted forecast history from disk (C3 fix)."""
+        import json
+        try:
+            if _FORECAST_HISTORY_PATH.exists():
+                with open(_FORECAST_HISTORY_PATH, "r") as f:
+                    data = json.load(f)
+                # Keep only last 120 days to bound memory
+                return {k: v[-120:] for k, v in data.items() if isinstance(v, list)}
+        except Exception as exc:
+            logger.debug("Forecast history load failed: %s", exc)
+        return {}
+
+    def _save_forecast_history(self) -> None:
+        """Persist forecast history to disk (C3 fix)."""
+        import json
+        try:
+            _FORECAST_HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
+            # Keep only last 120 days
+            trimmed = {k: v[-120:] for k, v in self._forecast_history.items() if isinstance(v, list)}
+            with open(_FORECAST_HISTORY_PATH, "w") as f:
+                json.dump(trimmed, f)
+        except Exception as exc:
+            logger.debug("Forecast history save failed: %s", exc)
 
     def _init_vol_target(self):
         """Initialise the volatility target module.
@@ -172,6 +218,10 @@ class CarverPipeline:
         """
         result = PipelineResult()
         log = result.pipeline_log
+
+        # T1-2: Register this pipeline instance for options_overlay premium feedback
+        global _active_pipeline_instance
+        _active_pipeline_instance = self
 
         # ── Step 1: Compute instrument volatilities ────────────
         log.append("Step 1: Validating OHLCV data and computing volatilities...")
@@ -663,6 +713,31 @@ class CarverPipeline:
                     elif wt == "up" and val < -5.0:
                         fc_dict[src] = val * 0.5
                         dampened += 1
+
+            # G3 FIX (revised P3): Source-selective broad bear cap.
+            # Trend-following sources capped at +5 (was +3 — too aggressive).
+            # Mean-reversion, PEAD, pairs, event_driven, carver_value EXEMPT —
+            # these are designed for bear/range alpha and were being crushed.
+            if market_breadth_bearish:
+                _BEAR_EXEMPT_SOURCES = {
+                    "mean_reversion", "pead", "pairs_arb", "event_driven",
+                    "carver_value", "sentiment", "oi_signal",
+                }
+                _BEAR_CAP = 5.0  # P3: was 3.0, raised to allow stronger conviction signals
+                _g3_capped = 0
+                for sym, fc_dict in all_forecasts.items():
+                    for src, val in list(fc_dict.items()):
+                        if src in _BEAR_EXEMPT_SOURCES:
+                            continue  # P3: don't cap regime-appropriate sources
+                        if val > _BEAR_CAP:
+                            fc_dict[src] = _BEAR_CAP
+                            _g3_capped += 1
+                if _g3_capped:
+                    log.append(
+                        f"  -> G3/P3: Broad bear — capped {_g3_capped} trend forecasts "
+                        f"at +{_BEAR_CAP} (exempt: MR, PEAD, pairs, events, value, sentiment, OI)"
+                    )
+
             if dampened:
                 log.append(f"  -> Weekly Dow filter dampened {dampened} counter-trend signals")
                 if market_breadth_bearish:
@@ -746,6 +821,28 @@ class CarverPipeline:
         except Exception:
             pass
 
+        # ── T4-1: Thompson Sampling bandit weight modification ──
+        # Adaptively adjust source weights based on recent realized performance
+        try:
+            from services.thompson_sampling import ThompsonSamplingBandit
+            bandit = ThompsonSamplingBandit()
+            bandit.load_state()
+            sampled = bandit.sample_weights()
+            if sampled and len(sampled) >= 5:
+                # Blend sampled weights with Carver static weights (30% bandit, 70% Carver)
+                # T5-1 FIX: Mutate fw.weight directly (ForecastWeight is a mutable dataclass)
+                for fw in dynamic_weights:
+                    if fw.name in sampled:
+                        fw.weight = 0.70 * fw.weight + 0.30 * sampled[fw.name]
+                # Re-normalize
+                total_w = sum(fw.weight for fw in dynamic_weights)
+                if total_w > 0:
+                    for fw in dynamic_weights:
+                        fw.weight = fw.weight / total_w
+                log.append(f"  → Thompson Sampling: blended {len(sampled)} source weights")
+        except Exception as ts_exc:
+            log.append(f"  → Thompson Sampling skipped: {ts_exc}")
+
         combined = combine_forecasts_batch(
             all_forecasts, weights=dynamic_weights,
             vol_regime_multipliers=vol_regime_multipliers,
@@ -762,6 +859,8 @@ class CarverPipeline:
                         forecast_history[source] = []
                     forecast_history[source].append(val)
             self._forecast_history = forecast_history
+            # C3: persist to disk so next run has accumulated history
+            self._save_forecast_history()
 
             min_history = min((len(v) for v in forecast_history.values()), default=0)
             if min_history >= 60:
@@ -950,6 +1049,36 @@ class CarverPipeline:
             idm = get_default_idm(len(active_symbols))
         log.append(f"  → {len(active_symbols)} active symbols, IDM={idm:.2f}")
 
+        # ── T4-4: Risk-managed momentum scaling (Barroso & Santa-Clara) ──
+        # Scale momentum/trend forecasts by inverse of recent momentum vol
+        try:
+            from services.risk_managed_momentum import RiskManagedMomentum
+            rmm = RiskManagedMomentum()
+            # Identify momentum-sensitive sources
+            _mom_sources = {"momentum", "acceleration", "cross_momentum", "penfold_trend"}
+            _mom_raw = {}
+            for sym in active_symbols:
+                if sym in combined_values:
+                    _mom_raw[sym] = combined_values[sym]
+            if _mom_raw and ohlcv_cache:
+                _price_series = {
+                    sym: ohlcv_cache[sym]["Close"].squeeze()
+                    for sym in _mom_raw if sym in ohlcv_cache
+                }
+                rmm_result = rmm.adjust_forecasts(
+                    list(_mom_raw.keys()), _price_series, _mom_raw
+                )
+                _rmm_applied = 0
+                for sym, adj_fc in rmm_result.adjusted_forecast.items():
+                    scale = rmm_result.risk_scaling.get(sym, 1.0)
+                    if scale != 1.0 and sym in combined_values:
+                        combined_values[sym] = adj_fc
+                        _rmm_applied += 1
+                if _rmm_applied > 0:
+                    log.append(f"  → Risk-managed momentum: {_rmm_applied} forecasts scaled")
+        except Exception as rmm_exc:
+            log.append(f"  → Risk-managed momentum skipped: {rmm_exc}")
+
         # ── Step 7: Position sizing ────────────────────────────
         log.append("Step 7: Computing Carver position sizes...")
 
@@ -982,6 +1111,11 @@ class CarverPipeline:
         # Derive regime string from HMM snapshot regardless of leverage config
         if hmm_snap is not None and hmm_snap.confidence >= 0.5:
             detected_regime = hmm_snap.regime.lower() if hasattr(hmm_snap.regime, 'lower') else str(hmm_snap.regime).lower()
+
+        # A4: Set regime on vol target for regime-adaptive vol scaling
+        if detected_regime:
+            self._vol_target.set_regime(detected_regime)
+
         try:
             from config import Config as _LevCfg
             if getattr(_LevCfg, 'LEVERAGE_ENABLED', False):
@@ -1119,6 +1253,99 @@ class CarverPipeline:
                     notional_value=abs(scaled_qty) * ps.price if ps.price else 0.0,
                 )
             log.append(f"  → Gap C1: Scaled positions by {risk_snap.scale_factor:.0%} (risk level: {risk_snap.risk_level.value})")
+
+        # ── R-4: Correlation circuit breaker ──────────────────
+        # Reject new positions highly correlated (>0.80) with existing holdings
+        # Prevents concentrated sector bets during bull euphoria
+        if current_holdings:
+            try:
+                _corr_blocked = 0
+                _held_syms = [s for s, qty in current_holdings.items() if qty > 0]
+                _new_syms = [s for s, ps in position_sizes.items()
+                             if ps.trade_required and ps.target_quantity > ps.current_quantity
+                             and s not in _held_syms]
+                if _held_syms and _new_syms and ohlcv_cache:
+                    _all_check = _held_syms + _new_syms
+                    _rets = {}
+                    for s in _all_check:
+                        if s in ohlcv_cache:
+                            c = ohlcv_cache[s]["Close"]
+                            if hasattr(c, "squeeze"):
+                                c = c.squeeze()
+                            if len(c) >= 60:
+                                _rets[s] = c.pct_change().iloc[-60:]
+                    if len(_rets) >= 2:
+                        import pandas as _pd_corr
+                        _rets_df = _pd_corr.DataFrame(_rets).dropna()
+                        if len(_rets_df) >= 30:
+                            _corr_mat = _rets_df.corr()
+                            from dataclasses import replace as _dc_corr
+                            for new_sym in _new_syms:
+                                if new_sym not in _corr_mat.columns:
+                                    continue
+                                for held_sym in _held_syms:
+                                    if held_sym not in _corr_mat.columns:
+                                        continue
+                                    corr_val = abs(_corr_mat.loc[new_sym, held_sym])
+                                    if corr_val > 0.80:
+                                        # Block the new position
+                                        ps = position_sizes[new_sym]
+                                        position_sizes[new_sym] = _dc_corr(
+                                            ps, target_quantity=0, trade_delta=0,
+                                            trade_required=False, notional_value=0.0,
+                                        )
+                                        _corr_blocked += 1
+                                        break  # Already blocked this symbol
+                if _corr_blocked > 0:
+                    log.append(f"  → R-4: Blocked {_corr_blocked} new positions (corr > 0.80 with holdings)")
+            except Exception as corr_exc:
+                log.append(f"  → R-4: Correlation check skipped: {corr_exc}")
+        else:
+            log.append("  → R-4: Correlation breaker skipped (no current holdings)")
+
+        # ── Step 8-MC: Monte Carlo Kelly cap ──────────────────
+        # T1-1: Wire monte_carlo_risk.py into live sizing.
+        # Runs block bootstrap MC on recent trade returns → data-driven Kelly.
+        # If Carver sizing exceeds MC-Kelly implied max, scale down.
+        try:
+            from services.monte_carlo_risk import TradeBootstrapMonteCarlo
+            import json as _mc_json
+            _mc_trades_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "data", "recent_trade_returns.json"
+            )
+            if os.path.exists(_mc_trades_path):
+                with open(_mc_trades_path, "r") as _mcf:
+                    _mc_returns = _mc_json.load(_mcf)
+                if len(_mc_returns) >= 30:
+                    mc_engine = TradeBootstrapMonteCarlo(n_simulations=2000, n_trades_per_sim=200)
+                    mc_result = mc_engine.block_bootstrap(_mc_returns, block_size=5)
+                    result.mc_result = mc_result
+                    # Half-Kelly: use optimal_kelly / 2 as max sizing fraction
+                    half_kelly = max(0.05, min(mc_result.optimal_kelly * 0.5, 1.0))
+                    # If P(ruin) > 10%, force aggressive scale-down
+                    if mc_result.probability_of_ruin_pct > 10.0:
+                        mc_scale = max(0.3, half_kelly)
+                        from dataclasses import replace as _dc_mc
+                        for sym, ps in position_sizes.items():
+                            scaled_qty = max(0, int(ps.target_quantity * mc_scale))
+                            delta = scaled_qty - ps.current_quantity
+                            position_sizes[sym] = _dc_mc(
+                                ps,
+                                target_quantity=scaled_qty,
+                                trade_delta=delta,
+                                trade_required=abs(delta) > 0,
+                                notional_value=abs(scaled_qty) * ps.price if ps.price else 0.0,
+                            )
+                        log.append(f"  → MC Kelly: P(ruin)={mc_result.probability_of_ruin_pct:.1f}%, half-Kelly={half_kelly:.2f}, scaled all positions")
+                    else:
+                        log.append(f"  → MC Kelly: P(ruin)={mc_result.probability_of_ruin_pct:.1f}%, optimal_kelly={mc_result.optimal_kelly:.3f} — positions OK")
+                else:
+                    log.append(f"  → MC Kelly: only {len(_mc_returns)} trade returns (need ≥30), skipped")
+            else:
+                log.append("  → MC Kelly: no trade returns file yet, skipped")
+        except Exception as exc:
+            log.append(f"  → MC Kelly integration skipped: {exc}")
 
         # ── Step 8a: VIX-gated position scaling ───────────────
         # Pipes live India VIX into Carver pipeline (previously only in risk_manager)
@@ -1415,6 +1642,23 @@ class CarverPipeline:
             log.append(f"  → Aronson confidence gate: {_aronson_skipped} symbols skipped (conf < {_aronson_confidence_threshold})")
         log.append(f"  → {len(plans)} final trade plans generated")
 
+        # ── T4-5: TWAP/VWAP execution tagging for large orders ──
+        # Flag orders exceeding ₹5L for algorithmic execution splitting
+        try:
+            from services.twap_vwap_executor import should_use_algo_execution
+            _algo_tagged = 0
+            for plan in plans:
+                notional = getattr(plan, 'notional_value', 0) or (
+                    getattr(plan, 'entry_price', 0) * getattr(plan, 'quantity', 0)
+                )
+                if should_use_algo_execution(notional):
+                    plan.execution_algo = "TWAP"  # Tag for auto_executor
+                    _algo_tagged += 1
+            if _algo_tagged > 0:
+                log.append(f"  → TWAP/VWAP: {_algo_tagged} large orders tagged for algo execution")
+        except Exception as twap_exc:
+            log.append(f"  → TWAP/VWAP tagging skipped: {twap_exc}")
+
         # Aronson: persist per-symbol confidence scores
         result.validation_stats = {
             "confidence_scores": _aronson_confidence_map,
@@ -1472,6 +1716,31 @@ class CarverPipeline:
                 )
             else:
                 log.append("  → Options overlay: no opportunities (IV rank or VIX filter)")
+
+            # ── T4-3: Iron condor & strangle scan ──────────────
+            try:
+                from services.iron_condor_strangle import IronCondorStrangleOverlay
+                ic_overlay = IronCondorStrangleOverlay()
+                # Get spot prices and IV ranks for F&O stocks
+                _spot_prices = {sym: prices.get(sym, 0) for sym in iv_data}
+                _iv_ranks_map = {sym: iv_data[sym].get("iv_rank", 0) for sym in iv_data}
+                ic_result = ic_overlay.scan_all(
+                    symbols=list(_iv_ranks_map.keys()),
+                    spot_prices=_spot_prices,
+                    iv_data=_iv_ranks_map,
+                    available_capital=self._vol_target.current_capital,
+                    regime=current_regime,
+                )
+                result.iron_condor_result = ic_result
+                if ic_result.total_premium > 0:
+                    log.append(
+                        f"  → Iron condors: {len(ic_result.iron_condors)} IC + "
+                        f"{len(ic_result.strangles)} strangles = "
+                        f"₹{ic_result.total_premium:,.0f} premium"
+                    )
+            except Exception as ic_exc:
+                log.append(f"  → Iron condor scan skipped: {ic_exc}")
+
         except Exception as exc:
             log.append(f"  → Options overlay skipped: {exc}")
 
