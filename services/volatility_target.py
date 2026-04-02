@@ -27,6 +27,16 @@ logger = logging.getLogger(__name__)
 
 ANNUALISATION_FACTOR = 16  # sqrt(256)
 
+# A4+P2: Regime-adaptive vol scaling — SINGLE dampening layer (Carver approach).
+# P2 raised RANGE and BEAR from over-conservative levels. Leverage caps provide hard safety.
+REGIME_VOL_SCALE = {
+    "trending_bull":    1.00,
+    "trending_bear":    0.65,     # P2: was 0.55, raised to preserve mean-reversion alpha
+    "range_bound":      0.85,     # P2: was 0.75, raised — range is 25-40% of time, MR alpha here
+    "high_volatility":  0.50,     # P2: was 0.40, raised to allow vol-expansion signals (OI, breakout)
+    "crisis":           0.00,
+}
+
 
 @dataclass
 class VolatilityTargetConfig:
@@ -54,11 +64,6 @@ class VolatilityTargetConfig:
     # As DD deepens, active_frac → 0 smoothly.  0.0 = disabled (use legacy tiers).
     vince_insurance_pct: float = 0.0
 
-    # Vince active/inactive equity insurance.
-    # Floor = HWM × insurance_pct.  At HWM: active = (1-ins_pct) of equity.
-    # As DD deepens, active_frac → 0 smoothly.  0.0 = disabled (use legacy tiers).
-    vince_insurance_pct: float = 0.0
-
 
 class VolatilityTarget:
     """Portfolio-level volatility target with daily capital rolling.
@@ -77,6 +82,14 @@ class VolatilityTarget:
         self._realized_pnl: float = 0.0
         self._unrealized_pnl: float = 0.0
         self._high_water_mark: float = self.cfg.initial_capital
+        self._regime: str = ""  # A4: current regime for vol scaling
+
+    def set_regime(self, regime: str) -> None:
+        """A4: Set current market regime for vol target scaling."""
+        self._regime = (regime or "").lower().strip()
+        if self._regime:
+            scale = REGIME_VOL_SCALE.get(self._regime, 1.0)
+            logger.info("Vol target regime=%s, scale=%.2f", self._regime, scale)
 
     # ── Capital tracking ──────────────────────────────────────
 
@@ -109,6 +122,39 @@ class VolatilityTarget:
         """Set current mark-to-market unrealized P&L."""
         self._unrealized_pnl = amount
 
+    # ── Vince Active/Inactive Equity (C1 fix) ─────────────────
+
+    @property
+    def active_equity(self) -> float:
+        """Vince active equity: the portion of capital available for sizing.
+
+        Floor = HWM × insurance_pct.  Above HWM: active = equity − floor.
+        As DD deepens toward floor, active_equity → 0 smoothly.
+        When insurance is disabled (pct=0), returns current_capital.
+        """
+        ins = self.cfg.vince_insurance_pct
+        if ins <= 0:
+            return self.current_capital
+        floor = self._high_water_mark * ins
+        return max(0.0, self.current_capital - floor)
+
+    @property
+    def active_equity_fraction(self) -> float:
+        """Fraction of capital that is 'active' under Vince insurance.
+
+        At HWM: fraction = 1 − insurance_pct (e.g. 0.80 for 20% insurance).
+        At floor (DD = insurance_pct of HWM): fraction = 0.
+        When insurance disabled: returns 1.0.
+        """
+        ins = self.cfg.vince_insurance_pct
+        if ins <= 0:
+            return 1.0
+        cap = self.current_capital
+        if cap <= 0:
+            return 0.0
+        frac = self.active_equity / cap
+        return max(0.0, min(1.0, frac))
+
     # ── Volatility targets ────────────────────────────────────
 
     @property
@@ -122,10 +168,16 @@ class VolatilityTarget:
 
         When Vince insurance is enabled, uses active_equity instead of
         current_capital — providing smooth position scale-down as DD deepens.
+        A4: Applies regime-adaptive scaling so bear/crisis auto-shrinks.
         """
         if self.cfg.vince_insurance_pct > 0:
-            return self.active_equity * self.cfg.annual_vol_target_pct / ANNUALISATION_FACTOR
-        return self.annual_cash_vol_target / ANNUALISATION_FACTOR
+            base = self.active_equity * self.cfg.annual_vol_target_pct / ANNUALISATION_FACTOR
+        else:
+            base = self.annual_cash_vol_target / ANNUALISATION_FACTOR
+        # A4: regime scaling
+        if self._regime:
+            base *= REGIME_VOL_SCALE.get(self._regime, 1.0)
+        return base
 
     # ── Safety checks ─────────────────────────────────────────
 

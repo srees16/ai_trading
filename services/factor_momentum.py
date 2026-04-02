@@ -43,13 +43,30 @@ _WEIGHTS_PATH = Path(__file__).resolve().parent.parent / "data" / "factor_moment
 MIN_WEIGHT = 0.05   # no strategy below 5%
 MAX_WEIGHT = 0.40   # no strategy above 40%
 
-# Default strategy names that map to forecast combiner keys
+# Default strategy names that map to forecast combiner keys (all 22 sources)
 DEFAULT_STRATEGIES = [
     "ewmac_16_64",
     "ewmac_32_128",
     "ewmac_64_256",
+    "ewmac_8_32",
     "carry",
     "screener",
+    "mean_reversion",
+    "breakout",
+    "relative_momentum",
+    "volatility_breakout",
+    "trend_strength",
+    "pead",
+    "statistical_arbitrage",
+    "pairs_correlation",
+    "options_sentiment",
+    "orderflow_imbalance",
+    "overnight_drift",
+    "vwap_deviation",
+    "smart_money_divergence",
+    "bollinger_squeeze",
+    "gamma_exposure",
+    "regime_momentum",
 ]
 
 

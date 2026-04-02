@@ -56,8 +56,9 @@ def get_default_idm(n_instruments: int) -> float:
     if n_instruments in IDM_LOOKUP:
         return IDM_LOOKUP[n_instruments]
     if n_instruments > 10:
-        # Gradual asymptotic approach: IDM → ~2.0 for very diversified
-        return min(MAX_IDM, 1.82 + 0.03 * (n_instruments - 10))
+        # A9: Gradual asymptotic approach: IDM → ~2.3 for diversified portfolios
+        # (aligned with CARVER_DEFAULT_IDM=2.3 from config, capped at MAX_IDM=2.5)
+        return min(MAX_IDM, 1.82 + 0.05 * (n_instruments - 10))
     # Interpolate
     lo = max(k for k in IDM_LOOKUP if k <= n_instruments)
     hi = min(k for k in IDM_LOOKUP if k >= n_instruments)

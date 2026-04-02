@@ -449,4 +449,23 @@ class OptionsOverlay:
         for line in result.log:
             logger.info("Options overlay: %s", line)
 
+        # T1-2: Feed premium back to volatility_target for capital compounding
+        if total > 0:
+            try:
+                from services.volatility_target import VolatilityTarget
+                # Access the global vol target instance if available
+                from services.carver_pipeline import _get_vol_target_instance
+                vt = _get_vol_target_instance()
+                if vt is None:
+                    # P1-1 FIX: Fallback — create a standalone VolatilityTarget
+                    # so premium recycling works even outside a full pipeline run
+                    logger.info("No active pipeline — creating standalone VolatilityTarget for premium recycling")
+                    vt = VolatilityTarget()  # Uses default config from Config.py
+                if vt is not None:
+                    vt.add_realized(total)
+                    logger.info("Options premium ₹%.0f fed to vol target capital rolling", total)
+                    result.log.append(f"Premium ₹{total:,.0f} added to capital rolling")
+            except Exception as e:
+                logger.debug("Options premium→vol_target feed failed (non-fatal): %s", e)
+
         return result

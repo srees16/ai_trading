@@ -160,11 +160,28 @@ class RegimeDetector:
     _CACHE_TTL = timedelta(minutes=30)
 
     def detect(self, force: bool = False) -> RegimeSnapshot:
-        """Return the current regime snapshot (cached 30 min)."""
+        """Return the current regime snapshot (cached 30 min).
+
+        C9: Auto-invalidates cache if VIX spikes above 25 while
+        cached regime was non-crisis (flash-crash protection).
+        """
         now = datetime.utcnow()
         if not force and self._cache and self._cache_ts:
             if now - self._cache_ts < self._CACHE_TTL:
-                return self._cache
+                # C9: VIX spike auto-invalidation
+                if self._cache.regime not in (MarketRegime.CRISIS, MarketRegime.HIGH_VOLATILITY):
+                    try:
+                        live_vix = self._fetch_vix()
+                        if live_vix > 25:
+                            logger.warning(
+                                "C9: VIX=%.1f spike detected, cached regime=%s — forcing recompute",
+                                live_vix, self._cache.regime,
+                            )
+                            force = True
+                    except Exception:
+                        pass
+                if not force:
+                    return self._cache
 
         snap = self._compute()
         RegimeDetector._cache = snap
@@ -302,3 +319,22 @@ class RegimeDetector:
 
 # Singleton
 regime_detector = RegimeDetector()
+
+
+def get_current_regime() -> RegimeSnapshot:
+    """Module-level convenience function for callers that import get_current_regime."""
+    return regime_detector.detect()
+
+
+def detect_regime() -> RegimeSnapshot:
+    """Alias used by auto_executor."""
+    return regime_detector.detect()
+
+
+def get_current_vix() -> Optional[float]:
+    """Return current VIX value (India VIX from NSE), or None if unavailable."""
+    try:
+        snap = regime_detector.detect()
+        return getattr(snap, 'vix', None)
+    except Exception:
+        return None

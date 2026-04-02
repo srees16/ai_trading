@@ -41,6 +41,10 @@ class CostConfig:
     spread_slippage_pct: float = 0.0020   # 0.20% for liquid large-caps
     # Speed limit factor: cost_drag must be < SR / speed_limit_factor
     speed_limit_factor: float = 3.0       # Carver: "cost must be < SR/3"
+    # A7: Expected system SR for cost filter calibration.
+    # Using vol_target here was wrong — at 0.95 vol a forecast of 10 gave SR=0.095
+    # (absurdly low, blocking most trades). Use realistic post-G1 system SR instead.
+    expected_system_sr: float = 0.60
     # Annual turnover estimate for each rule variation
     # EWMAC(16,64): ~12-18 trades/year   → turnover ~30× position
     # EWMAC(64,256): ~4-6 trades/year    → turnover ~10×
@@ -134,10 +138,11 @@ def check_speed_limit(
     annual_cost_drag = turnover * (cost_per_trade / 2)
 
     # Estimated SR contribution from this forecast
-    # Forecast of 10 = neutral conviction → SR ≈ 0.20 (half-Kelly target)
-    # Scale linearly: forecast of 20 → SR ≈ 0.40
+    # A7: Use expected system SR (not vol target) to avoid conflation.
+    # Forecast of 10 = neutral conviction → SR ≈ 0.60 (system baseline)
+    # Scale linearly: forecast of 20 → SR ≈ 1.20
     forecast_strength = abs(combined_forecast) / 10.0
-    estimated_sr = forecast_strength * annual_vol_target_pct
+    estimated_sr = forecast_strength * cfg.expected_system_sr
 
     # Speed limit: SR contribution must be > factor × cost drag
     min_sr = cfg.speed_limit_factor * annual_cost_drag
