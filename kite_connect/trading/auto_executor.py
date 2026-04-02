@@ -1232,8 +1232,11 @@ class AutoExecutor:
                 positions = self.kite.positions()
                 day_positions = positions.get("day", []) if positions else []
                 daily_pnl = sum(float(p.get("pnl", 0)) for p in day_positions)
-            except Exception:
-                pass  # If positions fetch fails, proceed with pnl=0
+            except Exception as pos_exc:
+                # T6-6: Conservative fallback — assume loss at limit threshold
+                # rather than permissively assuming pnl=0
+                daily_pnl = -(capital * 0.03)
+                logger.warning("Daily P&L fetch failed — conservative estimate ₹%.0f: %s", daily_pnl, pos_exc)
             if _DLRisk.check_daily_loss_limit(capital, daily_pnl):
                 _cb(f"⛔ Daily loss limit breached (P&L: ₹{daily_pnl:,.0f}) — orders blocked")
                 logger.critical("_place_orders: Daily loss limit hit, blocking %d plans", len(plans))

@@ -650,7 +650,7 @@ def run_us_carver_pipeline(
     # ── Step 5b: Masters prediction quality gate ─────────────
     try:
         from services.forecast_combiner import apply_masters_quality_gate
-        gated = apply_masters_quality_gate(combined, ohlcv_data)
+        gated = apply_masters_quality_gate(combined, ohlcv_cache)
         gated_values = {sym: cf.combined_forecast for sym, cf in gated.items()}
         n_dampened = sum(
             1 for sym in gated_values

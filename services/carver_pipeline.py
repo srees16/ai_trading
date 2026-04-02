@@ -825,20 +825,33 @@ class CarverPipeline:
         # Adaptively adjust source weights based on recent realized performance
         try:
             from services.thompson_sampling import ThompsonSamplingBandit
+            from services.forecast_combiner import ForecastWeight
             bandit = ThompsonSamplingBandit()
             bandit.load_state()
             sampled = bandit.sample_weights()
-            if sampled and len(sampled) >= 5:
+            if sampled and len(sampled) >= 5 and dynamic_weights is not None:
+                # T6-1 FIX: Normalize dynamic_weights to list of ForecastWeight
+                # (may be dict from HMM blending or factor-momentum)
+                if isinstance(dynamic_weights, dict):
+                    _ts_weights = [ForecastWeight(name=k, weight=v) for k, v in dynamic_weights.items()]
+                elif isinstance(dynamic_weights, list):
+                    _ts_weights = dynamic_weights
+                else:
+                    _ts_weights = []
                 # Blend sampled weights with Carver static weights (30% bandit, 70% Carver)
-                # T5-1 FIX: Mutate fw.weight directly (ForecastWeight is a mutable dataclass)
-                for fw in dynamic_weights:
+                for fw in _ts_weights:
                     if fw.name in sampled:
                         fw.weight = 0.70 * fw.weight + 0.30 * sampled[fw.name]
                 # Re-normalize
-                total_w = sum(fw.weight for fw in dynamic_weights)
+                total_w = sum(fw.weight for fw in _ts_weights)
                 if total_w > 0:
-                    for fw in dynamic_weights:
+                    for fw in _ts_weights:
                         fw.weight = fw.weight / total_w
+                # Write back to dynamic_weights (dict or list form)
+                if isinstance(dynamic_weights, dict):
+                    dynamic_weights = {fw.name: fw.weight for fw in _ts_weights}
+                else:
+                    dynamic_weights = _ts_weights
                 log.append(f"  → Thompson Sampling: blended {len(sampled)} source weights")
         except Exception as ts_exc:
             log.append(f"  → Thompson Sampling skipped: {ts_exc}")
@@ -852,12 +865,20 @@ class CarverPipeline:
         try:
             from services.forecast_combiner import compute_rolling_correlations
             forecast_history = getattr(self, '_forecast_history', {})
-            # Append today's forecasts to history (averaged across symbols)
+            # T6-4 FIX: Average forecasts across symbols per source per run
+            # (previously appended every symbol value, inflating history)
+            _source_sums: Dict[str, float] = {}
+            _source_counts: Dict[str, int] = {}
             for sym, fc_dict in all_forecasts.items():
                 for source, val in fc_dict.items():
-                    if source not in forecast_history:
-                        forecast_history[source] = []
-                    forecast_history[source].append(val)
+                    if np.isfinite(val):
+                        _source_sums[source] = _source_sums.get(source, 0.0) + val
+                        _source_counts[source] = _source_counts.get(source, 0) + 1
+            for source in _source_sums:
+                avg_val = _source_sums[source] / max(1, _source_counts[source])
+                if source not in forecast_history:
+                    forecast_history[source] = []
+                forecast_history[source].append(avg_val)
             self._forecast_history = forecast_history
             # C3: persist to disk so next run has accumulated history
             self._save_forecast_history()
@@ -1070,6 +1091,8 @@ class CarverPipeline:
                 )
                 _rmm_applied = 0
                 for sym, adj_fc in rmm_result.adjusted_forecast.items():
+                    if not np.isfinite(adj_fc):  # T6-3: Skip NaN/Inf from RMM
+                        continue
                     scale = rmm_result.risk_scaling.get(sym, 1.0)
                     if scale != 1.0 and sym in combined_values:
                         combined_values[sym] = adj_fc

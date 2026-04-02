@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
@@ -26,6 +27,9 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# T6-5: Thread-safe lock for KILL_SWITCH mutations
+_kill_switch_lock = threading.Lock()
 
 
 class RiskLevel(Enum):
@@ -298,10 +302,12 @@ def assess_portfolio_risk(
                     logger.critical("AUTO KILL SWITCH: VIX %.1f > threshold %.0f", current_vix, vix_kill_threshold)
             except Exception as vix_exc:
                 logger.warning("T5-8: VIX fetch failed for kill switch check: %s — proceeding without VIX guard", vix_exc)
-            if should_kill and not getattr(_KSCfg, 'KILL_SWITCH', False):
-                _KSCfg.KILL_SWITCH = True
-                logger.critical("KILL SWITCH ACTIVATED — all order placement blocked. Manual reset required.")
-                snap.alerts.append("KILL SWITCH ACTIVATED — manual reset required via Config.KILL_SWITCH = False")
+            if should_kill:
+                with _kill_switch_lock:
+                    if not getattr(_KSCfg, 'KILL_SWITCH', False):
+                        _KSCfg.KILL_SWITCH = True
+                        logger.critical("KILL SWITCH ACTIVATED — all order placement blocked. Manual reset required.")
+                        snap.alerts.append("KILL SWITCH ACTIVATED — manual reset required via Config.KILL_SWITCH = False")
     except Exception as e:
         logger.warning("Auto kill switch check failed: %s", e)
 
