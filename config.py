@@ -122,11 +122,11 @@ class Config:
     # Carver Systematic Trading Framework (Robert Carver)
     # =================================================================
     CARVER_ENABLED: bool = True             # Enable Carver vol-targeted sizing (False = legacy Kelly)
-    CARVER_ANNUAL_VOL_TARGET: float = 0.65  # Recal: 65% vol target — math ceiling ~75% gross with SR=0.50, IDM=2.3; regime+DD scaling dampens to ~55-60% effective
+    CARVER_ANNUAL_VOL_TARGET: float = 0.55  # R4: 55% vol — bull effective 71.5% (×1.30 regime), ~63% gross with SR=0.50, IDM=2.3; survivable through all regimes
     CARVER_INITIAL_CAPITAL: float = 500_000.0  # Starting capital (₹)
     CARVER_DEFAULT_IDM: float = 2.3         # A2: IDM for 17 active sources at avg corr ~0.15-0.20 (Carver: 1/sqrt(avg_corr) ≈ 2.2-2.6)
     CARVER_MAX_LEVERAGE: float = 4.0        # Recal: 4× hard cap — survivable through 2013 taper, 2015 China, 2020 COVID with DD breakers
-    CARVER_INERTIA_THRESHOLD: float = 0.20  # G3: raised from 15% to 20% — reduce churn with 100-stock universe
+    CARVER_INERTIA_THRESHOLD: float = 0.30  # R4: raised from 20% to 30% — reduce cost death spiral from frequent small rebalances
     CARVER_COST_SPEED_LIMIT: float = 3.0    # SR must exceed 3× cost drag
     CARVER_TRADE_HORIZON: str = "swing"     # "swing" (3σ bear/5σ bull) or "positional"
 

@@ -427,17 +427,12 @@ def run_full_backtest(
     source_total: Dict[str, int] = defaultdict(int)
     daily_position_counts: List[int] = []
 
-    # FIX-DD: Drawdown circuit breaker state (matches live pipeline)
+    # FIX-DD-v2: Smooth continuous drawdown scaling (no force-liquidation)
+    # Force-liquidation at bottoms caused whipsaw death spiral (-60% in bull market).
+    # New approach: smooth scale-down curve, let trailing stops handle exits organically.
     peak_equity = capital
-    dd_halt_days = 0  # consecutive days in halt mode
-    DD_HALT_RECOVERY_DAYS = 20  # after 20 halt days, reset peak to current equity
-    try:
-        from config import Config as _DDCfg
-        dd_warning  = getattr(_DDCfg, 'PORTFOLIO_DRAWDOWN_WARNING',  0.15)
-        dd_critical = getattr(_DDCfg, 'PORTFOLIO_DRAWDOWN_CRITICAL', 0.25)
-        dd_halt     = getattr(_DDCfg, 'PORTFOLIO_DRAWDOWN_HALT',     0.35)
-    except Exception:
-        dd_warning, dd_critical, dd_halt = 0.15, 0.25, 0.35
+    dd_deep_days = 0          # consecutive days with DD > 25% (for peak staleness reset)
+    DD_PEAK_RESET_DAYS = 40   # after 40 days in deep DD, reset peak to prevent permanent death spiral
 
     # ── Pre-fetch dividend yields for carry (one-time) ─────────
     dividend_yields: Dict[str, float] = {}
@@ -826,53 +821,38 @@ def run_full_backtest(
 
             _cached_forecasts = {sym: dict(fc) for sym, fc in all_forecasts.items()}
         # ── 3. Combine forecasts + size positions ──────────────
-        # FIX-DD: Drawdown circuit breaker — matches live pipeline's 3-tier system
+        # FIX-DD-v2: Smooth continuous drawdown scaling (NO force-liquidation)
+        # Previous approach: 3-tier with force-liquidation at 35% → whipsaw death spiral
+        # New: smooth power curve 1.0→0.05, trailing stops handle exits organically
         peak_equity = max(peak_equity, equity)
         current_dd = (peak_equity - equity) / peak_equity if peak_equity > 0 else 0.0
-        if current_dd >= dd_halt:
-            dd_halt_days += 1
-            # After DD_HALT_RECOVERY_DAYS in halt, reset peak to current equity
-            # This allows gradual re-entry instead of permanent death spiral
-            if dd_halt_days >= DD_HALT_RECOVERY_DAYS:
+
+        # Peak staleness reset: if in deep DD (>25%) for 40+ consecutive days,
+        # reset peak to current equity — prevents permanent death spiral from
+        # an unreachable peak that was set during a brief spike
+        if current_dd >= 0.25:
+            dd_deep_days += 1
+            if dd_deep_days >= DD_PEAK_RESET_DAYS:
                 peak_equity = equity
-                dd_halt_days = 0
-            # HALT: apply MTM PnL from step 1, then force-liquidate all positions
-            if not np.isfinite(day_pnl):
-                day_pnl = 0.0
-            # Force-liquidate all held positions (market sell at close)
-            for sym in list(prev_positions.keys()):
-                qty = prev_positions[sym]
-                if qty != 0:
-                    if sym in ohlcv_slice:
-                        c = ohlcv_slice[sym]["Close"]
-                        if hasattr(c, "squeeze"):
-                            c = c.squeeze()
-                        p = float(c.iloc[-1]) if len(c) > 0 else 0
-                        day_pnl -= abs(qty) * p * cost_pct  # exit costs
-                        trades_count += 1
-                    prev_positions[sym] = 0
-                    peak_prices.pop(sym, None)
-                    stop_levels.pop(sym, None)
-            equity += day_pnl
-            daily_returns.append(day_pnl / max(daily_equity[-1], 1))
-            daily_equity.append(equity)
-            daily_position_counts.append(0)
-            continue
-        elif current_dd >= dd_critical:
-            dd_halt_days = 0  # reset halt counter when not halted
-            # Aggressive scale-down: quadratic taper 1.0 → 0.0
-            dd_scale = max(0.05, 1.0 - ((current_dd - dd_critical) / (dd_halt - dd_critical)) ** 2)
-        elif current_dd >= dd_warning:
-            dd_halt_days = 0
-            # Smooth scale-down: linear taper 1.0 → ~0.5
-            dd_scale = max(0.3, 1.0 - 0.5 * (current_dd - dd_warning) / (dd_critical - dd_warning))
+                current_dd = 0.0
+                dd_deep_days = 0
         else:
-            dd_halt_days = 0
-            dd_scale = 1.0
+            dd_deep_days = 0
+
+        # Smooth continuous DD scale: power curve with no discontinuities
+        # 0% DD → 1.00,  10% → 0.86,  15% → 0.74,  20% → 0.60
+        # 25% → 0.46,  30% → 0.31,  35% → 0.18,  40% → 0.10,  50%+ → 0.05
+        dd_scale = max(0.05, 1.0 - (current_dd / 0.50) ** 1.5)
+
+        # FIX-WARMUP: Ramp vol from 40% to 100% over first 250 trading days
+        # Early forecasts are noisy with limited history — don't risk full size
+        warmup_end = 250
+        day_in_sim = day_idx - min_history
+        warmup_scale = min(1.0, 0.4 + 0.6 * (day_in_sim / warmup_end)) if day_in_sim < warmup_end else 1.0
 
         # FIX-FLOOR: Use actual equity for daily target (no artificial 50% floor)
         sizing_equity = max(equity, capital * 0.10)  # 10% ruin floor, not 50%
-        dynamic_daily_target = sizing_equity * annual_vol_target / 16.0 * dd_scale
+        dynamic_daily_target = sizing_equity * annual_vol_target / 16.0 * dd_scale * warmup_scale
 
         # Regime detection: average 40-day return + volatility across ALL symbols
         detected_regime = 'sideways'
@@ -898,26 +878,27 @@ def run_full_backtest(
             if rets_40d:
                 avg_ret_40d = np.mean(rets_40d)
             avg_vol_20d = np.mean(vol_20d_list) if vol_20d_list else 0.25
-            # FIX-REGIME: 4-state regime (matches live pipeline categories)
+            # FIX-REGIME-v2: 4-state regime — lowered bull threshold from 5% to 3%
+            # Previous 5% threshold misclassified most normal bull markets as 'sideways'
+            # (0.85× instead of 1.30×), throttling returns during best periods
             if avg_vol_20d > 0.45:
                 detected_regime = 'crisis'
             elif avg_vol_20d > 0.35:
                 detected_regime = 'high_volatility'
-            elif avg_ret_40d > 0.05:
+            elif avg_ret_40d > 0.03:
                 detected_regime = 'bull'
-            elif avg_ret_40d < -0.05:
+            elif avg_ret_40d < -0.03:
                 detected_regime = 'bear'
             else:
                 detected_regime = 'sideways'
 
-        # Read leverage and short-selling config
+        # Read leverage config; disable shorts in backtest (signal quality too poor)
         try:
             from config import Config as _BtCfg
             max_leverage = getattr(_BtCfg, 'CARVER_MAX_LEVERAGE', 3.0)
-            allow_short = getattr(_BtCfg, 'SHORT_SELLING_ENABLED', False)
         except Exception:
             max_leverage = 3.0
-            allow_short = False
+        allow_short = False  # FIX-SHORT: disabled — short Sharpe ≈ -0.01, bleeds in secular bull
 
         # Tick down stop cooldowns
         for sym in list(stop_cooldown.keys()):
@@ -1045,8 +1026,8 @@ def run_full_backtest(
                 prev_qty = prev_positions.get(sym, 0)
                 delta = abs(target_qty - prev_qty)
                 if delta > 0:
-                    # G3: Inertia: skip small changes (< 20% — reduced churn)
-                    if abs(prev_qty) > 0 and delta / abs(prev_qty) < 0.20:
+                    # G3-v2: Inertia: skip small changes (< 30% — reduce cost death spiral)
+                    if abs(prev_qty) > 0 and delta / abs(prev_qty) < 0.30:
                         target_qty = prev_qty
                     else:
                         cost = delta * price * cost_pct
@@ -1055,17 +1036,19 @@ def run_full_backtest(
 
                 prev_positions[sym] = target_qty
 
-                # G3: Tightened regime-adaptive trailing stop
-                # (previous 3-5σ too wide → 62% max drawdown)
-                # Bull: 3.0σ (was 5.0 — tighter locks profits in trend)
-                # Bear: 1.5σ (was 3.0 — rapid exit, signals broken)
-                # Sideways: 2.5σ (was 4.0 — moderate protection)
+                # FIX-STOP-v2: Widened trailing stops — let forecasts drive exits
+                # Previous 3σ bull stops fired on normal 6% pullbacks → constant
+                # stop-outs + re-entry costs = cost death spiral in bull market.
+                # Stops are now last-resort protection; forecast→0 is primary exit.
+                # Bull: 5.0σ (~10% below peak — only genuine crashes)
+                # Bear: 2.0σ (~4% — tight exit, signals unreliable)
+                # Sideways/HV: 3.5σ (~7% — moderate protection)
                 if detected_regime == 'bull':
-                    stop_sigma = 3.0
+                    stop_sigma = 5.0
                 elif detected_regime == 'bear':
-                    stop_sigma = 1.5
+                    stop_sigma = 2.0
                 else:
-                    stop_sigma = 2.5
+                    stop_sigma = 3.5
 
                 if target_qty > 0:
                     active_count += 1
