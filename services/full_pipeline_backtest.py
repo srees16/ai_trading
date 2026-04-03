@@ -427,6 +427,18 @@ def run_full_backtest(
     source_total: Dict[str, int] = defaultdict(int)
     daily_position_counts: List[int] = []
 
+    # FIX-DD: Drawdown circuit breaker state (matches live pipeline)
+    peak_equity = capital
+    dd_halt_days = 0  # consecutive days in halt mode
+    DD_HALT_RECOVERY_DAYS = 20  # after 20 halt days, reset peak to current equity
+    try:
+        from config import Config as _DDCfg
+        dd_warning  = getattr(_DDCfg, 'PORTFOLIO_DRAWDOWN_WARNING',  0.15)
+        dd_critical = getattr(_DDCfg, 'PORTFOLIO_DRAWDOWN_CRITICAL', 0.25)
+        dd_halt     = getattr(_DDCfg, 'PORTFOLIO_DRAWDOWN_HALT',     0.35)
+    except Exception:
+        dd_warning, dd_critical, dd_halt = 0.15, 0.25, 0.35
+
     # ── Pre-fetch dividend yields for carry (one-time) ─────────
     dividend_yields: Dict[str, float] = {}
     if include_carry:
@@ -814,14 +826,60 @@ def run_full_backtest(
 
             _cached_forecasts = {sym: dict(fc) for sym, fc in all_forecasts.items()}
         # ── 3. Combine forecasts + size positions ──────────────
-        # Update daily cash target based on current equity (compounding)
-        dynamic_daily_target = max(equity, capital * 0.5) * annual_vol_target / 16.0
+        # FIX-DD: Drawdown circuit breaker — matches live pipeline's 3-tier system
+        peak_equity = max(peak_equity, equity)
+        current_dd = (peak_equity - equity) / peak_equity if peak_equity > 0 else 0.0
+        if current_dd >= dd_halt:
+            dd_halt_days += 1
+            # After DD_HALT_RECOVERY_DAYS in halt, reset peak to current equity
+            # This allows gradual re-entry instead of permanent death spiral
+            if dd_halt_days >= DD_HALT_RECOVERY_DAYS:
+                peak_equity = equity
+                dd_halt_days = 0
+            # HALT: apply MTM PnL from step 1, then force-liquidate all positions
+            if not np.isfinite(day_pnl):
+                day_pnl = 0.0
+            # Force-liquidate all held positions (market sell at close)
+            for sym in list(prev_positions.keys()):
+                qty = prev_positions[sym]
+                if qty != 0:
+                    if sym in ohlcv_slice:
+                        c = ohlcv_slice[sym]["Close"]
+                        if hasattr(c, "squeeze"):
+                            c = c.squeeze()
+                        p = float(c.iloc[-1]) if len(c) > 0 else 0
+                        day_pnl -= abs(qty) * p * cost_pct  # exit costs
+                        trades_count += 1
+                    prev_positions[sym] = 0
+                    peak_prices.pop(sym, None)
+                    stop_levels.pop(sym, None)
+            equity += day_pnl
+            daily_returns.append(day_pnl / max(daily_equity[-1], 1))
+            daily_equity.append(equity)
+            daily_position_counts.append(0)
+            continue
+        elif current_dd >= dd_critical:
+            dd_halt_days = 0  # reset halt counter when not halted
+            # Aggressive scale-down: quadratic taper 1.0 → 0.0
+            dd_scale = max(0.05, 1.0 - ((current_dd - dd_critical) / (dd_halt - dd_critical)) ** 2)
+        elif current_dd >= dd_warning:
+            dd_halt_days = 0
+            # Smooth scale-down: linear taper 1.0 → ~0.5
+            dd_scale = max(0.3, 1.0 - 0.5 * (current_dd - dd_warning) / (dd_critical - dd_warning))
+        else:
+            dd_halt_days = 0
+            dd_scale = 1.0
 
-        # Regime detection: average 40-day return across ALL symbols
+        # FIX-FLOOR: Use actual equity for daily target (no artificial 50% floor)
+        sizing_equity = max(equity, capital * 0.10)  # 10% ruin floor, not 50%
+        dynamic_daily_target = sizing_equity * annual_vol_target / 16.0 * dd_scale
+
+        # Regime detection: average 40-day return + volatility across ALL symbols
         detected_regime = 'sideways'
         avg_ret_40d = 0.0
         if day_idx >= 40:
             rets_40d = []
+            vol_20d_list = []
             for sym in symbols:
                 if sym not in ohlcv_slice:
                     continue
@@ -832,12 +890,25 @@ def run_full_backtest(
                     r = float(pc.iloc[-1] / pc.iloc[-40] - 1)
                     if np.isfinite(r):
                         rets_40d.append(r)
+                if len(pc) >= 20:
+                    daily_rets = pc.pct_change().iloc[-20:]
+                    v = float(daily_rets.std()) * np.sqrt(252)
+                    if np.isfinite(v):
+                        vol_20d_list.append(v)
             if rets_40d:
                 avg_ret_40d = np.mean(rets_40d)
-                if avg_ret_40d > 0.05:
-                    detected_regime = 'bull'
-                elif avg_ret_40d < -0.05:
-                    detected_regime = 'bear'
+            avg_vol_20d = np.mean(vol_20d_list) if vol_20d_list else 0.25
+            # FIX-REGIME: 4-state regime (matches live pipeline categories)
+            if avg_vol_20d > 0.45:
+                detected_regime = 'crisis'
+            elif avg_vol_20d > 0.35:
+                detected_regime = 'high_volatility'
+            elif avg_ret_40d > 0.05:
+                detected_regime = 'bull'
+            elif avg_ret_40d < -0.05:
+                detected_regime = 'bear'
+            else:
+                detected_regime = 'sideways'
 
         # Read leverage and short-selling config
         try:
@@ -936,16 +1007,14 @@ def run_full_backtest(
                 vol_scalar = dynamic_daily_target / ivv
                 position = (forecast / 10.0) * vol_scalar * weight_per_sym * idm
 
-                # G3: Direction-aware regime scaling (tuned to actual signal quality):
-                # Bull: longs 1.5×, shorts 0.3× (Sharpe 0.73 in bull — push hard)
-                # Bear: shorts 1.0×, longs 0.15× (Sharpe -0.01 — near-halt longs)
-                # Sideways: both 1.0× (Sharpe 0.68 — decent both ways)
-                if detected_regime == 'bull':
-                    regime_scale = 1.5 if position >= 0 else 0.3
-                elif detected_regime == 'bear':
-                    regime_scale = 1.0 if position < 0 else 0.15
-                else:
-                    regime_scale = 1.0
+                # FIX-REGIME: Use live pipeline's REGIME_VOL_SCALE values
+                # (previously used ad-hoc 1.5/0.3/1.0/0.15 that didn't match live)
+                # bull=1.30, bear=0.15, sideways=0.85, high_vol=0.35, crisis=0.00
+                _REGIME_VOL = {
+                    'bull': 1.30, 'bear': 0.15, 'sideways': 0.85,
+                    'high_volatility': 0.35, 'crisis': 0.00,
+                }
+                regime_scale = _REGIME_VOL.get(detected_regime, 0.85)
                 position *= regime_scale
 
                 target_qty = round(position)
@@ -1017,6 +1086,24 @@ def run_full_backtest(
                     stop_levels.pop(sym, None)
 
         daily_position_counts.append(active_count)
+
+        # FIX-LEV: Portfolio-wide leverage cap enforcement
+        # Sum of all |position × price| must not exceed equity × max_leverage
+        total_exposure = 0.0
+        for sym, qty in prev_positions.items():
+            if qty == 0 or sym not in ohlcv_slice:
+                continue
+            c = ohlcv_slice[sym]["Close"]
+            if hasattr(c, "squeeze"):
+                c = c.squeeze()
+            p = float(c.dropna().iloc[-1]) if len(c.dropna()) > 0 else 0
+            total_exposure += abs(qty) * p
+        max_total_exposure = max(equity, capital * 0.10) * max_leverage
+        if total_exposure > max_total_exposure and total_exposure > 0:
+            scale_down = max_total_exposure / total_exposure
+            for sym in list(prev_positions.keys()):
+                if prev_positions[sym] != 0:
+                    prev_positions[sym] = round(prev_positions[sym] * scale_down)
 
         # ── 4. Update equity ───────────────────────────────────
         if not np.isfinite(day_pnl):

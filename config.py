@@ -122,10 +122,10 @@ class Config:
     # Carver Systematic Trading Framework (Robert Carver)
     # =================================================================
     CARVER_ENABLED: bool = True             # Enable Carver vol-targeted sizing (False = legacy Kelly)
-    CARVER_ANNUAL_VOL_TARGET: float = 0.90  # P1: Kelly-optimal for SR≈0.50 with IDM≈2.3 → σ*=90%; regime scaling dampens to ~75% effective
+    CARVER_ANNUAL_VOL_TARGET: float = 0.65  # Recal: 65% vol target — math ceiling ~75% gross with SR=0.50, IDM=2.3; regime+DD scaling dampens to ~55-60% effective
     CARVER_INITIAL_CAPITAL: float = 500_000.0  # Starting capital (₹)
     CARVER_DEFAULT_IDM: float = 2.3         # A2: IDM for 17 active sources at avg corr ~0.15-0.20 (Carver: 1/sqrt(avg_corr) ≈ 2.2-2.6)
-    CARVER_MAX_LEVERAGE: float = 6.0        # P1: 6× hard cap — proportional to 90% vol target; regime caps limit bear/crisis
+    CARVER_MAX_LEVERAGE: float = 4.0        # Recal: 4× hard cap — survivable through 2013 taper, 2015 China, 2020 COVID with DD breakers
     CARVER_INERTIA_THRESHOLD: float = 0.20  # G3: raised from 15% to 20% — reduce churn with 100-stock universe
     CARVER_COST_SPEED_LIMIT: float = 3.0    # SR must exceed 3× cost drag
     CARVER_TRADE_HORIZON: str = "swing"     # "swing" (3σ bear/5σ bull) or "positional"
@@ -137,10 +137,10 @@ class Config:
     VINCE_INSURANCE_PCT_US: float = 0.10    # US: 10% floor (more conservative for manual)
     VINCE_REGIME_SHRINK_ENABLED: bool = True  # Enable Vince shrink/stretch per regime
 
-    # Drawdown thresholds — graduated for 90% vol target (wider to avoid premature halt)
-    PORTFOLIO_DRAWDOWN_WARNING: float = 0.20    # P1: 20% DD → smooth scale-down begins (was 15%)
-    PORTFOLIO_DRAWDOWN_CRITICAL: float = 0.35   # P1: 35% DD → aggressive scale-down (was 25%)
-    PORTFOLIO_DRAWDOWN_HALT: float = 0.45       # P1: 45% DD → halt all new trades (was 30%)
+    # Drawdown thresholds — graduated for 65% vol target
+    PORTFOLIO_DRAWDOWN_WARNING: float = 0.15    # Recal: 15% DD → smooth scale-down begins (tighter to protect capital)
+    PORTFOLIO_DRAWDOWN_CRITICAL: float = 0.25   # Recal: 25% DD → aggressive scale-down
+    PORTFOLIO_DRAWDOWN_HALT: float = 0.35       # Recal: 35% DD → halt all new trades (survive worst bear markets)
 
     # Carver — US Stocks overrides (USD-based)
     CARVER_US_ENABLED: bool = True          # Enable Carver for US stocks pipeline
@@ -399,10 +399,10 @@ class Config:
     # Phase 3 — Leverage via Futures
     # =================================================================
     LEVERAGE_ENABLED: bool = True            # G11: Enabled — regime-adaptive leverage
-    LEVERAGE_MAX: float = 6.0               # P1: Absolute max leverage (synced with CARVER_MAX_LEVERAGE at 90% vol)
-    LEVERAGE_BULL_MAX: float = 6.0           # P1: 6× in strong bull — proportional to 90% vol target
-    LEVERAGE_RANGE_MAX: float = 4.0          # P1: 4× in range-bound — alpha capture with DD layers
-    LEVERAGE_BEAR_MAX: float = 2.0           # P1: 2× in bear — defensive, stops+VIX gate provide DD protection
+    LEVERAGE_MAX: float = 4.0               # Recal: 4× absolute cap (synced with CARVER_MAX_LEVERAGE at 65% vol)
+    LEVERAGE_BULL_MAX: float = 4.0           # Recal: 4× in strong bull — capture trend with controlled risk
+    LEVERAGE_RANGE_MAX: float = 3.0          # Recal: 3× in range-bound — alpha capture with DD layers
+    LEVERAGE_BEAR_MAX: float = 1.5           # Recal: 1.5× in bear — defensive, stops+VIX gate provide DD protection
     LEVERAGE_CRISIS_MAX: float = 0.5         # 50% sizing in crisis — near-cash (VIX panic gate also blocks entries)
     FUTURES_INSTRUMENT: str = "NIFTY"        # NIFTY or BANKNIFTY
     FUTURES_LOT_SIZE: int = 25               # NIFTY lot size

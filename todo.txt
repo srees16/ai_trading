@@ -6,6 +6,10 @@ also verify if monte carlo evaluation of trading system is implemented
 prompts:
 
 ~~~~~~
+here is the plan:
+1. focus on the backtest results first, fine tune the settings and configuration to ensure the 13-year backtest produces realistic estimate of CAGR > 60+% and not just theoretical estimate
+2. once the above step is completed, fix the task registration so it actually runs such that live testing can start for a real world CAGR estimates
+~~~~~~
 identify gaps to achieve 60+% CAGR for Ind stocks and ensure to implement fixes required to meet the objective
 ~~~~~~
 /Godmode
