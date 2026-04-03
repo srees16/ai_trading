@@ -27,14 +27,16 @@ logger = logging.getLogger(__name__)
 
 ANNUALISATION_FACTOR = 16  # sqrt(256)
 
-# A4+P2: Regime-adaptive vol scaling — SINGLE dampening layer (Carver approach).
-# P2 raised RANGE and BEAR from over-conservative levels. Leverage caps provide hard safety.
+# A4+P2+G3: Regime-adaptive vol scaling — SINGLE dampening layer (Carver approach).
+# G3 FIX: Bull boosted to 1.30× (Sharpe=0.73 in bull, strongest regime).
+# Bear slashed to 0.15× (Sharpe=-0.01, signals are broken in bear).
+# Net effect: capture more upside, protect capital in bear.
 REGIME_VOL_SCALE = {
-    "trending_bull":    1.00,
-    "trending_bear":    0.65,     # P2: was 0.55, raised to preserve mean-reversion alpha
-    "range_bound":      0.85,     # P2: was 0.75, raised — range is 25-40% of time, MR alpha here
-    "high_volatility":  0.50,     # P2: was 0.40, raised to allow vol-expansion signals (OI, breakout)
-    "crisis":           0.00,
+    "trending_bull":    1.30,     # G3: was 1.00 — bull is highest-alpha regime, push sizing
+    "trending_bear":    0.15,     # G3: was 0.65 — bear signals BROKEN (Sharpe -0.01), near-halt
+    "range_bound":      0.85,     # P2: preserved — range is 25-40% of time, MR alpha here
+    "high_volatility":  0.35,     # G3: was 0.50 — more conservative in high-vol chaos
+    "crisis":           0.00,     # Full halt
 }
 
 

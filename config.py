@@ -126,7 +126,7 @@ class Config:
     CARVER_INITIAL_CAPITAL: float = 500_000.0  # Starting capital (₹)
     CARVER_DEFAULT_IDM: float = 2.3         # A2: IDM for 17 active sources at avg corr ~0.15-0.20 (Carver: 1/sqrt(avg_corr) ≈ 2.2-2.6)
     CARVER_MAX_LEVERAGE: float = 4.0        # 4× hard cap — proportional to 55% vol target (was 7× at 95%)
-    CARVER_INERTIA_THRESHOLD: float = 0.15  # 15% position change for re-trade (reduces churn)
+    CARVER_INERTIA_THRESHOLD: float = 0.20  # G3: raised from 15% to 20% — reduce churn with 100-stock universe
     CARVER_COST_SPEED_LIMIT: float = 3.0    # SR must exceed 3× cost drag
     CARVER_TRADE_HORIZON: str = "swing"     # "swing" (3σ bear/5σ bull) or "positional"
 
@@ -192,7 +192,7 @@ class Config:
     # =================================================================
     # Gap C3: Unified max open trades (single source of truth)
     # =================================================================
-    MAX_OPEN_TRADES: int = 12              # Max concurrent positions (12 for diversification at 55% vol)
+    MAX_OPEN_TRADES: int = 25              # G3: raised from 12 — 100-stock universe needs more slots for diversification
 
     # =================================================================
     # Gap C5: Time-based exit enforcement
