@@ -84,6 +84,12 @@ class ChapterRunRequest(BaseModel):
     date_end: Optional[str] = None
 
 
+class OverlayScanRequest(BaseModel):
+    symbols: Optional[List[str]] = None
+    capital: float = 500_000
+    regime: str = "RANGE_BOUND"
+
+
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -1295,15 +1301,14 @@ async def options_chain(symbol: str, expiry: str):
 
 
 @router.post("/options/overlay/scan")
-async def options_overlay_scan(
-    symbols: Optional[List[str]] = None,
-    capital: float = 500_000,
-    regime: str = "RANGE_BOUND",
-):
+async def options_overlay_scan(req: OverlayScanRequest = OverlayScanRequest()):
     """Run full options overlay scan — covered calls, CSPs, iron condors, strangles.
 
     Returns combined strategy recommendations with yield estimates.
     """
+    symbols = req.symbols
+    capital = req.capital
+    regime = req.regime
     try:
         from services.options_overlay import OptionsOverlay
         from services.iron_condor_strangle import IronCondorStrangleOverlay
@@ -1806,6 +1811,20 @@ async def aronson_progress(batch_id: str):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+@router.get("/aronson/history")
+async def aronson_history(page: int = 1, limit: int = 50):
+    """Get Aronson Lab batch run history."""
+    db = get_db_service()
+    if not db:
+        return {"data": [], "total": 0}
+    try:
+        data = db.get_lab_history("aronson", page=page, limit=limit)
+        total = db.count_lab_runs("aronson")
+        return {"data": data, "total": total}
+    except Exception:
+        return {"data": [], "total": 0}
+
+
 # ─── Ehlers DSP Lab ─────────────────────────────────────────────────────
 
 @router.get("/ehlers/chapters")
@@ -1866,6 +1885,20 @@ async def ehlers_progress(batch_id: str):
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
+@router.get("/ehlers/history")
+async def ehlers_history(page: int = 1, limit: int = 50):
+    """Get Ehlers DSP Lab batch run history."""
+    db = get_db_service()
+    if not db:
+        return {"data": [], "total": 0}
+    try:
+        data = db.get_lab_history("ehlers", page=page, limit=limit)
+        total = db.count_lab_runs("ehlers")
+        return {"data": data, "total": total}
+    except Exception:
+        return {"data": [], "total": 0}
+
+
 # ─── Vince Risk Lab ─────────────────────────────────────────────────────
 
 @router.get("/vince/chapters")
@@ -1924,6 +1957,20 @@ async def vince_progress(batch_id: str):
             import json
             yield f"data: {json.dumps({'batch_id': batch_id, 'total': 0, 'completed': 0, 'chapters': {}})}\n\n"
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@router.get("/vince/history")
+async def vince_history(page: int = 1, limit: int = 50):
+    """Get Vince Risk Lab batch run history."""
+    db = get_db_service()
+    if not db:
+        return {"data": [], "total": 0}
+    try:
+        data = db.get_lab_history("vince", page=page, limit=limit)
+        total = db.count_lab_runs("vince")
+        return {"data": data, "total": total}
+    except Exception:
+        return {"data": [], "total": 0}
 
 
 # ─── RAG Pipeline ────────────────────────────────────────────────────────
