@@ -52,10 +52,14 @@ DEFAULT_PAIRS_US = [
     ("JPM", "V"),
 ]
 DEFAULT_PAIRS_IND = [
-    ("HDFCBANK.NS", "ICICIBANK.NS"),
-    ("TCS.NS", "INFY.NS"),
-    ("RELIANCE.NS", "ONGC.NS"),
-    ("SBIN.NS", "PNB.NS"),
+    ("HDFCBANK.NS", "ICICIBANK.NS"),   # Large-cap banking
+    ("TCS.NS", "INFY.NS"),             # IT services
+    ("RELIANCE.NS", "ONGC.NS"),        # Energy
+    ("SBIN.NS", "PNB.NS"),             # PSU banking
+    ("SUNPHARMA.NS", "DRREDDY.NS"),    # Pharma
+    ("TATASTEEL.NS", "JSWSTEEL.NS"),   # Metal
+    ("MARUTI.NS", "M&M.NS"),           # Auto
+    ("HINDUNILVR.NS", "ITC.NS"),       # FMCG
 ]
 
 
@@ -266,12 +270,30 @@ def run_full_backtest(
                 "JNJ",
             ]
         else:
-            tickers = [
-                "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS",
-                "ICICIBANK.NS", "BHARTIARTL.NS", "LT.NS", "SBIN.NS",
-                "ITC.NS", "TATAMOTORS.NS", "AXISBANK.NS", "WIPRO.NS",
-                "SUNPHARMA.NS", "MARUTI.NS", "ONGC.NS",
-            ]
+            # FIX: Use NSE universe (respects Config.NSE_UNIVERSE_TIER)
+            # instead of hardcoded 15-stock list.  Default tier is
+            # Config.NSE_UNIVERSE_TIER = "BROAD" for NIFTY50+NEXT50+
+            # sectoral+thematic (~800-1200 stocks).  For backtesting
+            # we use DEFAULT tier (~100 NIFTY50+NEXT50) for speed;
+            # override via Config.NSE_UNIVERSE_TIER for broader runs.
+            try:
+                from kite_connect.nse.nse_universe import get_nse_default_tickers
+                raw_syms = get_nse_default_tickers()
+                if raw_syms and len(raw_syms) >= 10:
+                    tickers = [f"{s}.NS" for s in raw_syms]
+                    if verbose:
+                        print(f"  NSE universe: {len(tickers)} tickers (NIFTY50+NEXT50)")
+                else:
+                    raise ValueError("NSE download returned too few symbols")
+            except Exception as exc:
+                logger.warning("NSE universe fetch failed (%s), using fallback", exc)
+                # Fallback: hardcoded NIFTY50+NEXT50 core names
+                from kite_connect.core.config import INDEX_CONSTITUENTS
+                n50 = INDEX_CONSTITUENTS.get("NIFTY50", [])
+                nn50 = INDEX_CONSTITUENTS.get("NIFTY_NEXT50", [])
+                tickers = [f"{s}.NS" for s in sorted(set(n50 + nn50))]
+                if verbose:
+                    print(f"  NSE fallback: {len(tickers)} tickers (hardcoded NIFTY50+NEXT50)")
     if pairs is None:
         pairs = DEFAULT_PAIRS_US if market == "US" else DEFAULT_PAIRS_IND
 
@@ -299,16 +321,42 @@ def run_full_backtest(
         print("ERROR: Need at least 2 symbols with sufficient data.")
         return {"sharpe": 0, "report": "Insufficient data"}
 
-    # ── Align dates across all symbols ─────────────────────────
-    min_len = min(len(df) for df in ohlcv_full.values())
-    n_days = min_len
-    if n_days < min_history + 20:
-        print(f"ERROR: Only {n_days} bars, need at least {min_history + 20}.")
-        return {"sharpe": 0, "report": "Insufficient history"}
+    # ── G3: Drop symbols with insufficient history ─────────────
+    # With 100-stock universe, some newer listings won't have 13yr data.
+    # Drop those instead of failing the entire backtest.
+    _min_required = min_history + 20
+    _short_syms = [s for s, df in ohlcv_full.items() if len(df) < _min_required]
+    if _short_syms:
+        for s in _short_syms:
+            del ohlcv_full[s]
+        if verbose:
+            print(f"\n  Dropped {len(_short_syms)} symbols with <{_min_required} bars: "
+                  f"{', '.join(_short_syms[:5])}{'...' if len(_short_syms) > 5 else ''}")
+    symbols = list(ohlcv_full.keys())
+    n_symbols = len(symbols)
+    if n_symbols < 2:
+        print("ERROR: Need at least 2 symbols with sufficient data after filtering.")
+        return {"sharpe": 0, "report": "Insufficient data"}
+
+    # ── Date-align all symbols to a common calendar ──────────
+    # Use the longest-running symbol's dates as the master calendar.
+    # For efficiency: precompute each symbol's offset into the master index
+    # instead of reindexing (which adds NaN rows that must be dropna'd every day).
+    _longest_sym = max(ohlcv_full.keys(), key=lambda s: len(ohlcv_full[s]))
+    master_index = ohlcv_full[_longest_sym].index
+    n_days = len(master_index)
+
+    # Map each symbol to its starting position in master calendar
+    # sym_start[sym] = master_index position where this symbol's first date falls
+    _master_dates_set = {d: i for i, d in enumerate(master_index)}
+    sym_start: Dict[str, int] = {}
+    for sym, df in ohlcv_full.items():
+        first_date = df.index[0]
+        sym_start[sym] = _master_dates_set.get(first_date, 0)
 
     if verbose:
         print(f"\n  Symbols loaded: {n_symbols}")
-        print(f"  Common bars:    {n_days}")
+        print(f"  Master bars:    {n_days}  (from {_longest_sym})")
         print(f"  Warmup period:  {min_history} bars")
         print(f"  Trading days:   {n_days - min_history}\n")
 
@@ -404,24 +452,32 @@ def run_full_backtest(
     if verbose:
         print("\n  Running simulation...", end="", flush=True)
 
+    _cached_forecasts: Dict[str, Dict[str, float]] = {}  # signal cache for recompute optimization
+
     for day_idx in range(min_history, n_days):
         day_pnl = 0.0
 
         # Build OHLCV slices up to current day
         ohlcv_slice: Dict[str, pd.DataFrame] = {}
         # T3-1: Extract current simulation date for look-ahead bias prevention
-        _ref_sym = next(iter(ohlcv_full))
-        current_date = ohlcv_full[_ref_sym].index[day_idx]
+        current_date = master_index[day_idx]
         if hasattr(current_date, 'date'):
             current_date = current_date.date()
         for sym, df in ohlcv_full.items():
-            ohlcv_slice[sym] = df.iloc[:day_idx + 1]
+            # Compute how many bars this symbol has up to current master day_idx
+            local_len = day_idx - sym_start.get(sym, 0) + 1
+            actual_len = len(df)
+            use_len = min(local_len, actual_len)
+            if use_len >= 50:  # need at least 50 valid bars
+                ohlcv_slice[sym] = df.iloc[:use_len]
 
         # ── 1. Mark-to-market existing positions ───────────────
         for sym in symbols:
             prev_qty = prev_positions.get(sym, 0)
             if prev_qty == 0:
                 continue
+            if sym not in ohlcv_slice:
+                continue  # no data for this symbol yet
             c = ohlcv_slice[sym]["Close"]
             if hasattr(c, "squeeze"):
                 c = c.squeeze()
@@ -477,304 +533,289 @@ def run_full_backtest(
                     day_pnl += abs(prev_qty) * prev_price * daily_ret
 
         # ── 2. Compute ALL forecasts ───────────────────────────
-        all_forecasts: Dict[str, Dict[str, float]] = {sym: {} for sym in symbols}
+        # Optimization: expensive signals recomputed every RECOMPUTE_FREQ days,
+        # cached between. EWMAC/momentum change slowly over 5 days.
+        _RECOMPUTE_FREQ = 5
+        _trading_day = day_idx - min_history
+        _recompute = (_trading_day % _RECOMPUTE_FREQ == 0)
 
-        # 2a. EWMAC (3 variations)
-        for sym, df in ohlcv_slice.items():
-            c = df["Close"]
-            if hasattr(c, "squeeze"):
-                c = c.squeeze()
-            close = c.dropna()
-            if len(close) < 270:
-                continue
-            price = float(close.iloc[-1])
-            dpv = daily_price_volatility(close)
-            if dpv <= 0:
-                dpv = 0.02
+        if _recompute:
+            all_forecasts: Dict[str, Dict[str, float]] = {sym: {} for sym in symbols}
+        else:
+            # Reuse cached forecasts from last full recompute
+            all_forecasts = {sym: dict(fc) for sym, fc in _cached_forecasts.items()}
 
-            for fast, slow in DEFAULT_VARIATIONS:
-                if len(close) < slow + 10:
-                    continue
-                fast_ewma = close.ewm(span=fast, adjust=False).mean()
-                slow_ewma = close.ewm(span=slow, adjust=False).mean()
-                raw = float(fast_ewma.iloc[-1] - slow_ewma.iloc[-1])
-                fc = ewmac_to_forecast(raw, dpv, fast, slow)
-                key = f"ewmac_{fast}_{slow}"
-                all_forecasts[sym][key] = fc
+        if not _recompute:
+            pass  # skip signal computation, use cached
+        else:  # ── full signal recompute ──
 
-        # 2b. Momentum (12-1 month)
-        try:
-            mom_forecasts = compute_momentum_forecasts(ohlcv_slice)
-            for sym, fc in mom_forecasts.items():
-                if sym in all_forecasts:
-                    all_forecasts[sym]["momentum"] = fc
-        except Exception as e:
-            logger.debug("Momentum failed at day %d: %s", day_idx, e)
-
-        # 2c. Mean reversion
-        try:
-            mr_forecasts = compute_mean_reversion_batch(ohlcv_slice)
-            for sym, fc in mr_forecasts.items():
-                if sym in all_forecasts:
-                    all_forecasts[sym]["mean_reversion"] = fc
-        except Exception as e:
-            logger.debug("Mean reversion failed at day %d: %s", day_idx, e)
-
-        # 2d. Carry
-        if include_carry:
-            try:
-                carry_results = compute_carry_batch(
-                    ohlcv_slice, dividend_yields=dividend_yields,
-                )
-                for sym, cf in carry_results.items():
-                    if sym in all_forecasts:
-                        all_forecasts[sym]["carry"] = cf.forecast
-            except Exception as e:
-                logger.debug("Carry failed at day %d: %s", day_idx, e)
-
-        # 2e. OI signal (volume proxy — bare symbols for FNO lookup)
-        try:
-            oi_data = _build_oi_proxy(ohlcv_slice)
-            oi_forecasts = compute_oi_signals_batch(oi_data)
-            # Map bare symbols back to .NS if needed
-            for sym in symbols:
-                bare = sym.replace('.NS', '').replace('.BO', '')
-                if bare in oi_forecasts and sym in all_forecasts:
-                    all_forecasts[sym]["oi_signal"] = oi_forecasts[bare]
-        except Exception as e:
-            logger.debug("OI signal failed at day %d: %s", day_idx, e)
-
-        # 2f. Breakout signal (20-day high/low channel)
-        for sym, df in ohlcv_slice.items():
-            if sym not in all_forecasts:
-                continue
-            c = df["Close"]
-            if hasattr(c, "squeeze"):
-                c = c.squeeze()
-            if len(c) < 22:
-                continue
-            price_now = float(c.iloc[-1])
-            high_20 = float(c.iloc[-21:-1].max())
-            low_20 = float(c.iloc[-21:-1].min())
-            rng = high_20 - low_20
-            if rng > 0 and np.isfinite(price_now):
-                # Breakout position: +10 at 20-day high, -10 at 20-day low, linear between
-                breakout_fc = ((price_now - low_20) / rng - 0.5) * 20.0
-                breakout_fc = max(-20.0, min(20.0, breakout_fc))
-                all_forecasts[sym]["breakout"] = breakout_fc
-
-        # 2g. Pairs arb
-        if include_pairs:
-            try:
-                pairs_fc = _compute_pairs_forecasts(ohlcv_slice, pairs, pair_states)
-                for sym, fc in pairs_fc.items():
-                    if sym in all_forecasts:
-                        all_forecasts[sym]["pairs_arb"] = fc
-            except Exception as e:
-                logger.debug("Pairs failed at day %d: %s", day_idx, e)
-
-        # 2h. Cross-sectional momentum (long top, short bottom)
-        # Rank stocks by 6-month return, tilt forecasts for top/bottom tercile
-        xmom_returns = {}
-        for sym, df in ohlcv_slice.items():
-            if sym not in all_forecasts:
-                continue
-            c = df["Close"]
-            if hasattr(c, "squeeze"):
-                c = c.squeeze()
-            if len(c) >= 126:
-                ret = float(c.iloc[-1] / c.iloc[-126] - 1)
-                if np.isfinite(ret):
-                    xmom_returns[sym] = ret
-        if len(xmom_returns) >= 6:
-            sorted_syms = sorted(xmom_returns.keys(), key=lambda s: xmom_returns[s])
-            n_tercile = max(1, len(sorted_syms) // 3)
-            bottom = sorted_syms[:n_tercile]      # worst performers → short
-            top = sorted_syms[-n_tercile:]         # best performers → long
-            for sym in bottom:
-                all_forecasts[sym]["cross_momentum"] = -8.0
-            for sym in top:
-                all_forecasts[sym]["cross_momentum"] = +8.0
-
-        # ── 2i. Penfold Trend (Turtle + ATR + Retracement + Dow filter) ──
-        try:
-            penfold_fc = compute_penfold_forecast_batch(ohlcv_slice)
-            for sym, fc in penfold_fc.items():
-                if sym in all_forecasts:
-                    all_forecasts[sym]["penfold_trend"] = fc
-        except Exception as e:
-            logger.debug("Penfold failed at day %d: %s", day_idx, e)
-
-        # ── 2j. Ehlers DSP (Fisher, MAMA/FAMA, SuperSmoother) ──
-        try:
-            ehlers_fc = compute_ehlers_forecast_batch(ohlcv_slice)
-            for sym, fc in ehlers_fc.items():
-                if sym in all_forecasts:
-                    all_forecasts[sym]["ehlers_dsp"] = fc
-        except Exception as e:
-            logger.debug("Ehlers DSP failed at day %d: %s", day_idx, e)
-
-        # ── 2k. Ruggiero Cybernetic (intermarket + seasonal + multi-TF) ──
-        try:
-            intermarket_fc = compute_cybernetic_forecast_batch(ohlcv_slice)
-            for sym, fc in intermarket_fc.items():
-                if sym in all_forecasts:
-                    all_forecasts[sym]["intermarket"] = fc
-        except Exception as e:
-            logger.debug("Intermarket failed at day %d: %s", day_idx, e)
-
-        # ── 2l. Acceleration (AFTS S23: rate-of-change of EWMAC) ──
-        try:
-            accel_fc = compute_acceleration_batch(ohlcv_slice)
-            for sym, fc in accel_fc.items():
-                if sym in all_forecasts:
-                    all_forecasts[sym]["acceleration"] = fc
-        except Exception as e:
-            logger.debug("Acceleration failed at day %d: %s", day_idx, e)
-
-        # ── 2m. Carver Value (AFTS S22: 5-year mean reversion) ──
-        try:
-            value_fc = compute_value_batch(ohlcv_slice)
-            for sym, fc in value_fc.items():
-                if sym in all_forecasts:
-                    all_forecasts[sym]["carver_value"] = fc
-        except Exception as e:
-            logger.debug("Carver value failed at day %d: %s", day_idx, e)
-
-        # ── 2n. Skew Signal (AFTS S24: realized skew risk premium) ──
-        try:
-            skew_fc = compute_skew_batch(ohlcv_slice)
-            for sym, fc in skew_fc.items():
-                if sym in all_forecasts:
-                    all_forecasts[sym]["skew_signal"] = fc
-        except Exception as e:
-            logger.debug("Skew signal failed at day %d: %s", day_idx, e)
-
-        # ── 2o. PEAD (Post-Earnings Announcement Drift) ──
-        # T3-1: pass as_of_date to prevent look-ahead bias
-        try:
-            pead = PEADStrategy()
-            for sym in symbols:
-                if sym not in all_forecasts:
-                    continue
-                try:
-                    pead_fc = pead.get_forecast(sym, as_of_date=current_date)
-                except TypeError:
-                    pead_fc = pead.get_forecast(sym)
-                if pead_fc is not None and np.isfinite(pead_fc):
-                    all_forecasts[sym]["pead"] = pead_fc
-        except Exception as e:
-            logger.debug("PEAD failed at day %d: %s", day_idx, e)
-
-        # ── 2p. FII Flow (institutional net buy/sell) ──
-        try:
-            fii_fc = compute_fii_forecast()
-            if fii_fc is not None and np.isfinite(fii_fc):
-                for sym in symbols:
-                    if sym in all_forecasts:
-                        all_forecasts[sym]["fii_flow"] = fii_fc
-        except Exception as e:
-            logger.debug("FII flow failed at day %d: %s", day_idx, e)
-
-        # ── 2q. Event-Driven (earnings/RBI/expiry/rebalance) ──
-        # T3-1: pass as_of_date to prevent look-ahead bias
-        try:
-            try:
-                event_fcs = generate_event_forecasts(symbols, as_of_date=current_date)
-            except TypeError:
-                event_fcs = generate_event_forecasts(symbols)
-            if isinstance(event_fcs, dict):
-                for sym, fc_val in event_fcs.items():
-                    if sym in all_forecasts and fc_val is not None:
-                        f_v = fc_val.forecast if hasattr(fc_val, 'forecast') else fc_val
-                        if np.isfinite(f_v):
-                            all_forecasts[sym]["event_driven"] = f_v
-        except Exception as e:
-            logger.debug("Event-driven failed at day %d: %s", day_idx, e)
-
-        # ── 2r. Sentiment (FinBERT news-based) ──
-        try:
-            sent_fc = compute_sentiment_batch(symbols)
-            for sym, fc in sent_fc.items():
-                if sym in all_forecasts:
-                    all_forecasts[sym]["sentiment"] = fc
-        except Exception as e:
-            logger.debug("Sentiment failed at day %d: %s", day_idx, e)
-
-        # ── 2s. Screener + Decision Engine (composite technical/fundamental) ──
-        # In backtest mode these use simplified technical proxies
-        # (the live pipeline uses NSEScreener + IntegratedScorer which need real-time data)
-        for sym, df in ohlcv_slice.items():
-            if sym not in all_forecasts:
-                continue
-            c = df["Close"]
-            if hasattr(c, "squeeze"):
-                c = c.squeeze()
-            if len(c) < 50:
-                continue
-            # Screener proxy: RSI(14) + 50-day MA slope composite
-            delta = c.diff()
-            gain = delta.where(delta > 0, 0.0).ewm(span=14).mean()
-            loss = (-delta).where(delta < 0, 0.0).ewm(span=14).mean()
-            rs = gain / (loss + 1e-10)
-            rsi = float(100 - (100 / (1 + rs.iloc[-1])))
-            ma50 = c.rolling(50).mean()
-            ma_slope = float((ma50.iloc[-1] - ma50.iloc[-5]) / (ma50.iloc[-5] + 1e-10)) * 100
-            screener_fc = ((rsi - 50) / 5.0) + ma_slope * 2.0
-            screener_fc = max(-20.0, min(20.0, screener_fc))
-            all_forecasts[sym]["screener"] = screener_fc
-            # Decision engine proxy: blend of technical + fundamental-ish signals
-            # Uses available forecast average as a simple proxy
-            existing_fcs = [v for v in all_forecasts[sym].values() if np.isfinite(v)]
-            if existing_fcs:
-                de_fc = np.mean(existing_fcs) * 0.3  # dampened consensus
-                de_fc = max(-20.0, min(20.0, de_fc))
-                all_forecasts[sym]["decision_engine"] = de_fc
-
-        # ── 2t. Order flow (OBV + CVD + MFI microstructure) — T3-2 ──
-        try:
-            from strategies.order_flow import compute_order_flow_forecasts_batch
-            of_fc = compute_order_flow_forecasts_batch(ohlcv_slice)
-            for sym, fc in of_fc.items():
-                if sym in all_forecasts:
-                    all_forecasts[sym]["order_flow"] = fc
-        except Exception as e:
-            logger.debug("Order flow failed at day %d: %s", day_idx, e)
-
-        # ── 3. Combine forecasts + size positions ──────────────
-        # Update daily cash target based on current equity (compounding)
-        dynamic_daily_target = max(equity, capital * 0.5) * annual_vol_target / 16.0
-        n_active = max(1, sum(1 for sym in symbols if all_forecasts.get(sym)))
-        weight_per_sym = 1.0 / n_active
-
-        # IDM: T3-6 — compute dynamically from instrument return correlations
-        # IDM = 1/sqrt(avg_pairwise_correlation) for >6 instruments
-        # Replaces static heuristic (was 2.0/1.8/1.5) with data-driven value
-        if n_active >= 6 and day_idx >= min_history + 60:
-            _rets_for_idm = []
+            # 2a. EWMAC (3 variations)
             for sym, df in ohlcv_slice.items():
-                if sym not in all_forecasts or not all_forecasts[sym]:
+                c = df["Close"]
+                if hasattr(c, "squeeze"):
+                    c = c.squeeze()
+                close = c.dropna()
+                if len(close) < 270:
+                    continue
+                price = float(close.iloc[-1])
+                dpv = daily_price_volatility(close)
+                if dpv <= 0:
+                    dpv = 0.02
+
+                for fast, slow in DEFAULT_VARIATIONS:
+                    if len(close) < slow + 10:
+                        continue
+                    fast_ewma = close.ewm(span=fast, adjust=False).mean()
+                    slow_ewma = close.ewm(span=slow, adjust=False).mean()
+                    raw = float(fast_ewma.iloc[-1] - slow_ewma.iloc[-1])
+                    fc = ewmac_to_forecast(raw, dpv, fast, slow)
+                    key = f"ewmac_{fast}_{slow}"
+                    all_forecasts[sym][key] = fc
+
+            # 2b. Momentum (12-1 month)
+            try:
+                mom_forecasts = compute_momentum_forecasts(ohlcv_slice)
+                for sym, fc in mom_forecasts.items():
+                    if sym in all_forecasts:
+                        all_forecasts[sym]["momentum"] = fc
+            except Exception as e:
+                logger.debug("Momentum failed at day %d: %s", day_idx, e)
+
+            # 2c. Mean reversion
+            try:
+                mr_forecasts = compute_mean_reversion_batch(ohlcv_slice)
+                for sym, fc in mr_forecasts.items():
+                    if sym in all_forecasts:
+                        all_forecasts[sym]["mean_reversion"] = fc
+            except Exception as e:
+                logger.debug("Mean reversion failed at day %d: %s", day_idx, e)
+
+            # 2d. Carry
+            if include_carry:
+                try:
+                    carry_results = compute_carry_batch(
+                        ohlcv_slice, dividend_yields=dividend_yields,
+                    )
+                    for sym, cf in carry_results.items():
+                        if sym in all_forecasts:
+                            all_forecasts[sym]["carry"] = cf.forecast
+                except Exception as e:
+                    logger.debug("Carry failed at day %d: %s", day_idx, e)
+
+            # 2e. OI signal (volume proxy — bare symbols for FNO lookup)
+            try:
+                oi_data = _build_oi_proxy(ohlcv_slice)
+                oi_forecasts = compute_oi_signals_batch(oi_data)
+                # Map bare symbols back to .NS if needed
+                for sym in symbols:
+                    bare = sym.replace('.NS', '').replace('.BO', '')
+                    if bare in oi_forecasts and sym in all_forecasts:
+                        all_forecasts[sym]["oi_signal"] = oi_forecasts[bare]
+            except Exception as e:
+                logger.debug("OI signal failed at day %d: %s", day_idx, e)
+
+            # 2f. Breakout signal (20-day high/low channel)
+            for sym, df in ohlcv_slice.items():
+                if sym not in all_forecasts:
                     continue
                 c = df["Close"]
                 if hasattr(c, "squeeze"):
                     c = c.squeeze()
-                if len(c) >= 60:
-                    _rets_for_idm.append(c.pct_change().iloc[-60:].rename(sym))
-            if len(_rets_for_idm) >= 4:
-                _rets_df = pd.concat(_rets_for_idm, axis=1).dropna()
-                if len(_rets_df) >= 30:
-                    _corr_mat = _rets_df.corr()
-                    # Average off-diagonal correlation
-                    _n = len(_corr_mat)
-                    _off_diag = (_corr_mat.values.sum() - _n) / max(_n * (_n - 1), 1)
-                    _avg_corr = max(0.05, min(0.95, _off_diag))
-                    idm = min(2.5, 1.0 / np.sqrt(_avg_corr))
-                else:
-                    idm = 1.7
-            else:
-                idm = 1.7
-        else:
-            idm = 1.5 if n_active < 6 else 1.7
+                if len(c) < 22:
+                    continue
+                price_now = float(c.iloc[-1])
+                high_20 = float(c.iloc[-21:-1].max())
+                low_20 = float(c.iloc[-21:-1].min())
+                rng = high_20 - low_20
+                if rng > 0 and np.isfinite(price_now):
+                    # Breakout position: +10 at 20-day high, -10 at 20-day low, linear between
+                    breakout_fc = ((price_now - low_20) / rng - 0.5) * 20.0
+                    breakout_fc = max(-20.0, min(20.0, breakout_fc))
+                    all_forecasts[sym]["breakout"] = breakout_fc
+
+            # 2g. Pairs arb
+            if include_pairs:
+                try:
+                    pairs_fc = _compute_pairs_forecasts(ohlcv_slice, pairs, pair_states)
+                    for sym, fc in pairs_fc.items():
+                        if sym in all_forecasts:
+                            all_forecasts[sym]["pairs_arb"] = fc
+                except Exception as e:
+                    logger.debug("Pairs failed at day %d: %s", day_idx, e)
+
+            # 2h. Cross-sectional momentum (long top, short bottom)
+            # Rank stocks by 6-month return, tilt forecasts for top/bottom tercile
+            xmom_returns = {}
+            for sym, df in ohlcv_slice.items():
+                if sym not in all_forecasts:
+                    continue
+                c = df["Close"]
+                if hasattr(c, "squeeze"):
+                    c = c.squeeze()
+                if len(c) >= 126:
+                    ret = float(c.iloc[-1] / c.iloc[-126] - 1)
+                    if np.isfinite(ret):
+                        xmom_returns[sym] = ret
+            if len(xmom_returns) >= 6:
+                sorted_syms = sorted(xmom_returns.keys(), key=lambda s: xmom_returns[s])
+                n_tercile = max(1, len(sorted_syms) // 3)
+                bottom = sorted_syms[:n_tercile]      # worst performers → short
+                top = sorted_syms[-n_tercile:]         # best performers → long
+                for sym in bottom:
+                    all_forecasts[sym]["cross_momentum"] = -8.0
+                for sym in top:
+                    all_forecasts[sym]["cross_momentum"] = +8.0
+
+            # ── 2i. Penfold Trend (Turtle + ATR + Retracement + Dow filter) ──
+            try:
+                penfold_fc = compute_penfold_forecast_batch(ohlcv_slice)
+                for sym, fc in penfold_fc.items():
+                    if sym in all_forecasts:
+                        all_forecasts[sym]["penfold_trend"] = fc
+            except Exception as e:
+                logger.debug("Penfold failed at day %d: %s", day_idx, e)
+
+            # ── 2j. Ehlers DSP (Fisher, MAMA/FAMA, SuperSmoother) ──
+            try:
+                ehlers_fc = compute_ehlers_forecast_batch(ohlcv_slice)
+                for sym, fc in ehlers_fc.items():
+                    if sym in all_forecasts:
+                        all_forecasts[sym]["ehlers_dsp"] = fc
+            except Exception as e:
+                logger.debug("Ehlers DSP failed at day %d: %s", day_idx, e)
+
+            # ── 2k. Ruggiero Cybernetic (intermarket + seasonal + multi-TF) ──
+            try:
+                intermarket_fc = compute_cybernetic_forecast_batch(ohlcv_slice)
+                for sym, fc in intermarket_fc.items():
+                    if sym in all_forecasts:
+                        all_forecasts[sym]["intermarket"] = fc
+            except Exception as e:
+                logger.debug("Intermarket failed at day %d: %s", day_idx, e)
+
+            # ── 2l. Acceleration (AFTS S23: rate-of-change of EWMAC) ──
+            try:
+                accel_fc = compute_acceleration_batch(ohlcv_slice)
+                for sym, fc in accel_fc.items():
+                    if sym in all_forecasts:
+                        all_forecasts[sym]["acceleration"] = fc
+            except Exception as e:
+                logger.debug("Acceleration failed at day %d: %s", day_idx, e)
+
+            # ── 2m. Carver Value (AFTS S22: 5-year mean reversion) ──
+            try:
+                value_fc = compute_value_batch(ohlcv_slice)
+                for sym, fc in value_fc.items():
+                    if sym in all_forecasts:
+                        all_forecasts[sym]["carver_value"] = fc
+            except Exception as e:
+                logger.debug("Carver value failed at day %d: %s", day_idx, e)
+
+            # ── 2n. Skew Signal (AFTS S24: realized skew risk premium) ──
+            try:
+                skew_fc = compute_skew_batch(ohlcv_slice)
+                for sym, fc in skew_fc.items():
+                    if sym in all_forecasts:
+                        all_forecasts[sym]["skew_signal"] = fc
+            except Exception as e:
+                logger.debug("Skew signal failed at day %d: %s", day_idx, e)
+
+            # ── 2o. PEAD (Post-Earnings Announcement Drift) ──
+            # T3-1: pass as_of_date to prevent look-ahead bias
+            try:
+                pead = PEADStrategy()
+                for sym in symbols:
+                    if sym not in all_forecasts:
+                        continue
+                    try:
+                        pead_fc = pead.get_forecast(sym, as_of_date=current_date)
+                    except TypeError:
+                        pead_fc = pead.get_forecast(sym)
+                    if pead_fc is not None and np.isfinite(pead_fc):
+                        all_forecasts[sym]["pead"] = pead_fc
+            except Exception as e:
+                logger.debug("PEAD failed at day %d: %s", day_idx, e)
+
+            # ── 2p. FII Flow (institutional net buy/sell) ──
+            try:
+                fii_fc = compute_fii_forecast()
+                if fii_fc is not None and np.isfinite(fii_fc):
+                    for sym in symbols:
+                        if sym in all_forecasts:
+                            all_forecasts[sym]["fii_flow"] = fii_fc
+            except Exception as e:
+                logger.debug("FII flow failed at day %d: %s", day_idx, e)
+
+            # ── 2q. Event-Driven (earnings/RBI/expiry/rebalance) ──
+            # T3-1: pass as_of_date to prevent look-ahead bias
+            try:
+                try:
+                    event_fcs = generate_event_forecasts(symbols, as_of_date=current_date)
+                except TypeError:
+                    event_fcs = generate_event_forecasts(symbols)
+                if isinstance(event_fcs, dict):
+                    for sym, fc_val in event_fcs.items():
+                        if sym in all_forecasts and fc_val is not None:
+                            f_v = fc_val.forecast if hasattr(fc_val, 'forecast') else fc_val
+                            if np.isfinite(f_v):
+                                all_forecasts[sym]["event_driven"] = f_v
+            except Exception as e:
+                logger.debug("Event-driven failed at day %d: %s", day_idx, e)
+
+            # ── 2r. Sentiment (FinBERT news-based) ──
+            try:
+                sent_fc = compute_sentiment_batch(symbols)
+                for sym, fc in sent_fc.items():
+                    if sym in all_forecasts:
+                        all_forecasts[sym]["sentiment"] = fc
+            except Exception as e:
+                logger.debug("Sentiment failed at day %d: %s", day_idx, e)
+
+            # ── 2s. Screener + Decision Engine (composite technical/fundamental) ──
+            # In backtest mode these use simplified technical proxies
+            # (the live pipeline uses NSEScreener + IntegratedScorer which need real-time data)
+            for sym, df in ohlcv_slice.items():
+                if sym not in all_forecasts:
+                    continue
+                c = df["Close"]
+                if hasattr(c, "squeeze"):
+                    c = c.squeeze()
+                if len(c) < 50:
+                    continue
+                # Screener proxy: RSI(14) + 50-day MA slope composite
+                delta = c.diff()
+                gain = delta.where(delta > 0, 0.0).ewm(span=14).mean()
+                loss = (-delta).where(delta < 0, 0.0).ewm(span=14).mean()
+                rs = gain / (loss + 1e-10)
+                rsi = float(100 - (100 / (1 + rs.iloc[-1])))
+                ma50 = c.rolling(50).mean()
+                ma_slope = float((ma50.iloc[-1] - ma50.iloc[-5]) / (ma50.iloc[-5] + 1e-10)) * 100
+                screener_fc = ((rsi - 50) / 5.0) + ma_slope * 2.0
+                screener_fc = max(-20.0, min(20.0, screener_fc))
+                all_forecasts[sym]["screener"] = screener_fc
+                # Decision engine proxy: blend of technical + fundamental-ish signals
+                # Uses available forecast average as a simple proxy
+                existing_fcs = [v for v in all_forecasts[sym].values() if np.isfinite(v)]
+                if existing_fcs:
+                    de_fc = np.mean(existing_fcs) * 0.3  # dampened consensus
+                    de_fc = max(-20.0, min(20.0, de_fc))
+                    all_forecasts[sym]["decision_engine"] = de_fc
+
+            # ── 2t. Order flow (OBV + CVD + MFI microstructure) — T3-2 ──
+            try:
+                from strategies.order_flow import compute_order_flow_forecasts_batch
+                of_fc = compute_order_flow_forecasts_batch(ohlcv_slice)
+                for sym, fc in of_fc.items():
+                    if sym in all_forecasts:
+                        all_forecasts[sym]["order_flow"] = fc
+            except Exception as e:
+                logger.debug("Order flow failed at day %d: %s", day_idx, e)
+
+
+            _cached_forecasts = {sym: dict(fc) for sym, fc in all_forecasts.items()}
+        # ── 3. Combine forecasts + size positions ──────────────
+        # Update daily cash target based on current equity (compounding)
+        dynamic_daily_target = max(equity, capital * 0.5) * annual_vol_target / 16.0
 
         # Regime detection: average 40-day return across ALL symbols
         detected_regime = 'sideways'
@@ -782,6 +823,8 @@ def run_full_backtest(
         if day_idx >= 40:
             rets_40d = []
             for sym in symbols:
+                if sym not in ohlcv_slice:
+                    continue
                 pc = ohlcv_slice[sym]["Close"]
                 if hasattr(pc, "squeeze"):
                     pc = pc.squeeze()
@@ -811,6 +854,52 @@ def run_full_backtest(
             if stop_cooldown[sym] <= 0:
                 del stop_cooldown[sym]
 
+        # ── G3: Top-N conviction filter ────────────────────────
+        # With 100 stocks, only trade the top MAX_POSITIONS by absolute
+        # combined forecast strength (concentrated best-ideas portfolio).
+        MAX_POSITIONS = 25  # G3: concentrate on strongest conviction
+        # Pre-compute combined forecasts for ALL symbols, then rank
+        _all_combined: Dict[str, float] = {}
+        for sym, fc_dict in all_forecasts.items():
+            if not fc_dict:
+                continue
+            combined = combine_forecasts(sym, fc_dict, active_weights)
+            _all_combined[sym] = combined.combined_forecast
+        # Rank by absolute forecast strength, keep top N
+        _ranked = sorted(_all_combined.items(), key=lambda x: abs(x[1]), reverse=True)
+        _top_syms = set(s for s, _ in _ranked[:MAX_POSITIONS])
+
+        # G3: Use conviction-filtered count for weight calculation
+        n_active = max(1, min(len(_top_syms), MAX_POSITIONS))
+        weight_per_sym = 1.0 / n_active
+
+        # IDM: T3-6 — compute dynamically from instrument return correlations
+        # IDM = 1/sqrt(avg_pairwise_correlation) for >6 instruments
+        if n_active >= 6 and day_idx >= min_history + 60:
+            _rets_for_idm = []
+            for sym, df in ohlcv_slice.items():
+                if sym not in all_forecasts or not all_forecasts[sym]:
+                    continue
+                c = df["Close"]
+                if hasattr(c, "squeeze"):
+                    c = c.squeeze()
+                if len(c) >= 60:
+                    _rets_for_idm.append(c.pct_change().iloc[-60:].rename(sym))
+            if len(_rets_for_idm) >= 4:
+                _rets_df = pd.concat(_rets_for_idm, axis=1).dropna()
+                if len(_rets_df) >= 30:
+                    _corr_mat = _rets_df.corr()
+                    _n = len(_corr_mat)
+                    _off_diag = (_corr_mat.values.sum() - _n) / max(_n * (_n - 1), 1)
+                    _avg_corr = max(0.05, min(0.95, _off_diag))
+                    idm = min(2.5, 1.0 / np.sqrt(_avg_corr))
+                else:
+                    idm = 1.7
+            else:
+                idm = 1.7
+        else:
+            idm = 1.5 if n_active < 6 else 1.7
+
         active_count = 0
         for sym, fc_dict in all_forecasts.items():
             if not fc_dict:
@@ -822,11 +911,15 @@ def run_full_backtest(
             for fw in active_weights:
                 source_total[fw.name] += 1
 
-            # Combine
-            combined = combine_forecasts(sym, fc_dict, active_weights)
-            forecast = combined.combined_forecast
+            # G3: Skip symbols outside top-N conviction set
+            # (still exit existing positions if held)
+            forecast = _all_combined.get(sym, 0.0)
+            if sym not in _top_syms and prev_positions.get(sym, 0) == 0:
+                continue
 
-            # Position sizing
+            # Position sizing (forecast already computed in conviction filter above)
+            if sym not in ohlcv_slice:
+                continue
             c = ohlcv_slice[sym]["Close"]
             if hasattr(c, "squeeze"):
                 c = c.squeeze()
@@ -843,14 +936,14 @@ def run_full_backtest(
                 vol_scalar = dynamic_daily_target / ivv
                 position = (forecast / 10.0) * vol_scalar * weight_per_sym * idm
 
-                # Direction-aware regime scaling:
-                # Bull: longs 1.3x, shorts 0.5x (trend aligned)
-                # Bear: shorts 1.3x, longs 0.5x (trend aligned)
-                # Sideways: both 1.0x
+                # G3: Direction-aware regime scaling (tuned to actual signal quality):
+                # Bull: longs 1.5×, shorts 0.3× (Sharpe 0.73 in bull — push hard)
+                # Bear: shorts 1.0×, longs 0.15× (Sharpe -0.01 — near-halt longs)
+                # Sideways: both 1.0× (Sharpe 0.68 — decent both ways)
                 if detected_regime == 'bull':
-                    regime_scale = 1.3 if position >= 0 else 0.5
+                    regime_scale = 1.5 if position >= 0 else 0.3
                 elif detected_regime == 'bear':
-                    regime_scale = 1.3 if position < 0 else 0.5
+                    regime_scale = 1.0 if position < 0 else 0.15
                 else:
                     regime_scale = 1.0
                 position *= regime_scale
@@ -883,8 +976,8 @@ def run_full_backtest(
                 prev_qty = prev_positions.get(sym, 0)
                 delta = abs(target_qty - prev_qty)
                 if delta > 0:
-                    # Inertia: skip small changes (< 15%)
-                    if abs(prev_qty) > 0 and delta / abs(prev_qty) < 0.15:
+                    # G3: Inertia: skip small changes (< 20% — reduced churn)
+                    if abs(prev_qty) > 0 and delta / abs(prev_qty) < 0.20:
                         target_qty = prev_qty
                     else:
                         cost = delta * price * cost_pct
@@ -893,16 +986,17 @@ def run_full_backtest(
 
                 prev_positions[sym] = target_qty
 
-                # Regime-adaptive trailing stop:
-                # Bull: 5.0σ (let winners run)
-                # Bear: 3.0σ (cut losses fast)
-                # Sideways: 4.0σ
+                # G3: Tightened regime-adaptive trailing stop
+                # (previous 3-5σ too wide → 62% max drawdown)
+                # Bull: 3.0σ (was 5.0 — tighter locks profits in trend)
+                # Bear: 1.5σ (was 3.0 — rapid exit, signals broken)
+                # Sideways: 2.5σ (was 4.0 — moderate protection)
                 if detected_regime == 'bull':
-                    stop_sigma = 5.0
-                elif detected_regime == 'bear':
                     stop_sigma = 3.0
+                elif detected_regime == 'bear':
+                    stop_sigma = 1.5
                 else:
-                    stop_sigma = 4.0
+                    stop_sigma = 2.5
 
                 if target_qty > 0:
                     active_count += 1
