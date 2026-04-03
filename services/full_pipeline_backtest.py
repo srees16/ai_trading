@@ -52,10 +52,14 @@ DEFAULT_PAIRS_US = [
     ("JPM", "V"),
 ]
 DEFAULT_PAIRS_IND = [
-    ("HDFCBANK.NS", "ICICIBANK.NS"),
-    ("TCS.NS", "INFY.NS"),
-    ("RELIANCE.NS", "ONGC.NS"),
-    ("SBIN.NS", "PNB.NS"),
+    ("HDFCBANK.NS", "ICICIBANK.NS"),   # Large-cap banking
+    ("TCS.NS", "INFY.NS"),             # IT services
+    ("RELIANCE.NS", "ONGC.NS"),        # Energy
+    ("SBIN.NS", "PNB.NS"),             # PSU banking
+    ("SUNPHARMA.NS", "DRREDDY.NS"),    # Pharma
+    ("TATASTEEL.NS", "JSWSTEEL.NS"),   # Metal
+    ("MARUTI.NS", "M&M.NS"),           # Auto
+    ("HINDUNILVR.NS", "ITC.NS"),       # FMCG
 ]
 
 
@@ -266,12 +270,30 @@ def run_full_backtest(
                 "JNJ",
             ]
         else:
-            tickers = [
-                "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "INFY.NS",
-                "ICICIBANK.NS", "BHARTIARTL.NS", "LT.NS", "SBIN.NS",
-                "ITC.NS", "TATAMOTORS.NS", "AXISBANK.NS", "WIPRO.NS",
-                "SUNPHARMA.NS", "MARUTI.NS", "ONGC.NS",
-            ]
+            # FIX: Use NSE universe (respects Config.NSE_UNIVERSE_TIER)
+            # instead of hardcoded 15-stock list.  Default tier is
+            # Config.NSE_UNIVERSE_TIER = "BROAD" for NIFTY50+NEXT50+
+            # sectoral+thematic (~800-1200 stocks).  For backtesting
+            # we use DEFAULT tier (~100 NIFTY50+NEXT50) for speed;
+            # override via Config.NSE_UNIVERSE_TIER for broader runs.
+            try:
+                from kite_connect.nse.nse_universe import get_nse_default_tickers
+                raw_syms = get_nse_default_tickers()
+                if raw_syms and len(raw_syms) >= 10:
+                    tickers = [f"{s}.NS" for s in raw_syms]
+                    if verbose:
+                        print(f"  NSE universe: {len(tickers)} tickers (NIFTY50+NEXT50)")
+                else:
+                    raise ValueError("NSE download returned too few symbols")
+            except Exception as exc:
+                logger.warning("NSE universe fetch failed (%s), using fallback", exc)
+                # Fallback: hardcoded NIFTY50+NEXT50 core names
+                from kite_connect.core.config import INDEX_CONSTITUENTS
+                n50 = INDEX_CONSTITUENTS.get("NIFTY50", [])
+                nn50 = INDEX_CONSTITUENTS.get("NIFTY_NEXT50", [])
+                tickers = [f"{s}.NS" for s in sorted(set(n50 + nn50))]
+                if verbose:
+                    print(f"  NSE fallback: {len(tickers)} tickers (hardcoded NIFTY50+NEXT50)")
     if pairs is None:
         pairs = DEFAULT_PAIRS_US if market == "US" else DEFAULT_PAIRS_IND
 

@@ -83,6 +83,54 @@ INDEX_CONSTITUENTS = {
         "SBICARD", "SIEMENS", "SJVN", "TATACOMM", "TATAELXSI",
         "TATAPOWER", "TORNTPHARM", "UNITDSPR", "VBL", "ZOMATO",
     ],
+    # ── Sectoral fallback constituents (used when NSE archive CSV download fails) ──
+    "NIFTYAUTO": [
+        "BAJAJ-AUTO", "BHARATFORG", "BOSCHLTD", "EICHERMOT", "EXIDEIND",
+        "HEROMOTOCO", "M&M", "MARUTI", "MOTHERSON", "MRF",
+        "TATAMOTORS", "TVSMOTOR",
+    ],
+    "NIFTYFMCG": [
+        "BRITANNIA", "COLPAL", "DABUR", "GODREJCP", "HINDUNILVR",
+        "ITC", "MARICO", "NESTLEIND", "TATACONSUM", "UNITDSPR", "VBL",
+    ],
+    "NIFTYMETAL": [
+        "ADANIENSOL", "APLAPOLLO", "HINDALCO", "HINDCOPPER", "HINDZINC",
+        "JINDALSTEL", "JSWSTEEL", "NATIONALUM", "NMDC", "RATNAMANI",
+        "SAIL", "TATASTEEL", "VEDL",
+    ],
+    "NIFTYPHARMA": [
+        "ALKEM", "AUROPHARMA", "BIOCON", "CIPLA", "DIVISLAB",
+        "DRREDDY", "GLENMARK", "GRANULES", "IPCALAB", "LUPIN",
+        "SUNPHARMA", "TORNTPHARM", "ZYDUSLIFE",
+    ],
+    "NIFTYREALTY": [
+        "BRIGADE", "DLF", "GODREJPROP", "LODHA", "OBEROIRLTY",
+        "PHOENIXLTD", "PRESTIGE", "SOBHA", "SUNTV",
+    ],
+    "NIFTYPSUBANK": [
+        "BANKBARODA", "CANBK", "CENTRALBK", "INDIANB", "IOB",
+        "MAHABANK", "PNB", "SBIN", "UCOBANK", "UNIONBANK",
+    ],
+    "NIFTYFINSERV": [
+        "AXISBANK", "BAJAJFINSV", "BAJFINANCE", "CHOLAFIN", "HDFCBANK",
+        "HDFCLIFE", "ICICIBANK", "ICICIGI", "ICICIPRULI", "JIOFIN",
+        "KOTAKBANK", "LT", "MUTHOOTFIN", "PFC", "RECLTD",
+        "SBICARD", "SBILIFE", "SBIN", "SHRIRAMFIN",
+    ],
+    "NIFTYMEDIA": [
+        "HATHWAY", "NETWORK18", "PVR", "SUNTV", "TV18BRDCST",
+        "TVSMOTOR", "ZEEL",
+    ],
+    "NIFTYCONSUMERDURABLES": [
+        "BATAINDIA", "BLUESTARLT", "CROMPTON", "DIXON", "HAVELLS",
+        "KAJARIACER", "PAGEIND", "POLYCAB", "RAJESHEXPO", "TITAN",
+        "VOLTAS", "WHIRLPOOL",
+    ],
+    "NIFTYOILGAS": [
+        "ADANIENSOL", "BPCL", "CASTROLIND", "GAIL", "GSPL",
+        "GUJARATGAS", "HINDPETRO", "IOC", "IGL", "MGL",
+        "ONGC", "PETRONET", "RELIANCE",
+    ],
 }
 
 # ── Streamlit ──────────────────────────────────────────────────

@@ -63,35 +63,35 @@ class ForecastWeight:
 
 
 # Default handcrafted weights for centurion_core NSE swing/positional
-# GAP-9 FIX: Weights sum to 1.00.  P5: breakout re-added as 23rd source (0.03).
-# Redistributed 7% to highest-alpha sources: ehlers +2%, momentum +1%, pead +1%,
-# penfold +1%, intermarket +1%, acceleration +1%.
+# 13yr backtest audit (2012-2025): zeroed 4 dead sources (pead, event_driven,
+# fii_flow, sentiment = 15%) and 3 negative-tstat sources (pairs_arb,
+# mean_reversion, oi_signal = 6%). Redistributed 21% to proven +tstat sources.
 DEFAULT_FORECAST_WEIGHTS: List[ForecastWeight] = [
-    ForecastWeight("ewmac_8_32", 0.06),     # fast swing: regime-change alpha
-    ForecastWeight("ewmac_16_64", 0.07),
-    ForecastWeight("ewmac_32_128", 0.06),
-    ForecastWeight("ewmac_64_256", 0.06),
-    ForecastWeight("carry", 0.01),           # G7: weak for equities — minimal
-    ForecastWeight("screener", 0.04),
-    ForecastWeight("momentum", 0.07),        # Strong for IND equities (Jegadeesh-Titman) — P5: -0.01 for breakout
-    ForecastWeight("pead", 0.06),            # Highest-Sharpe academic signal
-    ForecastWeight("mean_reversion", 0.02),  # Reduced: counter-trend drags CAGR in trending mkts
-    ForecastWeight("fii_flow", 0.03),
-    ForecastWeight("decision_engine", 0.03),
-    ForecastWeight("oi_signal", 0.02),       # G19: OI provides vol expansion signal
-    ForecastWeight("cross_momentum", 0.04),  # Cross-sectional: long winners, short losers
-    ForecastWeight("pairs_arb", 0.02),       # Reduced: less relevant for CAGR maximisation
-    ForecastWeight("event_driven", 0.04),    # Episodic alpha
-    ForecastWeight("penfold_trend", 0.06),   # Penfold: Turtle+ATR+Retrace+Dow filter — P5: -0.01 for breakout
-    ForecastWeight("ehlers_dsp", 0.08),      # Ehlers: Fisher+MAMA/FAMA+SuperSmoother — P5: -0.01 for breakout
-    ForecastWeight("intermarket", 0.07),     # Ruggiero: intermarket+seasonal+trend+multi-TF
-    ForecastWeight("acceleration", 0.04),    # S23: rate-of-change of trend forecast (T1-6: -0.01)
-    ForecastWeight("carver_value", 0.02),    # S22: 5-year mean reversion
-    ForecastWeight("skew_signal", 0.03),     # S24: realized skew risk premium
-    ForecastWeight("sentiment", 0.02),       # News sentiment: FinBERT z-scored
-    ForecastWeight("breakout", 0.03),        # P5: 20-day channel breakout — diversifies trend styles
-    ForecastWeight("order_flow", 0.02),      # T1-6: OBV+CVD+MFI microstructure signal
-    # Total: 1.00 (24 sources)
+    ForecastWeight("ewmac_8_32", 0.08),     # fast swing: regime-change alpha
+    ForecastWeight("ewmac_16_64", 0.08),     # swing core
+    ForecastWeight("ewmac_32_128", 0.06),    # medium trend
+    ForecastWeight("ewmac_64_256", 0.06),    # positional core
+    ForecastWeight("carry", 0.02),           # weak for equities — minimal
+    ForecastWeight("screener", 0.05),        # technical overlay
+    ForecastWeight("momentum", 0.10),        # Strong for IND (Jegadeesh-Titman)
+    ForecastWeight("pead", 0.00),            # DEAD: 0% hit rate in backtest — no earnings data
+    ForecastWeight("mean_reversion", 0.00),  # HARMFUL: t-stat = -139.3
+    ForecastWeight("fii_flow", 0.00),        # DEAD: 0% hit rate in backtest — no live FII data
+    ForecastWeight("decision_engine", 0.03), # composite signal
+    ForecastWeight("oi_signal", 0.00),       # HARMFUL: t-stat = -69.8
+    ForecastWeight("cross_momentum", 0.06),  # Cross-sectional: long winners, short losers
+    ForecastWeight("pairs_arb", 0.00),       # HARMFUL: t-stat = -190.7
+    ForecastWeight("event_driven", 0.00),    # DEAD: 0% hit rate in backtest — no event calendar
+    ForecastWeight("penfold_trend", 0.08),   # Penfold: Turtle+ATR+Retrace+Dow
+    ForecastWeight("ehlers_dsp", 0.10),      # Ehlers: Fisher+MAMA/FAMA+SuperSmoother (best adaptive)
+    ForecastWeight("intermarket", 0.09),     # Ruggiero: intermarket+seasonal
+    ForecastWeight("acceleration", 0.05),    # rate-of-change of trend
+    ForecastWeight("carver_value", 0.03),    # 5-year mean reversion
+    ForecastWeight("skew_signal", 0.04),     # realized skew risk premium
+    ForecastWeight("sentiment", 0.00),       # DEAD: 0% hit rate in backtest — no live NLP
+    ForecastWeight("breakout", 0.05),        # 20-day channel breakout
+    ForecastWeight("order_flow", 0.02),      # OBV+CVD+MFI microstructure
+    # Total: 1.00 exact (24 sources, 7 zeroed, 17 active)
 ]
 
 # Rule-of-thumb correlations between forecast sources (Carver Appendix C):
