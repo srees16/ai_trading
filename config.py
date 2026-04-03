@@ -113,13 +113,19 @@ class Config:
     SIGNAL_FRESHNESS_MAX_HOURS: int = 4      # Tier 1 Gap 5: reject OHLCV older than N hours
 
     # =================================================================
+    # Backtest Configuration
+    # =================================================================
+    BACKTEST_START_DATE: str = "2012-01-01"  # 13+ years: covers 2013 taper tantrum, 2015 China, 2018 IL&FS, 2020 COVID, 2022 rate hikes
+    BACKTEST_END_DATE: str = "2025-12-31"    # End of backtest window (use "" for latest available)
+
+    # =================================================================
     # Carver Systematic Trading Framework (Robert Carver)
     # =================================================================
     CARVER_ENABLED: bool = True             # Enable Carver vol-targeted sizing (False = legacy Kelly)
-    CARVER_ANNUAL_VOL_TARGET: float = 0.95  # A1: 95% annual vol target — targets 65%+ CAGR; A4 regime scaling prevents naked bear exposure
+    CARVER_ANNUAL_VOL_TARGET: float = 0.55  # Kelly-optimal: SR ≈ 0.55 → σ* = 55%; regime scaling provides further protection
     CARVER_INITIAL_CAPITAL: float = 500_000.0  # Starting capital (₹)
     CARVER_DEFAULT_IDM: float = 2.3         # A2: IDM for 17 active sources at avg corr ~0.15-0.20 (Carver: 1/sqrt(avg_corr) ≈ 2.2-2.6)
-    CARVER_MAX_LEVERAGE: float = 7.0        # 7× hard cap — high vol needs leverage headroom, regime caps limit actual use
+    CARVER_MAX_LEVERAGE: float = 4.0        # 4× hard cap — proportional to 55% vol target (was 7× at 95%)
     CARVER_INERTIA_THRESHOLD: float = 0.15  # 15% position change for re-trade (reduces churn)
     CARVER_COST_SPEED_LIMIT: float = 3.0    # SR must exceed 3× cost drag
     CARVER_TRADE_HORIZON: str = "swing"     # "swing" (3σ bear/5σ bull) or "positional"
@@ -131,7 +137,7 @@ class Config:
     VINCE_INSURANCE_PCT_US: float = 0.10    # US: 10% floor (more conservative for manual)
     VINCE_REGIME_SHRINK_ENABLED: bool = True  # Enable Vince shrink/stretch per regime
 
-    # Drawdown thresholds — graduated for 75% vol target
+    # Drawdown thresholds — graduated for 55% vol target
     PORTFOLIO_DRAWDOWN_WARNING: float = 0.15    # 15% DD → smooth scale-down begins
     PORTFOLIO_DRAWDOWN_CRITICAL: float = 0.25   # 25% DD → aggressive scale-down
     PORTFOLIO_DRAWDOWN_HALT: float = 0.30       # 30% DD → halt all new trades
@@ -177,7 +183,7 @@ class Config:
     # =================================================================
     # VIX Regime Gate — Gap C4: Unified thresholds
     # =================================================================
-    VIX_CAUTION_THRESHOLD: float = 20.0    # India VIX > 20 → reduce position sizes (raised for 75% vol)
+    VIX_CAUTION_THRESHOLD: float = 20.0    # India VIX > 20 → reduce position sizes
     VIX_PANIC_THRESHOLD: float = 30.0      # India VIX > 30 → suppress new BUY signals
     VIX_POSITION_SCALE: float = 0.5        # Scale factor when VIX in caution zone
     VIX_PIPELINE_SCALING_ENABLED: bool = True  # Enable VIX scaling in Carver pipeline (not just risk_manager)
@@ -186,7 +192,7 @@ class Config:
     # =================================================================
     # Gap C3: Unified max open trades (single source of truth)
     # =================================================================
-    MAX_OPEN_TRADES: int = 12              # Max concurrent positions (12 for diversification at 75% vol)
+    MAX_OPEN_TRADES: int = 12              # Max concurrent positions (12 for diversification at 55% vol)
 
     # =================================================================
     # Gap C5: Time-based exit enforcement
@@ -384,10 +390,10 @@ class Config:
     # Phase 3 — Leverage via Futures
     # =================================================================
     LEVERAGE_ENABLED: bool = True            # G11: Enabled — regime-adaptive leverage
-    LEVERAGE_MAX: float = 7.0               # Absolute max leverage (hard cap — matches CARVER_MAX_LEVERAGE)
-    LEVERAGE_BULL_MAX: float = 7.0           # Full 7× in strong bull — 50%+ CAGR engine
-    LEVERAGE_RANGE_MAX: float = 5.0          # 5× in range-bound — higher alpha capture with DD layers
-    LEVERAGE_BEAR_MAX: float = 2.0           # 2× in bear — moderate, stops+VIX gate provide DD protection
+    LEVERAGE_MAX: float = 4.0               # Absolute max leverage (hard cap — matches CARVER_MAX_LEVERAGE at 55% vol)
+    LEVERAGE_BULL_MAX: float = 4.0           # 4× in strong bull — proportional to 55% vol (was 7× at 95%)
+    LEVERAGE_RANGE_MAX: float = 3.0          # 3× in range-bound — alpha capture with DD layers
+    LEVERAGE_BEAR_MAX: float = 1.5           # 1.5× in bear — defensive, stops+VIX gate provide DD protection
     LEVERAGE_CRISIS_MAX: float = 0.5         # 50% sizing in crisis — near-cash (VIX panic gate also blocks entries)
     FUTURES_INSTRUMENT: str = "NIFTY"        # NIFTY or BANKNIFTY
     FUTURES_LOT_SIZE: int = 25               # NIFTY lot size
