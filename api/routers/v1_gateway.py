@@ -576,6 +576,8 @@ async def backtest_run(req: BacktestRunRequest):
             "strategy_id": req.strategy_id,
             "strategy_name": getattr(strategy_cls, "name", req.strategy_id),
             "tickers": req.tickers,
+            "start_date": start_date,
+            "end_date": end_date,
             "total_return": float(m.get("total_return", 0)),
             "sharpe_ratio": float(m.get("sharpe_ratio", 0)),
             "sortino_ratio": float(m.get("sortino_ratio", 0)),
