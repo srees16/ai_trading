@@ -1294,6 +1294,134 @@ async def options_chain(symbol: str, expiry: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/options/overlay/scan")
+async def options_overlay_scan(
+    symbols: Optional[List[str]] = None,
+    capital: float = 500_000,
+    regime: str = "RANGE_BOUND",
+):
+    """Run full options overlay scan — covered calls, CSPs, iron condors, strangles.
+
+    Returns combined strategy recommendations with yield estimates.
+    """
+    try:
+        from services.options_overlay import OptionsOverlay
+        from services.iron_condor_strangle import IronCondorStrangleOverlay
+        from services.oi_signal import FNO_LOT_SIZES
+
+        # ── Gather IV data ──────────────────────────
+        iv_data: Dict[str, Dict] = {}
+        spot_prices: Dict[str, float] = {}
+        try:
+            from services.iv_rank import compute_iv_ranks_batch
+            from infrastructure.cache import ohlcv_cache_store
+            ohlcv_cache = ohlcv_cache_store.get_all() if hasattr(ohlcv_cache_store, "get_all") else {}
+            iv_ranks = await asyncio.to_thread(compute_iv_ranks_batch, ohlcv_cache)
+            iv_data = {
+                sym: {"iv": ivr.current_iv, "iv_rank": ivr.iv_rank}
+                for sym, ivr in iv_ranks.items()
+            }
+        except Exception:
+            pass
+
+        # ── Gather spot prices via Kite / cache ─────
+        kite = get_kite_session()
+        fno_symbols = symbols or list(FNO_LOT_SIZES.keys())
+        if kite:
+            try:
+                from kite_connect.nse.live_quotes import get_nse_quotes
+                quotes = await asyncio.to_thread(get_nse_quotes, kite, fno_symbols)
+                spot_prices = {sym: q.get("last_price", 0) for sym, q in quotes.items() if q.get("last_price")}
+            except Exception:
+                pass
+
+        # Fill in any missing IV data with defaults
+        for sym in fno_symbols:
+            if sym not in iv_data:
+                iv_data[sym] = {"iv": 0.25, "iv_rank": 55.0}
+            if sym not in spot_prices:
+                spot_prices[sym] = 0
+
+        # ── Covered Calls + CSPs ────────────────────
+        overlay = OptionsOverlay()
+        # For covered calls: treat all held positions as potential CC targets
+        holdings_dict = {
+            sym: {"quantity": FNO_LOT_SIZES.get(sym, 25), "avg_price": p, "current_price": p}
+            for sym, p in spot_prices.items() if p > 0
+        }
+        # For CSPs: candidates with positive implied forecast
+        csp_candidates = {
+            sym: {"current_price": p, "forecast": 10.0}
+            for sym, p in spot_prices.items() if p > 0
+        }
+
+        overlay_result = await asyncio.to_thread(
+            overlay.run_overlay,
+            holdings=holdings_dict,
+            candidates=csp_candidates,
+            iv_data=iv_data,
+            available_capital=capital,
+        )
+
+        # ── Iron Condors + Strangles ────────────────
+        ic_overlay = IronCondorStrangleOverlay()
+        iv_rank_map = {sym: iv_data[sym].get("iv_rank", 0) for sym in iv_data}
+        lot_sizes = {sym: FNO_LOT_SIZES.get(sym, 25) for sym in fno_symbols}
+
+        ic_result = await asyncio.to_thread(
+            ic_overlay.scan_all,
+            symbols=list(iv_rank_map.keys()),
+            spot_prices=spot_prices,
+            iv_data=iv_rank_map,
+            available_capital=capital,
+            regime=regime,
+            lot_sizes=lot_sizes,
+        )
+
+        # ── Build response ──────────────────────────
+        return {
+            "covered_calls": [
+                {
+                    "symbol": o.symbol, "strike": o.strike, "expiry": o.expiry_date,
+                    "premium": o.premium, "total_premium": o.total_premium,
+                    "delta": o.delta, "iv": o.iv, "lots": o.lots, "lot_size": o.lot_size,
+                    "underlying_price": o.underlying_price,
+                }
+                for o in overlay_result.covered_call_orders
+            ],
+            "cash_secured_puts": [
+                {
+                    "symbol": o.symbol, "strike": o.strike, "expiry": o.expiry_date,
+                    "premium": o.premium, "total_premium": o.total_premium,
+                    "delta": o.delta, "iv": o.iv, "lots": o.lots, "lot_size": o.lot_size,
+                    "underlying_price": o.underlying_price,
+                }
+                for o in overlay_result.put_write_orders
+            ],
+            "iron_condors": [ic.to_dict() for ic in ic_result.iron_condors],
+            "strangles": [sg.to_dict() for sg in ic_result.strangles],
+            "summary": {
+                "total_premium": round(
+                    overlay_result.total_premium_expected + ic_result.total_premium, 2
+                ),
+                "overlay_premium": overlay_result.total_premium_expected,
+                "multileg_premium": ic_result.total_premium,
+                "monthly_yield_pct": overlay_result.monthly_yield_pct,
+                "annualized_yield_pct": overlay_result.annualized_yield_pct,
+                "covered_call_count": len(overlay_result.covered_call_orders),
+                "csp_count": len(overlay_result.put_write_orders),
+                "iron_condor_count": len(ic_result.iron_condors),
+                "strangle_count": len(ic_result.strangles),
+            },
+            "log": overlay_result.log + ic_result.log,
+        }
+    except ImportError as e:
+        raise HTTPException(status_code=501, detail=f"Module not available: {e}")
+    except Exception as e:
+        logger.exception("Options overlay scan failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── DriveWealth ─────────────────────────────────────────────────────────
 
 _dw_session: Dict[str, Any] = {}
@@ -1618,6 +1746,186 @@ async def tts_history(page: int = 1, limit: int = 50):
         return {"data": [], "total": 0}
 
 
+# ─── Aronson Validator Lab ───────────────────────────────────────────────
+
+@router.get("/aronson/chapters")
+async def aronson_chapters():
+    """List available Aronson EBTA chapters."""
+    try:
+        from references.aronson.applied import get_chapters
+        return get_chapters()
+    except ImportError:
+        return []
+
+
+@router.post("/aronson/run")
+async def aronson_run(req: ChapterRunRequest):
+    """Run selected Aronson chapters."""
+    import uuid
+    batch_id = str(uuid.uuid4())
+    try:
+        from references.aronson.applied import run_chapters_async
+        asyncio.create_task(run_chapters_async(
+            batch_id, req.chapters,
+            tickers=req.tickers, date_start=req.date_start, date_end=req.date_end,
+        ))
+    except ImportError:
+        logger.warning("Aronson module not found — run will be a no-op")
+    return {"batch_id": batch_id}
+
+
+@router.post("/aronson/abort/{batch_id}")
+async def aronson_abort(batch_id: str):
+    """Abort a running Aronson batch."""
+    try:
+        from references.aronson.applied import abort_batch
+        return {"aborted": abort_batch(batch_id)}
+    except ImportError:
+        raise HTTPException(404, "Aronson module not available")
+
+
+@router.get("/aronson/progress/{batch_id}")
+async def aronson_progress(batch_id: str):
+    """SSE stream for Aronson batch progress."""
+    async def event_stream():
+        try:
+            from references.aronson.applied import get_batch_progress
+            import json
+            while True:
+                progress = get_batch_progress(batch_id)
+                if progress:
+                    yield f"data: {json.dumps(progress)}\n\n"
+                    if progress.get("completed", 0) >= progress.get("total", 1):
+                        break
+                    if progress.get("status") == "aborted":
+                        break
+                await asyncio.sleep(1)
+        except ImportError:
+            import json
+            yield f"data: {json.dumps({'batch_id': batch_id, 'total': 0, 'completed': 0, 'chapters': {}})}\n\n"
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ─── Ehlers DSP Lab ─────────────────────────────────────────────────────
+
+@router.get("/ehlers/chapters")
+async def ehlers_chapters():
+    """List available Ehlers DSP chapters."""
+    try:
+        from references.ehlers.applied import get_chapters
+        return get_chapters()
+    except ImportError:
+        return []
+
+
+@router.post("/ehlers/run")
+async def ehlers_run(req: ChapterRunRequest):
+    """Run selected Ehlers chapters."""
+    import uuid
+    batch_id = str(uuid.uuid4())
+    try:
+        from references.ehlers.applied import run_chapters_async
+        asyncio.create_task(run_chapters_async(
+            batch_id, req.chapters,
+            tickers=req.tickers, date_start=req.date_start, date_end=req.date_end,
+        ))
+    except ImportError:
+        logger.warning("Ehlers module not found — run will be a no-op")
+    return {"batch_id": batch_id}
+
+
+@router.post("/ehlers/abort/{batch_id}")
+async def ehlers_abort(batch_id: str):
+    """Abort a running Ehlers batch."""
+    try:
+        from references.ehlers.applied import abort_batch
+        return {"aborted": abort_batch(batch_id)}
+    except ImportError:
+        raise HTTPException(404, "Ehlers module not available")
+
+
+@router.get("/ehlers/progress/{batch_id}")
+async def ehlers_progress(batch_id: str):
+    """SSE stream for Ehlers batch progress."""
+    async def event_stream():
+        try:
+            from references.ehlers.applied import get_batch_progress
+            import json
+            while True:
+                progress = get_batch_progress(batch_id)
+                if progress:
+                    yield f"data: {json.dumps(progress)}\n\n"
+                    if progress.get("completed", 0) >= progress.get("total", 1):
+                        break
+                    if progress.get("status") == "aborted":
+                        break
+                await asyncio.sleep(1)
+        except ImportError:
+            import json
+            yield f"data: {json.dumps({'batch_id': batch_id, 'total': 0, 'completed': 0, 'chapters': {}})}\n\n"
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+# ─── Vince Risk Lab ─────────────────────────────────────────────────────
+
+@router.get("/vince/chapters")
+async def vince_chapters():
+    """List available Vince Risk Lab chapters."""
+    try:
+        from references.vince.applied import get_chapters
+        return get_chapters()
+    except ImportError:
+        return []
+
+
+@router.post("/vince/run")
+async def vince_run(req: ChapterRunRequest):
+    """Run selected Vince chapters."""
+    import uuid
+    batch_id = str(uuid.uuid4())
+    try:
+        from references.vince.applied import run_chapters_async
+        asyncio.create_task(run_chapters_async(
+            batch_id, req.chapters,
+            tickers=req.tickers, date_start=req.date_start, date_end=req.date_end,
+        ))
+    except ImportError:
+        logger.warning("Vince module not found — run will be a no-op")
+    return {"batch_id": batch_id}
+
+
+@router.post("/vince/abort/{batch_id}")
+async def vince_abort(batch_id: str):
+    """Abort a running Vince batch."""
+    try:
+        from references.vince.applied import abort_batch
+        return {"aborted": abort_batch(batch_id)}
+    except ImportError:
+        raise HTTPException(404, "Vince module not available")
+
+
+@router.get("/vince/progress/{batch_id}")
+async def vince_progress(batch_id: str):
+    """SSE stream for Vince batch progress."""
+    async def event_stream():
+        try:
+            from references.vince.applied import get_batch_progress
+            import json
+            while True:
+                progress = get_batch_progress(batch_id)
+                if progress:
+                    yield f"data: {json.dumps(progress)}\n\n"
+                    if progress.get("completed", 0) >= progress.get("total", 1):
+                        break
+                    if progress.get("status") == "aborted":
+                        break
+                await asyncio.sleep(1)
+        except ImportError:
+            import json
+            yield f"data: {json.dumps({'batch_id': batch_id, 'total': 0, 'completed': 0, 'chapters': {}})}\n\n"
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
 # ─── RAG Pipeline ────────────────────────────────────────────────────────
 
 @router.get("/rag/sources")
@@ -1789,6 +2097,20 @@ async def rag_query(
 
 # ─── Market Ticker Prices ────────────────────────────────────────────────
 
+# ── NSE Trading Holidays (official calendar – update annually) ──
+# Source: https://www.nseindia.com/resources/exchange-communication-holidays
+_NSE_HOLIDAYS: set = {
+    # 2025
+    "2025-02-26", "2025-03-14", "2025-03-31", "2025-04-10", "2025-04-14",
+    "2025-04-18", "2025-05-01", "2025-08-15", "2025-08-27", "2025-10-02",
+    "2025-10-21", "2025-10-22", "2025-11-05", "2025-12-25",
+    # 2026
+    "2026-01-15", "2026-01-26", "2026-03-03", "2026-03-26", "2026-03-31",
+    "2026-04-03", "2026-04-14", "2026-05-01", "2026-05-28", "2026-06-26",
+    "2026-09-14", "2026-10-02", "2026-10-20", "2026-11-10", "2026-11-24",
+    "2026-12-25",
+}
+
 _ticker_price_cache: Dict[str, Any] = {}   # L1 in-memory: cache_key -> response dict
 _ticker_cache_ts: Dict[str, float] = {}    # L1 in-memory: cache_key -> monotonic ts
 _ticker_cache_lock = asyncio.Lock()        # guards concurrent dict access
@@ -1800,9 +2122,11 @@ def _is_market_open(market: str) -> bool:
     from datetime import datetime, timezone, timedelta
     now_utc = datetime.now(timezone.utc)
     if market == "IND":
-        # NSE: 9:15 AM – 3:30 PM IST (UTC+5:30), Mon–Fri
+        # NSE: 9:15 AM – 3:30 PM IST (UTC+5:30), Mon–Fri, excl. holidays
         ist = now_utc + timedelta(hours=5, minutes=30)
         if ist.weekday() >= 5:
+            return False
+        if ist.strftime("%Y-%m-%d") in _NSE_HOLIDAYS:
             return False
         t = ist.hour * 60 + ist.minute
         return 9 * 60 + 15 <= t < 15 * 60 + 30
