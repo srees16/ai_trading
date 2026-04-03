@@ -9,7 +9,7 @@ prompts:
 check & analyze the backtest progress
 ~~~~~~
 1. abort the backtest
-2. recalibrate & retune the config first
+2. recalibrate, refine & re-tune the config first
 3. implement the identified fixes to achieve annual CAGR > 60%+
 4. finally, re-run full_pipeline_backtest
 ~~~~~~
