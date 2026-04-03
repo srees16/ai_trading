@@ -5,6 +5,9 @@ also verify if monte carlo evaluation of trading system is implemented
 
 prompts:
 
+> run full_pipeline_backtest.py
+
+critical 14 checkpoints: 0-100, 100-250, 250-400, 400-500, 500-650, 650-800, 800-1000, 1000-1250, 1250-1500, 1500-1800, 1800-2150, 2150-2500, 2500-2900, 2900-3190
 ~~~~~~
 check & analyze the backtest progress
 ~~~~~~

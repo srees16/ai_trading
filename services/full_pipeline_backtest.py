@@ -839,35 +839,29 @@ def run_full_backtest(
         else:
             dd_deep_days = 0
 
-        # R9: DD SCALING WITH GRACE PERIOD
-        # Root cause of R4-R8 death spiral: three throttles (DD + warmup + regime)
-        # compound to 0.50× deployment, creating negative feedback loop:
-        #   small positions → miss recoveries → DD stays high → positions stay small
-        # Fix: No DD scaling for first 500 trading days — early losses are startup
-        # noise from insufficient signal history, not real drawdown signal.
-        # After day 500, smooth DD curve kicks in for genuine risk management.
-        day_in_sim = day_idx - min_history
-        DD_GRACE_PERIOD = 500  # ~2 years of trading — signals need full history
-        if day_in_sim < DD_GRACE_PERIOD:
-            dd_scale = 1.0  # Full deployment during learning phase
+        # R10: DD SCALING DISABLED — emergency halt only
+        # Root cause of R4-R9 under-performance: DD scaling throttles positions
+        # during NORMAL pullbacks (10-20%), preventing compounding in bulls.
+        # R9 proof: Days 0-500 (grace, dd_scale=1.0) → +56.9%.
+        #           Days 500-1250 (DD scaling active) → degraded to +40.4%.
+        # Risk management delegated to: regime scaling + trailing stops + leverage cap.
+        # Emergency halt at DD > 65% prevents catastrophic ruin only.
+        DD_EMERGENCY_THRESHOLD = 0.65
+        if current_dd > DD_EMERGENCY_THRESHOLD:
+            dd_scale = 0.15  # Emergency: 15% deployment only
         else:
-            dd_scale = max(0.05, 1.0 - (current_dd / 0.55) ** 1.3)
-
-        # R9: NO WARMUP — removed entirely
-        # Dynamic weight_per_sym (R8 fix) already limits early exposure:
-        # - Few stocks with |forecast|>2.0 early → n_investable = 5 → 1/5 per stock
-        # - Multiplied by dd_scale=1.0, regime_scale, no warmup drag
-        # Previous warmup × DD × regime = 0.50× was the core death spiral
+            dd_scale = 1.0   # Full deployment — let regime scaling handle risk
 
         # FIX-FLOOR: Use actual equity for daily target (no artificial 50% floor)
         sizing_equity = max(equity, capital * 0.10)  # 10% ruin floor, not 50%
         dynamic_daily_target = sizing_equity * annual_vol_target / 16.0 * dd_scale
 
-        # Regime detection: average 40-day return + volatility across ALL symbols
+        # Regime detection: average 30-day return + volatility across ALL symbols
+        # R10: 30d lookback (from 40d) — detect regime changes ~2 weeks faster
         detected_regime = 'sideways'
-        avg_ret_40d = 0.0
-        if day_idx >= 40:
-            rets_40d = []
+        avg_ret_30d = 0.0
+        if day_idx >= 30:
+            rets_30d = []
             vol_20d_list = []
             for sym in symbols:
                 if sym not in ohlcv_slice:
@@ -875,27 +869,26 @@ def run_full_backtest(
                 pc = ohlcv_slice[sym]["Close"]
                 if hasattr(pc, "squeeze"):
                     pc = pc.squeeze()
-                if len(pc) >= 40:
-                    r = float(pc.iloc[-1] / pc.iloc[-40] - 1)
+                if len(pc) >= 30:
+                    r = float(pc.iloc[-1] / pc.iloc[-30] - 1)
                     if np.isfinite(r):
-                        rets_40d.append(r)
+                        rets_30d.append(r)
                 if len(pc) >= 20:
                     daily_rets = pc.pct_change().iloc[-20:]
                     v = float(daily_rets.std()) * np.sqrt(252)
                     if np.isfinite(v):
                         vol_20d_list.append(v)
-            if rets_40d:
-                avg_ret_40d = np.mean(rets_40d)
+            if rets_30d:
+                avg_ret_30d = np.mean(rets_30d)
             avg_vol_20d = np.mean(vol_20d_list) if vol_20d_list else 0.25
-            # R7: 4-state regime — thresholds at ±4% (compromise)
-            # ±3% misclassified too many normal dips as bear; ±5% missed real regime shifts
+            # R10: 4-state regime — thresholds at ±4% (30d return), faster detection
             if avg_vol_20d > 0.45:
                 detected_regime = 'crisis'
             elif avg_vol_20d > 0.35:
                 detected_regime = 'high_volatility'
-            elif avg_ret_40d > 0.04:
+            elif avg_ret_30d > 0.04:
                 detected_regime = 'bull'
-            elif avg_ret_40d < -0.04:
+            elif avg_ret_30d < -0.04:
                 detected_regime = 'bear'
             else:
                 detected_regime = 'sideways'
@@ -917,8 +910,8 @@ def run_full_backtest(
         # ── G3: Top-N conviction filter ────────────────────────
         # With 100 stocks, only trade the top MAX_POSITIONS by absolute
         # combined forecast strength (concentrated best-ideas portfolio).
-        MAX_POSITIONS = 20  # R8: max positions (hard cap)
-        MAX_HOLD_GRACE = 30  # R7: grace zone — held positions stay up to top-30
+        MAX_POSITIONS = 15  # R10: concentrated portfolio (only 5-10 stocks have strong conviction)
+        MAX_HOLD_GRACE = 22  # R10: tighter rotation for concentration
         # Pre-compute combined forecasts for ALL symbols, then rank
         _all_combined: Dict[str, float] = {}
         for sym, fc_dict in all_forecasts.items():
@@ -1023,12 +1016,12 @@ def run_full_backtest(
                 vol_scalar = dynamic_daily_target / ivv
                 position = (forecast / 10.0) * vol_scalar * weight_per_sym * idm
 
-                # R9: Regime vol scale — minimal drag, DD grace period handles risk
-                # sideways 0.90: most of the 13-year period is sideways; even -10% drag compounds
-                # bull 1.35: compound in confirmed uptrends
+                # R10: Regime vol scale — DD scaling disabled, regime is primary risk control
+                # sideways 1.00: ZERO drag in most common regime (was 0.90 = permanent -10% drag)
+                # bull 1.50: compound HARD in uptrends (was 1.35)
                 # bear 0.15: proven protective across all runs
                 _REGIME_VOL = {
-                    'bull': 1.35, 'bear': 0.15, 'sideways': 0.90,
+                    'bull': 1.50, 'bear': 0.15, 'sideways': 1.00,
                     'high_volatility': 0.25, 'crisis': 0.00,
                 }
                 regime_scale = _REGIME_VOL.get(detected_regime, 0.85)
@@ -1058,8 +1051,8 @@ def run_full_backtest(
                 prev_qty = prev_positions.get(sym, 0)
                 delta = abs(target_qty - prev_qty)
                 if delta > 0:
-                    # R8: Inertia 20% — matches config, responsive with dynamic weights
-                    if abs(prev_qty) > 0 and delta / abs(prev_qty) < 0.20:
+                    # R10: Inertia 15% — less drag during gradual bulls (was 20%)
+                    if abs(prev_qty) > 0 and delta / abs(prev_qty) < 0.15:
                         target_qty = prev_qty
                     else:
                         cost = delta * price * cost_pct
@@ -1129,7 +1122,8 @@ def run_full_backtest(
             d = day_idx - min_history
             total_d = n_days - min_history
             ret_so_far = (equity / capital - 1) * 100
-            print(f"\r  Day {d:4d}/{total_d}  equity={equity:,.0f}  ret={ret_so_far:+.1f}%  positions={active_count}", end="", flush=True)
+            _line = f"  Day {d:4d}/{total_d}  equity={equity:,.0f}  ret={ret_so_far:+.1f}%  positions={active_count}"
+            print(f"\r{_line:<80}", end="", flush=True)
 
     if verbose:
         print(f"\r  Simulation complete: {n_days - min_history} trading days" + " " * 40)
