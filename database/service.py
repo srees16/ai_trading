@@ -683,8 +683,74 @@ class DatabaseService:
             return None
 
     # =================================================================
-    # Pre-Aggregated Summary Refresh
+    # Chapter-Runner Lab History
     # =================================================================
+
+    def get_lab_history(self, lab_prefix: str, page: int = 1, limit: int = 50) -> List[Dict[str, Any]]:
+        """Return paginated batch run history for a chapter-runner lab.
+
+        Queries backtest_results where strategy_id = '<lab_prefix>_batch'.
+        """
+        if not self.is_available:
+            return []
+        try:
+            from sqlalchemy import desc
+            strategy_id = f"{lab_prefix}_batch"
+            offset = (max(1, page) - 1) * limit
+            with self.session_scope() as session:
+                rows = (
+                    session.query(BacktestResult)
+                    .filter(BacktestResult.strategy_id == strategy_id)
+                    .order_by(desc(BacktestResult.created_at))
+                    .offset(offset)
+                    .limit(limit)
+                    .all()
+                )
+                return [self._lab_row_to_dict(r) for r in rows]
+        except Exception as e:
+            logger.error("Failed to fetch %s history: %s", lab_prefix, e)
+            return []
+
+    def count_lab_runs(self, lab_prefix: str) -> int:
+        """Count total batch runs for a chapter-runner lab."""
+        if not self.is_available:
+            return 0
+        try:
+            from sqlalchemy import func as sqla_func
+            strategy_id = f"{lab_prefix}_batch"
+            with self.session_scope() as session:
+                return session.query(sqla_func.count(BacktestResult.id)).filter(
+                    BacktestResult.strategy_id == strategy_id
+                ).scalar() or 0
+        except Exception as e:
+            logger.error("Failed to count %s runs: %s", lab_prefix, e)
+            return 0
+
+    @staticmethod
+    def _lab_row_to_dict(bt: "BacktestResult") -> Dict[str, Any]:
+        metrics = bt.metrics or {}
+        params = bt.parameters or {}
+        return {
+            "batch_id": metrics.get("batch_id", str(bt.id)),
+            "chapters": params.get("chapters_requested", []),
+            "status": metrics.get("status", "completed" if bt.success else "error"),
+            "total": metrics.get("total", 0),
+            "completed": metrics.get("completed", 0),
+            "created_at": bt.created_at.isoformat() if bt.created_at else None,
+        }
+
+    # Convenience aliases for FML/TTS (called by existing v1_gateway endpoints)
+    def get_fml_history(self, page: int = 1, limit: int = 50):
+        return self.get_lab_history("fml", page, limit)
+
+    def count_fml_runs(self):
+        return self.count_lab_runs("fml")
+
+    def get_tts_history(self, page: int = 1, limit: int = 50):
+        return self.get_lab_history("tts", page, limit)
+
+    def count_tts_runs(self):
+        return self.count_lab_runs("tts")
     
     def _refresh_strategy_summary(self, session: Session, strategy_id: str):
         """

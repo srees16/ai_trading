@@ -40,7 +40,7 @@ if __name__ == "__main__":
     # ── Part 1: Theoretical bias curve ──────────────────────────
     print("\n[1] Theoretical bias: E[best Sharpe] ≈ σ√(2·ln N)")
     n_range = [5, 10, 20, 50, 100, 200, 500, 1000, 5000]
-    bias_values = [estimate_data_mining_bias(n) for n in n_range]
+    bias_values = [estimate_data_mining_bias(n, sigma_best=1.0) for n in n_range]
 
     print(f"\n  {'N tested':>10} {'Expected bias (Sharpe units)':>30}")
     print(f"  {'─'*10} {'─'*30}")
@@ -83,7 +83,7 @@ if __name__ == "__main__":
 
         mc_results[n_strats] = best_sharpes
         empirical_mean = np.mean(best_sharpes)
-        theoretical = estimate_data_mining_bias(n_strats)
+        theoretical = estimate_data_mining_bias(n_strats, sigma_best=1.0)
         print(f"  N={n_strats:>4d}:  Empirical best SR = {empirical_mean:.3f}  |  Theory = {theoretical:.3f}")
 
     # Plot MC distributions
@@ -91,7 +91,7 @@ if __name__ == "__main__":
     for i, n_strats in enumerate(mc_ns):
         ax = axes[i]
         ax.hist(mc_results[n_strats], bins=40, alpha=0.7, color="steelblue", edgecolor="white", density=True)
-        th = estimate_data_mining_bias(n_strats)
+        th = estimate_data_mining_bias(n_strats, sigma_best=1.0)
         ax.axvline(th, color="red", linestyle="--", linewidth=2, label=f"Theory={th:.2f}")
         ax.axvline(np.mean(mc_results[n_strats]), color="green", linestyle="-", linewidth=2, label=f"MC mean={np.mean(mc_results[n_strats]):.2f}")
         ax.set_title(f"N={n_strats}", fontsize=10)
@@ -116,7 +116,7 @@ if __name__ == "__main__":
 
         # Assume we scanned 50 parameter combos to find this signal
         n_tested = 50
-        bias = estimate_data_mining_bias(n_tested)
+        bias = estimate_data_mining_bias(n_tested, sigma_best=1.0)
         corrected_sr = max(0, raw_sr - bias)
 
         print(f"\n  {sym}:")

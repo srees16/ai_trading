@@ -195,3 +195,15 @@ async def run_chapters_async(
         with _batch_lock:
             _batch_progress[batch_id]["chapters"][ch_key] = result
             _batch_progress[batch_id]["completed"] += 1
+
+    # Persist completed batch to DB + R2
+    try:
+        from references.batch_history import save_batch_history
+        with _batch_lock:
+            snapshot = dict(_batch_progress.get(batch_id, {}))
+        await asyncio.to_thread(
+            save_batch_history, batch_id, "ehlers", chapter_keys, snapshot,
+            tickers, date_start, date_end,
+        )
+    except Exception:
+        logger.warning("Failed to save Ehlers batch history", exc_info=True)
