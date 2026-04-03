@@ -528,13 +528,29 @@ _US_TOP10 = [
 _RIBBON_TTL_MARKET_OPEN = 60    # refresh every 60s during market hours
 _RIBBON_TTL_MARKET_CLOSED = 300 # refresh every 5min when market is closed
 
+# NSE Trading Holidays – update annually from
+# https://www.nseindia.com/resources/exchange-communication-holidays
+_NSE_HOLIDAYS: set = {
+    # 2025
+    "2025-02-26", "2025-03-14", "2025-03-31", "2025-04-10", "2025-04-14",
+    "2025-04-18", "2025-05-01", "2025-08-15", "2025-08-27", "2025-10-02",
+    "2025-10-21", "2025-10-22", "2025-11-05", "2025-12-25",
+    # 2026
+    "2026-01-15", "2026-01-26", "2026-03-03", "2026-03-26", "2026-03-31",
+    "2026-04-03", "2026-04-14", "2026-05-01", "2026-05-28", "2026-06-26",
+    "2026-09-14", "2026-10-02", "2026-10-20", "2026-11-10", "2026-11-24",
+    "2026-12-25",
+}
+
 
 def _is_nse_market_open() -> bool:
-    """Return True if NSE is currently open (Mon-Fri, 9:15-15:30 IST)."""
+    """Return True if NSE is currently open (Mon-Fri, 9:15-15:30 IST, excl. holidays)."""
     from datetime import datetime, timezone, timedelta
     ist = timezone(timedelta(hours=5, minutes=30))
     now = datetime.now(ist)
     if now.weekday() >= 5:  # Sat/Sun
+        return False
+    if now.strftime("%Y-%m-%d") in _NSE_HOLIDAYS:
         return False
     market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
     market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)

@@ -701,6 +701,12 @@ def run_realistic_backtest(
         return PortfolioBacktestResult()
 
     # Run production pipeline backtest with matching config
+    try:
+        from config import Config as _BtCfg
+        _bt_start = getattr(_BtCfg, "BACKTEST_START_DATE", "")
+        _bt_end = getattr(_BtCfg, "BACKTEST_END_DATE", "")
+    except Exception:
+        _bt_start, _bt_end = "", ""
     bt = run_full_backtest(
         tickers=tickers,
         capital=capital,
@@ -708,6 +714,8 @@ def run_realistic_backtest(
         market=market,
         annual_vol_target=annual_vol_target,
         verbose=True,
+        start_date=_bt_start,
+        end_date=_bt_end,
     )
 
     if not isinstance(bt, dict) or bt.get("sharpe", 0) == 0:

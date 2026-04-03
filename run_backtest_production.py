@@ -16,6 +16,8 @@ result = run_full_backtest(
     market="IND",
     annual_vol_target=Config.CARVER_ANNUAL_VOL_TARGET,
     verbose=True,
+    start_date=getattr(Config, "BACKTEST_START_DATE", ""),
+    end_date=getattr(Config, "BACKTEST_END_DATE", ""),
 )
 
 print()

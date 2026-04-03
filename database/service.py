@@ -529,13 +529,23 @@ class DatabaseService:
                     if k in result
                 }
                 
+                # Ensure start_date/end_date are never None (NOT NULL columns)
+                from datetime import datetime, timedelta
+                _now = datetime.utcnow()
+                _start = result.get('start_date')
+                _end = result.get('end_date')
+                if not _start:
+                    _start = (_now - timedelta(days=365)).isoformat()
+                if not _end:
+                    _end = _now.isoformat()
+
                 backtest = BacktestResult(
                     market=market,
                     strategy_id=result.get('strategy_id', result.get('strategy_name', 'unknown').lower().replace(' ', '_')),
                     strategy_name=result.get('strategy_name', 'unknown'),
                     tickers=tickers_list,
-                    start_date=result.get('start_date'),
-                    end_date=result.get('end_date'),
+                    start_date=_start,
+                    end_date=_end,
                     initial_capital=result.get('initial_capital', 10000),
                     total_return=result.get('total_return'),
                     annualized_return=result.get('annualized_return'),
