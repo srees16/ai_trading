@@ -863,7 +863,7 @@ def run_full_backtest(
         for sym, fc_dict in all_forecasts.items():
             if not fc_dict:
                 continue
-            combined = combine_forecasts(sym, fc_dict, active_weights)
+            combined = combine_forecasts(sym, fc_dict, active_weights, regime=detected_regime)
             _all_combined[sym] = combined.combined_forecast
         # Rank by absolute forecast strength, keep top N
         _ranked = sorted(_all_combined.items(), key=lambda x: abs(x[1]), reverse=True)

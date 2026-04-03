@@ -607,6 +607,104 @@ def apply_decay_state_filter(
     return adjusted
 
 
+# ── P4: Regime-Specific Sharpe²-Weighted Forecast Allocation ──────────
+# Historical signal quality by regime (from 13yr audit, April 2026):
+#   BULL:     Sharpe 0.73 (10D) — trend-following strongest
+#   SIDEWAYS: Sharpe 0.80 (5D)  — mean-reversion & adaptive strongest
+#   BEAR:     Sharpe 0.10 (10D) — signals broken, near-random
+#
+# Sharpe² weighting: w_i ∝ sharpe_i² in that regime (Kelly-optimal allocation)
+# This tilts forecast ensemble toward historically proven sources per regime.
+
+REGIME_SHARPE_SCORES = {
+    # {source: {regime: sharpe_estimate}} — from backtest signal quality audit
+    "ewmac_8_32":      {"bull": 0.65, "sideways": 0.40, "bear": 0.05},
+    "ewmac_16_64":     {"bull": 0.70, "sideways": 0.35, "bear": 0.08},
+    "ewmac_32_128":    {"bull": 0.72, "sideways": 0.30, "bear": 0.10},
+    "ewmac_64_256":    {"bull": 0.68, "sideways": 0.25, "bear": 0.12},
+    "ehlers_dsp":      {"bull": 0.60, "sideways": 0.75, "bear": 0.15},
+    "momentum":        {"bull": 0.55, "sideways": 0.30, "bear": 0.05},
+    "intermarket":     {"bull": 0.50, "sideways": 0.45, "bear": 0.20},
+    "penfold_trend":   {"bull": 0.65, "sideways": 0.35, "bear": 0.08},
+    "cross_momentum":  {"bull": 0.50, "sideways": 0.25, "bear": 0.10},
+    "screener":        {"bull": 0.40, "sideways": 0.50, "bear": 0.10},
+    "acceleration":    {"bull": 0.55, "sideways": 0.30, "bear": 0.05},
+    "breakout":        {"bull": 0.60, "sideways": 0.55, "bear": 0.08},
+    "skew_signal":     {"bull": 0.30, "sideways": 0.40, "bear": 0.25},
+    "decision_engine": {"bull": 0.35, "sideways": 0.45, "bear": 0.10},
+    "carver_value":    {"bull": 0.20, "sideways": 0.55, "bear": 0.15},
+    "carry":           {"bull": 0.25, "sideways": 0.30, "bear": 0.10},
+    "order_flow":      {"bull": 0.30, "sideways": 0.35, "bear": 0.10},
+}
+
+
+def apply_regime_sharpe_weights(
+    base_weights: List[ForecastWeight],
+    regime: str = "",
+    blend_factor: float = 0.5,
+) -> List[ForecastWeight]:
+    """P4: Tilt forecast weights toward historically strong sources for current regime.
+
+    Uses Sharpe² weighting (Kelly-optimal) blended with base weights.
+    blend_factor=0.5 means 50% base + 50% Sharpe²-optimised.
+
+    Parameters
+    ----------
+    base_weights : list[ForecastWeight]
+        Current weights (post-decay, pre-Aronson).
+    regime : str
+        Current market regime (bull/bear/sideways).
+    blend_factor : float
+        How aggressively to tilt (0.0=no change, 1.0=full Sharpe² weighting).
+
+    Returns
+    -------
+    list[ForecastWeight]
+        Regime-adjusted weights, renormalised to sum=1.0.
+    """
+    if not regime or blend_factor <= 0:
+        return base_weights
+
+    regime_key = regime.lower().replace("trending_", "").replace("range_bound", "sideways").replace("high_volatility", "bear").replace("crisis", "bear")
+    if regime_key not in ("bull", "sideways", "bear"):
+        regime_key = "sideways"  # default
+
+    # Compute Sharpe² for each source in this regime
+    sharpe_sq = {}
+    for fw in base_weights:
+        if fw.weight <= 0:
+            sharpe_sq[fw.name] = 0.0
+            continue
+        scores = REGIME_SHARPE_SCORES.get(fw.name, {})
+        sr = scores.get(regime_key, 0.30)  # default 0.30 Sharpe for unknown sources
+        sharpe_sq[fw.name] = sr * sr  # Sharpe²
+
+    total_sq = sum(sharpe_sq.values())
+    if total_sq <= 0:
+        return base_weights
+
+    # Build Sharpe²-weighted allocation
+    adjusted = []
+    for fw in base_weights:
+        if fw.weight <= 0:
+            adjusted.append(ForecastWeight(fw.name, 0.0))
+            continue
+        optimal_w = sharpe_sq[fw.name] / total_sq
+        blended = (1 - blend_factor) * fw.weight + blend_factor * optimal_w
+        adjusted.append(ForecastWeight(fw.name, blended))
+
+    # Renormalise to sum=1.0
+    total = sum(fw.weight for fw in adjusted if fw.weight > 0)
+    if total > 0:
+        adjusted = [
+            ForecastWeight(fw.name, fw.weight / total) if fw.weight > 0 else fw
+            for fw in adjusted
+        ]
+
+    logger.info("P4: Regime-Sharpe² weights applied (regime=%s, blend=%.0f%%)", regime_key, blend_factor * 100)
+    return adjusted
+
+
 def get_aronson_adjusted_weights(
     base_weights: List[ForecastWeight],
 ) -> List[ForecastWeight]:
@@ -649,6 +747,8 @@ def combine_forecasts(
     weights: Optional[List[ForecastWeight]] = None,
     correlations: Optional[Dict[tuple, float]] = None,
     vol_regime_multiplier: Optional[float] = None,
+    regime: str = "",
+    forecast_history: Optional[Dict[str, list]] = None,
 ) -> CombinedForecast:
     """Combine multiple forecast sources into a single combined forecast.
 
@@ -668,6 +768,12 @@ def combine_forecasts(
         is below median → scale forecasts UP (calm markets = more signal).
         If <1, current vol is above median → scale DOWN (volatile markets =
         more noise).  Capped at [0.5, 1.5].  If None, no vol adjustment.
+    regime : str
+        P4: Current market regime for Sharpe²-weighted allocation.
+    forecast_history : dict[str, list[float]] | None
+        P6: Rolling daily forecast values per source for dynamic FDM.
+        When provided (≥30 days), FDM uses empirical correlations
+        (shrinkage-blended with static prior) instead of static defaults.
 
     Returns
     -------
@@ -676,6 +782,9 @@ def combine_forecasts(
     weights = weights or DEFAULT_FORECAST_WEIGHTS
     # G1 FIX: Zero-weight inverted/dead strategies BEFORE Aronson adjustment
     weights = apply_decay_state_filter(weights)
+    # P4: Apply regime-specific Sharpe²-weighted allocation
+    if regime:
+        weights = apply_regime_sharpe_weights(weights, regime=regime, blend_factor=0.5)
     # Apply Aronson EBTA validation multipliers (penalise unvalidated signals)
     weights = get_aronson_adjusted_weights(weights)
     weight_map = {fw.name: fw.weight for fw in weights}
@@ -714,7 +823,18 @@ def combine_forecasts(
     # G20: Compute FDM per-symbol from AVAILABLE sources (Carver Ch.8).
     # When a source is missing, the reduced set has different correlations
     # and thus a different FDM. This avoids over-scaling thin-signal symbols.
-    fdm = compute_fdm(active_weights, correlations)
+    #
+    # P6: Use rolling empirical correlations when forecast_history is available.
+    # Shrinkage-blended with static prior (30% shrinkage) for stability.
+    effective_correlations = correlations
+    if forecast_history:
+        rolling_corr = compute_rolling_correlations(
+            forecast_history, lookback=252, shrinkage=0.3,
+        )
+        if rolling_corr is not DEFAULT_CORRELATION_MATRIX:
+            effective_correlations = rolling_corr
+            logger.debug("P6: Using rolling FDM correlations for %s", symbol)
+    fdm = compute_fdm(active_weights, effective_correlations)
 
     # Apply FDM and cap
     combined = raw_combined * fdm

@@ -122,10 +122,10 @@ class Config:
     # Carver Systematic Trading Framework (Robert Carver)
     # =================================================================
     CARVER_ENABLED: bool = True             # Enable Carver vol-targeted sizing (False = legacy Kelly)
-    CARVER_ANNUAL_VOL_TARGET: float = 0.55  # Kelly-optimal: SR ≈ 0.55 → σ* = 55%; regime scaling provides further protection
+    CARVER_ANNUAL_VOL_TARGET: float = 0.90  # P1: Kelly-optimal for SR≈0.50 with IDM≈2.3 → σ*=90%; regime scaling dampens to ~75% effective
     CARVER_INITIAL_CAPITAL: float = 500_000.0  # Starting capital (₹)
     CARVER_DEFAULT_IDM: float = 2.3         # A2: IDM for 17 active sources at avg corr ~0.15-0.20 (Carver: 1/sqrt(avg_corr) ≈ 2.2-2.6)
-    CARVER_MAX_LEVERAGE: float = 4.0        # 4× hard cap — proportional to 55% vol target (was 7× at 95%)
+    CARVER_MAX_LEVERAGE: float = 6.0        # P1: 6× hard cap — proportional to 90% vol target; regime caps limit bear/crisis
     CARVER_INERTIA_THRESHOLD: float = 0.20  # G3: raised from 15% to 20% — reduce churn with 100-stock universe
     CARVER_COST_SPEED_LIMIT: float = 3.0    # SR must exceed 3× cost drag
     CARVER_TRADE_HORIZON: str = "swing"     # "swing" (3σ bear/5σ bull) or "positional"
@@ -137,10 +137,10 @@ class Config:
     VINCE_INSURANCE_PCT_US: float = 0.10    # US: 10% floor (more conservative for manual)
     VINCE_REGIME_SHRINK_ENABLED: bool = True  # Enable Vince shrink/stretch per regime
 
-    # Drawdown thresholds — graduated for 55% vol target
-    PORTFOLIO_DRAWDOWN_WARNING: float = 0.15    # 15% DD → smooth scale-down begins
-    PORTFOLIO_DRAWDOWN_CRITICAL: float = 0.25   # 25% DD → aggressive scale-down
-    PORTFOLIO_DRAWDOWN_HALT: float = 0.30       # 30% DD → halt all new trades
+    # Drawdown thresholds — graduated for 90% vol target (wider to avoid premature halt)
+    PORTFOLIO_DRAWDOWN_WARNING: float = 0.20    # P1: 20% DD → smooth scale-down begins (was 15%)
+    PORTFOLIO_DRAWDOWN_CRITICAL: float = 0.35   # P1: 35% DD → aggressive scale-down (was 25%)
+    PORTFOLIO_DRAWDOWN_HALT: float = 0.45       # P1: 45% DD → halt all new trades (was 30%)
 
     # Carver — US Stocks overrides (USD-based)
     CARVER_US_ENABLED: bool = True          # Enable Carver for US stocks pipeline
@@ -205,15 +205,21 @@ class Config:
 
     @staticmethod
     def get_regime_hold_days(regime: str, horizon: str = "swing") -> int:
-        """A5: Return max hold days for given regime and horizon."""
+        """P5: Return max hold days for given regime and horizon.
+        
+        Tuned from signal quality audit (April 2026):
+          - SIDEWAYS 20D: Sharpe 0.85 (best) → hold 20 days to capture full MR cycle
+          - BULL 10D: Sharpe 0.73 → hold 12 days (lock profits before reversal)
+          - BEAR 5D: Sharpe -0.01 → hold 5 days (rapid exit, signals broken)
+        """
         if horizon != "swing":
             return 60
         _HOLD = {
-            "trending_bull":    18,
-            "trending_bear":     7,
-            "range_bound":      10,
-            "high_volatility":   5,
-            "crisis":            3,
+            "trending_bull":    12,   # P5: was 18 → 12 (BULL 10D Sharpe=0.73, lock profits)
+            "trending_bear":     5,   # P5: was 7 → 5 (BEAR signals broken, rapid exit)
+            "range_bound":      20,   # P5: was 10 → 20 (SIDEWAYS 20D Sharpe=0.85, best regime!)
+            "high_volatility":   5,   # P5: was 5, unchanged (chaos = fast exits)
+            "crisis":            3,   # Unchanged — emergency exits
         }
         return _HOLD.get((regime or "").lower().strip(), 15)
 
@@ -369,14 +375,17 @@ class Config:
     OPTIONS_TAIL_HEDGE_PCT: float = 0.02    # 2% of portfolio for tail hedges
 
     # =================================================================
-    # Phase 2 — Short Selling
+    # Phase 2 — Short Selling (F&O Only)
     # =================================================================
-    SHORT_SELLING_ENABLED: bool = False      # DISABLED: IND equities cannot be shorted directly
-    SHORT_MAX_PORTFOLIO_PCT: float = 0.20    # Max 20% of portfolio short
-    SHORT_MAX_CONCURRENT: int = 3            # Max concurrent short positions
+    # P2: Enabled via Futures & Options — naked short selling is prohibited in India.
+    # Shorts are executed as NRML (overnight F&O) positions, not MIS equity.
+    SHORT_SELLING_ENABLED: bool = True       # P2: ENABLED via F&O (legal in India)
+    SHORT_SELLING_MODE: str = "FNO"          # P2: "FNO" = futures/options only (no naked equity shorts)
+    SHORT_MAX_PORTFOLIO_PCT: float = 0.25    # P2: Max 25% of portfolio short (raised from 20% for bear alpha)
+    SHORT_MAX_CONCURRENT: int = 5            # P2: Max concurrent short positions (raised from 3)
     SHORT_REGIME_REQUIRED: str = "bear"      # Only short in bear regime
     SHORT_MIN_FORECAST: float = -5.0         # Min forecast to trigger short trade plan
-    SHORT_PRODUCT: str = "MIS"               # MIS (intraday) or NRML (overnight F&O)
+    SHORT_PRODUCT: str = "NRML"              # P2: NRML for overnight F&O (was MIS intraday)
 
     # Options-Based Bear Hedging (replaces direct shorting for IND)
     OPTIONS_HEDGE_ENABLED: bool = True       # Enable put-buying / call-selling in bear regime
@@ -390,10 +399,10 @@ class Config:
     # Phase 3 — Leverage via Futures
     # =================================================================
     LEVERAGE_ENABLED: bool = True            # G11: Enabled — regime-adaptive leverage
-    LEVERAGE_MAX: float = 4.0               # Absolute max leverage (hard cap — matches CARVER_MAX_LEVERAGE at 55% vol)
-    LEVERAGE_BULL_MAX: float = 4.0           # 4× in strong bull — proportional to 55% vol (was 7× at 95%)
-    LEVERAGE_RANGE_MAX: float = 3.0          # 3× in range-bound — alpha capture with DD layers
-    LEVERAGE_BEAR_MAX: float = 1.5           # 1.5× in bear — defensive, stops+VIX gate provide DD protection
+    LEVERAGE_MAX: float = 6.0               # P1: Absolute max leverage (synced with CARVER_MAX_LEVERAGE at 90% vol)
+    LEVERAGE_BULL_MAX: float = 6.0           # P1: 6× in strong bull — proportional to 90% vol target
+    LEVERAGE_RANGE_MAX: float = 4.0          # P1: 4× in range-bound — alpha capture with DD layers
+    LEVERAGE_BEAR_MAX: float = 2.0           # P1: 2× in bear — defensive, stops+VIX gate provide DD protection
     LEVERAGE_CRISIS_MAX: float = 0.5         # 50% sizing in crisis — near-cash (VIX panic gate also blocks entries)
     FUTURES_INSTRUMENT: str = "NIFTY"        # NIFTY or BANKNIFTY
     FUTURES_LOT_SIZE: int = 25               # NIFTY lot size

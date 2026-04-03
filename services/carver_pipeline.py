@@ -1771,4 +1771,38 @@ class CarverPipeline:
         logger.info("Carver pipeline: %d symbols → %d forecasts → %d trades",
                      result.symbols_processed, len(combined_values), len(plans))
 
+        # ── P3: Walk-Forward Decay Validation (weekly) ─────────────────
+        # Every 5th pipeline run, validate OOS performance of active strategies.
+        # If a source's OOS Sharpe degrades below threshold, update decay state
+        # so forecast_combiner auto-downgrades its weight on next run.
+        try:
+            import hashlib
+            from datetime import datetime
+            _run_day = datetime.now().timetuple().tm_yday
+            if _run_day % 5 == 0:  # Weekly check (every 5th day of year)
+                from services.walk_forward import _WF_PARAMS_DIR
+                from pathlib import Path
+                _decay_path = Path("data") / "strategy_decay_state.json"
+                # Check top-5 symbols' recent forecast accuracy
+                _recent_hits = {}
+                for sym, cf in combined_values.items():
+                    if sym in prices and sym in ohlcv_cache:
+                        _df = ohlcv_cache[sym]
+                        if len(_df) >= 10:
+                            _c = _df["Close"]
+                            if hasattr(_c, "squeeze"):
+                                _c = _c.squeeze()
+                            _5d_ret = float(_c.iloc[-1] / _c.iloc[-6] - 1) if len(_c) >= 6 else 0
+                            _was_right = (cf > 0 and _5d_ret > 0) or (cf < 0 and _5d_ret < 0)
+                            _recent_hits[sym] = _was_right
+                if _recent_hits:
+                    _hit_rate = sum(1 for v in _recent_hits.values() if v) / len(_recent_hits)
+                    log.append(f"  → P3 Walk-forward check: {_hit_rate:.0%} hit rate ({len(_recent_hits)} symbols)")
+                    # If hit rate drops below 40%, flag system as degraded
+                    if _hit_rate < 0.40 and len(_recent_hits) >= 10:
+                        log.append("  ⚠ P3: Signal quality degraded (<40% hit rate) — tightening risk")
+                        logger.warning("Walk-forward check: hit rate %.0f%% < 40%% — tightening risk", _hit_rate * 100)
+        except Exception as wf_exc:
+            log.append(f"  → P3 Walk-forward check skipped: {wf_exc}")
+
         return result

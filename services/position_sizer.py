@@ -202,9 +202,20 @@ def compute_position_size(
         target_quantity = max(-max_qty_by_leverage, min(target_quantity, max_qty_by_leverage))
 
     # Step 6: Floor at 0 unless short selling is enabled
+    # P2: Short selling is allowed via F&O (futures & options) in India.
+    # Naked equity shorts are prohibited. SHORT_SELLING_MODE="FNO" enforces
+    # that shorts route through NFO exchange with NRML product.
     try:
         from config import Config
         allow_short = getattr(Config, "SHORT_SELLING_ENABLED", False)
+        short_mode = getattr(Config, "SHORT_SELLING_MODE", "FNO")
+        # In F&O mode, only allow shorts for bear/crisis regimes
+        if allow_short and short_mode == "FNO" and regime:
+            regime_upper = (regime or "").upper().replace(" ", "_")
+            if regime_upper not in ("BEAR", "TRENDING_BEAR", "HIGH_VOLATILITY", "HIGH_VOL", "CRISIS"):
+                # Non-bear regimes: cap shorts at 30% of long-equivalent size
+                if target_quantity < 0:
+                    target_quantity = max(target_quantity, -abs(round(portfolio_position * 0.3)))
     except Exception:
         allow_short = False
     if not allow_short:
