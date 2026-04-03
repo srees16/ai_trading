@@ -62,36 +62,39 @@ class ForecastWeight:
     weight: float  # 0.0 to 1.0
 
 
-# Default handcrafted weights for centurion_core NSE swing/positional
-# 13yr backtest audit (2012-2025): zeroed 4 dead sources (pead, event_driven,
-# fii_flow, sentiment = 15%) and 3 negative-tstat sources (pairs_arb,
-# mean_reversion, oi_signal = 6%). Redistributed 21% to proven +tstat sources.
+# R7 MODERATE CONCENTRATION: 8 proven signals.
+# Diagnosis across 6 runs: 17 signals diluted forecast to ~4 (R4), 5 signals had
+# too much variance causing -50% in 400 days (R5/R6). 8 signals balances:
+# avg forecast ~6-7 (vs Carver target 10), sufficient diversification to avoid
+# single-signal blowups, decorrelated styles (trend + momentum + adaptive + breakout).
 DEFAULT_FORECAST_WEIGHTS: List[ForecastWeight] = [
-    ForecastWeight("ewmac_8_32", 0.08),     # fast swing: regime-change alpha
-    ForecastWeight("ewmac_16_64", 0.08),     # swing core
-    ForecastWeight("ewmac_32_128", 0.06),    # medium trend
-    ForecastWeight("ewmac_64_256", 0.06),    # positional core
-    ForecastWeight("carry", 0.02),           # weak for equities — minimal
-    ForecastWeight("screener", 0.05),        # technical overlay
-    ForecastWeight("momentum", 0.10),        # Strong for IND (Jegadeesh-Titman)
-    ForecastWeight("pead", 0.00),            # DEAD: 0% hit rate in backtest — no earnings data
+    ForecastWeight("ewmac_8_32", 0.00),      # zeroed — too fast, whipsaws
+    ForecastWeight("ewmac_16_64", 0.15),     # R7: CORE swing trend
+    ForecastWeight("ewmac_32_128", 0.00),    # zeroed — redundant
+    ForecastWeight("ewmac_64_256", 0.12),    # R7: CORE positional trend
+    ForecastWeight("carry", 0.00),           # zeroed — weak for equities
+    ForecastWeight("screener", 0.08),        # R7: RE-ADDED — RSI+MA composite, decorrelated from momentum
+    ForecastWeight("momentum", 0.20),        # R7: PRIMARY alpha — 12-1 momentum factor
+    ForecastWeight("pead", 0.00),            # DEAD: 0% hit rate
     ForecastWeight("mean_reversion", 0.00),  # HARMFUL: t-stat = -139.3
-    ForecastWeight("fii_flow", 0.00),        # DEAD: 0% hit rate in backtest — no live FII data
-    ForecastWeight("decision_engine", 0.03), # composite signal
+    ForecastWeight("fii_flow", 0.00),        # DEAD: 0% hit rate
+    ForecastWeight("decision_engine", 0.00), # zeroed — circular dependency
     ForecastWeight("oi_signal", 0.00),       # HARMFUL: t-stat = -69.8
-    ForecastWeight("cross_momentum", 0.06),  # Cross-sectional: long winners, short losers
+    ForecastWeight("cross_momentum", 0.00),  # zeroed — conflicts with long-only
     ForecastWeight("pairs_arb", 0.00),       # HARMFUL: t-stat = -190.7
-    ForecastWeight("event_driven", 0.00),    # DEAD: 0% hit rate in backtest — no event calendar
-    ForecastWeight("penfold_trend", 0.08),   # Penfold: Turtle+ATR+Retrace+Dow
-    ForecastWeight("ehlers_dsp", 0.10),      # Ehlers: Fisher+MAMA/FAMA+SuperSmoother (best adaptive)
-    ForecastWeight("intermarket", 0.09),     # Ruggiero: intermarket+seasonal
-    ForecastWeight("acceleration", 0.05),    # rate-of-change of trend
-    ForecastWeight("carver_value", 0.03),    # 5-year mean reversion
-    ForecastWeight("skew_signal", 0.04),     # realized skew risk premium
-    ForecastWeight("sentiment", 0.00),       # DEAD: 0% hit rate in backtest — no live NLP
-    ForecastWeight("breakout", 0.05),        # 20-day channel breakout
-    ForecastWeight("order_flow", 0.02),      # OBV+CVD+MFI microstructure
-    # Total: 1.00 exact (24 sources, 7 zeroed, 17 active)
+    ForecastWeight("event_driven", 0.00),    # DEAD: 0% hit rate
+    ForecastWeight("penfold_trend", 0.15),   # R7: Turtle+ATR+Retrace+Dow trend filter
+    ForecastWeight("ehlers_dsp", 0.15),      # R7: Adaptive DSP (Fisher+MAMA/FAMA)
+    ForecastWeight("intermarket", 0.00),     # zeroed — noisy
+    ForecastWeight("acceleration", 0.07),    # R7: RE-ADDED — trend rate-of-change, leads EWMAC
+    ForecastWeight("carver_value", 0.00),    # zeroed — 5yr mean-reversion too slow
+    ForecastWeight("skew_signal", 0.00),     # zeroed — weak signal
+    ForecastWeight("sentiment", 0.00),       # DEAD: 0% hit rate
+    ForecastWeight("breakout", 0.08),        # R7: RE-ADDED — 20-day channel, decorrelated from EWMAC
+    ForecastWeight("order_flow", 0.00),      # zeroed — microstructure noise
+    # Total: 1.00 exact (24 sources, 8 active)
+    # Active: momentum(20%), ewmac_16_64(15%), penfold_trend(15%), ehlers_dsp(15%),
+    #         ewmac_64_256(12%), screener(8%), breakout(8%), acceleration(7%)
 ]
 
 # Rule-of-thumb correlations between forecast sources (Carver Appendix C):

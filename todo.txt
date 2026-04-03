@@ -6,6 +6,13 @@ also verify if monte carlo evaluation of trading system is implemented
 prompts:
 
 ~~~~~~
+check & analyze the backtest progress
+~~~~~~
+1. abort the backtest
+2. recalibrate & retune the config first
+3. implement the identified fixes to achieve annual CAGR > 60%+
+4. finally, re-run full_pipeline_backtest
+~~~~~~
 here is the plan:
 1. focus on the backtest results first, fine tune the settings and configuration to ensure the 13-year backtest produces realistic estimate of CAGR > 60+% and not just theoretical estimate
 2. once the above step is completed, fix the task registration so it actually runs such that live testing can start for a real world CAGR estimates
