@@ -682,6 +682,63 @@ class DatabaseService:
             logger.error("Failed to fetch backtest result %s: %s", backtest_id, e)
             return None
 
+    def get_backtest_history(self, market: str = "US", page: int = 1, limit: int = 50) -> List[Dict[str, Any]]:
+        """Return paginated backtest history filtered by market."""
+        if not self.is_available:
+            return []
+        try:
+            from sqlalchemy import desc
+            offset = (max(1, page) - 1) * limit
+            with self.session_scope() as session:
+                rows = (
+                    session.query(BacktestResult)
+                    .filter(BacktestResult.market == market.upper())
+                    .order_by(desc(BacktestResult.created_at))
+                    .offset(offset)
+                    .limit(limit)
+                    .all()
+                )
+                return [self._backtest_row_to_dict(bt) for bt in rows]
+        except Exception as e:
+            logger.error("Failed to fetch backtest history: %s", e)
+            return []
+
+    def count_backtests(self, market: str = "US") -> int:
+        """Count total backtests for a market."""
+        if not self.is_available:
+            return 0
+        try:
+            from sqlalchemy import func as sqla_func
+            with self.session_scope() as session:
+                return session.query(sqla_func.count(BacktestResult.id)).filter(
+                    BacktestResult.market == market.upper()
+                ).scalar() or 0
+        except Exception as e:
+            logger.error("Failed to count backtests: %s", e)
+            return 0
+
+    @staticmethod
+    def _backtest_row_to_dict(bt: "BacktestResult") -> Dict[str, Any]:
+        return {
+            "id": str(bt.id),
+            "market": bt.market,
+            "strategy_id": bt.strategy_id,
+            "strategy_name": bt.strategy_name,
+            "tickers": bt.tickers or [],
+            "start_date": bt.start_date.isoformat() if bt.start_date else None,
+            "end_date": bt.end_date.isoformat() if bt.end_date else None,
+            "initial_capital": float(bt.initial_capital) if bt.initial_capital else None,
+            "total_return": bt.total_return,
+            "annualized_return": bt.annualized_return,
+            "sharpe_ratio": bt.sharpe_ratio,
+            "sortino_ratio": bt.sortino_ratio,
+            "max_drawdown": bt.max_drawdown,
+            "total_trades": bt.total_trades,
+            "win_rate": bt.win_rate,
+            "success": bt.success,
+            "created_at": bt.created_at.isoformat() if bt.created_at else None,
+        }
+
     # =================================================================
     # Chapter-Runner Lab History
     # =================================================================
