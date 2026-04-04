@@ -433,8 +433,8 @@ def run_full_backtest(
     # New approach: smooth scale-down curve, let trailing stops handle exits organically.
     peak_equity = capital
     dd_deep_days = 0          # consecutive days with DD > 25% (for gradual peak decay)
-    PEAK_DECAY_GRACE_DAYS = 60  # R14: wait 60 days before starting gradual decay
-    PEAK_DECAY_RATE = 0.01      # R14: blend 1% of equity into peak per day
+    PEAK_DECAY_GRACE_DAYS = 40  # R19a: faster decay (was 60 in R14)
+    PEAK_DECAY_RATE = 0.015     # R19a: 1.5%/day blend (was 1% in R14)
 
     # R13: Bear lockout REMOVED — binary exit/re-enter causes whipsaw in all variants
     # R11 (return-based) and R12 (vol-based) both destroyed equity via whipsaw.
@@ -849,17 +849,17 @@ def run_full_backtest(
         # R13: NO DD SCALING — replaced with dynamic vol target (Fix C)
         dd_scale = 1.0
 
-        # R16: DD-based vol target (base) — same as R14
-        if current_dd < 0.10:
-            base_vol_target = 0.75   # Full risk — no DD
-        elif current_dd < 0.20:
-            base_vol_target = 0.65   # Mild pullback — slight reduction
-        elif current_dd < 0.30:
-            base_vol_target = 0.55   # Moderate DD — meaningful reduction
-        elif current_dd < 0.40:
-            base_vol_target = 0.45   # Severe DD — significant reduction
-        else:
-            base_vol_target = 0.40   # Extreme DD — floor
+        # R19a: Continuous DD vol target — smooth linear ramp replaces 5-tier step
+        # At DD=0%: 0.90 (more aggressive than R14's 0.75 ceiling)
+        # At DD=28%+: 0.27 floor (more defensive than R14's 0.40 floor)
+        # Formula: vol = 0.90 * max(0.30, 1.0 - 2.5 * dd)
+        base_vol_target = 0.90 * max(0.30, 1.0 - 2.5 * current_dd)
+
+        # R19a: Portfolio equity curve stop — additional scaling at deep DD
+        # Beyond 30% DD, aggressively cut sizing. At 45%+ DD, floor at 10%.
+        if current_dd > 0.30:
+            dd_curtail = max(0.10, 1.0 - 2.0 * (current_dd - 0.30))
+            base_vol_target *= dd_curtail
 
         annual_vol_target = base_vol_target
 
@@ -1044,10 +1044,10 @@ def run_full_backtest(
 
                 prev_positions[sym] = target_qty
 
-                # R12: Uniform wide stops 10.0σ — let winners ride, only exit catastrophic
-                # R4-R11: regime-dependent stops caused whipsaw (tightened in bear → stopped out)
-                # R12: same stop in ALL conditions. ~20% below peak = only true crashes trigger.
-                stop_sigma = 10.0
+                # R19a: Tighter stops 5σ — catches genuine breakdowns at ~10% below peak
+                # R14 had 10σ (~20% below peak) which practically never triggered.
+                # 5σ for typical 2% daily vol stock = stop at ~10% below instrument peak.
+                stop_sigma = 5.0
 
                 if target_qty > 0:
                     active_count += 1

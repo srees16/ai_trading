@@ -934,6 +934,167 @@ async def screener_monitor():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/screener/monitor/trades")
+async def screener_monitor_trades():
+    """Get detailed list of all monitored trades (active + closed)."""
+    try:
+        from kite_connect.trading.trade_monitor import TradeMonitor
+        from dataclasses import asdict
+        monitor = TradeMonitor()
+        trades = []
+        for oid, trade in monitor._trades.items():
+            d = asdict(trade)
+            d["opened_at"] = trade.opened_at.isoformat()
+            d["is_active"] = trade.is_active
+            # Compute unrealised P&L for active trades
+            if trade.is_active and trade.entry_price > 0:
+                if trade.direction == "LONG":
+                    d["unrealised_pnl_pct"] = round(
+                        (trade.target_price / trade.entry_price - 1) * 100, 2
+                    )
+                else:
+                    d["unrealised_pnl_pct"] = round(
+                        (1 - trade.target_price / trade.entry_price) * 100, 2
+                    )
+            else:
+                d["unrealised_pnl_pct"] = 0
+            trades.append(d)
+        # Sort: active first, then by opened_at desc
+        trades.sort(key=lambda t: (not t["is_active"], t["opened_at"]), reverse=False)
+        active = [t for t in trades if t["is_active"]]
+        closed = [t for t in trades if not t["is_active"]]
+        return {
+            "active_trades": active,
+            "closed_trades": closed,
+            "total_active": len(active),
+            "total_closed": len(closed),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ─── Config Management ──────────────────────────────────────────────────
+
+@router.get("/config/carver")
+async def get_carver_config():
+    """Get current Carver framework configuration values."""
+    from config import Config
+    return {
+        "carver_enabled": Config.CARVER_ENABLED,
+        "annual_vol_target": Config.CARVER_ANNUAL_VOL_TARGET,
+        "initial_capital": Config.CARVER_INITIAL_CAPITAL,
+        "default_idm": Config.CARVER_DEFAULT_IDM,
+        "max_leverage": Config.CARVER_MAX_LEVERAGE,
+        "inertia_threshold": Config.CARVER_INERTIA_THRESHOLD,
+        "cost_speed_limit": Config.CARVER_COST_SPEED_LIMIT,
+        "trade_horizon": Config.CARVER_TRADE_HORIZON,
+        "vince_insurance_pct_ind": Config.VINCE_INSURANCE_PCT_IND,
+        "vince_insurance_pct_us": Config.VINCE_INSURANCE_PCT_US,
+        "vince_regime_shrink_enabled": Config.VINCE_REGIME_SHRINK_ENABLED,
+        "dd_warning": Config.PORTFOLIO_DRAWDOWN_WARNING,
+        "dd_critical": Config.PORTFOLIO_DRAWDOWN_CRITICAL,
+        "dd_halt": Config.PORTFOLIO_DRAWDOWN_HALT,
+        "max_open_trades": Config.MAX_OPEN_TRADES,
+        "vix_caution_threshold": Config.VIX_CAUTION_THRESHOLD,
+        "vix_panic_threshold": Config.VIX_PANIC_THRESHOLD,
+        "nse_universe_tier": Config.NSE_UNIVERSE_TIER,
+        # US overrides
+        "us_enabled": Config.CARVER_US_ENABLED,
+        "us_vol_target": Config.CARVER_US_ANNUAL_VOL_TARGET,
+        "us_initial_capital": Config.CARVER_US_INITIAL_CAPITAL,
+        "us_idm": Config.CARVER_US_DEFAULT_IDM,
+        "us_max_leverage": Config.CARVER_US_MAX_LEVERAGE,
+    }
+
+
+@router.post("/config/carver")
+async def update_carver_config(updates: Dict[str, Any]):
+    """Update Carver config values at runtime (session only, not persisted to disk)."""
+    from config import Config
+
+    ALLOWED_KEYS = {
+        "annual_vol_target": ("CARVER_ANNUAL_VOL_TARGET", float, 0.05, 1.5),
+        "initial_capital": ("CARVER_INITIAL_CAPITAL", float, 10_000, 100_000_000),
+        "default_idm": ("CARVER_DEFAULT_IDM", float, 1.0, 5.0),
+        "max_leverage": ("CARVER_MAX_LEVERAGE", float, 1.0, 10.0),
+        "inertia_threshold": ("CARVER_INERTIA_THRESHOLD", float, 0.0, 0.5),
+        "trade_horizon": ("CARVER_TRADE_HORIZON", str, None, None),
+        "dd_warning": ("PORTFOLIO_DRAWDOWN_WARNING", float, 0.05, 0.5),
+        "dd_critical": ("PORTFOLIO_DRAWDOWN_CRITICAL", float, 0.10, 0.6),
+        "dd_halt": ("PORTFOLIO_DRAWDOWN_HALT", float, 0.15, 0.8),
+        "max_open_trades": ("MAX_OPEN_TRADES", int, 1, 100),
+        "vix_caution_threshold": ("VIX_CAUTION_THRESHOLD", float, 10.0, 50.0),
+        "vix_panic_threshold": ("VIX_PANIC_THRESHOLD", float, 20.0, 80.0),
+    }
+
+    applied = {}
+    errors = []
+    for key, value in updates.items():
+        if key not in ALLOWED_KEYS:
+            errors.append(f"Unknown key: {key}")
+            continue
+        attr_name, expected_type, min_val, max_val = ALLOWED_KEYS[key]
+        try:
+            cast_val = expected_type(value)
+            if min_val is not None and cast_val < min_val:
+                errors.append(f"{key}: value {cast_val} below minimum {min_val}")
+                continue
+            if max_val is not None and cast_val > max_val:
+                errors.append(f"{key}: value {cast_val} above maximum {max_val}")
+                continue
+            setattr(Config, attr_name, cast_val)
+            applied[key] = cast_val
+        except (ValueError, TypeError) as e:
+            errors.append(f"{key}: {e}")
+
+    return {"applied": applied, "errors": errors}
+
+
+# ─── Backtest Comparison ─────────────────────────────────────────────────
+
+@router.get("/backtest/compare")
+async def backtest_compare(ids: str):
+    """Compare multiple backtest runs side-by-side.
+
+    Query param `ids` is a comma-separated list of backtest IDs.
+    Returns metrics and equity curves for overlay comparison.
+    """
+    db = get_db_service()
+    if not db:
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    id_list = [i.strip() for i in ids.split(",") if i.strip()]
+    if len(id_list) < 1 or len(id_list) > 5:
+        raise HTTPException(status_code=400, detail="Provide 1-5 backtest IDs")
+
+    results = []
+    for bid in id_list:
+        row = db.get_backtest_result(bid)
+        if not row:
+            continue
+        # Fetch equity curve from DB model directly (not in service dict)
+        equity_curve = row.get("equity_curve", [])
+        if not equity_curve:
+            equity_curve = row.get("metrics", {}).get("equity_curve", [])
+        results.append({
+            "id": row.get("id", bid),
+            "strategy_name": row.get("strategy_name", "Unknown"),
+            "tickers": row.get("tickers", []),
+            "total_return": row.get("total_return", 0),
+            "sharpe_ratio": row.get("sharpe_ratio", 0),
+            "sortino_ratio": row.get("sortino_ratio", 0),
+            "max_drawdown": row.get("max_drawdown", 0),
+            "calmar": row.get("calmar_ratio", 0),
+            "win_rate": row.get("win_rate", 0),
+            "total_trades": row.get("total_trades", 0),
+            "initial_capital": row.get("initial_capital", 0),
+            "equity_curve": equity_curve,
+            "created_at": row.get("created_at", ""),
+        })
+
+    return {"runs": results, "count": len(results)}
+
+
 # ─── Kite Connect ───────────────────────────────────────────────────────
 
 @router.get("/kite/session/status")
