@@ -682,6 +682,53 @@ class DatabaseService:
             logger.error("Failed to fetch backtest result %s: %s", backtest_id, e)
             return None
 
+    def get_signal_history(self, market: str = "US", page: int = 1, limit: int = 50) -> List[Dict[str, Any]]:
+        """Return paginated signal history filtered by market."""
+        if not self.is_available:
+            return []
+        try:
+            from sqlalchemy import desc
+            offset = (max(1, page) - 1) * limit
+            with self.session_scope() as session:
+                rows = (
+                    session.query(StockSignal)
+                    .filter(StockSignal.market == market.upper())
+                    .order_by(desc(StockSignal.created_at))
+                    .offset(offset)
+                    .limit(limit)
+                    .all()
+                )
+                return [
+                    {
+                        "id": str(s.id),
+                        "ticker": s.ticker,
+                        "decision": s.decision.value if s.decision else None,
+                        "decision_score": float(s.decision_score) if s.decision_score else 0,
+                        "current_price": float(s.current_price) if s.current_price else 0,
+                        "rsi": float(s.rsi) if s.rsi else 0,
+                        "sentiment_label": (s.decision_factors or {}).get("sentiment_label", ""),
+                        "created_at": s.created_at.isoformat() if s.created_at else None,
+                    }
+                    for s in rows
+                ]
+        except Exception as e:
+            logger.error("Failed to fetch signal history: %s", e)
+            return []
+
+    def count_signals(self, market: str = "US") -> int:
+        """Count total signals for a market."""
+        if not self.is_available:
+            return 0
+        try:
+            from sqlalchemy import func as sqla_func
+            with self.session_scope() as session:
+                return session.query(sqla_func.count(StockSignal.id)).filter(
+                    StockSignal.market == market.upper()
+                ).scalar() or 0
+        except Exception as e:
+            logger.error("Failed to count signals: %s", e)
+            return 0
+
     def get_backtest_history(self, market: str = "US", page: int = 1, limit: int = 50) -> List[Dict[str, Any]]:
         """Return paginated backtest history filtered by market."""
         if not self.is_available:
