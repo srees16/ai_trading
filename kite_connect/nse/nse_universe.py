@@ -57,7 +57,7 @@ NSE_INDEX_REGISTRY: Dict[str, List[Tuple[str, str]]] = {
         ("ind_niftymidsmallcap400list.csv",          "NIFTY MidSmallcap 400"),
         ("ind_niftyindiafpi150list.csv",             "NIFTY India FPI 150"),
     ],
-    # ── Sectoral Indices (23 — full niftyindices.com/sectoral-indices) ────────
+    # ── Sectoral Indices (25 — full niftyindices.com/sectoral-indices) ────────
     "sectoral": [
         ("ind_niftyautolist.csv",                    "NIFTY Auto"),
         ("ind_niftybanklist.csv",                    "NIFTY Bank"),
@@ -82,6 +82,8 @@ NSE_INDEX_REGISTRY: Dict[str, List[Tuple[str, str]]] = {
         ("ind_niftymidsmallfinservlist.csv",         "NIFTY MidSmall Financial Services"),
         ("ind_niftymidsmallhealthcarelist.csv",      "NIFTY MidSmall Healthcare"),
         ("ind_niftymidsmallit_telecomlist.csv",      "NIFTY MidSmall IT & Telecom"),
+        ("ind_niftyindiadefence_list.csv",           "NIFTY India Defence"),
+        ("ind_niftyindiadigital_list.csv",           "NIFTY India Digital"),
     ],
     # ── Strategy & Thematic Indices ───────────────────────────
     "strategy_thematic": [
