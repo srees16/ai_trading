@@ -125,8 +125,8 @@ class Config:
     CARVER_ANNUAL_VOL_TARGET: float = 0.75  # R10: 75% vol — DD scaling disabled, regime handles risk; 60% under-deployed with only 3-6 positions in 2017 bull.
     CARVER_INITIAL_CAPITAL: float = 500_000.0  # Starting capital (₹)
     CARVER_DEFAULT_IDM: float = 2.3         # R6: IDM 2.3 — conservative for 5 sources (corr ~0.15-0.20)
-    CARVER_MAX_LEVERAGE: float = 5.0        # R10: 5× — DD scaling removed, regime+stops protect downside. 4× under-compounded in bulls.
-    CARVER_INERTIA_THRESHOLD: float = 0.15  # R10: 15% inertia — less drag during gradual bulls; 20% was too sticky
+    CARVER_MAX_LEVERAGE: float = 4.0        # R13: 4× — dynamic vol target handles risk. 5× caused -71% DD in R10.
+    CARVER_INERTIA_THRESHOLD: float = 0.10  # R12: 10% inertia — near-zero friction for responsive sizing
     CARVER_COST_SPEED_LIMIT: float = 3.0    # SR must exceed 3× cost drag
     CARVER_TRADE_HORIZON: str = "swing"     # "swing" (3σ bear/5σ bull) or "positional"
 
@@ -399,7 +399,7 @@ class Config:
     # Phase 3 — Leverage via Futures
     # =================================================================
     LEVERAGE_ENABLED: bool = True            # G11: Enabled — regime-adaptive leverage
-    LEVERAGE_MAX: float = 5.0               # R10: 5× absolute cap (synced with CARVER_MAX_LEVERAGE)
+    LEVERAGE_MAX: float = 4.0               # R13: 4× absolute cap (synced with CARVER_MAX_LEVERAGE)
     LEVERAGE_BULL_MAX: float = 4.0           # Recal: 4× in strong bull — capture trend with controlled risk
     LEVERAGE_RANGE_MAX: float = 3.0          # Recal: 3× in range-bound — alpha capture with DD layers
     LEVERAGE_BEAR_MAX: float = 1.5           # Recal: 1.5× in bear — defensive, stops+VIX gate provide DD protection
