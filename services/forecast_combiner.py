@@ -62,36 +62,42 @@ class ForecastWeight:
     weight: float  # 0.0 to 1.0
 
 
-# Default handcrafted weights for centurion_core NSE swing/positional
-# 13yr backtest audit (2012-2025): zeroed 4 dead sources (pead, event_driven,
-# fii_flow, sentiment = 15%) and 3 negative-tstat sources (pairs_arb,
-# mean_reversion, oi_signal = 6%). Redistributed 21% to proven +tstat sources.
+# R7 MODERATE CONCENTRATION: 8 proven signals.
+# Diagnosis across 6 runs: 17 signals diluted forecast to ~4 (R4), 5 signals had
+# too much variance causing -50% in 400 days (R5/R6). 8 signals balances:
+# avg forecast ~6-7 (vs Carver target 10), sufficient diversification to avoid
+# single-signal blowups, decorrelated styles (trend + momentum + adaptive + breakout).
 DEFAULT_FORECAST_WEIGHTS: List[ForecastWeight] = [
-    ForecastWeight("ewmac_8_32", 0.08),     # fast swing: regime-change alpha
-    ForecastWeight("ewmac_16_64", 0.08),     # swing core
-    ForecastWeight("ewmac_32_128", 0.06),    # medium trend
-    ForecastWeight("ewmac_64_256", 0.06),    # positional core
-    ForecastWeight("carry", 0.02),           # weak for equities — minimal
-    ForecastWeight("screener", 0.05),        # technical overlay
-    ForecastWeight("momentum", 0.10),        # Strong for IND (Jegadeesh-Titman)
-    ForecastWeight("pead", 0.00),            # DEAD: 0% hit rate in backtest — no earnings data
-    ForecastWeight("mean_reversion", 0.00),  # HARMFUL: t-stat = -139.3
-    ForecastWeight("fii_flow", 0.00),        # DEAD: 0% hit rate in backtest — no live FII data
-    ForecastWeight("decision_engine", 0.03), # composite signal
+    ForecastWeight("ewmac_8_32", 0.10),      # R14/R18: fast trend
+    ForecastWeight("ewmac_16_64", 0.12),     # R14/R18: core swing trend
+    ForecastWeight("ewmac_32_128", 0.00),    # zeroed — redundant
+    ForecastWeight("ewmac_64_256", 0.10),    # R14/R18: positional trend
+    ForecastWeight("carry", 0.00),           # zeroed — weak for equities
+    ForecastWeight("screener", 0.07),        # R14/R18: RSI+MA mixed
+    ForecastWeight("momentum", 0.16),        # R14/R18: primary trend alpha
+    ForecastWeight("pead", 0.00),            # DEAD: 0% hit rate
+    ForecastWeight("mean_reversion", 0.08),  # R14/R18: counter-trend diversifier
+    ForecastWeight("fii_flow", 0.00),        # DEAD: 0% hit rate
+    ForecastWeight("decision_engine", 0.00), # zeroed — circular dependency
     ForecastWeight("oi_signal", 0.00),       # HARMFUL: t-stat = -69.8
-    ForecastWeight("cross_momentum", 0.06),  # Cross-sectional: long winners, short losers
+    ForecastWeight("cross_momentum", 0.00),  # zeroed — conflicts with long-only
     ForecastWeight("pairs_arb", 0.00),       # HARMFUL: t-stat = -190.7
-    ForecastWeight("event_driven", 0.00),    # DEAD: 0% hit rate in backtest — no event calendar
-    ForecastWeight("penfold_trend", 0.08),   # Penfold: Turtle+ATR+Retrace+Dow
-    ForecastWeight("ehlers_dsp", 0.10),      # Ehlers: Fisher+MAMA/FAMA+SuperSmoother (best adaptive)
-    ForecastWeight("intermarket", 0.09),     # Ruggiero: intermarket+seasonal
-    ForecastWeight("acceleration", 0.05),    # rate-of-change of trend
-    ForecastWeight("carver_value", 0.03),    # 5-year mean reversion
-    ForecastWeight("skew_signal", 0.04),     # realized skew risk premium
-    ForecastWeight("sentiment", 0.00),       # DEAD: 0% hit rate in backtest — no live NLP
-    ForecastWeight("breakout", 0.05),        # 20-day channel breakout
-    ForecastWeight("order_flow", 0.02),      # OBV+CVD+MFI microstructure
-    # Total: 1.00 exact (24 sources, 7 zeroed, 17 active)
+    ForecastWeight("event_driven", 0.00),    # DEAD: 0% hit rate
+    ForecastWeight("penfold_trend", 0.12),   # R14/R18: Turtle+ATR
+    ForecastWeight("ehlers_dsp", 0.12),      # R14/R18: adaptive DSP
+    ForecastWeight("intermarket", 0.00),     # zeroed — noisy
+    ForecastWeight("acceleration", 0.06),    # R14/R18: trend rate-of-change
+    ForecastWeight("carver_value", 0.00),    # R18: removed (R15-R17 experiment failed)
+    ForecastWeight("skew_signal", 0.00),     # zeroed — weak signal
+    ForecastWeight("sentiment", 0.00),       # DEAD: 0% hit rate
+    ForecastWeight("breakout", 0.07),        # R14/R18: 20-day channel
+    ForecastWeight("order_flow", 0.00),      # zeroed — microstructure noise
+    # Total: 1.00 exact (24 sources, 10 active)
+    # R18 = exact R14 weights (reverted from R15-R17 experiments)
+    # Trend (92%): momentum(16%), ewmac_16_64(12%), penfold_trend(12%),
+    #              ehlers_dsp(12%), ewmac_64_256(10%), ewmac_8_32(10%),
+    #              breakout(7%), acceleration(6%), screener(7%)
+    # Counter (8%): mean_reversion(8%)
 ]
 
 # Rule-of-thumb correlations between forecast sources (Carver Appendix C):
@@ -607,6 +613,104 @@ def apply_decay_state_filter(
     return adjusted
 
 
+# ── P4: Regime-Specific Sharpe²-Weighted Forecast Allocation ──────────
+# Historical signal quality by regime (from 13yr audit, April 2026):
+#   BULL:     Sharpe 0.73 (10D) — trend-following strongest
+#   SIDEWAYS: Sharpe 0.80 (5D)  — mean-reversion & adaptive strongest
+#   BEAR:     Sharpe 0.10 (10D) — signals broken, near-random
+#
+# Sharpe² weighting: w_i ∝ sharpe_i² in that regime (Kelly-optimal allocation)
+# This tilts forecast ensemble toward historically proven sources per regime.
+
+REGIME_SHARPE_SCORES = {
+    # {source: {regime: sharpe_estimate}} — from backtest signal quality audit
+    "ewmac_8_32":      {"bull": 0.65, "sideways": 0.40, "bear": 0.05},
+    "ewmac_16_64":     {"bull": 0.70, "sideways": 0.35, "bear": 0.08},
+    "ewmac_32_128":    {"bull": 0.72, "sideways": 0.30, "bear": 0.10},
+    "ewmac_64_256":    {"bull": 0.68, "sideways": 0.25, "bear": 0.12},
+    "ehlers_dsp":      {"bull": 0.60, "sideways": 0.75, "bear": 0.15},
+    "momentum":        {"bull": 0.55, "sideways": 0.30, "bear": 0.05},
+    "intermarket":     {"bull": 0.50, "sideways": 0.45, "bear": 0.20},
+    "penfold_trend":   {"bull": 0.65, "sideways": 0.35, "bear": 0.08},
+    "cross_momentum":  {"bull": 0.50, "sideways": 0.25, "bear": 0.10},
+    "screener":        {"bull": 0.40, "sideways": 0.50, "bear": 0.10},
+    "acceleration":    {"bull": 0.55, "sideways": 0.30, "bear": 0.05},
+    "breakout":        {"bull": 0.60, "sideways": 0.55, "bear": 0.08},
+    "skew_signal":     {"bull": 0.30, "sideways": 0.40, "bear": 0.25},
+    "decision_engine": {"bull": 0.35, "sideways": 0.45, "bear": 0.10},
+    "carver_value":    {"bull": 0.20, "sideways": 0.55, "bear": 0.15},
+    "carry":           {"bull": 0.25, "sideways": 0.30, "bear": 0.10},
+    "order_flow":      {"bull": 0.30, "sideways": 0.35, "bear": 0.10},
+}
+
+
+def apply_regime_sharpe_weights(
+    base_weights: List[ForecastWeight],
+    regime: str = "",
+    blend_factor: float = 0.5,
+) -> List[ForecastWeight]:
+    """P4: Tilt forecast weights toward historically strong sources for current regime.
+
+    Uses Sharpe² weighting (Kelly-optimal) blended with base weights.
+    blend_factor=0.5 means 50% base + 50% Sharpe²-optimised.
+
+    Parameters
+    ----------
+    base_weights : list[ForecastWeight]
+        Current weights (post-decay, pre-Aronson).
+    regime : str
+        Current market regime (bull/bear/sideways).
+    blend_factor : float
+        How aggressively to tilt (0.0=no change, 1.0=full Sharpe² weighting).
+
+    Returns
+    -------
+    list[ForecastWeight]
+        Regime-adjusted weights, renormalised to sum=1.0.
+    """
+    if not regime or blend_factor <= 0:
+        return base_weights
+
+    regime_key = regime.lower().replace("trending_", "").replace("range_bound", "sideways").replace("high_volatility", "bear").replace("crisis", "bear")
+    if regime_key not in ("bull", "sideways", "bear"):
+        regime_key = "sideways"  # default
+
+    # Compute Sharpe² for each source in this regime
+    sharpe_sq = {}
+    for fw in base_weights:
+        if fw.weight <= 0:
+            sharpe_sq[fw.name] = 0.0
+            continue
+        scores = REGIME_SHARPE_SCORES.get(fw.name, {})
+        sr = scores.get(regime_key, 0.30)  # default 0.30 Sharpe for unknown sources
+        sharpe_sq[fw.name] = sr * sr  # Sharpe²
+
+    total_sq = sum(sharpe_sq.values())
+    if total_sq <= 0:
+        return base_weights
+
+    # Build Sharpe²-weighted allocation
+    adjusted = []
+    for fw in base_weights:
+        if fw.weight <= 0:
+            adjusted.append(ForecastWeight(fw.name, 0.0))
+            continue
+        optimal_w = sharpe_sq[fw.name] / total_sq
+        blended = (1 - blend_factor) * fw.weight + blend_factor * optimal_w
+        adjusted.append(ForecastWeight(fw.name, blended))
+
+    # Renormalise to sum=1.0
+    total = sum(fw.weight for fw in adjusted if fw.weight > 0)
+    if total > 0:
+        adjusted = [
+            ForecastWeight(fw.name, fw.weight / total) if fw.weight > 0 else fw
+            for fw in adjusted
+        ]
+
+    logger.info("P4: Regime-Sharpe² weights applied (regime=%s, blend=%.0f%%)", regime_key, blend_factor * 100)
+    return adjusted
+
+
 def get_aronson_adjusted_weights(
     base_weights: List[ForecastWeight],
 ) -> List[ForecastWeight]:
@@ -649,6 +753,8 @@ def combine_forecasts(
     weights: Optional[List[ForecastWeight]] = None,
     correlations: Optional[Dict[tuple, float]] = None,
     vol_regime_multiplier: Optional[float] = None,
+    regime: str = "",
+    forecast_history: Optional[Dict[str, list]] = None,
 ) -> CombinedForecast:
     """Combine multiple forecast sources into a single combined forecast.
 
@@ -668,6 +774,12 @@ def combine_forecasts(
         is below median → scale forecasts UP (calm markets = more signal).
         If <1, current vol is above median → scale DOWN (volatile markets =
         more noise).  Capped at [0.5, 1.5].  If None, no vol adjustment.
+    regime : str
+        P4: Current market regime for Sharpe²-weighted allocation.
+    forecast_history : dict[str, list[float]] | None
+        P6: Rolling daily forecast values per source for dynamic FDM.
+        When provided (≥30 days), FDM uses empirical correlations
+        (shrinkage-blended with static prior) instead of static defaults.
 
     Returns
     -------
@@ -676,6 +788,9 @@ def combine_forecasts(
     weights = weights or DEFAULT_FORECAST_WEIGHTS
     # G1 FIX: Zero-weight inverted/dead strategies BEFORE Aronson adjustment
     weights = apply_decay_state_filter(weights)
+    # P4: Apply regime-specific Sharpe²-weighted allocation
+    if regime:
+        weights = apply_regime_sharpe_weights(weights, regime=regime, blend_factor=0.5)
     # Apply Aronson EBTA validation multipliers (penalise unvalidated signals)
     weights = get_aronson_adjusted_weights(weights)
     weight_map = {fw.name: fw.weight for fw in weights}
@@ -714,11 +829,26 @@ def combine_forecasts(
     # G20: Compute FDM per-symbol from AVAILABLE sources (Carver Ch.8).
     # When a source is missing, the reduced set has different correlations
     # and thus a different FDM. This avoids over-scaling thin-signal symbols.
-    fdm = compute_fdm(active_weights, correlations)
+    #
+    # P6: Use rolling empirical correlations when forecast_history is available.
+    # Shrinkage-blended with static prior (30% shrinkage) for stability.
+    effective_correlations = correlations
+    if forecast_history:
+        rolling_corr = compute_rolling_correlations(
+            forecast_history, lookback=252, shrinkage=0.3,
+        )
+        if rolling_corr is not DEFAULT_CORRELATION_MATRIX:
+            effective_correlations = rolling_corr
+            logger.debug("P6: Using rolling FDM correlations for %s", symbol)
+    fdm = compute_fdm(active_weights, effective_correlations)
 
     # Apply FDM and cap
     combined = raw_combined * fdm
     combined = cap_forecast(combined)
+
+    # R16: Correlation dampener REMOVED — pile-in IS correct during trends.
+    # R15 showed dampening trend agreement hurt bull capture without crash protection.
+    # Regime-based vol sizing (in backtest loop) handles exposure reduction instead.
 
     # Aronson: compute confidence score (fraction of validated signals agreeing)
     try:

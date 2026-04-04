@@ -249,6 +249,7 @@ def run_full_backtest(
         DEFAULT_FORECAST_WEIGHTS, DEFAULT_CORRELATION_MATRIX,
     )
     from services.volatility_target import VolatilityTarget, VolatilityTargetConfig
+    # R18: regime_strategy_mix import removed — equity velocity replaces regime detection
     # GAP-1: Import all 12 previously missing forecast sources
     from strategies.penfold_trend import compute_penfold_forecast_batch
     from strategies.ehlers_dsp import compute_ehlers_forecast_batch
@@ -427,6 +428,18 @@ def run_full_backtest(
     source_total: Dict[str, int] = defaultdict(int)
     daily_position_counts: List[int] = []
 
+    # FIX-DD-v2: Smooth continuous drawdown scaling (no force-liquidation)
+    # Force-liquidation at bottoms caused whipsaw death spiral (-60% in bull market).
+    # New approach: smooth scale-down curve, let trailing stops handle exits organically.
+    peak_equity = capital
+    dd_deep_days = 0          # consecutive days with DD > 25% (for gradual peak decay)
+    PEAK_DECAY_GRACE_DAYS = 60  # R14: wait 60 days before starting gradual decay
+    PEAK_DECAY_RATE = 0.01      # R14: blend 1% of equity into peak per day
+
+    # R13: Bear lockout REMOVED — binary exit/re-enter causes whipsaw in all variants
+    # R11 (return-based) and R12 (vol-based) both destroyed equity via whipsaw.
+    # R13 uses dynamic vol target (Fix C) instead — continuous, no churn.
+
     # ── Pre-fetch dividend yields for carry (one-time) ─────────
     dividend_yields: Dict[str, float] = {}
     if include_carry:
@@ -535,7 +548,7 @@ def run_full_backtest(
         # ── 2. Compute ALL forecasts ───────────────────────────
         # Optimization: expensive signals recomputed every RECOMPUTE_FREQ days,
         # cached between. EWMAC/momentum change slowly over 5 days.
-        _RECOMPUTE_FREQ = 5
+        _RECOMPUTE_FREQ = 5  # R7: back to 5 days — 2-day churn killed R6 (constant top-N rotation)
         _trading_day = day_idx - min_history
         _recompute = (_trading_day % _RECOMPUTE_FREQ == 0)
 
@@ -814,39 +827,53 @@ def run_full_backtest(
 
             _cached_forecasts = {sym: dict(fc) for sym, fc in all_forecasts.items()}
         # ── 3. Combine forecasts + size positions ──────────────
-        # Update daily cash target based on current equity (compounding)
-        dynamic_daily_target = max(equity, capital * 0.5) * annual_vol_target / 16.0
+        # R12: SIMPLEST POSSIBLE SYSTEM — strip all whipsaw sources
+        # Meta-analysis of R1-R11: every scaling mechanism (DD, regime, warmup)
+        # either creates death spiral or amplifies whipsaw losses.
+        # R12 approach: STAY INVESTED through corrections, exit ONLY on panic vol.
+        peak_equity = max(peak_equity, equity)
+        current_dd = (peak_equity - equity) / peak_equity if peak_equity > 0 else 0.0
 
-        # Regime detection: average 40-day return across ALL symbols
-        detected_regime = 'sideways'
-        avg_ret_40d = 0.0
-        if day_idx >= 40:
-            rets_40d = []
-            for sym in symbols:
-                if sym not in ohlcv_slice:
-                    continue
-                pc = ohlcv_slice[sym]["Close"]
-                if hasattr(pc, "squeeze"):
-                    pc = pc.squeeze()
-                if len(pc) >= 40:
-                    r = float(pc.iloc[-1] / pc.iloc[-40] - 1)
-                    if np.isfinite(r):
-                        rets_40d.append(r)
-            if rets_40d:
-                avg_ret_40d = np.mean(rets_40d)
-                if avg_ret_40d > 0.05:
-                    detected_regime = 'bull'
-                elif avg_ret_40d < -0.05:
-                    detected_regime = 'bear'
+        # R14: Gradual peak decay — prevents unreachable peak trapping vol target
+        # at low levels forever, but does NOT snap DD to zero (which re-enabled
+        # full risk into a continuing crash every 30 days in R13).
+        if current_dd >= 0.25:
+            dd_deep_days += 1
+            if dd_deep_days >= PEAK_DECAY_GRACE_DAYS:
+                # Slowly blend peak toward current equity (1%/day)
+                peak_equity = peak_equity * (1.0 - PEAK_DECAY_RATE) + equity * PEAK_DECAY_RATE
+                current_dd = (peak_equity - equity) / peak_equity if peak_equity > 0 else 0.0
+        else:
+            dd_deep_days = 0
 
-        # Read leverage and short-selling config
+        # R13: NO DD SCALING — replaced with dynamic vol target (Fix C)
+        dd_scale = 1.0
+
+        # R16: DD-based vol target (base) — same as R14
+        if current_dd < 0.10:
+            base_vol_target = 0.75   # Full risk — no DD
+        elif current_dd < 0.20:
+            base_vol_target = 0.65   # Mild pullback — slight reduction
+        elif current_dd < 0.30:
+            base_vol_target = 0.55   # Moderate DD — meaningful reduction
+        elif current_dd < 0.40:
+            base_vol_target = 0.45   # Severe DD — significant reduction
+        else:
+            base_vol_target = 0.40   # Extreme DD — floor
+
+        annual_vol_target = base_vol_target
+
+        # FIX-FLOOR: Use actual equity for daily target
+        sizing_equity = max(equity, capital * 0.10)  # 10% ruin floor
+        dynamic_daily_target = sizing_equity * annual_vol_target / 16.0
+
+        # Read leverage config; disable shorts in backtest (signal quality too poor)
         try:
             from config import Config as _BtCfg
             max_leverage = getattr(_BtCfg, 'CARVER_MAX_LEVERAGE', 3.0)
-            allow_short = getattr(_BtCfg, 'SHORT_SELLING_ENABLED', False)
         except Exception:
             max_leverage = 3.0
-            allow_short = False
+        allow_short = False  # FIX-SHORT: disabled — short Sharpe ≈ -0.01, bleeds in secular bull
 
         # Tick down stop cooldowns
         for sym in list(stop_cooldown.keys()):
@@ -855,9 +882,12 @@ def run_full_backtest(
                 del stop_cooldown[sym]
 
         # ── G3: Top-N conviction filter ────────────────────────
-        # With 100 stocks, only trade the top MAX_POSITIONS by absolute
-        # combined forecast strength (concentrated best-ideas portfolio).
-        MAX_POSITIONS = 25  # G3: concentrate on strongest conviction
+        # R13 Fix B: ADAPTIVE position count based on forecast consensus
+        # When signals are strong (avg forecast > 8), deploy widely (15 positions).
+        # When signals are mixed (avg 3-8), concentrate (10 positions).
+        # When signals are weak (avg < 3), hold few (6 positions).
+        # This prevents over-deployment in low-conviction regimes without binary exit.
+        
         # Pre-compute combined forecasts for ALL symbols, then rank
         _all_combined: Dict[str, float] = {}
         for sym, fc_dict in all_forecasts.items():
@@ -865,17 +895,37 @@ def run_full_backtest(
                 continue
             combined = combine_forecasts(sym, fc_dict, active_weights)
             _all_combined[sym] = combined.combined_forecast
-        # Rank by absolute forecast strength, keep top N
-        _ranked = sorted(_all_combined.items(), key=lambda x: abs(x[1]), reverse=True)
-        _top_syms = set(s for s, _ in _ranked[:MAX_POSITIONS])
 
-        # G3: Use conviction-filtered count for weight calculation
-        n_active = max(1, min(len(_top_syms), MAX_POSITIONS))
-        weight_per_sym = 1.0 / n_active
+        # Adaptive position count based on top-15 average forecast strength
+        _ranked_for_count = sorted(_all_combined.values(), key=lambda x: abs(x), reverse=True)
+        _top15_avg = np.mean([abs(f) for f in _ranked_for_count[:15]]) if _ranked_for_count else 0.0
+        if _top15_avg > 8.0:
+            MAX_POSITIONS = 15  # Strong consensus — deploy widely
+        elif _top15_avg > 5.0:
+            MAX_POSITIONS = 12  # Moderate consensus
+        elif _top15_avg > 3.0:
+            MAX_POSITIONS = 8   # Weak consensus — concentrate
+        else:
+            MAX_POSITIONS = 5   # Very weak — minimal deployment
+
+        MAX_HOLD_GRACE = MAX_POSITIONS + 7  # Grace zone scales with positions
+        # Rank by absolute forecast strength
+        _ranked = sorted(_all_combined.items(), key=lambda x: abs(x[1]), reverse=True)
+        _top_syms = set(s for s, _ in _ranked[:MAX_POSITIONS])      # top-20 → eligible for new entries
+        _grace_syms = set(s for s, _ in _ranked[:MAX_HOLD_GRACE])   # top-30 → held positions stay
+
+        # R8 CRITICAL FIX: Dynamic weight_per_sym based on ACTUAL investable count
+        # Bug in R4-R7: weight_per_sym = 1/MAX_POSITIONS = 1/20 = 5% always.
+        # When only 5 stocks have strong signals, 75% of capital sat idle.
+        # Fix: count stocks with |forecast| > 2.0 in top set, use that for weight.
+        # Floor at 5 (prevent over-concentration), cap at MAX_POSITIONS.
+        _investable = [s for s in _top_syms if abs(_all_combined.get(s, 0)) > 2.0]
+        n_investable = max(5, min(len(_investable), MAX_POSITIONS))
+        weight_per_sym = 1.0 / n_investable
 
         # IDM: T3-6 — compute dynamically from instrument return correlations
         # IDM = 1/sqrt(avg_pairwise_correlation) for >6 instruments
-        if n_active >= 6 and day_idx >= min_history + 60:
+        if n_investable >= 6 and day_idx >= min_history + 60:
             _rets_for_idm = []
             for sym, df in ohlcv_slice.items():
                 if sym not in all_forecasts or not all_forecasts[sym]:
@@ -898,7 +948,7 @@ def run_full_backtest(
             else:
                 idm = 1.7
         else:
-            idm = 1.5 if n_active < 6 else 1.7
+            idm = 1.5 if n_investable < 6 else 1.7
 
         active_count = 0
         for sym, fc_dict in all_forecasts.items():
@@ -911,10 +961,30 @@ def run_full_backtest(
             for fw in active_weights:
                 source_total[fw.name] += 1
 
-            # G3: Skip symbols outside top-N conviction set
-            # (still exit existing positions if held)
+            # R7: Soft grace-zone position management
+            # - Top-20: eligible for NEW entries and re-sizing
+            # - Top-21 to top-30: HOLD existing positions, but no new entries
+            # - Below top-30: force exit (truly low-conviction stocks)
+            # This prevents the R6 churn (hard exit at 15) and R4/R5 leak (no exit at all)
             forecast = _all_combined.get(sym, 0.0)
-            if sym not in _top_syms and prev_positions.get(sym, 0) == 0:
+            is_held = prev_positions.get(sym, 0) != 0
+            if sym not in _top_syms:
+                if sym in _grace_syms and is_held:
+                    # Grace zone: keep position, don't resize, let existing stops/forecasts manage
+                    continue
+                elif is_held:
+                    # Below grace zone: force exit
+                    if sym in ohlcv_slice:
+                        _exit_c = ohlcv_slice[sym]["Close"]
+                        if hasattr(_exit_c, "squeeze"):
+                            _exit_c = _exit_c.squeeze()
+                        _exit_price = float(_exit_c.iloc[-1])
+                        _exit_qty = prev_positions[sym]
+                        day_pnl -= abs(_exit_qty) * _exit_price * cost_pct
+                        trades_count += 1
+                    prev_positions[sym] = 0
+                    peak_prices.pop(sym, None)
+                    stop_levels.pop(sym, None)
                 continue
 
             # Position sizing (forecast already computed in conviction filter above)
@@ -936,26 +1006,14 @@ def run_full_backtest(
                 vol_scalar = dynamic_daily_target / ivv
                 position = (forecast / 10.0) * vol_scalar * weight_per_sym * idm
 
-                # G3: Direction-aware regime scaling (tuned to actual signal quality):
-                # Bull: longs 1.5×, shorts 0.3× (Sharpe 0.73 in bull — push hard)
-                # Bear: shorts 1.0×, longs 0.15× (Sharpe -0.01 — near-halt longs)
-                # Sideways: both 1.0× (Sharpe 0.68 — decent both ways)
-                if detected_regime == 'bull':
-                    regime_scale = 1.5 if position >= 0 else 0.3
-                elif detected_regime == 'bear':
-                    regime_scale = 1.0 if position < 0 else 0.15
-                else:
-                    regime_scale = 1.0
-                position *= regime_scale
+                # R13: NO REGIME SCALING — regime-agnostic position sizing
+                # Dynamic vol target (Fix C) handles risk continuously.
+                # No binary regime multipliers — those caused R4-R11 whipsaw.
 
                 target_qty = round(position)
 
-                # Cap at max leverage (both long and short)
-                # FIX-6: Per-symbol cap should NOT double-apply weight.
-                # The Carver formula already factors weight_per_sym × IDM.
-                # Cap each position at (equity × max_leverage / n_active)
-                # so portfolio total can reach equity × max_leverage.
-                max_notional = abs(equity) * max_leverage / n_active
+                # Cap at max leverage per-symbol (dynamic based on investable count)
+                max_notional = abs(equity) * max_leverage / n_investable
                 if abs(target_qty) * price > max_notional:
                     cap_qty = int(max_notional / price)
                     target_qty = cap_qty if target_qty > 0 else -cap_qty
@@ -976,8 +1034,8 @@ def run_full_backtest(
                 prev_qty = prev_positions.get(sym, 0)
                 delta = abs(target_qty - prev_qty)
                 if delta > 0:
-                    # G3: Inertia: skip small changes (< 20% — reduced churn)
-                    if abs(prev_qty) > 0 and delta / abs(prev_qty) < 0.20:
+                    # R12: Inertia 10% — near-zero friction, let sizing be responsive
+                    if abs(prev_qty) > 0 and delta / abs(prev_qty) < 0.10:
                         target_qty = prev_qty
                     else:
                         cost = delta * price * cost_pct
@@ -986,17 +1044,10 @@ def run_full_backtest(
 
                 prev_positions[sym] = target_qty
 
-                # G3: Tightened regime-adaptive trailing stop
-                # (previous 3-5σ too wide → 62% max drawdown)
-                # Bull: 3.0σ (was 5.0 — tighter locks profits in trend)
-                # Bear: 1.5σ (was 3.0 — rapid exit, signals broken)
-                # Sideways: 2.5σ (was 4.0 — moderate protection)
-                if detected_regime == 'bull':
-                    stop_sigma = 3.0
-                elif detected_regime == 'bear':
-                    stop_sigma = 1.5
-                else:
-                    stop_sigma = 2.5
+                # R12: Uniform wide stops 10.0σ — let winners ride, only exit catastrophic
+                # R4-R11: regime-dependent stops caused whipsaw (tightened in bear → stopped out)
+                # R12: same stop in ALL conditions. ~20% below peak = only true crashes trigger.
+                stop_sigma = 10.0
 
                 if target_qty > 0:
                     active_count += 1
@@ -1018,6 +1069,24 @@ def run_full_backtest(
 
         daily_position_counts.append(active_count)
 
+        # FIX-LEV: Portfolio-wide leverage cap enforcement
+        # Sum of all |position × price| must not exceed equity × max_leverage
+        total_exposure = 0.0
+        for sym, qty in prev_positions.items():
+            if qty == 0 or sym not in ohlcv_slice:
+                continue
+            c = ohlcv_slice[sym]["Close"]
+            if hasattr(c, "squeeze"):
+                c = c.squeeze()
+            p = float(c.dropna().iloc[-1]) if len(c.dropna()) > 0 else 0
+            total_exposure += abs(qty) * p
+        max_total_exposure = max(equity, capital * 0.10) * max_leverage
+        if total_exposure > max_total_exposure and total_exposure > 0:
+            scale_down = max_total_exposure / total_exposure
+            for sym in list(prev_positions.keys()):
+                if prev_positions[sym] != 0:
+                    prev_positions[sym] = round(prev_positions[sym] * scale_down)
+
         # ── 4. Update equity ───────────────────────────────────
         if not np.isfinite(day_pnl):
             day_pnl = 0.0  # NaN guard: skip corrupted days
@@ -1030,7 +1099,8 @@ def run_full_backtest(
             d = day_idx - min_history
             total_d = n_days - min_history
             ret_so_far = (equity / capital - 1) * 100
-            print(f"\r  Day {d:4d}/{total_d}  equity={equity:,.0f}  ret={ret_so_far:+.1f}%  positions={active_count}", end="", flush=True)
+            _line = f"  Day {d:4d}/{total_d}  equity={equity:,.0f}  ret={ret_so_far:+.1f}%  positions={active_count}"
+            print(f"\r{_line:<80}", end="", flush=True)
 
     if verbose:
         print(f"\r  Simulation complete: {n_days - min_history} trading days" + " " * 40)
