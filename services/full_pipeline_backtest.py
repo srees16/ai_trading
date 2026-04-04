@@ -249,6 +249,7 @@ def run_full_backtest(
         DEFAULT_FORECAST_WEIGHTS, DEFAULT_CORRELATION_MATRIX,
     )
     from services.volatility_target import VolatilityTarget, VolatilityTargetConfig
+    from services.regime_strategy_mix import get_regime_weights
     # GAP-1: Import all 12 previously missing forecast sources
     from strategies.penfold_trend import compute_penfold_forecast_batch
     from strategies.ehlers_dsp import compute_ehlers_forecast_batch
@@ -431,8 +432,9 @@ def run_full_backtest(
     # Force-liquidation at bottoms caused whipsaw death spiral (-60% in bull market).
     # New approach: smooth scale-down curve, let trailing stops handle exits organically.
     peak_equity = capital
-    dd_deep_days = 0          # consecutive days with DD > 25% (for peak staleness reset)
-    DD_PEAK_RESET_DAYS = 30   # R11: 30 days (from 40) — faster reset after bear lockout exit
+    dd_deep_days = 0          # consecutive days with DD > 25% (for gradual peak decay)
+    PEAK_DECAY_GRACE_DAYS = 60  # R14: wait 60 days before starting gradual decay
+    PEAK_DECAY_RATE = 0.01      # R14: blend 1% of equity into peak per day
 
     # R13: Bear lockout REMOVED — binary exit/re-enter causes whipsaw in all variants
     # R11 (return-based) and R12 (vol-based) both destroyed equity via whipsaw.
@@ -832,13 +834,15 @@ def run_full_backtest(
         peak_equity = max(peak_equity, equity)
         current_dd = (peak_equity - equity) / peak_equity if peak_equity > 0 else 0.0
 
-        # Peak staleness reset: 30 days in deep DD → reset peak
+        # R14: Gradual peak decay — prevents unreachable peak trapping vol target
+        # at low levels forever, but does NOT snap DD to zero (which re-enabled
+        # full risk into a continuing crash every 30 days in R13).
         if current_dd >= 0.25:
             dd_deep_days += 1
-            if dd_deep_days >= DD_PEAK_RESET_DAYS:
-                peak_equity = equity
-                current_dd = 0.0
-                dd_deep_days = 0
+            if dd_deep_days >= PEAK_DECAY_GRACE_DAYS:
+                # Slowly blend peak toward current equity (1%/day)
+                peak_equity = peak_equity * (1.0 - PEAK_DECAY_RATE) + equity * PEAK_DECAY_RATE
+                current_dd = (peak_equity - equity) / peak_equity if peak_equity > 0 else 0.0
         else:
             dd_deep_days = 0
 
@@ -863,8 +867,10 @@ def run_full_backtest(
         sizing_equity = max(equity, capital * 0.10)  # 10% ruin floor
         dynamic_daily_target = sizing_equity * annual_vol_target / 16.0
 
-        # R13: Volatility monitoring for LOGGING ONLY — no lockout
+        # R13: Volatility monitoring + R15: Portfolio-level regime detection
         avg_vol_20d = 0.25  # default safe value
+        portfolio_20d_return = 0.0  # portfolio-level momentum
+        portfolio_adx = 0.0  # trend strength
         if day_idx >= 20:
             vol_20d_list = []
             for sym in symbols:
@@ -880,10 +886,56 @@ def run_full_backtest(
                         vol_20d_list.append(v)
             avg_vol_20d = np.mean(vol_20d_list) if vol_20d_list else 0.25
 
-        # Regime label (for logging only — NOT used for position sizing in R13)
-        detected_regime = 'sideways'
-        if avg_vol_20d > 0.40:
-            detected_regime = 'crisis'
+            # Portfolio-level 20-day return (equal-weighted average across held symbols)
+            _ret_20d_list = []
+            for sym in symbols:
+                if sym not in ohlcv_slice:
+                    continue
+                pc = ohlcv_slice[sym]["Close"]
+                if hasattr(pc, "squeeze"):
+                    pc = pc.squeeze()
+                if len(pc) >= 20:
+                    r = float((pc.iloc[-1] / pc.iloc[-20]) - 1.0)
+                    if np.isfinite(r):
+                        _ret_20d_list.append(r)
+            portfolio_20d_return = np.mean(_ret_20d_list) if _ret_20d_list else 0.0
+
+            # ADX proxy: absolute 20-day return / 20-day volatility (directional ratio)
+            # High directional ratio → trending, low → range-bound
+            if avg_vol_20d > 0.01:
+                _vol_20d_daily = avg_vol_20d / np.sqrt(252)
+                _abs_ret_daily = abs(portfolio_20d_return) / 20.0
+                portfolio_adx = min(60.0, (_abs_ret_daily / _vol_20d_daily) * 25.0)
+
+        # R15: 5-state regime classification from portfolio data
+        # Uses same logic as regime_detector but from backtest-available data
+        if avg_vol_20d > 0.50:
+            detected_regime = 'CRISIS'
+        elif avg_vol_20d > 0.35 and portfolio_20d_return < -0.05:
+            detected_regime = 'TRENDING_BEAR'
+        elif avg_vol_20d > 0.35:
+            detected_regime = 'HIGH_VOLATILITY'
+        elif portfolio_adx > 20.0 and portfolio_20d_return > 0.03:
+            detected_regime = 'TRENDING_BULL'
+        elif portfolio_adx > 20.0 and portfolio_20d_return < -0.03:
+            detected_regime = 'TRENDING_BEAR'
+        else:
+            detected_regime = 'RANGE_BOUND'
+
+        # R15 Phase 2: Regime-conditioned weights via soft blending
+        # blend_with_static=0.50 → 50% regime weights + 50% base weights
+        # This provides smooth regime-aware allocation without hard switches
+        _base_weight_map = {fw.name: fw.weight for fw in active_weights}
+        _regime_blended = get_regime_weights(
+            detected_regime,
+            blend_with_static=0.50,
+            static_weights=_base_weight_map,
+        )
+        _regime_weights = [
+            ForecastWeight(name=k, weight=v)
+            for k, v in _regime_blended.items()
+            if v > 0.001  # skip near-zero weights
+        ]
 
         # Read leverage config; disable shorts in backtest (signal quality too poor)
         try:
@@ -911,7 +963,7 @@ def run_full_backtest(
         for sym, fc_dict in all_forecasts.items():
             if not fc_dict:
                 continue
-            combined = combine_forecasts(sym, fc_dict, active_weights, regime=detected_regime)
+            combined = combine_forecasts(sym, fc_dict, _regime_weights, regime=detected_regime)
             _all_combined[sym] = combined.combined_forecast
 
         # Adaptive position count based on top-15 average forecast strength

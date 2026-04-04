@@ -68,34 +68,36 @@ class ForecastWeight:
 # avg forecast ~6-7 (vs Carver target 10), sufficient diversification to avoid
 # single-signal blowups, decorrelated styles (trend + momentum + adaptive + breakout).
 DEFAULT_FORECAST_WEIGHTS: List[ForecastWeight] = [
-    ForecastWeight("ewmac_8_32", 0.10),      # R13: RE-ADDED — fast trend, catches reversals early
-    ForecastWeight("ewmac_16_64", 0.12),     # R13: CORE swing trend (was 15%)
+    ForecastWeight("ewmac_8_32", 0.07),      # R15: reduced — fast trend (was 10%)
+    ForecastWeight("ewmac_16_64", 0.10),     # R15: reduced — swing trend (was 12%)
     ForecastWeight("ewmac_32_128", 0.00),    # zeroed — redundant
-    ForecastWeight("ewmac_64_256", 0.10),    # R13: CORE positional trend (was 12%)
+    ForecastWeight("ewmac_64_256", 0.08),    # R15: reduced — positional trend (was 10%)
     ForecastWeight("carry", 0.00),           # zeroed — weak for equities
-    ForecastWeight("screener", 0.07),        # R13: RSI+MA composite (was 8%)
-    ForecastWeight("momentum", 0.16),        # R13: PRIMARY alpha (was 20%)
+    ForecastWeight("screener", 0.05),        # R15: reduced — RSI+MA mixed (was 7%)
+    ForecastWeight("momentum", 0.12),        # R15: reduced — trend alpha (was 16%)
     ForecastWeight("pead", 0.00),            # DEAD: 0% hit rate
-    ForecastWeight("mean_reversion", 0.08),  # R13: RE-ADDED — counter-trend diversification
+    ForecastWeight("mean_reversion", 0.20),  # R15: PRIMARY counter-trend (was 8%)
     ForecastWeight("fii_flow", 0.00),        # DEAD: 0% hit rate
     ForecastWeight("decision_engine", 0.00), # zeroed — circular dependency
     ForecastWeight("oi_signal", 0.00),       # HARMFUL: t-stat = -69.8
     ForecastWeight("cross_momentum", 0.00),  # zeroed — conflicts with long-only
     ForecastWeight("pairs_arb", 0.00),       # HARMFUL: t-stat = -190.7
     ForecastWeight("event_driven", 0.00),    # DEAD: 0% hit rate
-    ForecastWeight("penfold_trend", 0.12),   # R13: Turtle+ATR trend filter (was 15%)
-    ForecastWeight("ehlers_dsp", 0.12),      # R13: Adaptive DSP (was 15%)
+    ForecastWeight("penfold_trend", 0.10),   # R15: reduced — Turtle+ATR (was 12%)
+    ForecastWeight("ehlers_dsp", 0.08),      # R15: reduced — adaptive DSP (was 12%)
     ForecastWeight("intermarket", 0.00),     # zeroed — noisy
-    ForecastWeight("acceleration", 0.06),    # R13: trend rate-of-change (was 7%)
-    ForecastWeight("carver_value", 0.00),    # zeroed — 5yr mean-reversion too slow
+    ForecastWeight("acceleration", 0.05),    # R15: reduced — trend RoC (was 6%)
+    ForecastWeight("carver_value", 0.10),    # R15: RE-ADDED — 5yr mean-reversion, anti-correlated with trend
     ForecastWeight("skew_signal", 0.00),     # zeroed — weak signal
     ForecastWeight("sentiment", 0.00),       # DEAD: 0% hit rate
-    ForecastWeight("breakout", 0.07),        # R13: 20-day channel (was 8%)
+    ForecastWeight("breakout", 0.05),        # R15: reduced — 20-day channel (was 7%)
     ForecastWeight("order_flow", 0.00),      # zeroed — microstructure noise
-    # Total: 1.00 exact (24 sources, 10 active)
-    # Active: momentum(16%), ewmac_16_64(12%), penfold_trend(12%), ehlers_dsp(12%),
-    #         ewmac_64_256(10%), ewmac_8_32(10%), mean_reversion(8%), screener(7%),
-    #         breakout(7%), acceleration(6%)
+    # Total: 1.00 exact (24 sources, 11 active)
+    # R15 split: 65% trend / 35% counter-trend+value
+    # Trend (65%): momentum(12%), ewmac_16_64(10%), penfold_trend(10%),
+    #              ewmac_64_256(8%), ehlers_dsp(8%), ewmac_8_32(7%),
+    #              acceleration(5%), breakout(5%)
+    # Counter/Value (35%): mean_reversion(20%), carver_value(10%), screener(5%)
 ]
 
 # Rule-of-thumb correlations between forecast sources (Carver Appendix C):
@@ -843,6 +845,23 @@ def combine_forecasts(
     # Apply FDM and cap
     combined = raw_combined * fdm
     combined = cap_forecast(combined)
+
+    # R15 Phase 3: Correlation conviction dampener
+    # When trend signals all agree strongly (high pairwise agreement),
+    # the composite forecast is over-confident — exactly the pile-in danger zone.
+    # Measure: fraction of active signals with same sign as the combined forecast.
+    # If >80% agree on direction AND combined is strong (|fc|>10), dampen by 0.70.
+    # This naturally reduces position sizes when all trend signals pile in together.
+    _trend_sources = {"ewmac_8_32", "ewmac_16_64", "ewmac_64_256", "momentum",
+                      "penfold_trend", "ehlers_dsp", "acceleration", "breakout"}
+    _trend_active = {k: v for k, v in available.items() if k in _trend_sources}
+    if len(_trend_active) >= 4 and abs(combined) > 10.0:
+        _sign = 1.0 if combined > 0 else -1.0
+        _agreeing = sum(1 for v in _trend_active.values() if v * _sign > 0)
+        _agreement_ratio = _agreeing / len(_trend_active)
+        if _agreement_ratio > 0.80:
+            combined *= 0.70  # Dampen pile-in: 30% haircut
+            combined = cap_forecast(combined)
 
     # Aronson: compute confidence score (fraction of validated signals agreeing)
     try:
