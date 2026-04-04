@@ -249,7 +249,7 @@ def run_full_backtest(
         DEFAULT_FORECAST_WEIGHTS, DEFAULT_CORRELATION_MATRIX,
     )
     from services.volatility_target import VolatilityTarget, VolatilityTargetConfig
-    from services.regime_strategy_mix import get_regime_weights
+    # R18: regime_strategy_mix import removed — equity velocity replaces regime detection
     # GAP-1: Import all 12 previously missing forecast sources
     from strategies.penfold_trend import compute_penfold_forecast_batch
     from strategies.ehlers_dsp import compute_ehlers_forecast_batch
@@ -849,93 +849,23 @@ def run_full_backtest(
         # R13: NO DD SCALING — replaced with dynamic vol target (Fix C)
         dd_scale = 1.0
 
-        # R13 Fix C: DYNAMIC VOL TARGET — continuous position shrinkage during DD
-        # Unlike DD scaling (death spiral) or crash lockout (whipsaw), this reduces
-        # vol target smoothly. Positions shrink proportionally — no churn.
+        # R16: DD-based vol target (base) — same as R14
         if current_dd < 0.10:
-            annual_vol_target = 0.75   # Full risk — no DD
+            base_vol_target = 0.75   # Full risk — no DD
         elif current_dd < 0.20:
-            annual_vol_target = 0.65   # Mild pullback — slight reduction
+            base_vol_target = 0.65   # Mild pullback — slight reduction
         elif current_dd < 0.30:
-            annual_vol_target = 0.55   # Moderate DD — meaningful reduction
+            base_vol_target = 0.55   # Moderate DD — meaningful reduction
         elif current_dd < 0.40:
-            annual_vol_target = 0.45   # Severe DD — significant reduction
+            base_vol_target = 0.45   # Severe DD — significant reduction
         else:
-            annual_vol_target = 0.40   # Extreme DD — floor (never go to zero)
+            base_vol_target = 0.40   # Extreme DD — floor
+
+        annual_vol_target = base_vol_target
 
         # FIX-FLOOR: Use actual equity for daily target
         sizing_equity = max(equity, capital * 0.10)  # 10% ruin floor
         dynamic_daily_target = sizing_equity * annual_vol_target / 16.0
-
-        # R13: Volatility monitoring + R15: Portfolio-level regime detection
-        avg_vol_20d = 0.25  # default safe value
-        portfolio_20d_return = 0.0  # portfolio-level momentum
-        portfolio_adx = 0.0  # trend strength
-        if day_idx >= 20:
-            vol_20d_list = []
-            for sym in symbols:
-                if sym not in ohlcv_slice:
-                    continue
-                pc = ohlcv_slice[sym]["Close"]
-                if hasattr(pc, "squeeze"):
-                    pc = pc.squeeze()
-                if len(pc) >= 20:
-                    daily_rets = pc.pct_change().iloc[-20:]
-                    v = float(daily_rets.std()) * np.sqrt(252)
-                    if np.isfinite(v):
-                        vol_20d_list.append(v)
-            avg_vol_20d = np.mean(vol_20d_list) if vol_20d_list else 0.25
-
-            # Portfolio-level 20-day return (equal-weighted average across held symbols)
-            _ret_20d_list = []
-            for sym in symbols:
-                if sym not in ohlcv_slice:
-                    continue
-                pc = ohlcv_slice[sym]["Close"]
-                if hasattr(pc, "squeeze"):
-                    pc = pc.squeeze()
-                if len(pc) >= 20:
-                    r = float((pc.iloc[-1] / pc.iloc[-20]) - 1.0)
-                    if np.isfinite(r):
-                        _ret_20d_list.append(r)
-            portfolio_20d_return = np.mean(_ret_20d_list) if _ret_20d_list else 0.0
-
-            # ADX proxy: absolute 20-day return / 20-day volatility (directional ratio)
-            # High directional ratio → trending, low → range-bound
-            if avg_vol_20d > 0.01:
-                _vol_20d_daily = avg_vol_20d / np.sqrt(252)
-                _abs_ret_daily = abs(portfolio_20d_return) / 20.0
-                portfolio_adx = min(60.0, (_abs_ret_daily / _vol_20d_daily) * 25.0)
-
-        # R15: 5-state regime classification from portfolio data
-        # Uses same logic as regime_detector but from backtest-available data
-        if avg_vol_20d > 0.50:
-            detected_regime = 'CRISIS'
-        elif avg_vol_20d > 0.35 and portfolio_20d_return < -0.05:
-            detected_regime = 'TRENDING_BEAR'
-        elif avg_vol_20d > 0.35:
-            detected_regime = 'HIGH_VOLATILITY'
-        elif portfolio_adx > 20.0 and portfolio_20d_return > 0.03:
-            detected_regime = 'TRENDING_BULL'
-        elif portfolio_adx > 20.0 and portfolio_20d_return < -0.03:
-            detected_regime = 'TRENDING_BEAR'
-        else:
-            detected_regime = 'RANGE_BOUND'
-
-        # R15 Phase 2: Regime-conditioned weights via soft blending
-        # blend_with_static=0.50 → 50% regime weights + 50% base weights
-        # This provides smooth regime-aware allocation without hard switches
-        _base_weight_map = {fw.name: fw.weight for fw in active_weights}
-        _regime_blended = get_regime_weights(
-            detected_regime,
-            blend_with_static=0.50,
-            static_weights=_base_weight_map,
-        )
-        _regime_weights = [
-            ForecastWeight(name=k, weight=v)
-            for k, v in _regime_blended.items()
-            if v > 0.001  # skip near-zero weights
-        ]
 
         # Read leverage config; disable shorts in backtest (signal quality too poor)
         try:
@@ -963,7 +893,7 @@ def run_full_backtest(
         for sym, fc_dict in all_forecasts.items():
             if not fc_dict:
                 continue
-            combined = combine_forecasts(sym, fc_dict, _regime_weights, regime=detected_regime)
+            combined = combine_forecasts(sym, fc_dict, active_weights)
             _all_combined[sym] = combined.combined_forecast
 
         # Adaptive position count based on top-15 average forecast strength
@@ -977,6 +907,7 @@ def run_full_backtest(
             MAX_POSITIONS = 8   # Weak consensus — concentrate
         else:
             MAX_POSITIONS = 5   # Very weak — minimal deployment
+
         MAX_HOLD_GRACE = MAX_POSITIONS + 7  # Grace zone scales with positions
         # Rank by absolute forecast strength
         _ranked = sorted(_all_combined.items(), key=lambda x: abs(x[1]), reverse=True)
