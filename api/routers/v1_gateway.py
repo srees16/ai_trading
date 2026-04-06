@@ -936,33 +936,59 @@ async def screener_monitor():
 
 @router.get("/screener/monitor/trades")
 async def screener_monitor_trades():
-    """Get detailed list of all monitored trades (active + closed)."""
+    """Get active and closed trade details (live + paper)."""
     try:
-        from kite_connect.trading.trade_monitor import TradeMonitor
-        from dataclasses import asdict
-        monitor = TradeMonitor()
-        trades = []
-        for oid, trade in monitor._trades.items():
-            d = asdict(trade)
-            d["opened_at"] = trade.opened_at.isoformat()
-            d["is_active"] = trade.is_active
-            # Compute unrealised P&L for active trades
-            if trade.is_active and trade.entry_price > 0:
-                if trade.direction == "LONG":
-                    d["unrealised_pnl_pct"] = round(
-                        (trade.target_price / trade.entry_price - 1) * 100, 2
-                    )
-                else:
-                    d["unrealised_pnl_pct"] = round(
-                        (1 - trade.target_price / trade.entry_price) * 100, 2
-                    )
-            else:
-                d["unrealised_pnl_pct"] = 0
-            trades.append(d)
-        # Sort: active first, then by opened_at desc
-        trades.sort(key=lambda t: (not t["is_active"], t["opened_at"]), reverse=False)
-        active = [t for t in trades if t["is_active"]]
-        closed = [t for t in trades if not t["is_active"]]
+        import sqlite3 as _sql
+        from pathlib import Path as _Path
+
+        # Paper trades DB
+        db_path = _Path(__file__).resolve().parent.parent.parent / "data" / "paper_trades.sqlite3"
+        if not db_path.exists():
+            return {"active_trades": [], "closed_trades": [], "total_active": 0, "total_closed": 0}
+
+        conn = _sql.connect(str(db_path))
+        conn.row_factory = _sql.Row
+
+        active_rows = conn.execute(
+            "SELECT * FROM paper_positions WHERE is_open=1 ORDER BY opened_at DESC"
+        ).fetchall()
+        closed_rows = conn.execute(
+            "SELECT * FROM paper_positions WHERE is_open=0 ORDER BY closed_at DESC LIMIT 200"
+        ).fetchall()
+        conn.close()
+
+        def _row_to_trade(r, is_active: bool) -> dict:
+            entry = float(r["entry_price"])
+            sl = float(r["stop_loss"])
+            tp = float(r["target_price"])
+            pnl_pct = float(r["pnl_pct"]) if r["pnl_pct"] else 0.0
+            return {
+                "symbol": r["symbol"],
+                "side": r["side"],
+                "quantity": r["quantity"],
+                "entry_price": entry,
+                "stop_loss": sl,
+                "target_price": tp,
+                "entry_order_id": f"PAPER-{r['id']}",
+                "sl_order_id": None,
+                "tp_order_id": None,
+                "entry_filled": True,
+                "sl_triggered": r["exit_reason"] in ("SL", "TRAILING_SL") if not is_active else False,
+                "tp_triggered": r["exit_reason"] == "TP" if not is_active else False,
+                "closed": not is_active,
+                "scaled_2r": False,
+                "scaled_3r": False,
+                "sl_failed": False,
+                "opened_at": r["opened_at"],
+                "direction": "LONG" if r["side"] == "BUY" else "SHORT",
+                "product": "PAPER",
+                "is_active": is_active,
+                "unrealised_pnl_pct": pnl_pct if not is_active else 0.0,
+            }
+
+        active = [_row_to_trade(r, True) for r in active_rows]
+        closed = [_row_to_trade(r, False) for r in closed_rows]
+
         return {
             "active_trades": active,
             "closed_trades": closed,
@@ -973,126 +999,106 @@ async def screener_monitor_trades():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ─── Config Management ──────────────────────────────────────────────────
-
-@router.get("/config/carver")
-async def get_carver_config():
-    """Get current Carver framework configuration values."""
-    from config import Config
-    return {
-        "carver_enabled": Config.CARVER_ENABLED,
-        "annual_vol_target": Config.CARVER_ANNUAL_VOL_TARGET,
-        "initial_capital": Config.CARVER_INITIAL_CAPITAL,
-        "default_idm": Config.CARVER_DEFAULT_IDM,
-        "max_leverage": Config.CARVER_MAX_LEVERAGE,
-        "inertia_threshold": Config.CARVER_INERTIA_THRESHOLD,
-        "cost_speed_limit": Config.CARVER_COST_SPEED_LIMIT,
-        "trade_horizon": Config.CARVER_TRADE_HORIZON,
-        "vince_insurance_pct_ind": Config.VINCE_INSURANCE_PCT_IND,
-        "vince_insurance_pct_us": Config.VINCE_INSURANCE_PCT_US,
-        "vince_regime_shrink_enabled": Config.VINCE_REGIME_SHRINK_ENABLED,
-        "dd_warning": Config.PORTFOLIO_DRAWDOWN_WARNING,
-        "dd_critical": Config.PORTFOLIO_DRAWDOWN_CRITICAL,
-        "dd_halt": Config.PORTFOLIO_DRAWDOWN_HALT,
-        "max_open_trades": Config.MAX_OPEN_TRADES,
-        "vix_caution_threshold": Config.VIX_CAUTION_THRESHOLD,
-        "vix_panic_threshold": Config.VIX_PANIC_THRESHOLD,
-        "nse_universe_tier": Config.NSE_UNIVERSE_TIER,
-        # US overrides
-        "us_enabled": Config.CARVER_US_ENABLED,
-        "us_vol_target": Config.CARVER_US_ANNUAL_VOL_TARGET,
-        "us_initial_capital": Config.CARVER_US_INITIAL_CAPITAL,
-        "us_idm": Config.CARVER_US_DEFAULT_IDM,
-        "us_max_leverage": Config.CARVER_US_MAX_LEVERAGE,
-    }
+@router.get("/screener/monitor/paper-dashboard")
+async def screener_paper_dashboard():
+    """Get full paper trading dashboard with performance metrics."""
+    try:
+        from kite_connect.trading.paper_trader import PaperTrader
+        pt = PaperTrader()
+        dash = pt.dashboard()
+        return dash.to_dict()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/config/carver")
-async def update_carver_config(updates: Dict[str, Any]):
-    """Update Carver config values at runtime (session only, not persisted to disk)."""
-    from config import Config
+@router.get("/screener/monitor/daily-snapshots")
+async def screener_daily_snapshots():
+    """Get daily equity snapshots for chart rendering."""
+    try:
+        import sqlite3 as _sql
+        from pathlib import Path as _Path
 
-    ALLOWED_KEYS = {
-        "annual_vol_target": ("CARVER_ANNUAL_VOL_TARGET", float, 0.05, 1.5),
-        "initial_capital": ("CARVER_INITIAL_CAPITAL", float, 10_000, 100_000_000),
-        "default_idm": ("CARVER_DEFAULT_IDM", float, 1.0, 5.0),
-        "max_leverage": ("CARVER_MAX_LEVERAGE", float, 1.0, 10.0),
-        "inertia_threshold": ("CARVER_INERTIA_THRESHOLD", float, 0.0, 0.5),
-        "trade_horizon": ("CARVER_TRADE_HORIZON", str, None, None),
-        "dd_warning": ("PORTFOLIO_DRAWDOWN_WARNING", float, 0.05, 0.5),
-        "dd_critical": ("PORTFOLIO_DRAWDOWN_CRITICAL", float, 0.10, 0.6),
-        "dd_halt": ("PORTFOLIO_DRAWDOWN_HALT", float, 0.15, 0.8),
-        "max_open_trades": ("MAX_OPEN_TRADES", int, 1, 100),
-        "vix_caution_threshold": ("VIX_CAUTION_THRESHOLD", float, 10.0, 50.0),
-        "vix_panic_threshold": ("VIX_PANIC_THRESHOLD", float, 20.0, 80.0),
-    }
+        db_path = _Path(__file__).resolve().parent.parent.parent / "data" / "paper_trades.sqlite3"
+        if not db_path.exists():
+            return {"snapshots": [], "count": 0}
 
-    applied = {}
-    errors = []
-    for key, value in updates.items():
-        if key not in ALLOWED_KEYS:
-            errors.append(f"Unknown key: {key}")
-            continue
-        attr_name, expected_type, min_val, max_val = ALLOWED_KEYS[key]
-        try:
-            cast_val = expected_type(value)
-            if min_val is not None and cast_val < min_val:
-                errors.append(f"{key}: value {cast_val} below minimum {min_val}")
-                continue
-            if max_val is not None and cast_val > max_val:
-                errors.append(f"{key}: value {cast_val} above maximum {max_val}")
-                continue
-            setattr(Config, attr_name, cast_val)
-            applied[key] = cast_val
-        except (ValueError, TypeError) as e:
-            errors.append(f"{key}: {e}")
+        conn = _sql.connect(str(db_path))
+        conn.row_factory = _sql.Row
+        rows = conn.execute(
+            "SELECT * FROM daily_snapshots ORDER BY date"
+        ).fetchall()
+        conn.close()
 
-    return {"applied": applied, "errors": errors}
+        snapshots = [dict(r) for r in rows]
+        return {"snapshots": snapshots, "count": len(snapshots)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-# ─── Backtest Comparison ─────────────────────────────────────────────────
+@router.get("/screener/monitor/signal-log")
+async def screener_signal_log():
+    """Get signal audit log for backtest-vs-live comparison."""
+    try:
+        import sqlite3 as _sql
+        from pathlib import Path as _Path
 
-@router.get("/backtest/compare")
-async def backtest_compare(ids: str):
-    """Compare multiple backtest runs side-by-side.
+        db_path = _Path(__file__).resolve().parent.parent.parent / "data" / "paper_trades.sqlite3"
+        if not db_path.exists():
+            return {"signals": [], "count": 0, "summary": {}}
 
-    Query param `ids` is a comma-separated list of backtest IDs.
-    Returns metrics and equity curves for overlay comparison.
-    """
-    db = get_db_service()
-    if not db:
-        raise HTTPException(status_code=503, detail="Database not configured")
+        conn = _sql.connect(str(db_path))
+        conn.row_factory = _sql.Row
+        rows = conn.execute(
+            "SELECT * FROM signal_log ORDER BY date DESC, symbol LIMIT 500"
+        ).fetchall()
 
-    id_list = [i.strip() for i in ids.split(",") if i.strip()]
-    if len(id_list) < 1 or len(id_list) > 5:
-        raise HTTPException(status_code=400, detail="Provide 1-5 backtest IDs")
+        total = conn.execute("SELECT COUNT(*) as cnt FROM signal_log").fetchone()["cnt"]
+        traded = conn.execute("SELECT COUNT(*) as cnt FROM signal_log WHERE was_traded=1").fetchone()["cnt"]
 
-    results = []
-    for bid in id_list:
-        row = db.get_backtest_result(bid)
-        if not row:
-            continue
-        # Fetch equity curve from DB model directly (not in service dict)
-        equity_curve = row.get("equity_curve", [])
-        if not equity_curve:
-            equity_curve = row.get("metrics", {}).get("equity_curve", [])
-        results.append({
-            "id": row.get("id", bid),
-            "strategy_name": row.get("strategy_name", "Unknown"),
-            "tickers": row.get("tickers", []),
-            "total_return": row.get("total_return", 0),
-            "sharpe_ratio": row.get("sharpe_ratio", 0),
-            "sortino_ratio": row.get("sortino_ratio", 0),
-            "max_drawdown": row.get("max_drawdown", 0),
-            "calmar": row.get("calmar_ratio", 0),
-            "win_rate": row.get("win_rate", 0),
-            "total_trades": row.get("total_trades", 0),
-            "initial_capital": row.get("initial_capital", 0),
-            "equity_curve": equity_curve,
-            "created_at": row.get("created_at", ""),
-        })
+        # Per-date aggregation
+        date_stats = conn.execute("""
+            SELECT date,
+                   COUNT(*) as total_signals,
+                   SUM(was_traded) as traded_signals
+            FROM signal_log GROUP BY date ORDER BY date DESC LIMIT 30
+        """).fetchall()
+        conn.close()
 
-    return {"runs": results, "count": len(results)}
+        return {
+            "signals": [dict(r) for r in rows],
+            "count": len(rows),
+            "summary": {
+                "total_signals": total,
+                "traded_signals": traded,
+                "hit_rate": round(traded / total, 4) if total > 0 else 0,
+            },
+            "daily_stats": [dict(r) for r in date_stats],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/screener/monitor/weekly-checkpoints")
+async def screener_weekly_checkpoints():
+    """Get weekly performance checkpoints."""
+    try:
+        import sqlite3 as _sql
+        from pathlib import Path as _Path
+
+        db_path = _Path(__file__).resolve().parent.parent.parent / "data" / "paper_trades.sqlite3"
+        if not db_path.exists():
+            return {"checkpoints": [], "count": 0}
+
+        conn = _sql.connect(str(db_path))
+        conn.row_factory = _sql.Row
+        rows = conn.execute(
+            "SELECT * FROM weekly_checkpoints ORDER BY week_number"
+        ).fetchall()
+        conn.close()
+
+        return {"checkpoints": [dict(r) for r in rows], "count": len(rows)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ─── Kite Connect ───────────────────────────────────────────────────────

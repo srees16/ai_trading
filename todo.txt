@@ -1,26 +1,51 @@
 refer for applicable improvements: https://github.com/paperswithbacktest/awesome-systematic-trading
 
-implement trading system compliant with systematic trading pdf in ingested docs
-also verify if monte carlo evaluation of trading system is implemented
-
 prompts:
 
 > run full_pipeline_backtest.py
-
-Be more aggressive in sustained uptrends, more defensive in downtrends
-
-critical 14 checkpoints for backtest: 0-100, 100-250, 250-400, 400-500, 500-650, 650-800, 800-1000, 1000-1250, 1250-1500, 1500-1800, 1800-2150, 2150-2500, 2500-2900, 2900-3190
 ~~~~~~
 check backtest progress & analyze results thus far
 ~~~~~~
+Phase 1 — Survival (Days 0-1650):     Check at 500, 850, 1350, 1650
+Phase 2 — Recovery (Days 1650-2250):   Check at 1850, 2000, 2250
+Phase 3 — Bull capture (Days 2250-2700): Check at 2550, 2700
+Phase 4 — THE TEST (Days 2700-3190):   Check at 2850, 3000, 3100, 3190
+~~~~~~
+since the success criterion should be highest Sharpe + lowest max DD, not a CAGR number. ensure that we achieve the best possible config with at least 40%+ CAGR and highest Sharpe (~0.90) with lowest possible max DD. This is to ensure that centurion_core survives & even thrives in live trading and NOT blow up. Be more aggressive in sustained uptrends, more defensive in downtrends. Verify that while the backtest performance is great, it does not fail in live Ind markets and backtest CAGR does not lead to overfitting
+
+*success criterion should be highest Sharpe + lowest max DD, not a CAGR number. A config with 45%+ CAGR and 0.90 Sharpe is far better than 60% CAGR and 0.50 Sharpe, because the former will survive in live trading while the latter will blow up.*
+~~~~~~
+R14 benchmark: CAGR=37.1%  Sharpe=0.85  MaxDD=78.1%
+~~~~~~
+R19C benchmark: CAGR=48.78%, Sharpe=1.025, MaxDD=67.41%
+R19C Signal weights (winner):
+momentum=16%, mean_reversion=13%, penfold_trend=12%, ehlers_dsp=12%, ewmac_16_64=9%, ewmac_64_256=8%, carver_value=7%, breakout=7%, ewmac_8_32=7%, screener=5%, acceleration=4%
+
+~~~~~~
+Target - Sharpe > 1.5, CAGR > 50%, MaxDD <= 50%, Profit Factor >= 1.5
 1. abort the backtest
-2. fundamentally rethink the approach, recalibrate & re-tune the config first
-3. then, analyze the identified steps and implement the best fixes to achieve annual CAGR > 60%+
+2. fundamentally rethink the approach, recalibrate & re-tune first
+3. then, analyze the identified steps and implement the best fixes to achieve
 4. finally, re-run full_pipeline_backtest
 ~~~~~~
-here is the plan:
-1. focus on the backtest results first, fine tune the settings and configuration to ensure the 13-year backtest produces realistic estimate of CAGR > 60+% and not just theoretical estimate
-2. once the above step is completed, fix the task registration issue so it actually runs such that live testing can start for a real world CAGR estimates
+
+Target: Sharpe > 1.5, CAGR > 50%, MaxDD <= 50%
+Here is the plan:
+1. if R19h proves to be better than R19c, declare it as winner. Update the configuration & weights wherever neccessary and initiate live paper test for the next 4 weeks
+2. if R19h fails to prove as better than R19c, consider weights & configuration of R19c as winner
+3. Utilize all available resources on the internet, github repos, PhD thesis, medium blogs, wikipedia, research papers on sites like arxiv.org etc., quant blogs and/or any other relevant media to perform deep research and understand the characteristics of trading systems that beat the above target consistently
+4. audit centurion_core and identify all the gaps (critical, high, medium, low) after compare & contrast with the best trading systems that were researched
+5. use the acquired knowledge to prepare a plan of action for implementation to reach the desired target stated above
+~~~~~~
+Recommended Revised Plan
+Step	Action	Goal
+1a	Finish R19c (running now, ~49%)	See if Phase 3 signal tuning beats R14
+1b	Run R19d (asymmetric vol target)	Phase 4
+1c	Run R19e (GARCH vol sizing)	Phase 5
+1d	Pick best config by Sharpe ratio	Realistic performance metric
+2	Fix scheduler task (redirect bug)	Get live pipeline actually running
+3	Run live for 2-4 weeks in paper mode	Validate backtest vs live signals
+4	Go live with real capital	Start building real-world CAGR track record
 ~~~~~~
 identify gaps to achieve 60+% CAGR for Ind stocks and ensure to implement fixes required to meet the objective
 ~~~~~~

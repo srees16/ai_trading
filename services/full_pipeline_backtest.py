@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -43,6 +44,19 @@ import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# ── R19d/R19e/R19f/R19g/R19h regime mode flags (set by runners only) ──────
+_R19D_REGIME_MODE = False   # R19d: slow regime (SMA200 only)
+_R19E_REGIME_MODE = False   # R19e: fast regime (SMA50+momentum+vol_accel)
+_R19F_REGIME_MODE = False   # R19f: sigmoid blend (continuous vol scalar + equity DD)
+_R19G_REGIME_MODE = False   # R19g: sigmoid v2 (higher floors, gentler DD overlay)
+_R19H_REGIME_MODE = False   # R19h: R19c base + circuit breaker (binary crisis guard)
+_R20A_MAXDD_MODE = False    # R20a: Phase 1 MaxDD Kill — vol attenuation + sector caps + tight DD tiers
+_R20B_MAXDD_MODE = False    # R20b: Redesigned MaxDD — surgical guardrails on R19c base
+_R20C_MAXDD_MODE = False    # R20c: R19c + asymmetric vol boost (calm-only, never cuts)
+_R20D_HYBRID_MODE = False   # R20d: R20c + position floor (min 6) + tighter stops (8σ)
+_SAVE_FORECASTS_MODE = False  # R21a: save per-source forecasts for weight optimization
+_forecast_log: list = []      # accumulator: [(day_idx, {sym: {source: val}}, {sym: next_ret})]
 
 # ── Default pairs for pairs_arb source ────────────────────────
 DEFAULT_PAIRS_US = [
@@ -78,6 +92,8 @@ class BacktestResult:
     avg_positions: float = 0.0
     source_hit_rates: Dict[str, float] = field(default_factory=dict)
     daily_equity: List[float] = field(default_factory=list)
+    win_rate: float = 0.0
+    profit_factor: float = 0.0
     report: str = ""
     # Aronson EBTA enrichment fields
     detrended_sharpe: float = 0.0
@@ -85,6 +101,64 @@ class BacktestResult:
     per_signal_tstats: Dict[str, float] = field(default_factory=dict)
     dm_bias_estimate: float = 0.0
     bootstrap_ci_sharpe: tuple = (0.0, 0.0)
+
+
+# ── R20a: Vol Attenuation (Carver 2021) ──────────────────────
+# L = 2 - 1.5*Q where Q = vol quantile (0-1).
+# High-vol regime → Q≈1 → L=0.5 (halve forecast)
+# Low-vol regime  → Q≈0 → L=2.0 (double forecast, but capped by ±20)
+# Smoothed with 10-day EMA to avoid whipsaw.
+
+def _compute_vol_quantile(close: 'pd.Series', lookback: int = 252) -> float:
+    """Compute vol quantile: where current 20-day realized vol sits in
+    the lookback-day distribution.  Returns 0.0 (lowest) to 1.0 (highest)."""
+    if len(close) < max(lookback, 25):
+        return 0.5  # neutral if insufficient data
+    rets = close.pct_change().dropna()
+    if len(rets) < lookback:
+        return 0.5
+    current_vol = float(rets.iloc[-20:].std()) * np.sqrt(252)
+    hist_vols = rets.rolling(20).std().dropna() * np.sqrt(252)
+    if len(hist_vols) < 50:
+        return 0.5
+    hist_vols_arr = hist_vols.iloc[-lookback:].values
+    quantile = float(np.searchsorted(np.sort(hist_vols_arr), current_vol) / len(hist_vols_arr))
+    return max(0.0, min(1.0, quantile))
+
+
+def _vol_attenuation_multiplier(vol_quantile: float) -> float:
+    """Carver vol attenuation: L = 2 - 1.5*Q, clamped [0.5, 2.0]."""
+    L = 2.0 - 1.5 * vol_quantile
+    return max(0.5, min(2.0, L))
+
+
+def _vol_boost_multiplier(vol_quantile: float) -> float:
+    """R20c asymmetric: boost in calm, floor at 1.0 (never reduce below R19c).
+    L = max(1.0, min(1.5, 2.0 - 1.5*Q))
+    Q=0.0 (dead calm) → L=1.5  (+50% position size)
+    Q=0.5 (median)    → L=1.25 (+25%)
+    Q≥0.67            → L=1.0  (pure R19c — DD tiers handle crisis)
+    """
+    L = 2.0 - 1.5 * vol_quantile
+    return max(1.0, min(1.5, L))
+
+
+# ── R20a: Sector map loader ──────────────────────────────────
+_SECTOR_MAP: Optional[Dict[str, str]] = None
+
+def _load_sector_map() -> Dict[str, str]:
+    """Load NSE sector map from data/nse_sector_map.json."""
+    global _SECTOR_MAP
+    if _SECTOR_MAP is not None:
+        return _SECTOR_MAP
+    _map_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'nse_sector_map.json')
+    try:
+        import json
+        with open(_map_path, 'r') as f:
+            _SECTOR_MAP = json.load(f)
+    except Exception:
+        _SECTOR_MAP = {}
+    return _SECTOR_MAP
 
 
 # ── Helpers ───────────────────────────────────────────────────
@@ -424,6 +498,8 @@ def run_full_backtest(
     stop_cooldown: Dict[str, int] = {}   # sym → days remaining until re-entry allowed
     pair_states: Dict[str, dict] = {}
     trades_count = 0
+    entry_prices: Dict[str, float] = {}    # avg entry price per open position
+    trade_pnls: List[float] = []            # round-trip trade PnL %
     source_hits: Dict[str, int] = defaultdict(int)
     source_total: Dict[str, int] = defaultdict(int)
     daily_position_counts: List[int] = []
@@ -433,12 +509,30 @@ def run_full_backtest(
     # New approach: smooth scale-down curve, let trailing stops handle exits organically.
     peak_equity = capital
     dd_deep_days = 0          # consecutive days with DD > 25% (for gradual peak decay)
-    PEAK_DECAY_GRACE_DAYS = 40  # R19a: faster decay (was 60 in R14)
-    PEAK_DECAY_RATE = 0.015     # R19a: 1.5%/day blend (was 1% in R14)
+    PEAK_DECAY_GRACE_DAYS = 60  # R14 baseline
+    PEAK_DECAY_RATE = 0.01      # R14 baseline: 1%/day blend
 
     # R13: Bear lockout REMOVED — binary exit/re-enter causes whipsaw in all variants
     # R11 (return-based) and R12 (vol-based) both destroyed equity via whipsaw.
     # R13 uses dynamic vol target (Fix C) instead — continuous, no churn.
+
+    # R20a: Vol attenuation EMA cache (sym → smoothed L multiplier)
+    _vol_atten_cache: Dict[str, float] = {}
+
+    # R20a: Sector map (loaded once)
+    _sector_map = _load_sector_map() if _R20A_MAXDD_MODE else {}
+    _R20A_MAX_SECTOR_EXPOSURE_PCT = 0.30   # max 30% notional in any one sector
+    _R20A_MAX_PER_SECTOR = 3               # max 3 positions per sector
+
+    # R20b: Sector map + config (loaded once)
+    _sector_map_b = _load_sector_map() if _R20B_MAXDD_MODE else {}
+    _R20B_MAX_SECTOR_PCT = 0.35            # 35% max per sector (less aggressive than R20a)
+    _R20B_MAX_PER_SECTOR = 4               # 4 positions per sector (India has concentrated sectors)
+
+    # R20b: Peak decay overrides — faster escape from DD traps
+    if _R20B_MAXDD_MODE:
+        PEAK_DECAY_GRACE_DAYS = 30   # 30 days (vs R19c's 60) — escape sooner
+        PEAK_DECAY_RATE = 0.02       # 2%/day (vs R19c's 1%) — blend faster
 
     # ── Pre-fetch dividend yields for carry (one-time) ─────────
     dividend_yields: Dict[str, float] = {}
@@ -466,11 +560,115 @@ def run_full_backtest(
         print("\n  Running simulation...", end="", flush=True)
 
     _cached_forecasts: Dict[str, Dict[str, float]] = {}  # signal cache for recompute optimization
+    _cached_idm: float = 1.7  # IDM cache — recompute on recompute days only
 
-    for day_idx in range(min_history, n_days):
+    # OPT: Pre-load config once outside the loop
+    try:
+        from config import Config as _BtCfg
+        max_leverage = getattr(_BtCfg, 'CARVER_MAX_LEVERAGE', 3.0)
+    except Exception:
+        max_leverage = 3.0
+    allow_short = False  # FIX-SHORT: disabled — short Sharpe ≈ -0.01, bleeds in secular bull
+
+    # ── Checkpoint save/resume ─────────────────────────────────
+    import pickle, os, signal, traceback
+    _checkpoint_path = os.environ.get(
+        "CENTURION_BT_CHECKPOINT",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'backtest_checkpoint.pkl'),
+    )
+    _start_day_idx = min_history  # default: start from beginning
+
+    if os.path.exists(_checkpoint_path):
+        try:
+            with open(_checkpoint_path, 'rb') as _ckf:
+                _ckpt = pickle.load(_ckf)
+            # Validate checkpoint matches current run config
+            if (_ckpt.get('n_symbols') == n_symbols
+                    and _ckpt.get('capital') == capital
+                    and _ckpt.get('n_days') == n_days):
+                _start_day_idx = _ckpt['day_idx'] + 1  # resume from next day
+                equity = _ckpt['equity']
+                daily_equity = _ckpt['daily_equity']
+                daily_returns = _ckpt['daily_returns']
+                prev_positions = _ckpt['prev_positions']
+                peak_prices = _ckpt['peak_prices']
+                stop_levels = _ckpt['stop_levels']
+                stop_cooldown = _ckpt['stop_cooldown']
+                pair_states = _ckpt['pair_states']
+                trades_count = _ckpt['trades_count']
+                source_hits = defaultdict(int, _ckpt['source_hits'])
+                source_total = defaultdict(int, _ckpt['source_total'])
+                daily_position_counts = _ckpt['daily_position_counts']
+                peak_equity = _ckpt['peak_equity']
+                dd_deep_days = _ckpt['dd_deep_days']
+                _cached_forecasts = _ckpt.get('cached_forecasts', {})
+                _cached_idm = _ckpt.get('cached_idm', 1.7)
+                trade_pnls = _ckpt.get('trade_pnls', [])
+                entry_prices = _ckpt.get('entry_prices', {})
+                if verbose:
+                    _resume_day = _start_day_idx - min_history
+                    print(f"\n  Resuming from checkpoint: Day {_resume_day}/{n_days - min_history} "
+                          f"equity={equity:,.0f}", flush=True)
+            else:
+                if verbose:
+                    print("\n  Checkpoint found but config mismatch — starting fresh", flush=True)
+                os.remove(_checkpoint_path)
+        except Exception as e:
+            if verbose:
+                print(f"\n  Checkpoint load failed ({e}) — starting fresh", flush=True)
+            if os.path.exists(_checkpoint_path):
+                os.remove(_checkpoint_path)
+
+    # ── Signal handler: save checkpoint on SIGINT/SIGTERM ──────
+    _graceful_exit_requested = False
+
+    def _graceful_shutdown(signum, frame):
+        nonlocal _graceful_exit_requested
+        _graceful_exit_requested = True
+        if verbose:
+            print(f"\n  Signal {signum} received — will save checkpoint and exit after current day", flush=True)
+
+    _prev_sigint = signal.signal(signal.SIGINT, _graceful_shutdown)
+    _prev_sigterm = signal.signal(signal.SIGTERM, _graceful_shutdown)
+
+    _consecutive_day_errors = 0
+    _MAX_CONSECUTIVE_ERRORS = 10  # abort if 10+ days crash in a row
+
+    # R19d/R19e/R19f/R19g: Initialize default regime state (overwritten on first loop iteration)
+    if _R19D_REGIME_MODE or _R19E_REGIME_MODE or _R19F_REGIME_MODE or _R19G_REGIME_MODE:
+        from services.regime_detector import BacktestRegime, BacktestRegimeState
+        if _R19G_REGIME_MODE:
+            _init_vol = 0.60
+            _init_stop = 8.0
+        elif _R19E_REGIME_MODE or _R19F_REGIME_MODE:
+            _init_vol = 0.55
+            _init_stop = 5.0
+        else:
+            _init_vol = 0.65
+            _init_stop = 7.0
+        _current_regime_state = BacktestRegimeState(
+            regime=BacktestRegime.NEUTRAL,
+            vol_target=_init_vol,
+            stop_sigma=_init_stop,
+            index_above_sma200=True,
+            realized_vol_pct=20.0,
+            breadth_pct=0.50,
+            sma200_distance_pct=0.0,
+        )
+        if verbose:
+            _mode = 'R19g SIGMOIDv2' if _R19G_REGIME_MODE else ('R19f SIGMOID' if _R19F_REGIME_MODE else ('R19e FAST' if _R19E_REGIME_MODE else 'R19d'))
+            print(f"\n  {_mode} REGIME MODE: ON", flush=True)
+
+    # R19h: Circuit breaker state (init OFF — uses R19c base until crisis detected)
+    _circuit_breaker_active = False
+    if _R19H_REGIME_MODE and verbose:
+        print("\n  R19h HYBRID MODE: R19c base + circuit breaker guard", flush=True)
+
+    for day_idx in range(_start_day_idx, n_days):
+      try:
         day_pnl = 0.0
 
-        # Build OHLCV slices up to current day
+        # Build OHLCV slices up to current day (views, not copies)
         ohlcv_slice: Dict[str, pd.DataFrame] = {}
         # T3-1: Extract current simulation date for look-ahead bias prevention
         current_date = master_index[day_idx]
@@ -514,6 +712,9 @@ def run_full_backtest(
                         day_pnl += prev_qty * prev_price * daily_ret
                         day_pnl -= abs(prev_qty) * exit_price * cost_pct
                         trades_count += 1
+                        if sym in entry_prices and entry_prices[sym] > 0:
+                            trade_pnls.append((exit_price - entry_prices[sym]) / entry_prices[sym] * 100)
+                            del entry_prices[sym]
                         prev_positions[sym] = 0
                         peak_prices.pop(sym, None)
                         stop_levels.pop(sym, None)
@@ -530,6 +731,9 @@ def run_full_backtest(
                         day_pnl += abs(prev_qty) * prev_price * daily_ret
                         day_pnl -= abs(prev_qty) * exit_price * cost_pct
                         trades_count += 1
+                        if sym in entry_prices and entry_prices[sym] > 0:
+                            trade_pnls.append((entry_prices[sym] - exit_price) / entry_prices[sym] * 100)
+                            del entry_prices[sym]
                         prev_positions[sym] = 0
                         peak_prices.pop(sym, None)
                         stop_levels.pop(sym, None)
@@ -548,19 +752,14 @@ def run_full_backtest(
         # ── 2. Compute ALL forecasts ───────────────────────────
         # Optimization: expensive signals recomputed every RECOMPUTE_FREQ days,
         # cached between. EWMAC/momentum change slowly over 5 days.
-        _RECOMPUTE_FREQ = 5  # R7: back to 5 days — 2-day churn killed R6 (constant top-N rotation)
+        _RECOMPUTE_FREQ = 5  # R14 baseline: recompute every 5 days
         _trading_day = day_idx - min_history
         _recompute = (_trading_day % _RECOMPUTE_FREQ == 0)
 
-        if _recompute:
-            all_forecasts: Dict[str, Dict[str, float]] = {sym: {} for sym in symbols}
-        else:
-            # Reuse cached forecasts from last full recompute
-            all_forecasts = {sym: dict(fc) for sym, fc in _cached_forecasts.items()}
-
         if not _recompute:
-            pass  # skip signal computation, use cached
-        else:  # ── full signal recompute ──
+            all_forecasts = {sym: dict(fc) for sym, fc in _cached_forecasts.items()}
+        else:  # ── full signal recompute (serial) ──
+            all_forecasts: Dict[str, Dict[str, float]] = {sym: {} for sym in symbols}
 
             # 2a. EWMAC (3 variations)
             for sym, df in ohlcv_slice.items():
@@ -849,31 +1048,84 @@ def run_full_backtest(
         # R13: NO DD SCALING — replaced with dynamic vol target (Fix C)
         dd_scale = 1.0
 
-        # R19a: Continuous DD vol target — smooth linear ramp replaces 5-tier step
-        # At DD=0%: 0.90 (more aggressive than R14's 0.75 ceiling)
-        # At DD=28%+: 0.27 floor (more defensive than R14's 0.40 floor)
-        # Formula: vol = 0.90 * max(0.30, 1.0 - 2.5 * dd)
-        base_vol_target = 0.90 * max(0.30, 1.0 - 2.5 * current_dd)
+        if _R19D_REGIME_MODE or _R19E_REGIME_MODE or _R19F_REGIME_MODE or _R19G_REGIME_MODE:
+            # ── Regime-based vol target ───
+            # R19g/R19f: re-detect every 3 days (sigmoid is cheaper, more responsive)
+            # R19d/R19e: re-detect every 5 days
+            _recheck_interval = 3 if (_R19F_REGIME_MODE or _R19G_REGIME_MODE) else 5
+            if day_idx == _start_day_idx or (day_idx - _start_day_idx) % _recheck_interval == 0:
+                if _R19G_REGIME_MODE:
+                    from services.regime_detector import detect_backtest_regime_sigmoid_v2
+                    _current_regime_state = detect_backtest_regime_sigmoid_v2(
+                        ohlcv_slice, day_idx, equity_dd_pct=current_dd)
+                elif _R19F_REGIME_MODE:
+                    from services.regime_detector import detect_backtest_regime_sigmoid
+                    _current_regime_state = detect_backtest_regime_sigmoid(
+                        ohlcv_slice, day_idx, equity_dd_pct=current_dd)
+                elif _R19E_REGIME_MODE:
+                    from services.regime_detector import detect_backtest_regime_fast
+                    _current_regime_state = detect_backtest_regime_fast(ohlcv_slice, day_idx)
+                else:
+                    from services.regime_detector import detect_backtest_regime
+                    _current_regime_state = detect_backtest_regime(ohlcv_slice, day_idx)
+                if verbose and (day_idx - min_history) % 50 == 0:
+                    rs = _current_regime_state
+                    print(f"    regime={rs.regime.value}  vol_tgt={rs.vol_target:.2f}  "
+                          f"stop_σ={rs.stop_sigma:.1f}  sma_dist={rs.sma200_distance_pct:+.1f}%  "
+                          f"rvol={rs.realized_vol_pct:.1f}%  breadth={rs.breadth_pct:.0%}"
+                          f"  eq_dd={current_dd:.1%}" if (_R19F_REGIME_MODE or _R19G_REGIME_MODE) else "", flush=True)
+            annual_vol_target = _current_regime_state.vol_target
+        elif _R20A_MAXDD_MODE:
+            # R20a: Tightened DD vol tiers — kick in earlier, cut harder
+            # Old R19c tiers started at 10% and floored at 0.40.
+            # R20a starts at 5% DD and floors at 0.20 (aggressive de-risk).
+            if current_dd < 0.05:
+                annual_vol_target = 0.65   # Full risk (slightly lower baseline)
+            elif current_dd < 0.10:
+                annual_vol_target = 0.55   # Early pullback — cut early
+            elif current_dd < 0.15:
+                annual_vol_target = 0.45   # Moderate DD — meaningful cut
+            elif current_dd < 0.25:
+                annual_vol_target = 0.35   # Severe DD — aggressive reduction
+            else:
+                annual_vol_target = 0.20   # Extreme DD — survival mode
+        else:
+            # R14: 5-tier step function — dynamic vol target based on DD depth
+            if current_dd < 0.10:
+                annual_vol_target = 0.75   # Full risk — no DD
+            elif current_dd < 0.20:
+                annual_vol_target = 0.65   # Mild pullback — slight reduction
+            elif current_dd < 0.30:
+                annual_vol_target = 0.55   # Moderate DD — meaningful reduction
+            elif current_dd < 0.40:
+                annual_vol_target = 0.45   # Severe DD — significant reduction
+            else:
+                annual_vol_target = 0.40   # Extreme DD — floor (never go to zero)
 
-        # R19a: Portfolio equity curve stop — additional scaling at deep DD
-        # Beyond 30% DD, aggressively cut sizing. At 45%+ DD, floor at 10%.
-        if current_dd > 0.30:
-            dd_curtail = max(0.10, 1.0 - 2.0 * (current_dd - 0.30))
-            base_vol_target *= dd_curtail
-
-        annual_vol_target = base_vol_target
+            # R19h: Circuit breaker — binary crisis guard on top of R19c base
+            # Only fires when ALL 4 market features are severely negative (sig < 0.15)
+            # Applies a 15% vol reduction. No stop tightening. No continuous scaling.
+            if _R19H_REGIME_MODE:
+                _cb_interval = 5  # recheck every 5 days
+                if day_idx == _start_day_idx or (day_idx - _start_day_idx) % _cb_interval == 0:
+                    from services.regime_detector import detect_backtest_regime_sigmoid_v2
+                    _cb_state = detect_backtest_regime_sigmoid_v2(
+                        ohlcv_slice, day_idx, equity_dd_pct=0.0)  # NO equity DD pass-through
+                    _circuit_breaker_active = (_cb_state.regime.value == "CRISIS")
+                    if verbose and (day_idx - min_history) % 50 == 0:
+                        _cb_label = "TRIPPED" if _circuit_breaker_active else "OK"
+                        print(f"    circuit_breaker={_cb_label}  "
+                              f"sma_dist={_cb_state.sma200_distance_pct:+.1f}%  "
+                              f"rvol={_cb_state.realized_vol_pct:.1f}%  "
+                              f"breadth={_cb_state.breadth_pct:.0%}  "
+                              f"vol_tgt_base={annual_vol_target:.2f}  "
+                              f"eq_dd={current_dd:.1%}", flush=True)
+                if _circuit_breaker_active:
+                    annual_vol_target *= 0.85  # 15% reduction — gentle, not catastrophic
 
         # FIX-FLOOR: Use actual equity for daily target
         sizing_equity = max(equity, capital * 0.10)  # 10% ruin floor
         dynamic_daily_target = sizing_equity * annual_vol_target / 16.0
-
-        # Read leverage config; disable shorts in backtest (signal quality too poor)
-        try:
-            from config import Config as _BtCfg
-            max_leverage = getattr(_BtCfg, 'CARVER_MAX_LEVERAGE', 3.0)
-        except Exception:
-            max_leverage = 3.0
-        allow_short = False  # FIX-SHORT: disabled — short Sharpe ≈ -0.01, bleeds in secular bull
 
         # Tick down stop cooldowns
         for sym in list(stop_cooldown.keys()):
@@ -888,13 +1140,79 @@ def run_full_backtest(
         # When signals are weak (avg < 3), hold few (6 positions).
         # This prevents over-deployment in low-conviction regimes without binary exit.
         
+        # R20a/R20b: Pre-compute vol attenuation multipliers (smoothed)
+        if (_R20A_MAXDD_MODE or _R20B_MAXDD_MODE) and _recompute:
+            for sym in symbols:
+                if sym not in ohlcv_slice:
+                    continue
+                c = ohlcv_slice[sym]["Close"]
+                if hasattr(c, "squeeze"):
+                    c = c.squeeze()
+                if len(c) < 50:
+                    continue
+                q = _compute_vol_quantile(c.dropna())
+                raw_L = _vol_attenuation_multiplier(q)
+                # 10-day EMA smoothing to prevent whipsaw
+                prev_L = _vol_atten_cache.get(sym, 1.0)
+                alpha = 2.0 / (10.0 + 1.0)  # EMA(10) decay
+                smoothed_L = alpha * raw_L + (1.0 - alpha) * prev_L
+                _vol_atten_cache[sym] = smoothed_L
+
+        # R20c: Asymmetric vol boost — only increases position size in calm markets
+        # Uses _vol_boost_multiplier (floor=1.0, cap=1.5) with asymmetric EMA:
+        #   fast decay toward 1.0 (α=0.3, ~6-day HL) — protection deploys quickly
+        #   slow ramp up (α=0.1, ~20-day HL) — boosting builds gradually
+        if _R20C_MAXDD_MODE and _recompute:
+            for sym in symbols:
+                if sym not in ohlcv_slice:
+                    continue
+                c = ohlcv_slice[sym]["Close"]
+                if hasattr(c, "squeeze"):
+                    c = c.squeeze()
+                if len(c) < 50:
+                    continue
+                q = _compute_vol_quantile(c.dropna())
+                raw_L = _vol_boost_multiplier(q)
+                prev_L = _vol_atten_cache.get(sym, 1.0)
+                # Asymmetric EMA: fast down, slow up
+                if raw_L < prev_L:
+                    alpha = 0.3   # fast decay to floor (~6-day half-life)
+                else:
+                    alpha = 0.1   # slow ramp up (~20-day half-life)
+                smoothed_L = alpha * raw_L + (1.0 - alpha) * prev_L
+                _vol_atten_cache[sym] = smoothed_L
+
         # Pre-compute combined forecasts for ALL symbols, then rank
         _all_combined: Dict[str, float] = {}
         for sym, fc_dict in all_forecasts.items():
             if not fc_dict:
                 continue
             combined = combine_forecasts(sym, fc_dict, active_weights)
-            _all_combined[sym] = combined.combined_forecast
+            fc_val = combined.combined_forecast
+            # R20a: Apply vol attenuation to combined forecast
+            if _R20A_MAXDD_MODE:
+                va_mult = _vol_atten_cache.get(sym, 1.0)
+                fc_val = max(-20.0, min(20.0, fc_val * va_mult))
+            _all_combined[sym] = fc_val
+
+        # R21a: Save per-source forecasts + close prices for weight optimization
+        if _SAVE_FORECASTS_MODE:
+            _fc_snap = {}
+            _px_snap = {}
+            _vol_snap = {}
+            for sym, fc_dict in all_forecasts.items():
+                if fc_dict:
+                    _fc_snap[sym] = dict(fc_dict)
+                if sym in ohlcv_slice:
+                    c = ohlcv_slice[sym]["Close"]
+                    if hasattr(c, "squeeze"):
+                        c = c.squeeze()
+                    _c = c.dropna()
+                    if len(_c) > 0:
+                        _px_snap[sym] = float(_c.iloc[-1])
+                        _dpv = daily_price_volatility(_c)
+                        _vol_snap[sym] = float(_dpv) if np.isfinite(_dpv) else 0.02
+            _forecast_log.append((day_idx, str(current_date), _fc_snap, _px_snap, _vol_snap))
 
         # Adaptive position count based on top-15 average forecast strength
         _ranked_for_count = sorted(_all_combined.values(), key=lambda x: abs(x), reverse=True)
@@ -925,7 +1243,8 @@ def run_full_backtest(
 
         # IDM: T3-6 — compute dynamically from instrument return correlations
         # IDM = 1/sqrt(avg_pairwise_correlation) for >6 instruments
-        if n_investable >= 6 and day_idx >= min_history + 60:
+        # OPT: Only recompute on recompute days (correlation changes slowly)
+        if _recompute and n_investable >= 6 and day_idx >= min_history + 60:
             _rets_for_idm = []
             for sym, df in ohlcv_slice.items():
                 if sym not in all_forecasts or not all_forecasts[sym]:
@@ -942,13 +1261,14 @@ def run_full_backtest(
                     _n = len(_corr_mat)
                     _off_diag = (_corr_mat.values.sum() - _n) / max(_n * (_n - 1), 1)
                     _avg_corr = max(0.05, min(0.95, _off_diag))
-                    idm = min(2.5, 1.0 / np.sqrt(_avg_corr))
+                    _cached_idm = min(2.5, 1.0 / np.sqrt(_avg_corr))
                 else:
-                    idm = 1.7
+                    _cached_idm = 1.7
             else:
-                idm = 1.7
-        else:
-            idm = 1.5 if n_investable < 6 else 1.7
+                _cached_idm = 1.7
+        elif n_investable < 6:
+            _cached_idm = 1.5
+        idm = _cached_idm
 
         active_count = 0
         for sym, fc_dict in all_forecasts.items():
@@ -1006,6 +1326,19 @@ def run_full_backtest(
                 vol_scalar = dynamic_daily_target / ivv
                 position = (forecast / 10.0) * vol_scalar * weight_per_sym * idm
 
+                # R20b: Vol attenuation at position sizing level
+                # Apply L multiplier to position SIZE, not forecast.
+                # This preserves forecast ranking while reducing exposure in high-vol.
+                if _R20B_MAXDD_MODE:
+                    va_mult = _vol_atten_cache.get(sym, 1.0)
+                    position *= va_mult
+
+                # R20c: Asymmetric vol boost at position level
+                # L >= 1.0 always — boosts in calm, never reduces below R19c
+                if _R20C_MAXDD_MODE:
+                    va_mult = _vol_atten_cache.get(sym, 1.0)
+                    position *= va_mult
+
                 # R13: NO REGIME SCALING — regime-agnostic position sizing
                 # Dynamic vol target (Fix C) handles risk continuously.
                 # No binary regime multipliers — those caused R4-R11 whipsaw.
@@ -1034,20 +1367,42 @@ def run_full_backtest(
                 prev_qty = prev_positions.get(sym, 0)
                 delta = abs(target_qty - prev_qty)
                 if delta > 0:
-                    # R12: Inertia 10% — near-zero friction, let sizing be responsive
-                    if abs(prev_qty) > 0 and delta / abs(prev_qty) < 0.10:
+                    # R14 baseline: Inertia 10% (R20b: 15% to reduce churn)
+                    _inertia_pct = 0.15 if _R20B_MAXDD_MODE else 0.10
+                    if abs(prev_qty) > 0 and delta / abs(prev_qty) < _inertia_pct:
                         target_qty = prev_qty
                     else:
                         cost = delta * price * cost_pct
                         day_pnl -= cost
                         trades_count += 1
 
+                # ── Per-trade tracking (round-trip PnL) ───────
+                if prev_qty == 0 and target_qty != 0:
+                    # New position opened — record entry price
+                    entry_prices[sym] = price
+                elif prev_qty != 0 and target_qty == 0:
+                    # Position fully closed — log round-trip PnL
+                    if sym in entry_prices and entry_prices[sym] > 0:
+                        ep = entry_prices.pop(sym)
+                        if prev_qty > 0:
+                            trade_pnls.append((price - ep) / ep * 100)
+                        else:
+                            trade_pnls.append((ep - price) / ep * 100)
+                elif prev_qty != 0 and target_qty != 0 and abs(target_qty) != abs(prev_qty):
+                    # Position resized — update VWAP entry
+                    if sym in entry_prices and abs(target_qty) > abs(prev_qty):
+                        added = abs(target_qty) - abs(prev_qty)
+                        entry_prices[sym] = (entry_prices[sym] * abs(prev_qty) + price * added) / abs(target_qty)
+
                 prev_positions[sym] = target_qty
 
-                # R19a: Tighter stops 5σ — catches genuine breakdowns at ~10% below peak
-                # R14 had 10σ (~20% below peak) which practically never triggered.
-                # 5σ for typical 2% daily vol stock = stop at ~10% below instrument peak.
-                stop_sigma = 5.0
+                # R14 baseline: 10σ stops — adaptive in regime mode
+                if _R19D_REGIME_MODE or _R19E_REGIME_MODE or _R19F_REGIME_MODE or _R19G_REGIME_MODE:
+                    stop_sigma = _current_regime_state.stop_sigma
+                elif _R20D_HYBRID_MODE:
+                    stop_sigma = 8.0   # R20d: tighter stops — clip tail losses 20%
+                else:
+                    stop_sigma = 10.0
 
                 if target_qty > 0:
                     active_count += 1
@@ -1069,6 +1424,124 @@ def run_full_backtest(
 
         daily_position_counts.append(active_count)
 
+        # R20d: Position count floor — guarantee minimum diversification
+        # When natural sizing produces fewer than MIN_POSITIONS active positions,
+        # fill the gap with the strongest-conviction unfilled stocks using the
+        # existing risk budget.  Never forces entry on |forecast| < 2.0 stocks.
+        _R20D_MIN_POSITIONS = 6
+        if _R20D_HYBRID_MODE and active_count < _R20D_MIN_POSITIONS:
+            # Find unfilled stocks with viable conviction, sorted by strength
+            _unfilled_viable = []
+            for _uf_sym, _uf_fc in _ranked:
+                if abs(_uf_fc) < 2.0:
+                    break  # _ranked is sorted by abs(fc) descending; rest are weaker
+                if prev_positions.get(_uf_sym, 0) != 0:
+                    continue  # already has a position
+                if _uf_sym in stop_cooldown:
+                    continue  # recently stopped out
+                if _uf_sym not in ohlcv_slice:
+                    continue
+                _unfilled_viable.append((_uf_sym, _uf_fc))
+
+            _slots_needed = _R20D_MIN_POSITIONS - active_count
+            for _uf_sym, _uf_fc in _unfilled_viable[:_slots_needed]:
+                # Size using the same formula as the main sizing loop
+                _uf_c = ohlcv_slice[_uf_sym]["Close"]
+                if hasattr(_uf_c, "squeeze"):
+                    _uf_c = _uf_c.squeeze()
+                _uf_close = _uf_c.dropna()
+                if len(_uf_close) < 50:
+                    continue
+                _uf_price = float(_uf_close.iloc[-1])
+                if not np.isfinite(_uf_price) or _uf_price <= 0:
+                    continue
+                _uf_dpv = daily_price_volatility(_uf_close)
+                if not np.isfinite(_uf_dpv) or _uf_dpv <= 0:
+                    _uf_dpv = 0.02
+                _uf_ivv = _uf_price * _uf_dpv
+                if _uf_ivv <= 0 or dynamic_daily_target <= 0:
+                    continue
+                _uf_vol_scalar = dynamic_daily_target / _uf_ivv
+                _uf_n_inv = max(n_investable, _R20D_MIN_POSITIONS)
+                _uf_weight = 1.0 / _uf_n_inv
+                _uf_position = (_uf_fc / 10.0) * _uf_vol_scalar * _uf_weight * idm
+                # Apply R20c vol boost if active
+                if _R20C_MAXDD_MODE:
+                    _uf_va = _vol_atten_cache.get(_uf_sym, 1.0)
+                    _uf_position *= _uf_va
+                _uf_qty = round(_uf_position)
+                if _uf_qty == 0:
+                    continue
+                # Guard: long-only
+                if not allow_short and _uf_qty < 0:
+                    continue
+                # Per-symbol leverage cap
+                _uf_max_notional = abs(equity) * max_leverage / _uf_n_inv
+                if abs(_uf_qty) * _uf_price > _uf_max_notional:
+                    _uf_qty = int(_uf_max_notional / _uf_price)
+                    if _uf_qty == 0:
+                        continue
+                # Execute: cost + tracking
+                _uf_cost = abs(_uf_qty) * _uf_price * cost_pct
+                day_pnl -= _uf_cost
+                trades_count += 1
+                entry_prices[_uf_sym] = _uf_price
+                prev_positions[_uf_sym] = _uf_qty
+                active_count += 1
+                # Set trailing stop
+                _uf_stop_sigma = 8.0  # R20d tighter stops
+                peak_prices[_uf_sym] = _uf_price
+                _uf_stop_dist = _uf_stop_sigma * _uf_dpv * _uf_price
+                stop_levels[_uf_sym] = _uf_price - _uf_stop_dist
+
+        # R20a: Sector concentration enforcement
+        # After all positions are sized, cap per-sector exposure at 30% / 3 positions
+        if _R20A_MAXDD_MODE and _sector_map:
+            # Build per-symbol notional and sector buckets
+            _sector_exposure: Dict[str, float] = defaultdict(float)  # sector → total notional
+            _sector_count: Dict[str, int] = defaultdict(int)         # sector → position count
+            _sym_notional: Dict[str, float] = {}
+            _sym_sector: Dict[str, str] = {}
+            for sym, qty in prev_positions.items():
+                if qty == 0 or sym not in ohlcv_slice:
+                    continue
+                c = ohlcv_slice[sym]["Close"]
+                if hasattr(c, "squeeze"):
+                    c = c.squeeze()
+                p = float(c.dropna().iloc[-1]) if len(c.dropna()) > 0 else 0
+                notional = abs(qty) * p
+                # Strip .NS suffix for sector lookup
+                bare = sym.replace('.NS', '').replace('.BO', '')
+                sector = _sector_map.get(bare, "Unknown")
+                _sym_notional[sym] = notional
+                _sym_sector[sym] = sector
+                _sector_exposure[sector] += notional
+                _sector_count[sector] += 1
+
+            _portfolio_notional = sum(_sym_notional.values())
+            if _portfolio_notional > 0:
+                for sector in list(_sector_exposure.keys()):
+                    sector_pct = _sector_exposure[sector] / _portfolio_notional
+                    # If sector > 30% or > 3 positions, scale down the WEAKEST forecasts in that sector
+                    if sector_pct > _R20A_MAX_SECTOR_EXPOSURE_PCT or _sector_count[sector] > _R20A_MAX_PER_SECTOR:
+                        # Collect all syms in this sector, sorted by forecast strength (weakest first)
+                        _sector_syms = [(sym, abs(_all_combined.get(sym, 0)))
+                                        for sym, s in _sym_sector.items() if s == sector and prev_positions.get(sym, 0) != 0]
+                        _sector_syms.sort(key=lambda x: x[1])  # weakest first
+                        # Kill weakest positions until within limits
+                        while (_sector_count[sector] > _R20A_MAX_PER_SECTOR or
+                               (_sector_exposure[sector] / max(_portfolio_notional, 1) > _R20A_MAX_SECTOR_EXPOSURE_PCT)):
+                            if not _sector_syms:
+                                break
+                            kill_sym, _ = _sector_syms.pop(0)
+                            kill_notional = _sym_notional.get(kill_sym, 0)
+                            prev_positions[kill_sym] = 0
+                            peak_prices.pop(kill_sym, None)
+                            stop_levels.pop(kill_sym, None)
+                            _sector_exposure[sector] -= kill_notional
+                            _sector_count[sector] -= 1
+                            _portfolio_notional -= kill_notional
+
         # FIX-LEV: Portfolio-wide leverage cap enforcement
         # Sum of all |position × price| must not exceed equity × max_leverage
         total_exposure = 0.0
@@ -1087,6 +1560,63 @@ def run_full_backtest(
                 if prev_positions[sym] != 0:
                     prev_positions[sym] = round(prev_positions[sym] * scale_down)
 
+        # R20a: Simplified Risk Overlay (Carver 2020)
+        # If gross exposure exceeds 2× the vol-target-implied risk budget,
+        # proportionally scale ALL positions down.  This catches correlation
+        # spikes where diversification benefit collapses.
+        if _R20A_MAXDD_MODE:
+            _target_notional = sizing_equity * annual_vol_target / 0.16  # annualized target risk in notional
+            _risk_cap = 2.0 * _target_notional  # worst-case: 2× target risk
+            if total_exposure > _risk_cap and total_exposure > 0:
+                _risk_scale = _risk_cap / total_exposure
+                for sym in list(prev_positions.keys()):
+                    if prev_positions[sym] != 0:
+                        prev_positions[sym] = round(prev_positions[sym] * _risk_scale)
+
+        # R20b: Sector concentration — SCALE DOWN, never kill
+        # After leverage cap, proportionally reduce over-concentrated sectors
+        if _R20B_MAXDD_MODE and _sector_map_b:
+            _sb_exposure: Dict[str, float] = defaultdict(float)
+            _sb_count: Dict[str, int] = defaultdict(int)
+            _sb_sym_sector: Dict[str, str] = {}
+            _sb_sym_notional: Dict[str, float] = {}
+            for sym, qty in prev_positions.items():
+                if qty == 0 or sym not in ohlcv_slice:
+                    continue
+                c = ohlcv_slice[sym]["Close"]
+                if hasattr(c, "squeeze"):
+                    c = c.squeeze()
+                p = float(c.dropna().iloc[-1]) if len(c.dropna()) > 0 else 0
+                notional = abs(qty) * p
+                bare = sym.replace('.NS', '').replace('.BO', '')
+                sector = _sector_map_b.get(bare, "Unknown")
+                _sb_sym_sector[sym] = sector
+                _sb_sym_notional[sym] = notional
+                _sb_exposure[sector] += notional
+                _sb_count[sector] += 1
+            _sb_total = sum(_sb_sym_notional.values())
+            if _sb_total > 0:
+                for sector in list(_sb_exposure.keys()):
+                    sector_pct = _sb_exposure[sector] / _sb_total
+                    if sector_pct > _R20B_MAX_SECTOR_PCT:
+                        # Scale all positions in this sector proportionally
+                        _scale = _R20B_MAX_SECTOR_PCT / sector_pct
+                        for sym, s in _sb_sym_sector.items():
+                            if s == sector and prev_positions.get(sym, 0) != 0:
+                                prev_positions[sym] = max(1, round(prev_positions[sym] * _scale))
+
+        # R20b: Risk overlay — only at EXTREME (3× target, not 2×)
+        # Uses FULL vol target (0.75 baseline) for risk budget, not the DD-reduced one
+        if _R20B_MAXDD_MODE:
+            _base_vol_target = 0.75  # R19c's full-risk baseline
+            _target_notional_b = sizing_equity * _base_vol_target / 0.16
+            _risk_cap_b = 3.0 * _target_notional_b  # 3× target (lenient, only catches extreme)
+            if total_exposure > _risk_cap_b and total_exposure > 0:
+                _risk_scale_b = _risk_cap_b / total_exposure
+                for sym in list(prev_positions.keys()):
+                    if prev_positions[sym] != 0:
+                        prev_positions[sym] = round(prev_positions[sym] * _risk_scale_b)
+
         # ── 4. Update equity ───────────────────────────────────
         if not np.isfinite(day_pnl):
             day_pnl = 0.0  # NaN guard: skip corrupted days
@@ -1094,16 +1624,138 @@ def run_full_backtest(
         daily_returns.append(day_pnl / max(daily_equity[-1], 1))
         daily_equity.append(equity)
 
+        _consecutive_day_errors = 0  # reset on successful day
+
         # Print progress every 50 days
         if verbose and (day_idx - min_history) % 50 == 0:
             d = day_idx - min_history
             total_d = n_days - min_history
             ret_so_far = (equity / capital - 1) * 100
             _line = f"  Day {d:4d}/{total_d}  equity={equity:,.0f}  ret={ret_so_far:+.1f}%  positions={active_count}"
-            print(f"\r{_line:<80}", end="", flush=True)
+            print(_line, flush=True)
+
+            # Save checkpoint every 50-day block
+            try:
+                _ckpt_data = {
+                    'day_idx': day_idx,
+                    'n_symbols': n_symbols, 'capital': capital, 'n_days': n_days,
+                    'equity': equity,
+                    'daily_equity': daily_equity,
+                    'daily_returns': daily_returns,
+                    'prev_positions': dict(prev_positions),
+                    'peak_prices': dict(peak_prices),
+                    'stop_levels': dict(stop_levels),
+                    'stop_cooldown': dict(stop_cooldown),
+                    'pair_states': dict(pair_states),
+                    'trades_count': trades_count,
+                    'source_hits': dict(source_hits),
+                    'source_total': dict(source_total),
+                    'daily_position_counts': list(daily_position_counts),
+                    'peak_equity': peak_equity,
+                    'dd_deep_days': dd_deep_days,
+                    'cached_forecasts': {s: dict(f) for s, f in _cached_forecasts.items()},
+                    'cached_idm': _cached_idm,
+                    'trade_pnls': list(trade_pnls),
+                    'entry_prices': dict(entry_prices),
+                }
+                with open(_checkpoint_path, 'wb') as _ckf:
+                    pickle.dump(_ckpt_data, _ckf, protocol=pickle.HIGHEST_PROTOCOL)
+            except Exception:
+                pass  # non-fatal — checkpoint save failure shouldn't stop simulation
+
+        # ── Graceful exit: save checkpoint and break ───────────
+        if _graceful_exit_requested:
+            if verbose:
+                d = day_idx - min_history
+                print(f"\n  Graceful exit at Day {d}/{n_days - min_history} — saving checkpoint...", flush=True)
+            try:
+                _ckpt_data = {
+                    'day_idx': day_idx,
+                    'n_symbols': n_symbols, 'capital': capital, 'n_days': n_days,
+                    'equity': equity,
+                    'daily_equity': daily_equity,
+                    'daily_returns': daily_returns,
+                    'prev_positions': dict(prev_positions),
+                    'peak_prices': dict(peak_prices),
+                    'stop_levels': dict(stop_levels),
+                    'stop_cooldown': dict(stop_cooldown),
+                    'pair_states': dict(pair_states),
+                    'trades_count': trades_count,
+                    'source_hits': dict(source_hits),
+                    'source_total': dict(source_total),
+                    'daily_position_counts': list(daily_position_counts),
+                    'peak_equity': peak_equity,
+                    'dd_deep_days': dd_deep_days,
+                    'cached_forecasts': {s: dict(f) for s, f in _cached_forecasts.items()},
+                    'cached_idm': _cached_idm,
+                    'trade_pnls': list(trade_pnls),
+                    'entry_prices': dict(entry_prices),
+                }
+                with open(_checkpoint_path, 'wb') as _ckf:
+                    pickle.dump(_ckpt_data, _ckf, protocol=pickle.HIGHEST_PROTOCOL)
+                if verbose:
+                    print(f"  Checkpoint saved. Re-run to resume from Day {d+1}.", flush=True)
+            except Exception as _save_err:
+                if verbose:
+                    print(f"  WARNING: checkpoint save failed on exit: {_save_err}", flush=True)
+            break
+
+      except Exception as _day_err:
+        # Per-day fault tolerance: log error, skip day (pnl=0), continue
+        _consecutive_day_errors += 1
+        d = day_idx - min_history
+        if verbose:
+            print(f"  WARNING: Day {d} error ({type(_day_err).__name__}: {_day_err}) — skipping day", flush=True)
+            traceback.print_exc()
+        # Record zero PnL so equity array stays aligned with day_idx
+        # Guard: only append if this day hasn't already been appended (partial execution)
+        _expected_len = day_idx - min_history + 2  # +1 for initial, +1 for current
+        if len(daily_equity) < _expected_len:
+            daily_returns.append(0.0)
+            daily_equity.append(equity)
+        if _consecutive_day_errors >= _MAX_CONSECUTIVE_ERRORS:
+            if verbose:
+                print(f"\n  FATAL: {_MAX_CONSECUTIVE_ERRORS} consecutive day errors — aborting simulation", flush=True)
+            # Save emergency checkpoint before aborting
+            try:
+                _ckpt_data = {
+                    'day_idx': day_idx,
+                    'n_symbols': n_symbols, 'capital': capital, 'n_days': n_days,
+                    'equity': equity,
+                    'daily_equity': daily_equity,
+                    'daily_returns': daily_returns,
+                    'prev_positions': dict(prev_positions),
+                    'peak_prices': dict(peak_prices),
+                    'stop_levels': dict(stop_levels),
+                    'stop_cooldown': dict(stop_cooldown),
+                    'pair_states': dict(pair_states),
+                    'trades_count': trades_count,
+                    'source_hits': dict(source_hits),
+                    'source_total': dict(source_total),
+                    'daily_position_counts': list(daily_position_counts),
+                    'peak_equity': peak_equity,
+                    'dd_deep_days': dd_deep_days,
+                    'cached_forecasts': {s: dict(f) for s, f in _cached_forecasts.items()},
+                    'cached_idm': _cached_idm,
+                    'trade_pnls': list(trade_pnls),
+                    'entry_prices': dict(entry_prices),
+                }
+                with open(_checkpoint_path, 'wb') as _ckf:
+                    pickle.dump(_ckpt_data, _ckf, protocol=pickle.HIGHEST_PROTOCOL)
+            except Exception:
+                pass
+            break
+
+    # Restore original signal handlers
+    signal.signal(signal.SIGINT, _prev_sigint)
+    signal.signal(signal.SIGTERM, _prev_sigterm)
+
+    # Clean up checkpoint on successful completion
+    if os.path.exists(_checkpoint_path):
+        os.remove(_checkpoint_path)
 
     if verbose:
-        print(f"\r  Simulation complete: {n_days - min_history} trading days" + " " * 40)
+        print(f"  Simulation complete: {n_days - min_history} trading days")
 
     # ── 5. Compute metrics ─────────────────────────────────────
     ret_arr = np.array(daily_returns)
@@ -1159,6 +1811,16 @@ def run_full_backtest(
     # Average positions
     if daily_position_counts:
         result.avg_positions = round(np.mean(daily_position_counts), 1)
+
+    # Win Rate & Profit Factor (from round-trip trade PnLs)
+    if trade_pnls:
+        _tp = np.array(trade_pnls)
+        _wins = _tp[_tp > 0]
+        _losses = _tp[_tp < 0]
+        result.win_rate = round(len(_wins) / len(_tp) * 100, 1)
+        _gross_profit = float(np.sum(_wins)) if len(_wins) > 0 else 0.0
+        _gross_loss = float(np.abs(np.sum(_losses))) if len(_losses) > 0 else 0.0
+        result.profit_factor = round(_gross_profit / _gross_loss, 2) if _gross_loss > 0 else 99.99
 
     # ── 5b. Aronson EBTA enrichment metrics ─────────────────
     try:
@@ -1242,6 +1904,8 @@ def run_full_backtest(
         f"  Max Drawdown:  {result.max_drawdown_pct:>11.1f}%",
         f"  Annual Return: {result.annual_return_pct:>11.1f}%",
         f"  Total Return:  {result.total_return_pct:>11.1f}%",
+        f"  Win Rate:      {result.win_rate:>11.1f}%",
+        f"  Profit Factor: {result.profit_factor:>12.2f}",
         "",
         f"  {'─'*40}",
         f"  Source Contribution (% of days producing a forecast):",
@@ -1286,6 +1950,8 @@ def run_full_backtest(
         "n_days_traded": result.n_days_traded,
         "n_trades": result.n_trades,
         "avg_positions": result.avg_positions,
+        "win_rate": result.win_rate,
+        "profit_factor": result.profit_factor,
         "source_hit_rates": result.source_hit_rates,
         "daily_equity": result.daily_equity,
         "report": result.report,
@@ -1296,3 +1962,31 @@ def run_full_backtest(
         "dm_bias_estimate": result.dm_bias_estimate,
         "bootstrap_ci_sharpe": result.bootstrap_ci_sharpe,
     }
+
+
+if __name__ == "__main__":
+    import sys, os
+    # Ensure centurion_core root is on sys.path for internal imports
+    _root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _root not in sys.path:
+        sys.path.insert(0, _root)
+    sys.stdout.reconfigure(line_buffering=True, encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(line_buffering=True, encoding="utf-8", errors="replace")
+    result = run_full_backtest(
+        tickers=None,
+        capital=500_000,
+        period="13y",
+        market="IND",
+        verbose=True,
+        start_date="2012-01-01",
+        end_date="2025-12-31",
+    )
+    # Report already printed by verbose=True; print metrics summary
+    print(f"\n=== KEY METRICS ===")
+    for k in ["annual_return_pct", "total_return_pct", "sharpe", "sortino",
+              "calmar", "max_drawdown_pct", "n_trades", "avg_positions",
+              "detrended_sharpe", "trimmed_sharpe", "dm_bias_estimate"]:
+        print(f"  {k:25s} = {result.get(k)}")
+    if result.get("bootstrap_ci_sharpe"):
+        lo, hi = result["bootstrap_ci_sharpe"]
+        print(f"  {'bootstrap_ci_sharpe':25s} = [{lo:.3f}, {hi:.3f}]")

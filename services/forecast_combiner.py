@@ -68,15 +68,15 @@ class ForecastWeight:
 # avg forecast ~6-7 (vs Carver target 10), sufficient diversification to avoid
 # single-signal blowups, decorrelated styles (trend + momentum + adaptive + breakout).
 DEFAULT_FORECAST_WEIGHTS: List[ForecastWeight] = [
-    ForecastWeight("ewmac_8_32", 0.10),      # R14/R18: fast trend
-    ForecastWeight("ewmac_16_64", 0.12),     # R14/R18: core swing trend
+    ForecastWeight("ewmac_8_32", 0.07),      # R19c Phase 3: trimmed (was 10%)
+    ForecastWeight("ewmac_16_64", 0.09),     # R19c Phase 3: trimmed (was 12%)
     ForecastWeight("ewmac_32_128", 0.00),    # zeroed — redundant
-    ForecastWeight("ewmac_64_256", 0.10),    # R14/R18: positional trend
+    ForecastWeight("ewmac_64_256", 0.08),    # R19c Phase 3: trimmed (was 10%)
     ForecastWeight("carry", 0.00),           # zeroed — weak for equities
-    ForecastWeight("screener", 0.07),        # R14/R18: RSI+MA mixed
+    ForecastWeight("screener", 0.05),        # R19c Phase 3: trimmed (was 7%)
     ForecastWeight("momentum", 0.16),        # R14/R18: primary trend alpha
     ForecastWeight("pead", 0.00),            # DEAD: 0% hit rate
-    ForecastWeight("mean_reversion", 0.08),  # R14/R18: counter-trend diversifier
+    ForecastWeight("mean_reversion", 0.13),  # R19c Phase 3: boosted (was 8%)
     ForecastWeight("fii_flow", 0.00),        # DEAD: 0% hit rate
     ForecastWeight("decision_engine", 0.00), # zeroed — circular dependency
     ForecastWeight("oi_signal", 0.00),       # HARMFUL: t-stat = -69.8
@@ -86,8 +86,8 @@ DEFAULT_FORECAST_WEIGHTS: List[ForecastWeight] = [
     ForecastWeight("penfold_trend", 0.12),   # R14/R18: Turtle+ATR
     ForecastWeight("ehlers_dsp", 0.12),      # R14/R18: adaptive DSP
     ForecastWeight("intermarket", 0.00),     # zeroed — noisy
-    ForecastWeight("acceleration", 0.06),    # R14/R18: trend rate-of-change
-    ForecastWeight("carver_value", 0.00),    # R18: removed (R15-R17 experiment failed)
+    ForecastWeight("acceleration", 0.04),    # R19c Phase 3: trimmed (was 6%)
+    ForecastWeight("carver_value", 0.07),    # R19c Phase 3: re-enabled (was 0%)
     ForecastWeight("skew_signal", 0.00),     # zeroed — weak signal
     ForecastWeight("sentiment", 0.00),       # DEAD: 0% hit rate
     ForecastWeight("breakout", 0.07),        # R14/R18: 20-day channel
