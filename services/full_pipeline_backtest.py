@@ -57,6 +57,9 @@ _R20C_MAXDD_MODE = False    # R20c: R19c + asymmetric vol boost (calm-only, neve
 _R20D_HYBRID_MODE = False   # R20d: R20c + position floor (min 6) + tighter stops (8σ)
 _SAVE_FORECASTS_MODE = False  # R21a: save per-source forecasts for weight optimization
 _forecast_log: list = []      # accumulator: [(day_idx, {sym: {source: val}}, {sym: next_ret})]
+_R21A_REGIME_VOL = False      # R21a: regime-adaptive vol target (aggressive uptrend, defensive downtrend)
+_R21A_REGIME_BOOST = 1.25     # uptrend vol multiplier
+_R21A_REGIME_DEFEND = 0.55    # downtrend vol multiplier
 
 # ── Default pairs for pairs_arb source ────────────────────────
 DEFAULT_PAIRS_US = [
@@ -1126,6 +1129,15 @@ def run_full_backtest(
         # FIX-FLOOR: Use actual equity for daily target
         sizing_equity = max(equity, capital * 0.10)  # 10% ruin floor
         dynamic_daily_target = sizing_equity * annual_vol_target / 16.0
+
+        # R21a: Regime-adaptive vol target
+        # Aggressive in sustained uptrends, defensive in downtrends
+        if _R21A_REGIME_VOL and len(equity_curve) >= 200:
+            _eq_sma200 = sum(equity_curve[-200:]) / 200.0
+            if equity > _eq_sma200 * 1.02:
+                dynamic_daily_target *= _R21A_REGIME_BOOST  # uptrend: aggressive
+            elif equity < _eq_sma200 * 0.98:
+                dynamic_daily_target *= _R21A_REGIME_DEFEND  # downtrend: defensive
 
         # Tick down stop cooldowns
         for sym in list(stop_cooldown.keys()):
