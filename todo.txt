@@ -22,7 +22,7 @@ R19C Signal weights (winner):
 momentum=16%, mean_reversion=13%, penfold_trend=12%, ehlers_dsp=12%, ewmac_16_64=9%, ewmac_64_256=8%, carver_value=7%, breakout=7%, ewmac_8_32=7%, screener=5%, acceleration=4%
 
 ~~~~~~
-Target - Sharpe > 1.5, CAGR > 50%, MaxDD <= 50%, Profit Factor >= 1.5
+Target - Sharpe > 1.5, CAGR > 50%, MaxDD < 50%, Profit Factor >= 1.5
 1. abort the backtest
 2. fundamentally rethink the approach, recalibrate & re-tune first
 3. then, analyze the identified steps and implement the best fixes to achieve
