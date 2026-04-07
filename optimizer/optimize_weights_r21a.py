@@ -570,11 +570,16 @@ def run_optimization():
     bounds = [(0.01, 0.40)] * n_signals
 
     # ── Checkpoint config ──
-    _CKPT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "r21a_optimizer_checkpoint.pkl")
-    # On Kaggle, also check /kaggle/working/
+    _CKPT_NAME = "r21a_optimizer_checkpoint.pkl"
+    _CKPT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), _CKPT_NAME)
+    # Search order: /kaggle/working first, then input dataset, then local script dir
     _CKPT_PATHS = [_CKPT_PATH]
     if os.path.exists("/kaggle/working"):
-        _CKPT_PATHS.insert(0, "/kaggle/working/r21a_optimizer_checkpoint.pkl")
+        _CKPT_PATHS.insert(0, "/kaggle/working/" + _CKPT_NAME)
+    if os.path.exists("/kaggle/input/centurion-core"):
+        # Checkpoint uploaded to dataset root or nested inside centurion_core/
+        _CKPT_PATHS.insert(1, "/kaggle/input/centurion-core/" + _CKPT_NAME)
+        _CKPT_PATHS.insert(2, "/kaggle/input/centurion-core/centurion_core/optimizer/" + _CKPT_NAME)
     _CKPT_EVERY = 5  # save every N generations
     _MAX_ITER = 150
     _POP_SIZE = 60
