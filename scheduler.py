@@ -606,7 +606,15 @@ def _paper_trade_orders(verdicts: list, screened_df):
             today_str = _date_cls.today().isoformat()
             signal_entries = []
             traded_symbols = {r["symbol"] for r in results if r.get("success")}
+            # Build per-symbol source breakdown from pipeline individual forecasts
+            try:
+                _indiv = getattr(pipe_result, 'individual_forecasts', {})
+            except NameError:
+                _indiv = {}
             for plan in plans:
+                _sym_fc = _indiv.get(plan.symbol, {})
+                _active_sources = sorted(k for k, v in _sym_fc.items() if v and abs(v) > 0.01)
+                _src_str = ",".join(_active_sources) if _active_sources else "CarverPipeline"
                 signal_entries.append({
                     "symbol": plan.symbol,
                     "forecast": getattr(plan, "score", 0),
@@ -616,7 +624,7 @@ def _paper_trade_orders(verdicts: list, screened_df):
                     "stop_loss": plan.stop_loss,
                     "target_price": plan.target_price,
                     "quantity": plan.quantity,
-                    "pipeline_sources": "CarverPipeline",
+                    "pipeline_sources": _src_str,
                     "was_traded": plan.symbol in traded_symbols,
                 })
             pt.log_signals(today_str, signal_entries)
@@ -658,7 +666,7 @@ def _auto_place_orders(verdicts: list, screened_df):
     routed to the PaperTrader instead of Kite live.
     """
     # â”€â”€ Paper-trade mode check â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    paper_mode = os.environ.get("PAPER_TRADE_MODE", "").lower() in ("true", "1", "yes")
+    paper_mode = os.environ.get("CENTURION_PAPER_TRADE", "").lower() in ("true", "1", "yes")
     if not paper_mode:
         try:
             from config import Config

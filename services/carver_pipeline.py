@@ -119,6 +119,7 @@ class PipelineResult:
     cost_filtered_count: int = 0
     pipeline_log: List[str] = field(default_factory=list)
     validation_stats: Dict = field(default_factory=dict)  # Aronson EBTA per-symbol confidence scores
+    individual_forecasts: Dict[str, Dict[str, float]] = field(default_factory=dict)  # {sym: {source: value}}
 
 
 # T1-2: Module-level accessor for the current pipeline's vol target instance
@@ -690,6 +691,7 @@ class CarverPipeline:
 
         log.append(f"  -> Forecasts built for {len(all_forecasts)} symbols")
         result.symbols_processed = len(all_forecasts)
+        result.individual_forecasts = {sym: dict(fc) for sym, fc in all_forecasts.items()}
 
         # Penfold weekly Dow filter: dampen buy signals if weekly trend is down
         # Aggressive dampening (×0.2) prevents capital destruction in bear markets

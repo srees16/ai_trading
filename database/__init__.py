@@ -23,6 +23,10 @@ from database.models import (
     BacktestDailyReturn,
     StrategyPerformanceSummary,
     DataFreshness,
+    PaperPositionRecord,
+    PaperDailySnapshotRecord,
+    PaperSignalLogRecord,
+    PaperWeeklyCheckpointRecord,
 )
 from database.repositories import (
     SignalRepository,
@@ -51,6 +55,10 @@ __all__ = [
     'BacktestDailyReturn',
     'StrategyPerformanceSummary',
     'DataFreshness',
+    'PaperPositionRecord',
+    'PaperDailySnapshotRecord',
+    'PaperSignalLogRecord',
+    'PaperWeeklyCheckpointRecord',
     # Repositories
     'SignalRepository',
     'FundamentalRepository',
