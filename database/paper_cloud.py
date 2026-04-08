@@ -25,8 +25,20 @@ _cloud: Optional["PaperCloudSync"] = None
 
 
 def get_paper_cloud() -> Optional["PaperCloudSync"]:
-    """Return the singleton PaperCloudSync (or None if DB not configured)."""
+    """Return the singleton PaperCloudSync (or None if DB not configured).
+
+    Performs a lightweight health check on the cached singleton to detect
+    stale Neon connections (auto-suspend after idle timeout).
+    """
     global _cloud
+    if _cloud is not None:
+        # Health check: verify the underlying engine is still usable
+        try:
+            with _cloud._db.get_session() as session:
+                session.execute(text("SELECT 1"))
+        except Exception:
+            logger.info("Cloud sync connection stale — reinitialising")
+            _cloud = None
     if _cloud is not None:
         return _cloud
     try:

@@ -1131,6 +1131,82 @@ async def screener_weekly_checkpoints():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/screener/monitor/daily-detail/{date}")
+async def screener_daily_detail(date: str):
+    """Get full drill-down for a single trading day."""
+    import json as _json
+    try:
+        # 1. Snapshot for this date
+        cloud = _cloud_or_none()
+        snapshot = None
+        snapshot_detail = {}
+        if cloud:
+            df = cloud.read_snapshots()
+            if not df.empty:
+                row = df[df["date"] == date]
+                if not row.empty:
+                    snapshot = row.iloc[0].to_dict()
+        if snapshot is None:
+            rows = _sqlite_rows("daily_snapshots", f"SELECT * FROM daily_snapshots WHERE date='{date}'")
+            snapshot = rows[0] if rows else None
+        if snapshot:
+            sj = snapshot.get("snapshot_json", "{}")
+            try:
+                snapshot_detail = _json.loads(sj) if isinstance(sj, str) else (sj or {})
+            except Exception:
+                snapshot_detail = {}
+
+        # 2. Signals for this date
+        if cloud:
+            df = cloud.read_signals()
+            if not df.empty:
+                day_sig = df[df["date"] == date]
+                signals = day_sig.to_dict(orient="records")
+            else:
+                signals = []
+        else:
+            signals = _sqlite_rows("signal_log", f"SELECT * FROM signal_log WHERE date='{date}' ORDER BY combined_forecast DESC")
+        total_signals = len(signals)
+        traded_signals = sum(1 for s in signals if s.get("was_traded"))
+
+        # 3. Positions opened on this date
+        if cloud:
+            df = cloud.read_positions()
+            if not df.empty:
+                opened = df[df["opened_at"].astype(str).str.startswith(date)].to_dict(orient="records")
+            else:
+                opened = []
+        else:
+            opened = _sqlite_rows("paper_positions", f"SELECT * FROM paper_positions WHERE opened_at LIKE '{date}%'")
+
+        # 4. Positions closed on this date (SL/TP events)
+        if cloud:
+            df = cloud.read_positions()
+            if not df.empty:
+                closed = df[(df["closed_at"].astype(str).str.startswith(date)) & (df["is_open"] == 0)].to_dict(orient="records")
+            else:
+                closed = []
+        else:
+            closed = _sqlite_rows("paper_positions", f"SELECT * FROM paper_positions WHERE closed_at LIKE '{date}%' AND is_open=0")
+
+        return {
+            "date": date,
+            "snapshot": snapshot,
+            "snapshot_detail": snapshot_detail,
+            "signals": signals,
+            "total_signals": total_signals,
+            "traded_signals": traded_signals,
+            "skipped_signals": total_signals - traded_signals,
+            "trades_opened": opened,
+            "trades_opened_count": len(opened),
+            "trades_closed": closed,
+            "trades_closed_count": len(closed),
+            "exit_reasons": {},
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── Kite Connect ───────────────────────────────────────────────────────
 
 @router.get("/kite/session/status")

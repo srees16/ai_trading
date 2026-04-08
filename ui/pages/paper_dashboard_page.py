@@ -126,8 +126,8 @@ def render_paper_dashboard_page():
 
     st.caption(f"Data source: **{_source}**")
 
-    tab_overview, tab_signals, tab_positions, tab_weekly = st.tabs(
-        ["Overview", "Signals", "Positions", "Weekly"]
+    tab_overview, tab_signals, tab_positions, tab_weekly, tab_daily = st.tabs(
+        ["Overview", "Signals", "Positions", "Weekly", "Daily Detail"]
     )
 
     with tab_overview:
@@ -138,6 +138,8 @@ def render_paper_dashboard_page():
         _render_positions()
     with tab_weekly:
         _render_weekly()
+    with tab_daily:
+        _render_daily_detail()
 
     render_footer()
 
@@ -359,3 +361,167 @@ def _render_weekly():
     st.markdown("#### Equity Progression")
     eq_df = weeks[["week_number", "start_equity", "end_equity"]].set_index("week_number")
     st.line_chart(eq_df, use_container_width=True)
+
+
+# ═══════════════════════════════════════════════════════════════
+# Tab 5 — Daily Detail (drill-down by date)
+# ═══════════════════════════════════════════════════════════════
+
+def _render_daily_detail():
+    snapshots = _read_snapshots()
+    if snapshots.empty:
+        st.info("No daily data yet. The scheduler writes EOD snapshots at 15:35 IST.")
+        return
+
+    dates = sorted(snapshots["date"].unique(), reverse=True)
+
+    sel_date = st.selectbox("Select date", dates, key="dd_date")
+    if not sel_date:
+        return
+
+    # ── 1. Day snapshot KPIs ──────────────────────────
+    day_snap = snapshots[snapshots["date"] == sel_date]
+    if not day_snap.empty:
+        s = day_snap.iloc[0]
+        c1, c2, c3, c4, c5, c6 = st.columns(6)
+        c1.metric("Equity", f"₹{s['equity']:,.0f}")
+        c2.metric("Cash", f"₹{s['cash']:,.0f}")
+        c3.metric("Day P&L", f"₹{s['day_pnl']:,.0f}")
+        c4.metric("Cumulative P&L", f"{s['cumulative_pnl_pct']:+.1f}%")
+        c5.metric("Signals Generated", int(s["signals_generated"]))
+        c6.metric("Signals Traded", int(s["signals_traded"]))
+
+        # ── Parse snapshot_json for advanced metrics ──
+        snap_json = s.get("snapshot_json", "{}")
+        if isinstance(snap_json, str):
+            try:
+                detail = json.loads(snap_json)
+            except Exception:
+                detail = {}
+        else:
+            detail = snap_json or {}
+
+        if detail:
+            st.markdown("##### Portfolio Snapshot")
+            m1, m2, m3, m4, m5 = st.columns(5)
+            m1.metric("Open Positions", detail.get("open_positions", 0))
+            m2.metric("Closed Trades", detail.get("closed_trades", 0))
+            m3.metric("Win Rate", f"{detail.get('win_rate', 0):.0%}")
+            m4.metric("Sharpe", f"{detail.get('sharpe_ratio', 0):.3f}")
+            m5.metric("Max DD", f"{detail.get('max_drawdown_pct', 0):.1f}%")
+
+            r1, r2, r3, r4 = st.columns(4)
+            r1.metric("Sortino", f"{detail.get('sortino_ratio', 0):.3f}")
+            r2.metric("Calmar", f"{detail.get('calmar_ratio', 0):.3f}")
+            r3.metric("Omega", f"{detail.get('omega_ratio', 0):.3f}")
+            r4.metric("Profit Factor", f"{detail.get('profit_factor', 0):.2f}")
+    else:
+        st.warning(f"No snapshot found for {sel_date}.")
+
+    st.divider()
+
+    # ── 2. Signals for this day ───────────────────────
+    all_signals = _read_signals()
+    day_signals = all_signals[all_signals["date"] == sel_date] if not all_signals.empty else pd.DataFrame()
+
+    st.markdown(f"##### Forecasts & Signals ({len(day_signals)})")
+    if day_signals.empty:
+        st.caption("No signals logged for this date.")
+    else:
+        traded = day_signals[day_signals["was_traded"] == 1] if "was_traded" in day_signals.columns else pd.DataFrame()
+        not_traded = day_signals[day_signals["was_traded"] == 0] if "was_traded" in day_signals.columns else pd.DataFrame()
+
+        t1, t2, t3 = st.columns(3)
+        t1.metric("Total Forecasts", len(day_signals))
+        t2.metric("Traded", len(traded))
+        t3.metric("Skipped", len(not_traded))
+
+        sig_cols = [
+            "symbol", "forecast", "combined_forecast", "action",
+            "entry_price", "stop_loss", "target_price", "quantity",
+            "pipeline_sources", "was_traded",
+        ]
+        available_cols = [c for c in sig_cols if c in day_signals.columns]
+        st.dataframe(
+            day_signals[available_cols].sort_values("combined_forecast", ascending=False),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "forecast": st.column_config.NumberColumn(format="%.3f"),
+                "combined_forecast": st.column_config.NumberColumn(format="%.3f"),
+                "entry_price": st.column_config.NumberColumn(format="₹%.2f"),
+                "stop_loss": st.column_config.NumberColumn(format="₹%.2f"),
+                "target_price": st.column_config.NumberColumn(format="₹%.2f"),
+            },
+        )
+
+        # Forecast distribution chart
+        if "combined_forecast" in day_signals.columns and len(day_signals) > 1:
+            st.markdown("##### Forecast Distribution")
+            hist_df = day_signals[["symbol", "combined_forecast"]].set_index("symbol")
+            st.bar_chart(hist_df, use_container_width=True)
+
+    st.divider()
+
+    # ── 3. Trades opened on this day ──────────────────
+    all_pos = _read_positions()
+    if not all_pos.empty and "opened_at" in all_pos.columns:
+        opened_today = all_pos[all_pos["opened_at"].str.startswith(sel_date, na=False)]
+    else:
+        opened_today = pd.DataFrame()
+
+    st.markdown(f"##### Trades Opened ({len(opened_today)})")
+    if opened_today.empty:
+        st.caption("No new trades opened on this date.")
+    else:
+        open_cols = [
+            "symbol", "side", "quantity", "entry_price",
+            "stop_loss", "target_price", "opened_at",
+        ]
+        available_cols = [c for c in open_cols if c in opened_today.columns]
+        st.dataframe(
+            opened_today[available_cols],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "entry_price": st.column_config.NumberColumn(format="₹%.2f"),
+                "stop_loss": st.column_config.NumberColumn(format="₹%.2f"),
+                "target_price": st.column_config.NumberColumn(format="₹%.2f"),
+            },
+        )
+
+    # ── 4. Trades closed on this day (SL/TP/trailing) ──
+    if not all_pos.empty and "closed_at" in all_pos.columns:
+        closed_today = all_pos[
+            (all_pos["closed_at"].str.startswith(sel_date, na=False))
+            & (all_pos["is_open"] == 0)
+        ]
+    else:
+        closed_today = pd.DataFrame()
+
+    st.markdown(f"##### Trades Closed / SL-TP Events ({len(closed_today)})")
+    if closed_today.empty:
+        st.caption("No trades closed on this date.")
+    else:
+        close_cols = [
+            "symbol", "side", "quantity", "entry_price", "exit_price",
+            "exit_reason", "pnl", "pnl_pct", "closed_at",
+        ]
+        available_cols = [c for c in close_cols if c in closed_today.columns]
+        st.dataframe(
+            closed_today[available_cols],
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "entry_price": st.column_config.NumberColumn(format="₹%.2f"),
+                "exit_price": st.column_config.NumberColumn(format="₹%.2f"),
+                "pnl": st.column_config.NumberColumn(format="₹%.0f"),
+                "pnl_pct": st.column_config.NumberColumn(format="%.1f%%"),
+            },
+        )
+
+        # Exit reason breakdown
+        if "exit_reason" in closed_today.columns and len(closed_today) > 0:
+            reason_counts = closed_today["exit_reason"].value_counts()
+            st.markdown("**Exit Reasons**")
+            st.bar_chart(reason_counts)
