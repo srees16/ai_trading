@@ -64,6 +64,9 @@ class DatabaseConfig:
                 url = url.replace('postgres://', 'postgresql+psycopg2://', 1)
             elif url.startswith('postgresql://') and '+' not in url.split('://')[0]:
                 url = url.replace('postgresql://', 'postgresql+psycopg2://', 1)
+            # Strip channel_binding param (psycopg2 doesn't support it)
+            import re
+            url = re.sub(r'[&?]channel_binding=[^&]*', '', url)
             # Append sslmode for Neon if not already present
             if self.is_neon and 'sslmode' not in url:
                 separator = '&' if '?' in url else '?'

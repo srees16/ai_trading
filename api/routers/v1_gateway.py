@@ -934,6 +934,203 @@ async def screener_monitor():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/screener/monitor/trades")
+async def screener_monitor_trades():
+    """Get active and closed trade details (live + paper)."""
+    try:
+        import sqlite3 as _sql
+        from pathlib import Path as _Path
+
+        # Paper trades DB
+        db_path = _Path(__file__).resolve().parent.parent.parent / "data" / "paper_trades.sqlite3"
+        if not db_path.exists():
+            return {"active_trades": [], "closed_trades": [], "total_active": 0, "total_closed": 0}
+
+        conn = _sql.connect(str(db_path))
+        conn.row_factory = _sql.Row
+
+        active_rows = conn.execute(
+            "SELECT * FROM paper_positions WHERE is_open=1 ORDER BY opened_at DESC"
+        ).fetchall()
+        closed_rows = conn.execute(
+            "SELECT * FROM paper_positions WHERE is_open=0 ORDER BY closed_at DESC LIMIT 200"
+        ).fetchall()
+        conn.close()
+
+        def _row_to_trade(r, is_active: bool) -> dict:
+            entry = float(r["entry_price"])
+            sl = float(r["stop_loss"])
+            tp = float(r["target_price"])
+            pnl_pct = float(r["pnl_pct"]) if r["pnl_pct"] else 0.0
+            return {
+                "symbol": r["symbol"],
+                "side": r["side"],
+                "quantity": r["quantity"],
+                "entry_price": entry,
+                "stop_loss": sl,
+                "target_price": tp,
+                "entry_order_id": f"PAPER-{r['id']}",
+                "sl_order_id": None,
+                "tp_order_id": None,
+                "entry_filled": True,
+                "sl_triggered": r["exit_reason"] in ("SL", "TRAILING_SL") if not is_active else False,
+                "tp_triggered": r["exit_reason"] == "TP" if not is_active else False,
+                "closed": not is_active,
+                "scaled_2r": False,
+                "scaled_3r": False,
+                "sl_failed": False,
+                "opened_at": r["opened_at"],
+                "direction": "LONG" if r["side"] == "BUY" else "SHORT",
+                "product": "PAPER",
+                "is_active": is_active,
+                "unrealised_pnl_pct": pnl_pct if not is_active else 0.0,
+            }
+
+        active = [_row_to_trade(r, True) for r in active_rows]
+        closed = [_row_to_trade(r, False) for r in closed_rows]
+
+        return {
+            "active_trades": active,
+            "closed_trades": closed,
+            "total_active": len(active),
+            "total_closed": len(closed),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/screener/monitor/paper-dashboard")
+async def screener_paper_dashboard():
+    """Get full paper trading dashboard with performance metrics."""
+    try:
+        from kite_connect.trading.paper_trader import PaperTrader
+        pt = PaperTrader()
+        dash = pt.dashboard()
+        return dash.to_dict()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _cloud_or_none():
+    """Return PaperCloudSync if Neon is available, else None."""
+    try:
+        from database.paper_cloud import get_paper_cloud
+        return get_paper_cloud()
+    except Exception:
+        return None
+
+
+def _sqlite_rows(table: str, sql: str):
+    """Fallback: read rows from local SQLite."""
+    import sqlite3 as _sql
+    from pathlib import Path as _Path
+    db_path = _Path(__file__).resolve().parent.parent.parent / "data" / "paper_trades.sqlite3"
+    if not db_path.exists():
+        return []
+    conn = _sql.connect(str(db_path))
+    conn.row_factory = _sql.Row
+    rows = conn.execute(sql).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+@router.get("/screener/monitor/daily-snapshots")
+async def screener_daily_snapshots():
+    """Get daily equity snapshots for chart rendering."""
+    try:
+        cloud = _cloud_or_none()
+        if cloud:
+            df = cloud.read_snapshots()
+            if not df.empty:
+                snapshots = df.to_dict(orient="records")
+                return {"snapshots": snapshots, "count": len(snapshots)}
+
+        snapshots = _sqlite_rows("daily_snapshots", "SELECT * FROM daily_snapshots ORDER BY date")
+        return {"snapshots": snapshots, "count": len(snapshots)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/screener/monitor/signal-log")
+async def screener_signal_log():
+    """Get signal audit log for backtest-vs-live comparison."""
+    try:
+        cloud = _cloud_or_none()
+        if cloud:
+            df = cloud.read_signals()
+            if not df.empty:
+                signals = df.head(500).to_dict(orient="records")
+                total = len(df)
+                traded = int(df["was_traded"].sum()) if "was_traded" in df.columns else 0
+                daily = df.groupby("date").agg(
+                    total_signals=("symbol", "count"),
+                    traded_signals=("was_traded", "sum"),
+                ).reset_index().sort_values("date", ascending=False).head(30).to_dict(orient="records")
+                return {
+                    "signals": signals,
+                    "count": len(signals),
+                    "summary": {
+                        "total_signals": total,
+                        "traded_signals": traded,
+                        "hit_rate": round(traded / total, 4) if total > 0 else 0,
+                    },
+                    "daily_stats": daily,
+                }
+
+        import sqlite3 as _sql
+        from pathlib import Path as _Path
+        db_path = _Path(__file__).resolve().parent.parent.parent / "data" / "paper_trades.sqlite3"
+        if not db_path.exists():
+            return {"signals": [], "count": 0, "summary": {}}
+
+        conn = _sql.connect(str(db_path))
+        conn.row_factory = _sql.Row
+        rows = conn.execute(
+            "SELECT * FROM signal_log ORDER BY date DESC, symbol LIMIT 500"
+        ).fetchall()
+
+        total = conn.execute("SELECT COUNT(*) as cnt FROM signal_log").fetchone()["cnt"]
+        traded = conn.execute("SELECT COUNT(*) as cnt FROM signal_log WHERE was_traded=1").fetchone()["cnt"]
+
+        date_stats = conn.execute("""
+            SELECT date,
+                   COUNT(*) as total_signals,
+                   SUM(was_traded) as traded_signals
+            FROM signal_log GROUP BY date ORDER BY date DESC LIMIT 30
+        """).fetchall()
+        conn.close()
+
+        return {
+            "signals": [dict(r) for r in rows],
+            "count": len(rows),
+            "summary": {
+                "total_signals": total,
+                "traded_signals": traded,
+                "hit_rate": round(traded / total, 4) if total > 0 else 0,
+            },
+            "daily_stats": [dict(r) for r in date_stats],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/screener/monitor/weekly-checkpoints")
+async def screener_weekly_checkpoints():
+    """Get weekly performance checkpoints."""
+    try:
+        cloud = _cloud_or_none()
+        if cloud:
+            df = cloud.read_weekly()
+            if not df.empty:
+                checkpoints = df.to_dict(orient="records")
+                return {"checkpoints": checkpoints, "count": len(checkpoints)}
+
+        checkpoints = _sqlite_rows("weekly_checkpoints", "SELECT * FROM weekly_checkpoints ORDER BY week_number")
+        return {"checkpoints": checkpoints, "count": len(checkpoints)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ─── Kite Connect ───────────────────────────────────────────────────────
 
 @router.get("/kite/session/status")

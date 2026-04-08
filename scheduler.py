@@ -490,10 +490,14 @@ def _notify_signals(buy_verdicts: list, sell_verdicts: list):
 
 
 def _paper_trade_orders(verdicts: list, screened_df):
-    """Route orders to PaperTrader for simulated execution."""
+    """Route orders to PaperTrader for simulated execution.
+
+    G1 FIX: Uses CarverPipeline.run() for full signal parity with backtest
+    (all 20+ forecast sources), instead of manual EWMAC+screener stitching.
+    Falls back to legacy RiskManager path if CarverPipeline fails.
+    """
     try:
         from kite_connect.trading.paper_trader import PaperTrader
-        from kite_connect.trading.risk_manager import RiskManager, RiskConfig
 
         signal_dict = {
             v.ticker.replace(".NS", "").replace(".BO", ""): v.classification
@@ -507,82 +511,81 @@ def _paper_trade_orders(verdicts: list, screened_df):
             logger.info("Paper trade: no BUY symbols")
             return
 
-        # Generate trade plans via RiskManager (same as live path)
         buy_df = screened_df[screened_df["symbol"].isin(buy_symbols)]
         if buy_df.empty:
             return
 
-        # Carver-aware: create VolatilityTarget and use plan_trades_carver when enabled
-        vol_target = None
-        carver_enabled = False
+        plans = None
+
+        # ── G1 FIX: Full Carver pipeline (all forecast sources) ──
         try:
-            from config import Config
-            if getattr(Config, "CARVER_ENABLED", False):
-                from services.volatility_target import VolatilityTarget, VolatilityTargetConfig
-                vt_cfg = VolatilityTargetConfig(
-                    initial_capital=getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000.0),
-                    annual_vol_target_pct=getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.20),
+            from services.carver_pipeline import CarverPipeline, PipelineConfig
+            from utils import download_ind_ohlcv
+
+            # Download OHLCV for all buy symbols
+            ohlcv_cache = {}
+            for sym in buy_symbols:
+                try:
+                    df = download_ind_ohlcv(sym, period="2y")
+                    if df is not None and len(df) >= 64:
+                        ohlcv_cache[sym] = df
+                except Exception:
+                    pass
+
+            if ohlcv_cache:
+                # Extract screener scores from screened_df
+                screener_scores = {}
+                if "score" in screened_df.columns:
+                    for _, row in screened_df.iterrows():
+                        sym = row.get("symbol", "")
+                        if sym in ohlcv_cache:
+                            screener_scores[sym] = float(row["score"])
+
+                pipeline = CarverPipeline(PipelineConfig())
+                pipe_result = pipeline.run(
+                    ohlcv_cache=ohlcv_cache,
+                    screener_scores=screener_scores,
                 )
-                vol_target = VolatilityTarget(vt_cfg)
-                carver_enabled = True
-        except Exception:
-            pass
+                plans = pipe_result.trade_plans
+                logger.info(
+                    "Paper trade: CarverPipeline generated %d plans "
+                    "(processed %d symbols, %d with trades)",
+                    len(plans), pipe_result.symbols_processed,
+                    pipe_result.symbols_with_trades,
+                )
+                # Log pipeline steps for debugging
+                for log_line in pipe_result.pipeline_log:
+                    logger.debug("  Pipeline: %s", log_line)
+            else:
+                logger.warning("Paper trade: no OHLCV data available for CarverPipeline")
 
-        rm = RiskManager(RiskConfig(), volatility_target=vol_target)
+        except Exception as exc:
+            logger.warning("CarverPipeline paper trade failed, falling back to legacy: %s", exc)
+            plans = None
 
-        if carver_enabled and vol_target is not None:
+        # ── Fallback: legacy RiskManager path ──
+        # M1 FIX: Use VolatilityTarget-based sizing even in fallback path.
+        # Ensures R21a vol-targeting is preserved even when OHLCV download fails.
+        if not plans:
             try:
-                from services.instrument_volatility import compute_volatilities_batch
-                from strategies.ewmac import compute_ewmac_batch
-                from services.forecast_scalar import screener_to_forecast
-                from services.forecast_combiner import combine_forecasts_batch
-                from services.cost_speed_limit import filter_by_cost
-                from services.instrument_weights import compute_handcrafted_weights, get_default_idm
-                from utils import download_ind_ohlcv
-
-                ohlcv_cache = {}
-                for sym in buy_symbols:
-                    try:
-                        df = download_ind_ohlcv(sym, period="6mo")
-                        if df is not None and len(df) >= 64:
-                            ohlcv_cache[sym] = df
-                    except Exception:
-                        pass
-
-                if ohlcv_cache:
-                    vol_data = compute_volatilities_batch(ohlcv_cache)
-                    instrument_vols = {s: v["instrument_value_vol"] for s, v in vol_data.items()}
-                    ewmac_batch = compute_ewmac_batch(ohlcv_cache)
-                    all_forecasts = {}
-                    for sym in ohlcv_cache:
-                        fc = {}
-                        if sym in ewmac_batch:
-                            for ef in ewmac_batch[sym]:
-                                fc[f"ewmac_{ef.fast}_{ef.slow}"] = ef.forecast
-                        row_m = buy_df[buy_df["symbol"] == sym]
-                        if not row_m.empty and "score" in row_m.columns:
-                            fc["screener"] = screener_to_forecast(float(row_m.iloc[0]["score"]))
-                        if fc:
-                            all_forecasts[sym] = fc
-
-                    if all_forecasts:
-                        combined = combine_forecasts_batch(all_forecasts)
-                        cv = {s: cf.combined_forecast for s, cf in combined.items()}
-                        cv = filter_by_cost(cv, getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.20))
-                        active = [s for s in cv if cv[s] > 0]
-                        weights = compute_handcrafted_weights(active, getattr(Config, "NSE_SECTOR_MAP", {}))
-                        idm = get_default_idm(len(active))
-                        plans = rm.plan_trades_carver(buy_df, cv, instrument_vols, weights, idm)
-                        logger.info("Paper trade: Carver generated %d plans", len(plans))
-                    else:
-                        plans = rm.plan_trades(buy_df)
-                else:
-                    plans = rm.plan_trades(buy_df)
-            except Exception as exc:
-                logger.warning("Carver paper trade failed, using legacy: %s", exc)
+                from kite_connect.trading.risk_manager import RiskManager, RiskConfig
+                rm_cfg = RiskConfig()
+                vt_fallback = None
+                try:
+                    from services.volatility_target import VolatilityTarget, VolatilityTargetConfig
+                    from config import Config
+                    vt_fallback = VolatilityTarget(VolatilityTargetConfig(
+                        initial_capital=getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000.0),
+                        annual_vol_target_pct=getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.75),
+                    ))
+                except Exception:
+                    pass
+                rm = RiskManager(rm_cfg, volatility_target=vt_fallback)
                 plans = rm.plan_trades(buy_df)
-        else:
-            plans = rm.plan_trades(buy_df)
+                logger.info("Paper trade: fallback RiskManager (vol-targeted) generated %d plans", len(plans))
+            except Exception as exc:
+                logger.warning("Legacy plan_trades also failed: %s", exc)
+                return
         if not plans:
             logger.info("Paper trade: no plans met R:R threshold")
             return
@@ -596,6 +599,29 @@ def _paper_trade_orders(verdicts: list, screened_df):
 
         # Check SL/TP immediately
         close_events = pt.poll()
+
+        # ── Signal audit log (for backtest-vs-live comparison) ──
+        try:
+            from datetime import date as _date_cls
+            today_str = _date_cls.today().isoformat()
+            signal_entries = []
+            traded_symbols = {r["symbol"] for r in results if r.get("success")}
+            for plan in plans:
+                signal_entries.append({
+                    "symbol": plan.symbol,
+                    "forecast": getattr(plan, "score", 0),
+                    "combined_forecast": getattr(plan, "score", 0),
+                    "action": plan.side,
+                    "entry_price": plan.entry_price,
+                    "stop_loss": plan.stop_loss,
+                    "target_price": plan.target_price,
+                    "quantity": plan.quantity,
+                    "pipeline_sources": "CarverPipeline",
+                    "was_traded": plan.symbol in traded_symbols,
+                })
+            pt.log_signals(today_str, signal_entries)
+        except Exception as _sig_err:
+            logger.debug("Signal logging failed (non-fatal): %s", _sig_err)
 
         dashboard = pt.dashboard()
         logger.info(
@@ -1402,6 +1428,45 @@ def _run_trade_monitor_poll():
         logger.exception("TradeMonitor poll failed: %s", exc)
 
 
+@_tracked_job("paper_trade_poll", "Paper Trade Poll")
+def _run_paper_trade_poll():
+    """G3 FIX: Poll PaperTrader for SL/TP/trailing-SL at 3-min intervals.
+
+    Runs every 3 min during market hours (same cadence as live TradeMonitor).
+    Ensures paper positions are checked intraday, not just at order-placement time.
+    Uses the G5 vol-based trailing stop logic added to PaperTrader.poll().
+    """
+    try:
+        from config import Config
+        if not getattr(Config, "PAPER_TRADE_MODE", True):
+            return  # Only run when in paper mode
+    except Exception:
+        pass
+
+    try:
+        from kite_connect.trading.paper_trader import PaperTrader
+
+        kite = _get_scheduler_kite()  # optional — PaperTrader uses yfinance fallback
+        pt = PaperTrader(kite=kite)   # auto-loads open positions from SQLite
+
+        if not any(p.is_open for p in pt._positions):
+            logger.debug("Paper trade poll: no open positions")
+            return
+
+        events = pt.poll()
+        if events:
+            logger.info(
+                "Paper trade poll: %d close events — %s",
+                len(events),
+                ", ".join(f"{e['symbol']}({e['type']})" for e in events),
+            )
+        else:
+            open_count = sum(1 for p in pt._positions if p.is_open)
+            logger.debug("Paper trade poll: %d open positions, no events", open_count)
+    except Exception as exc:
+        logger.exception("Paper trade poll failed: %s", exc)
+
+
 @_tracked_job("forecast_calibration", "Forecast Calibration")
 def _run_forecast_calibration():
     """Auto-calibrate forecast scalars from recent OHLCV data.
@@ -1607,6 +1672,340 @@ def _run_eod_scan():
     the 15:30 market close.
     """
     run_pipeline("eod")
+
+
+# ─── Paper Trade Email Helpers ───────────────────────────────────────────
+
+def _send_paper_daily_email(pt, snapshot: dict) -> None:
+    """Send EOD paper trading summary email to s.srees@live.com."""
+    from services.notifications.manager import NotificationManager
+    from datetime import date as _d
+    import sqlite3 as _sq3
+
+    today = snapshot["date"]
+    dash = pt.dashboard()
+    pnl_color = "#15803d" if dash.total_pnl >= 0 else "#dc2626"
+    day_pnl_color = "#15803d" if snapshot["day_pnl"] >= 0 else "#dc2626"
+
+    # Fetch today's open positions for the table
+    pos_rows = ""
+    for p in dash.positions:
+        sym = p.get("symbol", "")
+        entry = p.get("entry_price", 0)
+        sl = p.get("stop_loss", 0)
+        tp = p.get("target_price", 0)
+        qty = p.get("quantity", 0)
+        pos_rows += (
+            f"<tr><td style='padding:4px 10px;border:1px solid #e5e7eb;'>{sym}</td>"
+            f"<td style='padding:4px 10px;border:1px solid #e5e7eb;text-align:right;'>₹{entry:,.2f}</td>"
+            f"<td style='padding:4px 10px;border:1px solid #e5e7eb;text-align:right;color:#dc2626;'>₹{sl:,.2f}</td>"
+            f"<td style='padding:4px 10px;border:1px solid #e5e7eb;text-align:right;color:#15803d;'>₹{tp:,.2f}</td>"
+            f"<td style='padding:4px 10px;border:1px solid #e5e7eb;text-align:right;'>{qty}</td></tr>"
+        )
+
+    # Fetch today's closed trades
+    closed_rows = ""
+    try:
+        _db = _sq3.connect(str(Path(__file__).parent / "data" / "paper_trades.sqlite3"))
+        _db.row_factory = _sq3.Row
+        closed = _db.execute(
+            "SELECT symbol, entry_price, exit_price, pnl, pnl_pct, exit_reason "
+            "FROM paper_positions WHERE is_open=0 AND closed_at LIKE ?",
+            (today + "%",),
+        ).fetchall()
+        _db.close()
+        for c in closed:
+            c_color = "#15803d" if c["pnl"] > 0 else "#dc2626"
+            closed_rows += (
+                f"<tr><td style='padding:4px 10px;border:1px solid #e5e7eb;'>{c['symbol']}</td>"
+                f"<td style='padding:4px 10px;border:1px solid #e5e7eb;text-align:right;'>₹{c['entry_price']:,.2f}</td>"
+                f"<td style='padding:4px 10px;border:1px solid #e5e7eb;text-align:right;'>₹{c['exit_price']:,.2f}</td>"
+                f"<td style='padding:4px 10px;border:1px solid #e5e7eb;text-align:right;font-weight:bold;color:{c_color};'>"
+                f"₹{c['pnl']:,.0f} ({c['pnl_pct']:+.1f}%)</td>"
+                f"<td style='padding:4px 10px;border:1px solid #e5e7eb;'>{c['exit_reason']}</td></tr>"
+            )
+    except Exception:
+        pass
+
+    html = f"""\
+<html><body style="font-family:Segoe UI,Arial,sans-serif;background:#f9fafb;padding:20px;">
+<div style="max-width:640px;margin:0 auto;background:#fff;border-radius:10px;
+            box-shadow:0 2px 8px rgba(0,0,0,0.08);overflow:hidden;">
+  <div style="background:#1a1a2e;padding:16px 24px;">
+    <h2 style="margin:0;color:#fff;font-size:18px;">
+      Centurion &mdash; Paper Trade Daily Report
+    </h2>
+    <p style="margin:4px 0 0;color:#9ca3af;font-size:13px;">{today}</p>
+  </div>
+  <div style="padding:20px 24px;">
+
+    <h3 style="color:#1a1a2e;margin-top:0;">Portfolio Summary</h3>
+    <table style="border-collapse:collapse;width:100%;font-size:14px;">
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Equity</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;font-weight:bold;">₹{snapshot['equity']:,.0f}</td></tr>
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Day P&amp;L</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;font-weight:bold;color:{day_pnl_color};">₹{snapshot['day_pnl']:,.0f}</td></tr>
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Cumulative P&amp;L</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;font-weight:bold;color:{pnl_color};">
+            ₹{dash.total_pnl:,.0f} ({dash.total_pnl_pct:+.1f}%)</td></tr>
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Win Rate</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;">{dash.win_rate:.0%}</td></tr>
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Sharpe / Sortino</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;">{dash.sharpe_ratio:.3f} / {dash.sortino_ratio:.3f}</td></tr>
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Max Drawdown</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;">{snapshot['max_drawdown_pct']:.1f}%</td></tr>
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Open / Closed</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;">{dash.open_positions} open, {dash.closed_trades} closed</td></tr>
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Signals</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;">{snapshot['signals_generated']} generated, {snapshot['signals_traded']} traded</td></tr>
+    </table>
+
+    {"<h3 style='color:#1a1a2e;margin-top:20px;'>Open Positions</h3>" + '''
+    <table style="border-collapse:collapse;width:100%;font-size:13px;">
+      <thead><tr style="background:#f3f4f6;">
+        <th style="padding:4px 10px;border:1px solid #e5e7eb;text-align:left;">Symbol</th>
+        <th style="padding:4px 10px;border:1px solid #e5e7eb;text-align:right;">Entry</th>
+        <th style="padding:4px 10px;border:1px solid #e5e7eb;text-align:right;">SL</th>
+        <th style="padding:4px 10px;border:1px solid #e5e7eb;text-align:right;">TP</th>
+        <th style="padding:4px 10px;border:1px solid #e5e7eb;text-align:right;">Qty</th>
+      </tr></thead><tbody>''' + pos_rows + "</tbody></table>" if pos_rows else "<p style='color:#999;font-size:13px;'>No open positions</p>"}
+
+    {"<h3 style='color:#1a1a2e;margin-top:20px;'>Closed Today</h3>" + '''
+    <table style="border-collapse:collapse;width:100%;font-size:13px;">
+      <thead><tr style="background:#f3f4f6;">
+        <th style="padding:4px 10px;border:1px solid #e5e7eb;text-align:left;">Symbol</th>
+        <th style="padding:4px 10px;border:1px solid #e5e7eb;text-align:right;">Entry</th>
+        <th style="padding:4px 10px;border:1px solid #e5e7eb;text-align:right;">Exit</th>
+        <th style="padding:4px 10px;border:1px solid #e5e7eb;text-align:right;">P&amp;L</th>
+        <th style="padding:4px 10px;border:1px solid #e5e7eb;">Reason</th>
+      </tr></thead><tbody>''' + closed_rows + "</tbody></table>" if closed_rows else ""}
+
+  </div>
+  <div style="padding:12px 24px;background:#f3f4f6;font-size:11px;color:#999;text-align:center;">
+    Centurion Paper Trading &bull; Auto-generated
+  </div>
+</div></body></html>"""
+
+    NotificationManager._send_html_email(
+        subject=f"[Centurion Paper] Daily Report — {today} | ₹{snapshot['equity']:,.0f} ({dash.total_pnl_pct:+.1f}%)",
+        html_body=html,
+        recipients=["s.srees@live.com"],
+    )
+
+
+def _send_paper_weekly_email(pt, checkpoint: dict) -> None:
+    """Send weekly paper trading performance email to s.srees@live.com."""
+    from services.notifications.manager import NotificationManager
+    import sqlite3 as _sq3
+
+    dash = pt.dashboard()
+    wk = checkpoint["week_number"]
+    pnl_color = "#15803d" if dash.total_pnl >= 0 else "#dc2626"
+    wk_color = "#15803d" if checkpoint["week_return_pct"] >= 0 else "#dc2626"
+
+    # Build historical weeks table
+    weeks_rows = ""
+    try:
+        _db = _sq3.connect(str(Path(__file__).parent / "data" / "paper_trades.sqlite3"))
+        _db.row_factory = _sq3.Row
+        all_weeks = _db.execute(
+            "SELECT * FROM weekly_checkpoints ORDER BY week_number"
+        ).fetchall()
+        _db.close()
+        for w in all_weeks:
+            w_color = "#15803d" if w["week_return_pct"] >= 0 else "#dc2626"
+            weeks_rows += (
+                f"<tr><td style='padding:4px 10px;border:1px solid #e5e7eb;font-weight:bold;'>W{w['week_number']}</td>"
+                f"<td style='padding:4px 10px;border:1px solid #e5e7eb;'>{w['week_start']} → {w['week_end']}</td>"
+                f"<td style='padding:4px 10px;border:1px solid #e5e7eb;text-align:right;font-weight:bold;color:{w_color};'>"
+                f"{w['week_return_pct']:+.1f}%</td>"
+                f"<td style='padding:4px 10px;border:1px solid #e5e7eb;text-align:right;'>{w['sharpe_ratio']:.2f}</td>"
+                f"<td style='padding:4px 10px;border:1px solid #e5e7eb;text-align:right;color:#dc2626;'>{w['max_dd_pct']:.1f}%</td>"
+                f"<td style='padding:4px 10px;border:1px solid #e5e7eb;text-align:right;'>"
+                f"{w['trades_closed']}/{w['trades_opened']}</td>"
+                f"<td style='padding:4px 10px;border:1px solid #e5e7eb;text-align:right;'>{w['win_rate'] * 100:.0f}%</td></tr>"
+            )
+    except Exception:
+        pass
+
+    # Verdict logic
+    if dash.sharpe_ratio >= 0.5 and dash.max_drawdown_pct < 30:
+        verdict = "PASS — Ready for live trading"
+        verdict_color = "#15803d"
+    elif dash.sharpe_ratio >= 0.2:
+        verdict = "MARGINAL — Consider extending paper period"
+        verdict_color = "#d97706"
+    else:
+        verdict = "FAIL — Do not go live, needs investigation"
+        verdict_color = "#dc2626"
+
+    html = f"""\
+<html><body style="font-family:Segoe UI,Arial,sans-serif;background:#f9fafb;padding:20px;">
+<div style="max-width:700px;margin:0 auto;background:#fff;border-radius:10px;
+            box-shadow:0 2px 8px rgba(0,0,0,0.08);overflow:hidden;">
+  <div style="background:#1a1a2e;padding:16px 24px;">
+    <h2 style="margin:0;color:#fff;font-size:18px;">
+      Centurion &mdash; Weekly Paper Trade Report (Week {wk})
+    </h2>
+    <p style="margin:4px 0 0;color:#9ca3af;font-size:13px;">{checkpoint['week_start']} → {checkpoint['week_end']}</p>
+  </div>
+  <div style="padding:20px 24px;">
+
+    <div style="background:#f0fdf4;border-left:4px solid {verdict_color};padding:12px 16px;margin-bottom:20px;border-radius:4px;">
+      <strong style="color:{verdict_color};font-size:14px;">VERDICT: {verdict}</strong>
+      <p style="margin:4px 0 0;color:#666;font-size:12px;">
+        Sharpe {dash.sharpe_ratio:.3f} | Max DD {dash.max_drawdown_pct:.1f}% | Win Rate {dash.win_rate:.0%}
+      </p>
+    </div>
+
+    <h3 style="color:#1a1a2e;margin-top:0;">This Week</h3>
+    <table style="border-collapse:collapse;width:100%;font-size:14px;">
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Week Return</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;font-weight:bold;color:{wk_color};">{checkpoint['week_return_pct']:+.1f}%</td></tr>
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Equity</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;">₹{checkpoint['start_equity']:,.0f} → ₹{checkpoint['end_equity']:,.0f}</td></tr>
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Trades</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;">{checkpoint['trades_opened']} opened, {checkpoint['trades_closed']} closed</td></tr>
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Sharpe (weekly)</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;">{checkpoint['sharpe_ratio']:.2f}</td></tr>
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Max Drawdown</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;">{checkpoint['max_dd_pct']:.1f}%</td></tr>
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Win Rate</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;">{checkpoint['win_rate']:.0%}</td></tr>
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Avg Holding Days</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;">{checkpoint['avg_holding_days']:.1f}</td></tr>
+    </table>
+
+    <h3 style="color:#1a1a2e;margin-top:24px;">Cumulative Performance</h3>
+    <table style="border-collapse:collapse;width:100%;font-size:14px;">
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Capital</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;">₹{dash.initial_capital:,.0f} → ₹{dash.current_capital:,.0f}</td></tr>
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Total P&amp;L</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;font-weight:bold;color:{pnl_color};">
+            ₹{dash.total_pnl:,.0f} ({dash.total_pnl_pct:+.1f}%)</td></tr>
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Sharpe / Sortino</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;">{dash.sharpe_ratio:.3f} / {dash.sortino_ratio:.3f}</td></tr>
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Profit Factor</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;">{dash.profit_factor:.2f}</td></tr>
+      <tr><td style="padding:6px 12px;border:1px solid #e5e7eb;color:#666;">Max Drawdown</td>
+          <td style="padding:6px 12px;border:1px solid #e5e7eb;">{dash.max_drawdown_pct:.1f}%</td></tr>
+    </table>
+
+    {"<h3 style='color:#1a1a2e;margin-top:24px;'>All Weeks</h3>" + '''
+    <table style="border-collapse:collapse;width:100%;font-size:13px;">
+      <thead><tr style="background:#f3f4f6;">
+        <th style="padding:4px 10px;border:1px solid #e5e7eb;">Wk</th>
+        <th style="padding:4px 10px;border:1px solid #e5e7eb;">Period</th>
+        <th style="padding:4px 10px;border:1px solid #e5e7eb;text-align:right;">Return</th>
+        <th style="padding:4px 10px;border:1px solid #e5e7eb;text-align:right;">Sharpe</th>
+        <th style="padding:4px 10px;border:1px solid #e5e7eb;text-align:right;">Max DD</th>
+        <th style="padding:4px 10px;border:1px solid #e5e7eb;text-align:right;">Trades</th>
+        <th style="padding:4px 10px;border:1px solid #e5e7eb;text-align:right;">Win Rate</th>
+      </tr></thead><tbody>''' + weeks_rows + "</tbody></table>" if weeks_rows else ""}
+
+  </div>
+  <div style="padding:12px 24px;background:#f3f4f6;font-size:11px;color:#999;text-align:center;">
+    Centurion Paper Trading &bull; Week {wk} of 4 &bull; Auto-generated
+  </div>
+</div></body></html>"""
+
+    NotificationManager._send_html_email(
+        subject=f"[Centurion Paper] Week {wk} Report | {checkpoint['week_return_pct']:+.1f}% | Sharpe {checkpoint['sharpe_ratio']:.2f}",
+        html_body=html,
+        recipients=["s.srees@live.com"],
+    )
+
+
+@_tracked_job("paper_eod_snapshot", "Paper EOD Snapshot")
+def _run_paper_eod_snapshot():
+    """Save daily equity snapshot for the paper trading validation run.
+
+    Runs Mon-Fri at 15:35 IST (after market close). Records equity,
+    P&L, open positions, and drawdown for equity curve reconstruction.
+    Even if the system crashes mid-week, we have daily granularity.
+    """
+    try:
+        from config import Config
+        if not getattr(Config, "PAPER_TRADE_MODE", True):
+            return
+    except Exception:
+        pass
+
+    try:
+        from kite_connect.trading.paper_trader import PaperTrader
+        kite = _get_scheduler_kite()
+        pt = PaperTrader(kite=kite)
+
+        # Count today's signals from scheduler cache
+        signals_generated = 0
+        signals_traded = 0
+        try:
+            from datetime import date as _d
+            today = _d.today().isoformat()
+            import sqlite3 as _sq3
+            _db = _sq3.connect(str(Path(__file__).parent / "data" / "paper_trades.sqlite3"))
+            row = _db.execute(
+                "SELECT COUNT(*) FROM signal_log WHERE date=?", (today,)
+            ).fetchone()
+            signals_generated = row[0] if row else 0
+            row2 = _db.execute(
+                "SELECT COUNT(*) FROM signal_log WHERE date=? AND was_traded=1", (today,)
+            ).fetchone()
+            signals_traded = row2[0] if row2 else 0
+            _db.close()
+        except Exception:
+            pass
+
+        snapshot = pt.snapshot_daily(
+            signals_generated=signals_generated,
+            signals_traded=signals_traded,
+        )
+        logger.info("Paper EOD snapshot saved: equity=%.0f", snapshot["equity"])
+
+        # ── Send daily paper trade email ─────────────────────────
+        try:
+            _send_paper_daily_email(pt, snapshot)
+        except Exception as mail_exc:
+            logger.warning("Paper daily email failed (non-fatal): %s", mail_exc)
+
+    except Exception as exc:
+        logger.exception("Paper EOD snapshot failed: %s", exc)
+
+
+@_tracked_job("paper_weekly_checkpoint", "Paper Weekly Checkpoint")
+def _run_paper_weekly_checkpoint():
+    """Save weekly aggregated checkpoint for crash-resilient 4-week analysis.
+
+    Runs Saturday 7:30 AM IST (after reconciliation). Aggregates the
+    week's daily snapshots into a summary with return, Sharpe, DD, win rate.
+    """
+    try:
+        from config import Config
+        if not getattr(Config, "PAPER_TRADE_MODE", True):
+            return
+    except Exception:
+        pass
+
+    try:
+        from kite_connect.trading.paper_trader import PaperTrader
+        kite = _get_scheduler_kite()
+        pt = PaperTrader(kite=kite)
+        checkpoint = pt.checkpoint_weekly()
+        if checkpoint:
+            logger.info(
+                "Paper weekly checkpoint W%d: return=%.1f%% sharpe=%.2f dd=%.1f%%",
+                checkpoint["week_number"], checkpoint["week_return_pct"],
+                checkpoint["sharpe_ratio"], checkpoint["max_dd_pct"],
+            )
+            # ── Send weekly performance email ────────────────────
+            try:
+                _send_paper_weekly_email(pt, checkpoint)
+            except Exception as mail_exc:
+                logger.warning("Paper weekly email failed (non-fatal): %s", mail_exc)
+        else:
+            logger.info("Paper weekly checkpoint: no new data this week")
+    except Exception as exc:
+        logger.exception("Paper weekly checkpoint failed: %s", exc)
 
 
 @_tracked_job("pead_earnings", "PEAD Earnings Feed")
@@ -2167,6 +2566,16 @@ def start_scheduler():
         misfire_grace_time=300,
     )
 
+    # Job 1d: Paper EOD snapshot at 15:35 IST (after market close)
+    # Records daily equity, P&L, DD for equity curve reconstruction
+    scheduler.add_job(
+        _run_paper_eod_snapshot,
+        CronTrigger(hour=15, minute=35, day_of_week="mon-fri", timezone="Asia/Kolkata"),
+        id="paper_eod_snapshot",
+        name="Paper EOD Snapshot",
+        misfire_grace_time=600,
+    )
+
     # Job 2: Weekly walk-forward strategy audit â€” Saturday 6 AM IST
     scheduler.add_job(
         run_walk_forward_audit,
@@ -2182,6 +2591,16 @@ def start_scheduler():
         CronTrigger(hour=7, minute=0, day_of_week="sat", timezone="Asia/Kolkata"),
         id="paper_live_reconciliation",
         name="Paper vs Live Reconciliation",
+        misfire_grace_time=3600,
+    )
+
+    # Job 3b: Paper weekly checkpoint — Saturday 7:30 AM IST (after reconciliation)
+    # Aggregates weekly stats for crash-resilient 4-week analysis
+    scheduler.add_job(
+        _run_paper_weekly_checkpoint,
+        CronTrigger(hour=7, minute=30, day_of_week="sat", timezone="Asia/Kolkata"),
+        id="paper_weekly_checkpoint",
+        name="Paper Weekly Checkpoint",
         misfire_grace_time=3600,
     )
 
@@ -2223,6 +2642,16 @@ def start_scheduler():
         misfire_grace_time=120,
     )
 
+    # Job 7b (G3 FIX): Paper Trade Monitor — poll every 3 min during market hours
+    # Checks paper positions for SL/TP/trailing-SL at same cadence as live
+    scheduler.add_job(
+        _run_paper_trade_poll,
+        CronTrigger(hour="9-15", minute="*/3", day_of_week="mon-fri", timezone="Asia/Kolkata"),
+        id="paper_trade_poll",
+        name="Paper Trade Poll",
+        misfire_grace_time=120,
+    )
+
     # Job 9: Monthly strategy tournament — 1st Saturday 4:00 AM IST
     scheduler.add_job(
         _run_strategy_tournament,
@@ -2236,9 +2665,12 @@ def start_scheduler():
     logger.info("  Pre-market scan : 09:20 IST, Mon-Fri")
     logger.info("  Intraday re-scan: 10:30, 12:30, 14:30 IST, Mon-Fri")
     logger.info("  EOD scan        : 15:20 IST, Mon-Fri")
+    logger.info("  Paper EOD snap  : 15:35 IST, Mon-Fri")
     logger.info("  Trade monitor   : every 3 min, 09:00-15:59 IST, Mon-Fri")
+    logger.info("  Paper trade poll: every 3 min, 09:00-15:59 IST, Mon-Fri")
     logger.info("  Walk-forward    : 06:00 IST, Saturday")
     logger.info("  Reconciliation  : 07:00 IST, Saturday")
+    logger.info("  Paper weekly ckpt: 07:30 IST, Saturday")
     logger.info("  Nightly backup  : 23:00 IST, daily")
     logger.info("  Kite refresh    : every 30 min, 09:00-16:30 IST, Mon-Fri")
     logger.info("  Forecast calib  : 05:30 IST, Saturday")

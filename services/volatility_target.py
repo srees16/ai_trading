@@ -39,6 +39,16 @@ REGIME_VOL_SCALE = {
     "crisis":           0.00,     # Full halt
 }
 
+# H1 FIX: R21a equity-curve SMA200 regime scaling — matches optimizer assumptions.
+# Applied as a SECOND layer on top of HMM market regime (they measure different things):
+#   HMM = "is the MARKET in crisis?" (NIFTY + VIX based)
+#   SMA200 = "is MY PORTFOLIO trending?" (equity curve based, R21a-optimized)
+# Combined multiplier is capped to prevent double-amplification.
+_R21A_EQUITY_SMA200_BOOST = 1.25    # uptrend: equity > SMA200 × 1.02
+_R21A_EQUITY_SMA200_DEFEND = 0.55   # downtrend: equity < SMA200 × 0.98
+_R21A_EQUITY_SMA_LOOKBACK = 200     # trading days for SMA
+_R21A_COMBINED_CAP = 1.30           # max combined multiplier (HMM × SMA200)
+
 
 @dataclass
 class VolatilityTargetConfig:
@@ -85,6 +95,8 @@ class VolatilityTarget:
         self._unrealized_pnl: float = 0.0
         self._high_water_mark: float = self.cfg.initial_capital
         self._regime: str = ""  # A4: current regime for vol scaling
+        # H1 FIX: equity curve history for SMA200 regime detection
+        self._equity_history: list = []
 
     def set_regime(self, regime: str) -> None:
         """A4: Set current market regime for vol target scaling."""
@@ -114,6 +126,8 @@ class VolatilityTarget:
         self._realized_pnl = realized
         self._unrealized_pnl = unrealized
         self._high_water_mark = max(self._high_water_mark, self.current_capital)
+        # H1 FIX: track equity for SMA200 regime detection
+        self._equity_history.append(self.current_capital)
 
     def add_realized(self, amount: float) -> None:
         """Incrementally add a realized trade result."""
@@ -171,15 +185,47 @@ class VolatilityTarget:
         When Vince insurance is enabled, uses active_equity instead of
         current_capital — providing smooth position scale-down as DD deepens.
         A4: Applies regime-adaptive scaling so bear/crisis auto-shrinks.
+        H1 FIX: Applies R21a equity SMA200 layer on top of HMM regime.
         """
         if self.cfg.vince_insurance_pct > 0:
             base = self.active_equity * self.cfg.annual_vol_target_pct / ANNUALISATION_FACTOR
         else:
             base = self.annual_cash_vol_target / ANNUALISATION_FACTOR
-        # A4: regime scaling
+
+        combined_scale = 1.0
+
+        # Layer 1: HMM market regime (A4)
         if self._regime:
-            base *= REGIME_VOL_SCALE.get(self._regime, 1.0)
+            combined_scale *= REGIME_VOL_SCALE.get(self._regime, 1.0)
+
+        # Layer 2: R21a equity-curve SMA200 regime (H1 FIX)
+        equity_scale = self._equity_sma200_scale()
+        combined_scale *= equity_scale
+
+        # Cap combined multiplier to prevent double-amplification
+        combined_scale = min(combined_scale, _R21A_COMBINED_CAP)
+
+        base *= combined_scale
         return base
+
+    def _equity_sma200_scale(self) -> float:
+        """R21a equity SMA200 regime scale factor.
+
+        Matches the optimizer's backtest assumption:
+        - equity > SMA200 × 1.02 → uptrend → 1.25× (push sizing)
+        - equity < SMA200 × 0.98 → downtrend → 0.55× (defend)
+        - otherwise → neutral → 1.0×
+        """
+        lookback = _R21A_EQUITY_SMA_LOOKBACK
+        if len(self._equity_history) < lookback:
+            return 1.0
+        sma200 = sum(self._equity_history[-lookback:]) / lookback
+        equity = self.current_capital
+        if equity > sma200 * 1.02:
+            return _R21A_EQUITY_SMA200_BOOST
+        elif equity < sma200 * 0.98:
+            return _R21A_EQUITY_SMA200_DEFEND
+        return 1.0
 
     # ── Safety checks ─────────────────────────────────────────
 
@@ -239,6 +285,7 @@ class VolatilityTarget:
 
     def summary(self) -> dict:
         """Return a diagnostic snapshot."""
+        eq_sma_scale = self._equity_sma200_scale()
         return {
             "initial_capital": self._initial_capital,
             "realized_pnl": self._realized_pnl,
@@ -253,4 +300,8 @@ class VolatilityTarget:
             "daily_cash_vol_target": self.daily_cash_vol_target,
             "risk_scale_factor": round(self.risk_scale_factor, 4),
             "is_halted": self.is_halted,
+            "hmm_regime": self._regime,
+            "hmm_regime_scale": REGIME_VOL_SCALE.get(self._regime, 1.0) if self._regime else 1.0,
+            "equity_sma200_scale": round(eq_sma_scale, 2),
+            "equity_history_days": len(self._equity_history),
         }

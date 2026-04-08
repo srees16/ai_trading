@@ -63,6 +63,7 @@ class PaperPosition:
     pnl: float = 0.0
     pnl_pct: float = 0.0
     is_open: bool = True
+    peak_price: float = 0.0  # G5: highest price since entry (for trailing SL)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -150,6 +151,7 @@ class PaperTrader:
             except Exception:
                 pass
 
+        self._cloud = None  # lazy-init cloud sync
         self._init_db()
         self._load_state()
 
@@ -181,6 +183,56 @@ class PaperTrader:
             CREATE TABLE IF NOT EXISTS paper_state (
                 key   TEXT PRIMARY KEY,
                 value TEXT
+            )
+        """)
+        # ── Paper validation checkpoint tables ─────────────────
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS daily_snapshots (
+                date        TEXT PRIMARY KEY,
+                equity      REAL NOT NULL,
+                cash        REAL NOT NULL,
+                open_positions INTEGER DEFAULT 0,
+                closed_today   INTEGER DEFAULT 0,
+                day_pnl     REAL DEFAULT 0,
+                cumulative_pnl REAL DEFAULT 0,
+                cumulative_pnl_pct REAL DEFAULT 0,
+                max_drawdown_pct   REAL DEFAULT 0,
+                signals_generated  INTEGER DEFAULT 0,
+                signals_traded     INTEGER DEFAULT 0,
+                snapshot_json TEXT DEFAULT '{}'
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS signal_log (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                date        TEXT NOT NULL,
+                symbol      TEXT NOT NULL,
+                forecast    REAL DEFAULT 0,
+                combined_forecast REAL DEFAULT 0,
+                action      TEXT DEFAULT '',
+                entry_price REAL DEFAULT 0,
+                stop_loss   REAL DEFAULT 0,
+                target_price REAL DEFAULT 0,
+                quantity    INTEGER DEFAULT 0,
+                pipeline_sources TEXT DEFAULT '',
+                was_traded  INTEGER DEFAULT 0
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS weekly_checkpoints (
+                week_number INTEGER PRIMARY KEY,
+                week_start  TEXT NOT NULL,
+                week_end    TEXT NOT NULL,
+                start_equity REAL DEFAULT 0,
+                end_equity   REAL DEFAULT 0,
+                week_return_pct REAL DEFAULT 0,
+                trades_opened  INTEGER DEFAULT 0,
+                trades_closed  INTEGER DEFAULT 0,
+                win_rate    REAL DEFAULT 0,
+                sharpe_ratio REAL DEFAULT 0,
+                max_dd_pct  REAL DEFAULT 0,
+                avg_holding_days REAL DEFAULT 0,
+                summary_json TEXT DEFAULT '{}'
             )
         """)
         conn.commit()
@@ -225,6 +277,16 @@ class PaperTrader:
         conn.commit()
         conn.close()
 
+    def _get_cloud(self):
+        """Lazy-init cloud sync (best-effort, never blocks)."""
+        if self._cloud is None:
+            try:
+                from database.paper_cloud import get_paper_cloud
+                self._cloud = get_paper_cloud()
+            except Exception:
+                self._cloud = False  # sentinel: don't retry
+        return self._cloud if self._cloud else None
+
     def _save_position(self, pos: PaperPosition):
         conn = sqlite3.connect(str(_DB_PATH))
         conn.execute("""
@@ -240,6 +302,10 @@ class PaperTrader:
         ))
         conn.commit()
         conn.close()
+        # Cloud sync (best-effort)
+        cloud = self._get_cloud()
+        if cloud:
+            cloud.sync_position(pos.to_dict())
 
     def _close_position_db(self, pos: PaperPosition):
         conn = sqlite3.connect(str(_DB_PATH))
@@ -254,6 +320,10 @@ class PaperTrader:
         ))
         conn.commit()
         conn.close()
+        # Cloud sync (best-effort)
+        cloud = self._get_cloud()
+        if cloud:
+            cloud.sync_position(pos.to_dict())
 
     # ── Price helpers ──────────────────────────────────────────
 
@@ -356,6 +426,7 @@ class PaperTrader:
                 stop_loss=plan.stop_loss,
                 target_price=plan.target_price,
                 opened_at=datetime.now(_IST).isoformat(),
+                peak_price=fill_price,  # G5: initialize peak at entry
             )
             self._positions.append(pos)
             self._save_position(pos)
@@ -378,10 +449,89 @@ class PaperTrader:
 
     # ── SL/TP check (call periodically) ────────────────────────
 
+    def _trail_stop(self, pos: PaperPosition, ltp: float) -> None:
+        """G5: Ratchet stop-loss using vol-based trailing stop.
+
+        Uses services.vol_trailing_stop.compute_trailing_stop() which:
+          - Scales stop distance by daily volatility (2.5σ swing, 3.5σ positional)
+          - Activates profit-lock after 4σ gain (tightens to 1.5σ)
+          - Guarantees break-even once profit-lock activates
+          - Clamps stop between 2% (min) and 12% (max) of peak
+
+        Falls back to simple 3% percentage trail if vol module unavailable.
+        """
+        # Update peak price
+        if pos.peak_price <= 0:
+            pos.peak_price = pos.entry_price
+        pos.peak_price = max(pos.peak_price, ltp)
+
+        try:
+            from services.vol_trailing_stop import compute_trailing_stop
+            from services.instrument_volatility import daily_price_volatility
+            from utils import download_ind_ohlcv
+
+            df = download_ind_ohlcv(pos.symbol, period="3mo")
+            if df is not None and len(df) >= 20:
+                close_series = df["Close"] if "Close" in df.columns else df["close"]
+                daily_vol = daily_price_volatility(close_series)
+            else:
+                daily_vol = 0.02
+
+            try:
+                from config import Config
+                trade_horizon = getattr(Config, "CARVER_TRADE_HORIZON", "swing")
+            except Exception:
+                trade_horizon = "swing"
+
+            state = compute_trailing_stop(
+                entry_price=pos.entry_price,
+                current_price=ltp,
+                peak_price=pos.peak_price,
+                daily_price_vol=daily_vol,
+                previous_stop=pos.stop_loss,
+                trade_horizon=trade_horizon,
+            )
+            new_sl = state.current_stop
+        except Exception:
+            # Fallback: simple 3% trail from peak (only activate after 5% profit)
+            profit_pct = (ltp - pos.entry_price) / pos.entry_price
+            if profit_pct < 0.05:
+                return
+            new_sl = round(pos.peak_price * 0.97, 2)
+
+        # Only ratchet UP for LONG positions
+        if new_sl > pos.stop_loss:
+            old_sl = pos.stop_loss
+            pos.stop_loss = round(new_sl, 2)
+            # Persist updated SL to DB
+            self._update_stop_db(pos)
+            logger.debug(
+                "PAPER TRAIL SL: %s %.2f → %.2f (peak=%.2f, ltp=%.2f)",
+                pos.symbol, old_sl, pos.stop_loss, pos.peak_price, ltp,
+            )
+
+    def _update_stop_db(self, pos: PaperPosition) -> None:
+        """Persist updated stop_loss to the DB for crash recovery."""
+        try:
+            conn = sqlite3.connect(str(_DB_PATH))
+            conn.execute(
+                "UPDATE paper_positions SET stop_loss=? WHERE symbol=? AND is_open=1 AND opened_at=?",
+                (pos.stop_loss, pos.symbol, pos.opened_at),
+            )
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+        # Cloud sync (best-effort)
+        cloud = self._get_cloud()
+        if cloud:
+            cloud.sync_stop_loss(pos.symbol, pos.opened_at, pos.stop_loss)
+
     def poll(self) -> List[dict]:
         """Check open positions against SL/TP using live prices.
 
-        Returns list of close events.
+        G5: Also applies vol-based trailing stop ratcheting before
+        checking SL/TP triggers. Returns list of close events.
         """
         events = []
         for pos in self._positions:
@@ -392,12 +542,15 @@ class PaperTrader:
             if ltp is None:
                 continue
 
+            # G5: Trail stop before checking triggers
+            self._trail_stop(pos, ltp)
+
             closed = False
             reason = ""
 
             if ltp <= pos.stop_loss:
                 closed = True
-                reason = "SL"
+                reason = "TRAILING_SL" if pos.stop_loss > pos.entry_price * 0.97 else "SL"
                 exit_price = self._apply_slippage(pos.stop_loss, "SELL", symbol=pos.symbol)
             elif ltp >= pos.target_price:
                 closed = True
@@ -545,3 +698,265 @@ class PaperTrader:
         self.cash = self.initial_capital
         self._positions.clear()
         logger.info("Paper trader reset: capital=%.2f", self.initial_capital)
+
+    # ── Checkpoint methods for 4-week paper validation ─────────
+
+    def snapshot_daily(self, signals_generated: int = 0, signals_traded: int = 0) -> dict:
+        """Save end-of-day equity snapshot for equity curve reconstruction.
+
+        Call this once daily (EOD scheduler job). Even if something crashes
+        mid-week, we'll have daily granularity up to the crash point.
+        """
+        today = datetime.now(_IST).strftime("%Y-%m-%d")
+        dashboard = self.dashboard()
+
+        # Count trades closed today
+        conn = sqlite3.connect(str(_DB_PATH))
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT * FROM paper_positions WHERE is_open=0 AND closed_at LIKE ?",
+            (today + "%",),
+        ).fetchall()
+        closed_today = len(rows)
+        day_pnl = sum(r["pnl"] for r in rows)
+
+        # Compute running max drawdown from daily_snapshots history
+        prev_snapshots = conn.execute(
+            "SELECT equity FROM daily_snapshots ORDER BY date"
+        ).fetchall()
+        equities = [r["equity"] for r in prev_snapshots] + [dashboard.current_capital]
+        peak = equities[0] if equities else self.initial_capital
+        max_dd = 0.0
+        for eq in equities:
+            if eq > peak:
+                peak = eq
+            dd = (peak - eq) / peak if peak > 0 else 0
+            if dd > max_dd:
+                max_dd = dd
+
+        snapshot = {
+            "date": today,
+            "equity": dashboard.current_capital,
+            "cash": self.cash,
+            "open_positions": dashboard.open_positions,
+            "closed_today": closed_today,
+            "day_pnl": round(day_pnl, 2),
+            "cumulative_pnl": dashboard.total_pnl,
+            "cumulative_pnl_pct": dashboard.total_pnl_pct,
+            "max_drawdown_pct": round(max_dd * 100, 2),
+            "signals_generated": signals_generated,
+            "signals_traded": signals_traded,
+            "snapshot_json": json.dumps(dashboard.to_dict()),
+        }
+
+        conn.execute("""
+            INSERT OR REPLACE INTO daily_snapshots
+            (date, equity, cash, open_positions, closed_today, day_pnl,
+             cumulative_pnl, cumulative_pnl_pct, max_drawdown_pct,
+             signals_generated, signals_traded, snapshot_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            snapshot["date"], snapshot["equity"], snapshot["cash"],
+            snapshot["open_positions"], snapshot["closed_today"],
+            snapshot["day_pnl"], snapshot["cumulative_pnl"],
+            snapshot["cumulative_pnl_pct"], snapshot["max_drawdown_pct"],
+            snapshot["signals_generated"], snapshot["signals_traded"],
+            snapshot["snapshot_json"],
+        ))
+        conn.commit()
+        conn.close()
+
+        logger.info(
+            "Daily snapshot: %s equity=%.0f pnl=%.0f (%.1f%%) dd=%.1f%% open=%d closed=%d",
+            today, snapshot["equity"], snapshot["cumulative_pnl"],
+            snapshot["cumulative_pnl_pct"], snapshot["max_drawdown_pct"],
+            snapshot["open_positions"], closed_today,
+        )
+        # Cloud sync (best-effort)
+        cloud = self._get_cloud()
+        if cloud:
+            cloud.sync_snapshot(snapshot)
+        return snapshot
+
+    def log_signals(self, date_str: str, signals: list) -> None:
+        """Persist forecast signals for backtest-vs-live comparison.
+
+        Parameters
+        ----------
+        date_str : str
+            Date string (YYYY-MM-DD).
+        signals : list of dict
+            Each dict: {symbol, forecast, combined_forecast, action,
+                       entry_price, stop_loss, target_price, quantity,
+                       pipeline_sources, was_traded}
+        """
+        if not signals:
+            return
+        conn = sqlite3.connect(str(_DB_PATH))
+        for sig in signals:
+            conn.execute("""
+                INSERT INTO signal_log
+                (date, symbol, forecast, combined_forecast, action,
+                 entry_price, stop_loss, target_price, quantity,
+                 pipeline_sources, was_traded)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                date_str,
+                sig.get("symbol", ""),
+                sig.get("forecast", 0),
+                sig.get("combined_forecast", 0),
+                sig.get("action", ""),
+                sig.get("entry_price", 0),
+                sig.get("stop_loss", 0),
+                sig.get("target_price", 0),
+                sig.get("quantity", 0),
+                sig.get("pipeline_sources", ""),
+                1 if sig.get("was_traded") else 0,
+            ))
+        conn.commit()
+        conn.close()
+        logger.debug("Signal log: %d signals for %s", len(signals), date_str)
+        # Cloud sync (best-effort)
+        cloud = self._get_cloud()
+        if cloud:
+            cloud.sync_signals(date_str, signals)
+
+    def checkpoint_weekly(self) -> Optional[dict]:
+        """Save weekly aggregated checkpoint for crash-resilient analysis.
+
+        Call this once per week (e.g., Friday EOD or Saturday).
+        Returns the checkpoint dict, or None if no data.
+        """
+        conn = sqlite3.connect(str(_DB_PATH))
+        conn.row_factory = sqlite3.Row
+
+        # Determine week number from daily snapshots
+        snapshots = conn.execute(
+            "SELECT * FROM daily_snapshots ORDER BY date"
+        ).fetchall()
+        if not snapshots:
+            conn.close()
+            return None
+
+        # Get existing weekly checkpoints to determine current week
+        existing_weeks = conn.execute(
+            "SELECT week_number FROM weekly_checkpoints ORDER BY week_number DESC LIMIT 1"
+        ).fetchone()
+        current_week = (existing_weeks["week_number"] + 1) if existing_weeks else 1
+
+        # Get last checkpoint date to determine this week's range
+        last_ckpt = conn.execute(
+            "SELECT week_end FROM weekly_checkpoints ORDER BY week_number DESC LIMIT 1"
+        ).fetchone()
+        if last_ckpt:
+            week_snapshots = [s for s in snapshots if s["date"] > last_ckpt["week_end"]]
+        else:
+            week_snapshots = list(snapshots)
+
+        if not week_snapshots:
+            conn.close()
+            return None
+
+        week_start = week_snapshots[0]["date"]
+        week_end = week_snapshots[-1]["date"]
+        start_equity = week_snapshots[0]["equity"]
+        end_equity = week_snapshots[-1]["equity"]
+        week_return = ((end_equity / start_equity) - 1) * 100 if start_equity > 0 else 0
+
+        # Count trades in this week
+        trades_opened = conn.execute(
+            "SELECT COUNT(*) FROM paper_positions WHERE opened_at >= ? AND opened_at <= ?",
+            (week_start, week_end + "T23:59:59"),
+        ).fetchone()[0]
+        trades_closed = conn.execute(
+            "SELECT COUNT(*) FROM paper_positions WHERE closed_at >= ? AND closed_at <= ? AND is_open=0",
+            (week_start, week_end + "T23:59:59"),
+        ).fetchone()[0]
+
+        # Win rate for this week's closed trades
+        week_closed = conn.execute(
+            "SELECT pnl FROM paper_positions WHERE closed_at >= ? AND closed_at <= ? AND is_open=0",
+            (week_start, week_end + "T23:59:59"),
+        ).fetchall()
+        wins = sum(1 for r in week_closed if r["pnl"] > 0)
+        win_rate = wins / len(week_closed) if week_closed else 0
+
+        # Sharpe from daily returns this week
+        import numpy as np
+        daily_returns = []
+        for i in range(1, len(week_snapshots)):
+            prev_eq = week_snapshots[i - 1]["equity"]
+            curr_eq = week_snapshots[i]["equity"]
+            if prev_eq > 0:
+                daily_returns.append(curr_eq / prev_eq - 1)
+        if len(daily_returns) >= 2:
+            sharpe = float(np.mean(daily_returns) / (np.std(daily_returns) + 1e-10) * np.sqrt(252))
+        else:
+            sharpe = 0.0
+
+        max_dd = max((s["max_drawdown_pct"] for s in week_snapshots), default=0)
+
+        # Average holding days for closed trades this week
+        avg_hold = 0.0
+        if week_closed:
+            hold_days = []
+            for r in conn.execute(
+                "SELECT opened_at, closed_at FROM paper_positions WHERE closed_at >= ? AND closed_at <= ? AND is_open=0",
+                (week_start, week_end + "T23:59:59"),
+            ).fetchall():
+                try:
+                    opened = datetime.fromisoformat(r["opened_at"].replace("Z", "+00:00"))
+                    closed = datetime.fromisoformat(r["closed_at"].replace("Z", "+00:00"))
+                    hold_days.append((closed - opened).total_seconds() / 86400)
+                except Exception:
+                    pass
+            if hold_days:
+                avg_hold = sum(hold_days) / len(hold_days)
+
+        checkpoint = {
+            "week_number": current_week,
+            "week_start": week_start,
+            "week_end": week_end,
+            "start_equity": round(start_equity, 2),
+            "end_equity": round(end_equity, 2),
+            "week_return_pct": round(week_return, 2),
+            "trades_opened": trades_opened,
+            "trades_closed": trades_closed,
+            "win_rate": round(win_rate, 4),
+            "sharpe_ratio": round(sharpe, 3),
+            "max_dd_pct": round(max_dd, 2),
+            "avg_holding_days": round(avg_hold, 1),
+        }
+
+        summary = self.dashboard().to_dict()
+        conn.execute("""
+            INSERT OR REPLACE INTO weekly_checkpoints
+            (week_number, week_start, week_end, start_equity, end_equity,
+             week_return_pct, trades_opened, trades_closed, win_rate,
+             sharpe_ratio, max_dd_pct, avg_holding_days, summary_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            checkpoint["week_number"], checkpoint["week_start"],
+            checkpoint["week_end"], checkpoint["start_equity"],
+            checkpoint["end_equity"], checkpoint["week_return_pct"],
+            checkpoint["trades_opened"], checkpoint["trades_closed"],
+            checkpoint["win_rate"], checkpoint["sharpe_ratio"],
+            checkpoint["max_dd_pct"], checkpoint["avg_holding_days"],
+            json.dumps(summary),
+        ))
+        conn.commit()
+        conn.close()
+
+        logger.info(
+            "Weekly checkpoint W%d: %s→%s equity=%.0f→%.0f ret=%.1f%% "
+            "trades=%d/%d wr=%.0f%% sharpe=%.2f dd=%.1f%%",
+            current_week, week_start, week_end,
+            start_equity, end_equity, week_return,
+            trades_opened, trades_closed, win_rate * 100,
+            sharpe, max_dd,
+        )
+        # Cloud sync (best-effort)
+        cloud = self._get_cloud()
+        if cloud:
+            cloud.sync_weekly(checkpoint)
+        return checkpoint

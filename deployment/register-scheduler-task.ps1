@@ -34,7 +34,9 @@ $ScriptPath = Join-Path $CoreDir "scheduler.py"
 if (-not (Test-Path $PythonExe)) { throw "Python not found at $PythonExe" }
 if (-not (Test-Path $ScriptPath)) { throw "scheduler.py not found at $ScriptPath" }
 
-$Argument = "-u `"$ScriptPath`" >> `"$LogFile`" 2>&1"
+# FIX: Task Scheduler doesn't interpret shell redirects (>>, 2>&1).
+# Wrap in cmd.exe /c so the redirect syntax is processed by a shell.
+$CmdLine = "`"$PythonExe`" -u `"$ScriptPath`" >> `"$LogFile`" 2>&1"
 
 Write-Host "Registering Windows Task: $TaskName" -ForegroundColor Cyan
 Write-Host "  Python : $PythonExe"
@@ -53,10 +55,10 @@ $Trigger = New-ScheduledTaskTrigger -Weekly `
     -DaysOfWeek Monday, Tuesday, Wednesday, Thursday, Friday `
     -At "08:45"
 
-# -- Action: run python scheduler.py --
+# -- Action: run python scheduler.py via cmd.exe for proper redirect handling --
 $Action = New-ScheduledTaskAction `
-    -Execute $PythonExe `
-    -Argument $Argument `
+    -Execute "cmd.exe" `
+    -Argument "/c $CmdLine" `
     -WorkingDirectory $CoreDir
 
 # -- Settings: restart on failure, don't stop if on battery --
