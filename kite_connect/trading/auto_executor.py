@@ -401,9 +401,25 @@ class AutoExecutor:
             plans = self._filter_by_mtf_consensus(plans, _cb)
             report.trade_plans = plans
             report.plans_count = len(plans)
-        # â”€â”€ 5.  Order placement â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        if self.auto_place and self.kite is not None:
-            _cb(f"Placing {len(plans)} orders via Kite â€¦")
+        # -- 5.  Order placement --------------------------------
+        # Paper-trade safety gate: if CENTURION_PAPER_TRADE=true,
+        # refuse to place live Kite orders even if auto_place=True.
+        _paper_active = False
+        try:
+            import os as _os
+            _paper_active = _os.environ.get('CENTURION_PAPER_TRADE', '').lower() in ('true', '1', 'yes')
+            if not _paper_active:
+                from config import Config
+                _paper_active = getattr(Config, 'PAPER_TRADE_MODE', False)
+        except Exception:
+            pass
+        if _paper_active:
+            _cb(
+                f'Paper-trade mode active -- {len(plans)} plans generated '
+                '(live orders blocked)'
+            )
+        elif self.auto_place and self.kite is not None:
+            _cb(f"Placing {len(plans)} orders via Kite ...")
             report.order_results = self._place_orders(plans, _cb)
             report.orders_placed = sum(1 for r in report.order_results if r.success)
             report.orders_failed = sum(1 for r in report.order_results if not r.success)
