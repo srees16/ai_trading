@@ -853,3 +853,19 @@ class PaperWeeklyCheckpointRecord(Base):
     max_dd_pct = Column(Float, default=0)
     avg_holding_days = Column(Float, default=0)
     summary_json = Column(Text, default='{}')
+
+
+class PaperTradingState(Base):
+    """Cloud state for automated paper trading toggle (controlled from UI)."""
+    __tablename__ = 'paper_trading_state'
+
+    id = Column(Integer, primary_key=True, default=1)
+    active = Column(Boolean, default=False, nullable=False)
+    started_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    stopped_at = Column(DateTime, nullable=True)
+    last_run_at = Column(DateTime, nullable=True)
+    total_runs = Column(Integer, default=0)
+    last_run_status = Column(String(20), default='none')  # none, success, error
+    last_run_message = Column(Text, default='')
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
