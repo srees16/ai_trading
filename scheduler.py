@@ -564,12 +564,25 @@ def _paper_trade_orders(verdicts: list, screened_df):
             plans = None
 
         # ── Fallback: legacy RiskManager path ──
+        # M1 FIX: Use VolatilityTarget-based sizing even in fallback path.
+        # Ensures R21a vol-targeting is preserved even when OHLCV download fails.
         if not plans:
             try:
                 from kite_connect.trading.risk_manager import RiskManager, RiskConfig
-                rm = RiskManager(RiskConfig())
+                rm_cfg = RiskConfig()
+                vt_fallback = None
+                try:
+                    from services.volatility_target import VolatilityTarget, VolatilityTargetConfig
+                    from config import Config
+                    vt_fallback = VolatilityTarget(VolatilityTargetConfig(
+                        initial_capital=getattr(Config, "CARVER_INITIAL_CAPITAL", 500_000.0),
+                        annual_vol_target_pct=getattr(Config, "CARVER_ANNUAL_VOL_TARGET", 0.75),
+                    ))
+                except Exception:
+                    pass
+                rm = RiskManager(rm_cfg, volatility_target=vt_fallback)
                 plans = rm.plan_trades(buy_df)
-                logger.info("Paper trade: legacy RiskManager generated %d plans", len(plans))
+                logger.info("Paper trade: fallback RiskManager (vol-targeted) generated %d plans", len(plans))
             except Exception as exc:
                 logger.warning("Legacy plan_trades also failed: %s", exc)
                 return

@@ -151,6 +151,7 @@ class PaperTrader:
             except Exception:
                 pass
 
+        self._cloud = None  # lazy-init cloud sync
         self._init_db()
         self._load_state()
 
@@ -276,6 +277,16 @@ class PaperTrader:
         conn.commit()
         conn.close()
 
+    def _get_cloud(self):
+        """Lazy-init cloud sync (best-effort, never blocks)."""
+        if self._cloud is None:
+            try:
+                from database.paper_cloud import get_paper_cloud
+                self._cloud = get_paper_cloud()
+            except Exception:
+                self._cloud = False  # sentinel: don't retry
+        return self._cloud if self._cloud else None
+
     def _save_position(self, pos: PaperPosition):
         conn = sqlite3.connect(str(_DB_PATH))
         conn.execute("""
@@ -291,6 +302,10 @@ class PaperTrader:
         ))
         conn.commit()
         conn.close()
+        # Cloud sync (best-effort)
+        cloud = self._get_cloud()
+        if cloud:
+            cloud.sync_position(pos.to_dict())
 
     def _close_position_db(self, pos: PaperPosition):
         conn = sqlite3.connect(str(_DB_PATH))
@@ -305,6 +320,10 @@ class PaperTrader:
         ))
         conn.commit()
         conn.close()
+        # Cloud sync (best-effort)
+        cloud = self._get_cloud()
+        if cloud:
+            cloud.sync_position(pos.to_dict())
 
     # ── Price helpers ──────────────────────────────────────────
 
@@ -503,6 +522,10 @@ class PaperTrader:
             conn.close()
         except Exception:
             pass
+        # Cloud sync (best-effort)
+        cloud = self._get_cloud()
+        if cloud:
+            cloud.sync_stop_loss(pos.symbol, pos.opened_at, pos.stop_loss)
 
     def poll(self) -> List[dict]:
         """Check open positions against SL/TP using live prices.
@@ -749,6 +772,10 @@ class PaperTrader:
             snapshot["cumulative_pnl_pct"], snapshot["max_drawdown_pct"],
             snapshot["open_positions"], closed_today,
         )
+        # Cloud sync (best-effort)
+        cloud = self._get_cloud()
+        if cloud:
+            cloud.sync_snapshot(snapshot)
         return snapshot
 
     def log_signals(self, date_str: str, signals: list) -> None:
@@ -789,6 +816,10 @@ class PaperTrader:
         conn.commit()
         conn.close()
         logger.debug("Signal log: %d signals for %s", len(signals), date_str)
+        # Cloud sync (best-effort)
+        cloud = self._get_cloud()
+        if cloud:
+            cloud.sync_signals(date_str, signals)
 
     def checkpoint_weekly(self) -> Optional[dict]:
         """Save weekly aggregated checkpoint for crash-resilient analysis.
@@ -924,4 +955,8 @@ class PaperTrader:
             trades_opened, trades_closed, win_rate * 100,
             sharpe, max_dd,
         )
+        # Cloud sync (best-effort)
+        cloud = self._get_cloud()
+        if cloud:
+            cloud.sync_weekly(checkpoint)
         return checkpoint

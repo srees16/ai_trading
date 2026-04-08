@@ -133,12 +133,29 @@ def _compute_fdm(weights: np.ndarray, corr_matrix: np.ndarray) -> float:
 
 
 def _load_data() -> dict:
-    """Load extracted forecasts from pickle."""
-    if not os.path.exists(_INPUT_PATH):
-        print(f"ERROR: {_INPUT_PATH} not found. Run run_extract_forecasts.py first.")
-        sys.exit(1)
-    with open(_INPUT_PATH, "rb") as f:
-        return pickle.load(f)
+    """Load extracted forecasts from pickle (Kaggle-aware path search)."""
+    search_paths = [_INPUT_PATH]
+    if os.path.exists("/kaggle/working"):
+        search_paths.insert(0, "/kaggle/working/extracted_forecasts.pkl")
+    # Auto-discover under /kaggle/input/ regardless of mount structure
+    if os.path.exists("/kaggle/input"):
+        for root, _dirs, files in os.walk("/kaggle/input"):
+            if "extracted_forecasts.pkl" in files:
+                p = os.path.join(root, "extracted_forecasts.pkl")
+                if p not in search_paths:
+                    search_paths.append(p)
+
+    for p in search_paths:
+        if os.path.exists(p):
+            print(f"  Loading forecasts from: {p}")
+            with open(p, "rb") as f:
+                return pickle.load(f)
+
+    print(f"ERROR: extracted_forecasts.pkl not found in any of:")
+    for p in search_paths:
+        print(f"  - {p}")
+    print("Run extract step first: !python centurion_core/cloud/run_kaggle.py --task extract")
+    sys.exit(1)
 
 
 def _prepare_matrices(log: list) -> Tuple[

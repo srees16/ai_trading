@@ -11,6 +11,7 @@ Usage (in Kaggle notebook cell):
     !python centurion_core/cloud/run_kaggle.py --task extract      # forecast extraction
     !python centurion_core/cloud/run_kaggle.py --task optimize     # weight optimization
     !python centurion_core/cloud/run_kaggle.py --task pipeline     # extract + optimize + validate
+    !python centurion_core/cloud/run_kaggle.py --task validate_hybrid  # H1 hybrid regime validation
 
 Tasks:
     r19c      – Baseline R19c backtest (all modes OFF)
@@ -41,7 +42,7 @@ sys.stderr.reconfigure(line_buffering=True, encoding="utf-8", errors="replace")
 IS_KAGGLE = os.path.exists("/kaggle/working")
 
 VALID_TASKS = ["r19c", "r20a", "r20b", "r20c", "r20d", "r21a",
-               "extract", "optimize", "pipeline"]
+               "extract", "optimize", "pipeline", "validate_hybrid"]
 
 
 def _print_header(task: str):
@@ -348,6 +349,13 @@ def task_pipeline():
     task_r21a()
 
 
+def task_validate_hybrid():
+    """Validate hybrid HMM×SMA200 regime scaling against R21a baseline."""
+    _print_header("validate_hybrid")
+    from optimizer.validate_r21a_hybrid import main as validate_main
+    validate_main()
+
+
 # ───────────────────────────────────────────────────
 #  Main
 # ───────────────────────────────────────────────────
@@ -362,6 +370,7 @@ TASK_MAP = {
     "extract": task_extract,
     "optimize": task_optimize,
     "pipeline": task_pipeline,
+    "validate_hybrid": task_validate_hybrid,
 }
 
 

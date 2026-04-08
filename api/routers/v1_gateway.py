@@ -1011,25 +1011,41 @@ async def screener_paper_dashboard():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _cloud_or_none():
+    """Return PaperCloudSync if Neon is available, else None."""
+    try:
+        from database.paper_cloud import get_paper_cloud
+        return get_paper_cloud()
+    except Exception:
+        return None
+
+
+def _sqlite_rows(table: str, sql: str):
+    """Fallback: read rows from local SQLite."""
+    import sqlite3 as _sql
+    from pathlib import Path as _Path
+    db_path = _Path(__file__).resolve().parent.parent.parent / "data" / "paper_trades.sqlite3"
+    if not db_path.exists():
+        return []
+    conn = _sql.connect(str(db_path))
+    conn.row_factory = _sql.Row
+    rows = conn.execute(sql).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 @router.get("/screener/monitor/daily-snapshots")
 async def screener_daily_snapshots():
     """Get daily equity snapshots for chart rendering."""
     try:
-        import sqlite3 as _sql
-        from pathlib import Path as _Path
+        cloud = _cloud_or_none()
+        if cloud:
+            df = cloud.read_snapshots()
+            if not df.empty:
+                snapshots = df.to_dict(orient="records")
+                return {"snapshots": snapshots, "count": len(snapshots)}
 
-        db_path = _Path(__file__).resolve().parent.parent.parent / "data" / "paper_trades.sqlite3"
-        if not db_path.exists():
-            return {"snapshots": [], "count": 0}
-
-        conn = _sql.connect(str(db_path))
-        conn.row_factory = _sql.Row
-        rows = conn.execute(
-            "SELECT * FROM daily_snapshots ORDER BY date"
-        ).fetchall()
-        conn.close()
-
-        snapshots = [dict(r) for r in rows]
+        snapshots = _sqlite_rows("daily_snapshots", "SELECT * FROM daily_snapshots ORDER BY date")
         return {"snapshots": snapshots, "count": len(snapshots)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1039,9 +1055,30 @@ async def screener_daily_snapshots():
 async def screener_signal_log():
     """Get signal audit log for backtest-vs-live comparison."""
     try:
+        cloud = _cloud_or_none()
+        if cloud:
+            df = cloud.read_signals()
+            if not df.empty:
+                signals = df.head(500).to_dict(orient="records")
+                total = len(df)
+                traded = int(df["was_traded"].sum()) if "was_traded" in df.columns else 0
+                daily = df.groupby("date").agg(
+                    total_signals=("symbol", "count"),
+                    traded_signals=("was_traded", "sum"),
+                ).reset_index().sort_values("date", ascending=False).head(30).to_dict(orient="records")
+                return {
+                    "signals": signals,
+                    "count": len(signals),
+                    "summary": {
+                        "total_signals": total,
+                        "traded_signals": traded,
+                        "hit_rate": round(traded / total, 4) if total > 0 else 0,
+                    },
+                    "daily_stats": daily,
+                }
+
         import sqlite3 as _sql
         from pathlib import Path as _Path
-
         db_path = _Path(__file__).resolve().parent.parent.parent / "data" / "paper_trades.sqlite3"
         if not db_path.exists():
             return {"signals": [], "count": 0, "summary": {}}
@@ -1055,7 +1092,6 @@ async def screener_signal_log():
         total = conn.execute("SELECT COUNT(*) as cnt FROM signal_log").fetchone()["cnt"]
         traded = conn.execute("SELECT COUNT(*) as cnt FROM signal_log WHERE was_traded=1").fetchone()["cnt"]
 
-        # Per-date aggregation
         date_stats = conn.execute("""
             SELECT date,
                    COUNT(*) as total_signals,
@@ -1082,21 +1118,15 @@ async def screener_signal_log():
 async def screener_weekly_checkpoints():
     """Get weekly performance checkpoints."""
     try:
-        import sqlite3 as _sql
-        from pathlib import Path as _Path
+        cloud = _cloud_or_none()
+        if cloud:
+            df = cloud.read_weekly()
+            if not df.empty:
+                checkpoints = df.to_dict(orient="records")
+                return {"checkpoints": checkpoints, "count": len(checkpoints)}
 
-        db_path = _Path(__file__).resolve().parent.parent.parent / "data" / "paper_trades.sqlite3"
-        if not db_path.exists():
-            return {"checkpoints": [], "count": 0}
-
-        conn = _sql.connect(str(db_path))
-        conn.row_factory = _sql.Row
-        rows = conn.execute(
-            "SELECT * FROM weekly_checkpoints ORDER BY week_number"
-        ).fetchall()
-        conn.close()
-
-        return {"checkpoints": [dict(r) for r in rows], "count": len(rows)}
+        checkpoints = _sqlite_rows("weekly_checkpoints", "SELECT * FROM weekly_checkpoints ORDER BY week_number")
+        return {"checkpoints": checkpoints, "count": len(checkpoints)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

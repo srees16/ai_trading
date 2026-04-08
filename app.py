@@ -274,6 +274,9 @@ def _get_renderer(module_key: str):
     elif module_key == "screener":
         from ui.pages.screener_page import render_screener_page
         return render_screener_page
+    elif module_key == "paper_dashboard":
+        from ui.pages.paper_dashboard_page import render_paper_dashboard_page
+        return render_paper_dashboard_page
     elif module_key == "main":
         from ui.pages.main_page import render_main_page
         return render_main_page
@@ -309,6 +312,8 @@ def _route_ind_stocks():
         _get_renderer('options')()
     elif current_page == 'screener':
         _get_renderer('screener')()
+    elif current_page == 'paper_dashboard':
+        _get_renderer('paper_dashboard')()
     elif current_page in ('fundamental', 'backtesting', 'history'):
         # Reuse the same pages as US Stocks — they read current_market
         _get_renderer(current_page)()
