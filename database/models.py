@@ -766,3 +766,90 @@ class TradeJournal(Base, TimestampMixin):
         Index('idx_journal_open', 'is_open'),
         Index('idx_journal_mode', 'mode'),
     )
+
+
+# =====================================================================
+# Paper Trading — Cloud-synced tables
+# =====================================================================
+
+class PaperPositionRecord(Base, TimestampMixin):
+    """Cloud-synced copy of local paper_positions (SQLite)."""
+    __tablename__ = 'paper_positions'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    symbol = Column(String(30), nullable=False, index=True)
+    side = Column(String(10), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    entry_price = Column(Float, nullable=False)
+    stop_loss = Column(Float, nullable=False)
+    target_price = Column(Float, nullable=False)
+    opened_at = Column(String(50), nullable=False)
+    closed_at = Column(String(50), default='')
+    exit_price = Column(Float, default=0)
+    exit_reason = Column(String(30), default='')
+    pnl = Column(Float, default=0)
+    pnl_pct = Column(Float, default=0)
+    is_open = Column(Boolean, default=True, index=True)
+
+    __table_args__ = (
+        Index('idx_pp_symbol_open', 'symbol', 'is_open'),
+    )
+
+
+class PaperDailySnapshotRecord(Base):
+    """Cloud-synced copy of local daily_snapshots (SQLite)."""
+    __tablename__ = 'paper_daily_snapshots'
+
+    date = Column(String(10), primary_key=True)
+    equity = Column(Float, nullable=False)
+    cash = Column(Float, nullable=False)
+    open_positions = Column(Integer, default=0)
+    closed_today = Column(Integer, default=0)
+    day_pnl = Column(Float, default=0)
+    cumulative_pnl = Column(Float, default=0)
+    cumulative_pnl_pct = Column(Float, default=0)
+    max_drawdown_pct = Column(Float, default=0)
+    signals_generated = Column(Integer, default=0)
+    signals_traded = Column(Integer, default=0)
+    snapshot_json = Column(Text, default='{}')
+
+
+class PaperSignalLogRecord(Base):
+    """Cloud-synced copy of local signal_log (SQLite)."""
+    __tablename__ = 'paper_signal_log'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    date = Column(String(10), nullable=False, index=True)
+    symbol = Column(String(30), nullable=False, index=True)
+    forecast = Column(Float, default=0)
+    combined_forecast = Column(Float, default=0)
+    action = Column(String(20), default='')
+    entry_price = Column(Float, default=0)
+    stop_loss = Column(Float, default=0)
+    target_price = Column(Float, default=0)
+    quantity = Column(Integer, default=0)
+    pipeline_sources = Column(String(500), default='')
+    was_traded = Column(Boolean, default=False)
+
+    __table_args__ = (
+        Index('idx_psl_date_symbol', 'date', 'symbol'),
+    )
+
+
+class PaperWeeklyCheckpointRecord(Base):
+    """Cloud-synced copy of local weekly_checkpoints (SQLite)."""
+    __tablename__ = 'paper_weekly_checkpoints'
+
+    week_number = Column(Integer, primary_key=True)
+    week_start = Column(String(10), nullable=False)
+    week_end = Column(String(10), nullable=False)
+    start_equity = Column(Float, default=0)
+    end_equity = Column(Float, default=0)
+    week_return_pct = Column(Float, default=0)
+    trades_opened = Column(Integer, default=0)
+    trades_closed = Column(Integer, default=0)
+    win_rate = Column(Float, default=0)
+    sharpe_ratio = Column(Float, default=0)
+    max_dd_pct = Column(Float, default=0)
+    avg_holding_days = Column(Float, default=0)
+    summary_json = Column(Text, default='{}')

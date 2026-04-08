@@ -1,0 +1,49 @@
+# ── Centurion R21a Compute Container ──
+# Optimized for backtest pipeline execution (not web serving).
+# Use with Azure ACI, GCP Cloud Run Jobs, or any Docker host.
+#
+# Build (from repo root c:\Users\suraboyi\Videos\dev_algo):
+#   docker build -f centurion_core/deployment/Dockerfile.compute -t centurion-r21a:latest .
+#
+# Run locally:
+#   docker run --rm -v ${PWD}/centurion_core/data:/app/centurion_core/data centurion-r21a:latest
+#
+# Run specific step:
+#   docker run --rm -e PIPELINE_STEP=optimize -v ${PWD}/centurion_core/data:/app/centurion_core/data centurion-r21a:latest
+
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# System dependencies for scientific computing
+RUN apt-get update && apt-get install -y \
+    gcc g++ build-essential curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python dependencies — install first for Docker cache
+COPY centurion_core/requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.txt
+
+# Copy centurion_core framework (code only, data mounted at runtime)
+COPY centurion_core/ /app/centurion_core/
+
+# Copy runner scripts
+COPY optimize_weights_r21a.py /app/
+COPY run_extract_forecasts.py /app/
+COPY run_r21a.py /app/
+COPY run_r21a_pipeline.py /app/
+
+# Create data directory (will be volume-mounted)
+RUN mkdir -p /app/centurion_core/data
+
+# Unbuffered output for real-time logging
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Default step: full pipeline
+# Override with: -e PIPELINE_STEP=optimize|extract|validate|pipeline
+ENV PIPELINE_STEP=pipeline
+
+# Entrypoint script that routes to the correct step
+COPY deployment/compute_entrypoint.py /app/compute_entrypoint.py
+ENTRYPOINT ["python", "/app/compute_entrypoint.py"]

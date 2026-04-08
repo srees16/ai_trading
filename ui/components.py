@@ -382,6 +382,7 @@ def render_ind_navigation_buttons(
         ('fundamental',  'Fundamentals'),
         ('backtesting',  'Backtest'),
         ('screener',     'Screener'),
+        ('paper_dashboard', 'Paper Trade'),
         ('ind_kite',     'Fly Kite'),
         ('options',      'Options'),
         ('history',      'History'),
