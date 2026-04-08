@@ -68,36 +68,37 @@ class ForecastWeight:
 # avg forecast ~6-7 (vs Carver target 10), sufficient diversification to avoid
 # single-signal blowups, decorrelated styles (trend + momentum + adaptive + breakout).
 DEFAULT_FORECAST_WEIGHTS: List[ForecastWeight] = [
-    ForecastWeight("ewmac_8_32", 0.07),      # R19c Phase 3: trimmed (was 10%)
-    ForecastWeight("ewmac_16_64", 0.09),     # R19c Phase 3: trimmed (was 12%)
+    ForecastWeight("ewmac_8_32", 0.196),     # R21a: ↑ from 7% — fast trend-following heavily upweighted
+    ForecastWeight("ewmac_16_64", 0.008),    # R21a: ↓ from 9% — nearly eliminated (redundant with 8_32)
     ForecastWeight("ewmac_32_128", 0.00),    # zeroed — redundant
-    ForecastWeight("ewmac_64_256", 0.08),    # R19c Phase 3: trimmed (was 10%)
+    ForecastWeight("ewmac_64_256", 0.108),   # R21a: ↑ from 8% — positional trend boosted
     ForecastWeight("carry", 0.00),           # zeroed — weak for equities
-    ForecastWeight("screener", 0.05),        # R19c Phase 3: trimmed (was 7%)
-    ForecastWeight("momentum", 0.16),        # R14/R18: primary trend alpha
+    ForecastWeight("screener", 0.018),       # R21a: ↓ from 5% — low alpha contribution
+    ForecastWeight("momentum", 0.112),       # R21a: ↓ from 16% — still important, less dominant
     ForecastWeight("pead", 0.00),            # DEAD: 0% hit rate
-    ForecastWeight("mean_reversion", 0.13),  # R19c Phase 3: boosted (was 8%)
+    ForecastWeight("mean_reversion", 0.027), # R21a: ↓ from 13% — counter-trend heavily trimmed
     ForecastWeight("fii_flow", 0.00),        # DEAD: 0% hit rate
     ForecastWeight("decision_engine", 0.00), # zeroed — circular dependency
     ForecastWeight("oi_signal", 0.00),       # HARMFUL: t-stat = -69.8
     ForecastWeight("cross_momentum", 0.00),  # zeroed — conflicts with long-only
     ForecastWeight("pairs_arb", 0.00),       # HARMFUL: t-stat = -190.7
     ForecastWeight("event_driven", 0.00),    # DEAD: 0% hit rate
-    ForecastWeight("penfold_trend", 0.12),   # R14/R18: Turtle+ATR
-    ForecastWeight("ehlers_dsp", 0.12),      # R14/R18: adaptive DSP
+    ForecastWeight("penfold_trend", 0.012),  # R21a: ↓ from 12% — nearly eliminated
+    ForecastWeight("ehlers_dsp", 0.188),     # R21a: ↑ from 12% — adaptive DSP heavily boosted
     ForecastWeight("intermarket", 0.00),     # zeroed — noisy
-    ForecastWeight("acceleration", 0.04),    # R19c Phase 3: trimmed (was 6%)
-    ForecastWeight("carver_value", 0.07),    # R19c Phase 3: re-enabled (was 0%)
+    ForecastWeight("acceleration", 0.119),   # R21a: ↑ from 4% — acceleration tripled
+    ForecastWeight("carver_value", 0.196),   # R21a: ↑ from 7% — value signal co-top weight
     ForecastWeight("skew_signal", 0.00),     # zeroed — weak signal
     ForecastWeight("sentiment", 0.00),       # DEAD: 0% hit rate
-    ForecastWeight("breakout", 0.07),        # R14/R18: 20-day channel
+    ForecastWeight("breakout", 0.016),       # R21a: ↓ from 7% — low alpha contribution
     ForecastWeight("order_flow", 0.00),      # zeroed — microstructure noise
-    # Total: 1.00 exact (24 sources, 10 active)
-    # R18 = exact R14 weights (reverted from R15-R17 experiments)
-    # Trend (92%): momentum(16%), ewmac_16_64(12%), penfold_trend(12%),
-    #              ehlers_dsp(12%), ewmac_64_256(10%), ewmac_8_32(10%),
-    #              breakout(7%), acceleration(6%), screener(7%)
-    # Counter (8%): mean_reversion(8%)
+    # Total: 1.00 exact (24 sources, 11 active)
+    # R21a OOS validated: Sharpe=2.09, CAGR=74.1%, MaxDD=25.2%, Calmar=2.94
+    # vs R19c baseline:  Sharpe=1.02, CAGR=48.8%, MaxDD=67.4%, Calmar=0.71
+    # Top signals: ewmac_8_32(19.6%), carver_value(19.6%), ehlers_dsp(18.8%),
+    #              acceleration(11.9%), momentum(11.2%), ewmac_64_256(10.8%)
+    # Trimmed:     mean_reversion(2.7%), screener(1.8%), breakout(1.6%),
+    #              penfold_trend(1.2%), ewmac_16_64(0.8%)
 ]
 
 # Rule-of-thumb correlations between forecast sources (Carver Appendix C):
