@@ -1496,12 +1496,15 @@ class CarverPipeline:
             # Compute vol-based stop loss
             from services.vol_trailing_stop import compute_trailing_stop
             daily_vol = daily_vols.get(sym, 0.02)
+            _current_regime = hmm_snap.regime if hmm_snap else ""
+            _regime_str = _current_regime.lower() if hasattr(_current_regime, 'lower') else str(_current_regime).lower()
             stop_state = compute_trailing_stop(
                 entry_price=ps.price,
                 current_price=ps.price,
                 peak_price=ps.price,
                 daily_price_vol=daily_vol,
                 trade_horizon=self.cfg.trade_horizon,
+                regime=_regime_str,
             )
 
             # Gap B2: Transition-aware stop tightening

@@ -45,6 +45,10 @@ class VolTrailingStopConfig:
     # Hard ceiling: never allow stop tighter than this % below peak
     min_stop_distance_pct: float = 0.02      # 2% minimum distance from peak
 
+    # Contra-regime: tighter profit-lock in bull to book profits earlier
+    bull_profit_lock_activation_vol: float = 3.0   # Activate after 3σ in bull (vs 4σ default)
+    bull_profit_lock_distance_vol: float = 1.0     # Lock at 1.0σ in bull (vs 1.5σ default)
+
 
 @dataclass
 class TrailingStopState:
@@ -67,6 +71,7 @@ def compute_trailing_stop(
     previous_stop: Optional[float] = None,
     trade_horizon: str = "swing",
     config: Optional[VolTrailingStopConfig] = None,
+    regime: str = "",
 ) -> TrailingStopState:
     """Compute the volatility-based trailing stop for a position.
 
@@ -85,6 +90,10 @@ def compute_trailing_stop(
     trade_horizon : str
         ``"swing"`` or ``"positional"``.
     config : VolTrailingStopConfig | None
+    regime : str
+        Current market regime (e.g. ``"trending_bull"``).
+        In bull regimes, tighter profit-lock parameters are used to
+        book profits earlier for contra-regime recycling.
 
     Returns
     -------
@@ -116,9 +125,15 @@ def compute_trailing_stop(
     profit_locked = False
     profit_vol_units = (peak - entry_price) / (daily_price_vol * entry_price) if daily_price_vol > 0 and entry_price > 0 else 0
 
-    if profit_vol_units >= cfg.profit_lock_activation_vol:
+    # Contra-regime: use tighter thresholds in bull to book profits earlier
+    _regime_lower = (regime or "").lower()
+    _is_bull = "bull" in _regime_lower
+    _activation = cfg.bull_profit_lock_activation_vol if _is_bull else cfg.profit_lock_activation_vol
+    _lock_dist = cfg.bull_profit_lock_distance_vol if _is_bull else cfg.profit_lock_distance_vol
+
+    if profit_vol_units >= _activation:
         profit_locked = True
-        lock_distance_pct = cfg.profit_lock_distance_vol * daily_price_vol
+        lock_distance_pct = _lock_dist * daily_price_vol
         lock_distance_pct = max(lock_distance_pct, cfg.min_stop_distance_pct)
         lock_stop = peak * (1 - lock_distance_pct)
         base_stop = max(base_stop, lock_stop)

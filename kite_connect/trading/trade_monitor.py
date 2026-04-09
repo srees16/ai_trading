@@ -531,6 +531,16 @@ class TradeMonitor:
                 from utils import download_ind_ohlcv
                 from config import Config
 
+                # Fetch current regime for contra-regime trailing stop
+                _tm_regime = ""
+                try:
+                    from services.regime_detector import detect_regime
+                    _snap = detect_regime()
+                    if _snap and hasattr(_snap, 'regime'):
+                        _tm_regime = str(_snap.regime).lower()
+                except Exception:
+                    pass
+
                 # Fetch recent close prices for vol computation
                 df = download_ind_ohlcv(trade.symbol, period="3mo")
                 if df is not None and len(df) >= 20:
@@ -553,6 +563,7 @@ class TradeMonitor:
                         peak_price=trade.entry_price,      # dummy
                         daily_price_vol=daily_vol,
                         trade_horizon=trade_horizon,
+                        regime=_tm_regime,
                     )
                     # For SHORT stop: entry + stop_distance, trail downward from there
                     stop_dist = trade.entry_price - state.current_stop
@@ -568,6 +579,7 @@ class TradeMonitor:
                         daily_price_vol=daily_vol,
                         previous_stop=trade.stop_loss,
                         trade_horizon=trade_horizon,
+                        regime=_tm_regime,
                     )
                     new_sl = state.current_stop
             except Exception:
