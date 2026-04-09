@@ -113,6 +113,12 @@ class Config:
     SIGNAL_FRESHNESS_MAX_HOURS: int = 4      # Tier 1 Gap 5: reject OHLCV older than N hours
 
     # =================================================================
+    # Strategy Names
+    # =================================================================
+    STRATEGY_COMPOUNDER: str = "Centurion Compounder"   # R21A pure compounding (CC)
+    STRATEGY_HARVEST: str = "Centurion Harvest"          # V4 income-generating overlay (CH)
+
+    # =================================================================
     # Backtest Configuration
     # =================================================================
     BACKTEST_START_DATE: str = "2012-01-01"  # 13+ years: covers 2013 taper tantrum, 2015 China, 2018 IL&FS, 2020 COVID, 2022 rate hikes

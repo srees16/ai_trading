@@ -61,6 +61,25 @@ _R21A_REGIME_VOL = True       # R21a: regime-adaptive vol target (aggressive upt
 _R21A_REGIME_BOOST = 1.25     # uptrend vol multiplier
 _R21A_REGIME_DEFEND = 0.55    # downtrend vol multiplier
 
+# ── Centurion Harvest (CH) flags: profit booking in bull → reinvest in bear dips ──
+# V1: Bear dip-buyer — mean-reversion signals get 3.3× vol boost in downtrend
+#     (equivalent to 0.50× instead of 0.15× in live VolatilityTarget)
+_HARVEST_DIP_BUYER = False
+_HARVEST_MR_BEAR_VOL_MULT = 3.33   # 0.50 / 0.15 ≈ 3.33× boost for MR in downtrend
+
+# V2: Bull profit-taker — tighter trailing stops in uptrend to book profits earlier
+_HARVEST_PROFIT_TAKER = False
+_HARVEST_BULL_STOP_SIGMA = 6.0     # 6σ stops in bull (vs default 10σ) — tighter exit
+
+# V4: Bear-bottom capital injection + bull profit booking (Centurion Harvest mode)
+# Simulates user adding extra funds at bear→bull crossover and booking profits in bull
+_HARVEST_ENABLED = False
+_HARVEST_INJECT_PCT = 0.20          # inject 20% of initial capital at bear→bull crossover
+_HARVEST_BOOK_PCT = 0.15            # book 15% of gains above peak when sustained bull
+_HARVEST_BULL_SUSTAIN_DAYS = 30     # require 30 days above SMA200 before booking profits
+_HARVEST_MIN_GAIN_TO_BOOK = 0.10    # only book if gains > 10% above injected capital
+_HARVEST_INJECT_COOLDOWN_DAYS = 200 # min 200 days between injections (avoid churn)
+
 # ── Default pairs for pairs_arb source ────────────────────────
 DEFAULT_PAIRS_US = [
     ("AAPL", "MSFT"),
@@ -506,6 +525,16 @@ def run_full_backtest(
     source_hits: Dict[str, int] = defaultdict(int)
     source_total: Dict[str, int] = defaultdict(int)
     daily_position_counts: List[int] = []
+
+    # V4: Capital rotation state — bear-bottom injection + bull profit booking
+    _cr_prev_below_sma = False        # was equity below SMA200 yesterday?
+    _cr_days_above_sma = 0            # consecutive days equity > SMA200
+    _cr_last_inject_day = -9999       # day_idx of last capital injection
+    _cr_total_injected = 0.0          # cumulative extra funds injected
+    _cr_total_booked = 0.0            # cumulative profits booked (withdrawn)
+    _cr_inject_events: list = []      # log: [(day_idx, amount, equity_before, equity_after)]
+    _cr_book_events: list = []        # log: [(day_idx, amount, equity_before, equity_after)]
+    _cr_base_capital = capital         # original starting capital (for injection sizing)
 
     # FIX-DD-v2: Smooth continuous drawdown scaling (no force-liquidation)
     # Force-liquidation at bottoms caused whipsaw death spiral (-60% in bull market).
@@ -1132,12 +1161,67 @@ def run_full_backtest(
 
         # R21a: Regime-adaptive vol target
         # Aggressive in sustained uptrends, defensive in downtrends
-        if _R21A_REGIME_VOL and len(equity_curve) >= 200:
-            _eq_sma200 = sum(equity_curve[-200:]) / 200.0
+        if _R21A_REGIME_VOL and len(daily_equity) >= 200:
+            _eq_sma200 = sum(daily_equity[-200:]) / 200.0
             if equity > _eq_sma200 * 1.02:
                 dynamic_daily_target *= _R21A_REGIME_BOOST  # uptrend: aggressive
             elif equity < _eq_sma200 * 0.98:
                 dynamic_daily_target *= _R21A_REGIME_DEFEND  # downtrend: defensive
+
+        # ── Centurion Harvest: inject at bear→bull, book in sustained bull ──
+        if _HARVEST_ENABLED and len(daily_equity) >= 200:
+            _cr_sma200 = sum(daily_equity[-200:]) / 200.0
+            _cr_currently_below = (equity < _cr_sma200 * 0.98)
+            _cr_currently_above = (equity > _cr_sma200 * 1.02)
+            _trading_day_num = day_idx - min_history
+
+            # Bear→Bull crossover: equity was below SMA200, now above → INJECT
+            if _cr_prev_below_sma and _cr_currently_above:
+                _days_since_inject = day_idx - _cr_last_inject_day
+                if _days_since_inject >= _HARVEST_INJECT_COOLDOWN_DAYS:
+                    _inject_amount = _cr_base_capital * _HARVEST_INJECT_PCT
+                    _eq_before = equity
+                    equity += _inject_amount
+                    capital += _inject_amount  # increase base capital for sizing
+                    _cr_total_injected += _inject_amount
+                    _cr_last_inject_day = day_idx
+                    _cr_inject_events.append((_trading_day_num, _inject_amount, _eq_before, equity))
+                    # Recalculate sizing targets with new capital
+                    sizing_equity = max(equity, capital * 0.10)
+                    dynamic_daily_target = sizing_equity * annual_vol_target / 16.0
+                    if verbose:
+                        print(f"  CAPITAL INJECT Day {_trading_day_num}: "
+                              f"+₹{_inject_amount:,.0f} ({_HARVEST_INJECT_PCT:.0%} of base) | "
+                              f"equity ₹{_eq_before:,.0f} → ₹{equity:,.0f} | "
+                              f"total injected: ₹{_cr_total_injected:,.0f}", flush=True)
+
+            # Sustained bull: equity above SMA200 for N days → BOOK PROFITS
+            if _cr_currently_above:
+                _cr_days_above_sma += 1
+            else:
+                _cr_days_above_sma = 0
+
+            if (_cr_days_above_sma >= _HARVEST_BULL_SUSTAIN_DAYS
+                    and _cr_days_above_sma % _HARVEST_BULL_SUSTAIN_DAYS == 0):
+                # Book profits = portion of gains above total invested capital
+                _total_invested = _cr_base_capital  # base includes all injections
+                _gain = equity - _total_invested
+                if _gain > _total_invested * _HARVEST_MIN_GAIN_TO_BOOK:
+                    _book_amount = _gain * _HARVEST_BOOK_PCT
+                    _eq_before = equity
+                    equity -= _book_amount
+                    _cr_total_booked += _book_amount
+                    _cr_book_events.append((_trading_day_num, _book_amount, _eq_before, equity))
+                    # Recalculate sizing targets
+                    sizing_equity = max(equity, capital * 0.10)
+                    dynamic_daily_target = sizing_equity * annual_vol_target / 16.0
+                    if verbose:
+                        print(f"  PROFIT BOOK Day {_trading_day_num}: "
+                              f"-₹{_book_amount:,.0f} ({_HARVEST_BOOK_PCT:.0%} of ₹{_gain:,.0f} gains) | "
+                              f"equity ₹{_eq_before:,.0f} → ₹{equity:,.0f} | "
+                              f"total booked: ₹{_cr_total_booked:,.0f}", flush=True)
+
+            _cr_prev_below_sma = _cr_currently_below
 
         # Tick down stop cooldowns
         for sym in list(stop_cooldown.keys()):
@@ -1335,7 +1419,18 @@ def run_full_backtest(
             ivv = price * dpv
 
             if ivv > 0 and dynamic_daily_target > 0:
-                vol_scalar = dynamic_daily_target / ivv
+                # V1: Bear dip-buyer — boost vol target for mean-reversion signals in downtrend
+                _sym_daily_target = dynamic_daily_target
+                if _HARVEST_DIP_BUYER and len(daily_equity) >= 200:
+                    _eq_sma = sum(daily_equity[-200:]) / 200.0
+                    if equity < _eq_sma * 0.98:  # downtrend
+                        _mr_fc = fc_dict.get("mean_reversion", 0.0)
+                        _max_src_fc = max(abs(v) for v in fc_dict.values()) if fc_dict else 0.0
+                        if abs(_mr_fc) > 0 and abs(_mr_fc) >= _max_src_fc * 0.5:
+                            # MR is a significant contributor — boost vol target
+                            _sym_daily_target *= _HARVEST_MR_BEAR_VOL_MULT
+
+                vol_scalar = _sym_daily_target / ivv
                 position = (forecast / 10.0) * vol_scalar * weight_per_sym * idm
 
                 # R20b: Vol attenuation at position sizing level
@@ -1415,6 +1510,12 @@ def run_full_backtest(
                     stop_sigma = 8.0   # R20d: tighter stops — clip tail losses 20%
                 else:
                     stop_sigma = 10.0
+
+                # V2: Bull profit-taker — tighter stops in uptrend to book profits
+                if _HARVEST_PROFIT_TAKER and len(daily_equity) >= 200:
+                    _eq_sma = sum(daily_equity[-200:]) / 200.0
+                    if equity > _eq_sma * 1.02:  # uptrend
+                        stop_sigma = min(stop_sigma, _HARVEST_BULL_STOP_SIGMA)
 
                 if target_qty > 0:
                     active_count += 1
@@ -1931,6 +2032,28 @@ def run_full_backtest(
     lines.append(f"  Regime-adaptive stop: 3.0-5.0σ  |  Inertia: 15%  |  Cooldown: 5d")
     lines.append(f"  Position sizing: Vol-target  |  IDM=dynamic  |  MaxLev={max_leverage:.1f}x")
 
+    # V4: Capital rotation summary
+    if _HARVEST_ENABLED:
+        lines.append(f"")
+        lines.append(f"  {'─'*40}")
+        lines.append(f"  Centurion Harvest — Capital Rotation:")
+        lines.append(f"  Total Injected:    ₹{_cr_total_injected:>12,.0f}  ({len(_cr_inject_events)} events)")
+        lines.append(f"  Total Booked:      ₹{_cr_total_booked:>12,.0f}  ({len(_cr_book_events)} events)")
+        _cr_net = _cr_total_injected - _cr_total_booked
+        lines.append(f"  Net Capital Added: ₹{_cr_net:>12,.0f}")
+        # Adjusted return: factor out injected capital for fair comparison
+        _cr_adjusted_equity = equity - _cr_total_injected + _cr_total_booked
+        _cr_adj_ret = (_cr_adjusted_equity / (capital - _cr_total_injected) - 1) * 100 if (capital - _cr_total_injected) > 0 else 0
+        lines.append(f"  Adj. Total Return: {_cr_adj_ret:>11.1f}%  (excl. injections)")
+        if _cr_inject_events:
+            lines.append(f"  Injection Events:")
+            for _ev in _cr_inject_events:
+                lines.append(f"    Day {_ev[0]:4d}: +₹{_ev[1]:,.0f}  (equity ₹{_ev[2]:,.0f} → ₹{_ev[3]:,.0f})")
+        if _cr_book_events:
+            lines.append(f"  Profit Booking Events:")
+            for _ev in _cr_book_events:
+                lines.append(f"    Day {_ev[0]:4d}: -₹{_ev[1]:,.0f}  (equity ₹{_ev[2]:,.0f} → ₹{_ev[3]:,.0f})")
+
     # Aronson EBTA enrichment
     if result.detrended_sharpe or result.trimmed_sharpe:
         lines.append(f"")
@@ -1973,6 +2096,14 @@ def run_full_backtest(
         "per_signal_tstats": result.per_signal_tstats,
         "dm_bias_estimate": result.dm_bias_estimate,
         "bootstrap_ci_sharpe": result.bootstrap_ci_sharpe,
+        # V4: Capital rotation
+        "capital_rotation": {
+            "total_injected": _cr_total_injected,
+            "total_booked": _cr_total_booked,
+            "net_added": _cr_total_injected - _cr_total_booked,
+            "inject_events": _cr_inject_events,
+            "book_events": _cr_book_events,
+        } if _HARVEST_ENABLED else None,
     }
 
 

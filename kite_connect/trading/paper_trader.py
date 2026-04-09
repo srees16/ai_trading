@@ -483,6 +483,16 @@ class PaperTrader:
             except Exception:
                 trade_horizon = "swing"
 
+            # Fetch current regime for contra-regime trailing stop
+            _paper_regime = ""
+            try:
+                from services.regime_detector import detect_regime
+                _snap = detect_regime()
+                if _snap and hasattr(_snap, 'regime'):
+                    _paper_regime = str(_snap.regime).lower()
+            except Exception:
+                pass
+
             state = compute_trailing_stop(
                 entry_price=pos.entry_price,
                 current_price=ltp,
@@ -490,6 +500,7 @@ class PaperTrader:
                 daily_price_vol=daily_vol,
                 previous_stop=pos.stop_loss,
                 trade_horizon=trade_horizon,
+                regime=_paper_regime,
             )
             new_sl = state.current_stop
         except Exception:

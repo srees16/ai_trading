@@ -15,8 +15,6 @@ since the success criterion should be highest Sharpe + lowest max DD, not a CAGR
 
 *success criterion should be highest Sharpe + lowest max DD, not a CAGR number. A config with 45%+ CAGR and 0.90 Sharpe is far better than 60% CAGR and 0.50 Sharpe, because the former will survive in live trading while the latter will blow up.*
 ~~~~~~
-R14 benchmark: CAGR=37.1%  Sharpe=0.85  MaxDD=78.1%
-~~~~~~
 R19C benchmark: CAGR=48.78%, Sharpe=1.025, MaxDD=67.41%
 R19C Signal weights (winner):
 momentum=16%, mean_reversion=13%, penfold_trend=12%, ehlers_dsp=12%, ewmac_16_64=9%, ewmac_64_256=8%, carver_value=7%, breakout=7%, ewmac_8_32=7%, screener=5%, acceleration=4%

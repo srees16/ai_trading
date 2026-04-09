@@ -12,6 +12,8 @@ Usage (in Kaggle notebook cell):
     !python centurion_core/cloud/run_kaggle.py --task optimize     # weight optimization
     !python centurion_core/cloud/run_kaggle.py --task pipeline     # extract + optimize + validate
     !python centurion_core/cloud/run_kaggle.py --task validate_hybrid  # H1 hybrid regime validation
+    !python centurion_core/cloud/run_kaggle.py --task contra_all   # all 5 contra-regime variants
+    !python centurion_core/cloud/run_kaggle.py --task contra_v4    # capital rotation (inject+book)
 
 Tasks:
     r19c      – Baseline R19c backtest (all modes OFF)
@@ -23,6 +25,12 @@ Tasks:
     extract   – Extract per-source forecasts for weight optimizer
     optimize  – Run differential evolution weight optimizer
     pipeline  – Full 3-step: extract → optimize → validate (R21a)
+    contra_v0 – Contra V0: R21a baseline (control)
+    contra_v1 – Contra V1: Bear dip-buyer (MR vol boost in downtrend)
+    contra_v2 – Contra V2: Bull profit-taker (tighter stops in uptrend)
+    contra_v3 – Contra V3: Combined V1+V2
+    contra_v4 – Contra V4: Capital rotation (inject at bear→bull, book in bull)
+    contra_all– Run all 5 variants sequentially + comparison table
 """
 import sys
 import os
@@ -42,7 +50,8 @@ sys.stderr.reconfigure(line_buffering=True, encoding="utf-8", errors="replace")
 IS_KAGGLE = os.path.exists("/kaggle/working")
 
 VALID_TASKS = ["r19c", "r20a", "r20b", "r20c", "r20d", "r21a",
-               "extract", "optimize", "pipeline", "validate_hybrid"]
+               "extract", "optimize", "pipeline", "validate_hybrid",
+               "contra_v0", "contra_v1", "contra_v2", "contra_v3", "contra_v4", "contra_all"]
 
 
 def _print_header(task: str):
@@ -357,6 +366,215 @@ def task_validate_hybrid():
 
 
 # ───────────────────────────────────────────────────
+#  Contra-Regime Strategy Backtest Variants
+# ───────────────────────────────────────────────────
+# V0: R21a baseline (contra flags OFF) — control
+# V1: Bear dip-buyer — MR signals get 3.33× vol boost in downtrend
+# V2: Bull profit-taker — tighter trailing stops (6σ) in uptrend
+# V3: Combined V1+V2
+# R21a benchmark: Sharpe=2.093, CAGR=74.1%, MaxDD=25.2%, Calmar=2.937
+
+def _setup_r21a_base(bt_mod):
+    """Set R21a base configuration (shared by all contra variants)."""
+    import pickle
+    from services.forecast_combiner import DEFAULT_FORECAST_WEIGHTS
+
+    _set_all_modes_off(bt_mod)
+    bt_mod._R21A_REGIME_VOL = True
+    bt_mod._R21A_REGIME_BOOST = 1.25
+    bt_mod._R21A_REGIME_DEFEND = 0.55
+
+    # Load optimized weights
+    opt_path = os.path.join(_CORE_DIR, "data", "r21a_optimization_results.pkl")
+    if IS_KAGGLE:
+        for p in ["/kaggle/working/r21a_optimization_results.pkl", opt_path]:
+            if os.path.exists(p):
+                opt_path = p
+                break
+
+    all_24 = [
+        "ewmac_8_32", "ewmac_16_64", "ewmac_32_128", "ewmac_64_256",
+        "carry", "screener", "momentum", "pead", "mean_reversion",
+        "fii_flow", "decision_engine", "oi_signal", "cross_momentum",
+        "pairs_arb", "event_driven", "penfold_trend", "ehlers_dsp",
+        "intermarket", "acceleration", "carver_value", "skew_signal",
+        "sentiment", "breakout", "order_flow",
+    ]
+
+    if os.path.exists(opt_path):
+        with open(opt_path, "rb") as f:
+            opt = pickle.load(f)
+        weights = opt["best_weights"]
+        print(f"  Loaded optimized weights from {opt_path}")
+    else:
+        print(f"  WARNING: No optimized weights — using R19c fallback")
+        weights = {
+            "ewmac_8_32": 0.07, "ewmac_16_64": 0.09, "ewmac_64_256": 0.08,
+            "screener": 0.05, "momentum": 0.16, "mean_reversion": 0.13,
+            "penfold_trend": 0.12, "ehlers_dsp": 0.12, "acceleration": 0.04,
+            "carver_value": 0.07, "breakout": 0.07,
+        }
+
+    for sig in all_24:
+        if sig not in weights:
+            weights[sig] = 0.0
+    for fw in DEFAULT_FORECAST_WEIGHTS:
+        if fw.name in weights:
+            fw.weight = weights[fw.name]
+
+
+def _set_contra_flags(bt_mod, dip_buyer: bool, profit_taker: bool, capital_rotation: bool = False):
+    """Set Centurion Harvest flags on the backtest module."""
+    bt_mod._HARVEST_DIP_BUYER = dip_buyer
+    bt_mod._HARVEST_PROFIT_TAKER = profit_taker
+    bt_mod._HARVEST_ENABLED = capital_rotation
+    flags = []
+    if dip_buyer:
+        flags.append(f"BEAR_DIP(MR×{bt_mod._HARVEST_MR_BEAR_VOL_MULT:.1f})")
+    if profit_taker:
+        flags.append(f"BULL_PROFIT(stop={bt_mod._HARVEST_BULL_STOP_SIGMA:.0f}σ)")
+    if capital_rotation:
+        flags.append(f"HARVEST(inject={bt_mod._HARVEST_INJECT_PCT:.0%},book={bt_mod._HARVEST_BOOK_PCT:.0%})")
+    print(f"  Harvest flags: {', '.join(flags) if flags else 'OFF (Compounder baseline)'}")
+
+
+def _print_contra_comparison(results: dict):
+    """Print comparison table for all contra-regime variants."""
+    r21a_sharpe = 2.093
+    r21a_cagr = 74.1
+    r21a_maxdd = 25.2
+    r21a_calmar = 2.937
+
+    print(f"\n{'='*78}")
+    print(f"  CENTURION HARVEST vs COMPOUNDER — COMPARISON")
+    print(f"{'='*78}")
+    print(f"  {'Variant':<12} {'Sharpe':>8} {'CAGR%':>8} {'MaxDD%':>8} {'Calmar':>8} {'Trades':>8} {'WinRate':>8} {'Injected':>10} {'Booked':>10}")
+    print(f"  {'-'*12} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*8} {'-'*10} {'-'*10}")
+    print(f"  {'R21a(ref)':<12} {r21a_sharpe:>8.3f} {r21a_cagr:>8.1f} {r21a_maxdd:>8.1f} {r21a_calmar:>8.3f} {'—':>8} {'—':>8} {'—':>10} {'—':>10}")
+
+    for name, r in results.items():
+        if r is None:
+            print(f"  {name:<12} {'FAILED':>8}")
+            continue
+        s = r.get('sharpe', 0)
+        c = r.get('annual_return_pct', 0)
+        m = r.get('max_drawdown_pct', 100)
+        cal = r.get('calmar', 0)
+        t = r.get('n_trades', 0)
+        w = r.get('win_rate', 0)
+        cr = r.get('capital_rotation')
+        inj = f"₹{cr['total_injected']:,.0f}" if cr else '—'
+        bkd = f"₹{cr['total_booked']:,.0f}" if cr else '—'
+        # Accept/reject
+        ok = s >= 2.0 and m <= 30.0 and cal >= 2.5
+        tag = ' ✓' if ok else ' ✗'
+        print(f"  {name:<12} {s:>8.3f} {c:>8.1f} {m:>8.1f} {cal:>8.3f} {t:>8d} {w:>7.1f}%{tag} {inj:>10} {bkd:>10}")
+
+    print(f"\n  Accept criteria: Sharpe ≥ 2.0 AND MaxDD ≤ 30% AND Calmar ≥ 2.5")
+    print(f"{'='*78}")
+
+
+def task_contra_v0():
+    """Contra V0: R21a baseline (control — contra flags OFF)."""
+    import services.full_pipeline_backtest as bt_mod
+    _setup_r21a_base(bt_mod)
+    _set_contra_flags(bt_mod, dip_buyer=False, profit_taker=False)
+    _set_checkpoint("contra_v0")
+    _print_header("contra_v0")
+    return _run_backtest(bt_mod, "Contra V0 (R21a baseline)")
+
+
+def task_contra_v1():
+    """Contra V1: Bear dip-buyer — MR gets 3.33× vol boost in downtrend."""
+    import services.full_pipeline_backtest as bt_mod
+    _setup_r21a_base(bt_mod)
+    _set_contra_flags(bt_mod, dip_buyer=True, profit_taker=False)
+    _set_checkpoint("contra_v1")
+    _print_header("contra_v1")
+    return _run_backtest(bt_mod, "Contra V1 (Bear Dip-Buyer)")
+
+
+def task_contra_v2():
+    """Contra V2: Bull profit-taker — tighter stops (6σ) in uptrend."""
+    import services.full_pipeline_backtest as bt_mod
+    _setup_r21a_base(bt_mod)
+    _set_contra_flags(bt_mod, dip_buyer=False, profit_taker=True)
+    _set_checkpoint("contra_v2")
+    _print_header("contra_v2")
+    return _run_backtest(bt_mod, "Contra V2 (Bull Profit-Taker)")
+
+
+def task_contra_v3():
+    """Contra V3: Combined dip-buyer + profit-taker."""
+    import services.full_pipeline_backtest as bt_mod
+    _setup_r21a_base(bt_mod)
+    _set_contra_flags(bt_mod, dip_buyer=True, profit_taker=True)
+    _set_checkpoint("contra_v3")
+    _print_header("contra_v3")
+    return _run_backtest(bt_mod, "Contra V3 (Combined)")
+
+
+def task_contra_v4():
+    """Centurion Harvest: Capital rotation — inject at bear→bull + book profits in bull."""
+    import services.full_pipeline_backtest as bt_mod
+    _setup_r21a_base(bt_mod)
+    _set_contra_flags(bt_mod, dip_buyer=True, profit_taker=True, capital_rotation=True)
+    _set_checkpoint("contra_v4")
+    _print_header("contra_v4")
+    print(f"  Capital inject: {bt_mod._HARVEST_INJECT_PCT:.0%} of base at bear→bull crossover")
+    print(f"  Profit booking: {bt_mod._HARVEST_BOOK_PCT:.0%} of gains after {bt_mod._HARVEST_BULL_SUSTAIN_DAYS}d sustained bull")
+    print(f"  Injection cooldown: {bt_mod._HARVEST_INJECT_COOLDOWN_DAYS}d | Min gain to book: {bt_mod._HARVEST_MIN_GAIN_TO_BOOK:.0%}")
+    return _run_backtest(bt_mod, "Centurion Harvest (Capital Rotation)")
+
+
+def task_contra_all():
+    """Run all 5 contra-regime variants and print comparison table."""
+    _print_header("contra_all")
+    print("\n  Running 5 contra-regime variants sequentially...")
+    print("  Paper trading is NOT affected (backtest uses historical data only).\n")
+
+    results = {}
+
+    print("\n" + "═" * 70)
+    print("  VARIANT 1/5: V0 — R21a Baseline (control)")
+    print("═" * 70)
+    results["V0-base"] = task_contra_v0()
+
+    print("\n" + "═" * 70)
+    print("  VARIANT 2/5: V1 — Bear Dip-Buyer")
+    print("═" * 70)
+    results["V1-dip"] = task_contra_v1()
+
+    print("\n" + "═" * 70)
+    print("  VARIANT 3/5: V2 — Bull Profit-Taker")
+    print("═" * 70)
+    results["V2-profit"] = task_contra_v2()
+
+    print("\n" + "═" * 70)
+    print("  VARIANT 4/5: V3 — Combined (V1+V2)")
+    print("═" * 70)
+    results["V3-combo"] = task_contra_v3()
+
+    print("\n" + "═" * 70)
+    print("  VARIANT 5/5: V4 — Capital Rotation (inject+book)")
+    print("═" * 70)
+    results["V4-rotate"] = task_contra_v4()
+
+    _print_contra_comparison(results)
+
+    # Save results for comparison
+    import pickle
+    out_path = os.path.join(_CORE_DIR, "data", "contra_regime_results.pkl")
+    if IS_KAGGLE:
+        out_path = "/kaggle/working/contra_regime_results.pkl"
+    with open(out_path, "wb") as f:
+        pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
+    print(f"\n  Results saved to {out_path}")
+
+    return results
+
+
+# ───────────────────────────────────────────────────
 #  Main
 # ───────────────────────────────────────────────────
 
@@ -371,6 +589,12 @@ TASK_MAP = {
     "optimize": task_optimize,
     "pipeline": task_pipeline,
     "validate_hybrid": task_validate_hybrid,
+    "contra_v0": task_contra_v0,
+    "contra_v1": task_contra_v1,
+    "contra_v2": task_contra_v2,
+    "contra_v3": task_contra_v3,
+    "contra_v4": task_contra_v4,
+    "contra_all": task_contra_all,
 }
 
 
