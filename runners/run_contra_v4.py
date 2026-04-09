@@ -9,18 +9,6 @@ import services.full_pipeline_backtest as bt
 import pickle, time
 from services.forecast_combiner import DEFAULT_FORECAST_WEIGHTS
 
-# Set all modes off first
-bt._R19D_REGIME_MODE = False
-bt._R19E_REGIME_MODE = False
-bt._R19F_REGIME_MODE = False
-bt._R19G_REGIME_MODE = False
-bt._R19H_REGIME_MODE = False
-bt._R20A_MAXDD_MODE = False
-bt._R20B_MAXDD_MODE = False
-bt._R20C_MAXDD_MODE = False
-bt._R20D_HYBRID_MODE = False
-bt._SAVE_FORECASTS_MODE = False
-
 # Enable R21A base
 bt._R21A_REGIME_VOL = True
 bt._R21A_REGIME_BOOST = 1.25
@@ -31,36 +19,21 @@ bt._HARVEST_DIP_BUYER = True
 bt._HARVEST_PROFIT_TAKER = True
 bt._HARVEST_ENABLED = True
 
-# Load optimized weights if available
+# Load optimized weights — fall back to DEFAULT_FORECAST_WEIGHTS (R21A)
 opt_path = os.path.join("data", "r21a_optimization_results.pkl")
-all_24 = [
-    "ewmac_8_32", "ewmac_16_64", "ewmac_32_128", "ewmac_64_256",
-    "carry", "screener", "momentum", "pead", "mean_reversion",
-    "fii_flow", "decision_engine", "oi_signal", "cross_momentum",
-    "pairs_arb", "event_driven", "penfold_trend", "ehlers_dsp",
-    "intermarket", "acceleration", "carver_value", "skew_signal",
-    "sentiment", "breakout", "order_flow",
-]
 if os.path.exists(opt_path):
     with open(opt_path, "rb") as f:
         opt = pickle.load(f)
     weights = opt["best_weights"]
+    for fw in DEFAULT_FORECAST_WEIGHTS:
+        if fw.name in weights:
+            fw.weight = weights[fw.name]
+        elif fw.weight > 0:
+            fw.weight = 0.0
     print(f"Loaded optimized weights from {opt_path}")
 else:
-    weights = {
-        "ewmac_8_32": 0.07, "ewmac_16_64": 0.09, "ewmac_64_256": 0.08,
-        "screener": 0.05, "momentum": 0.16, "mean_reversion": 0.13,
-        "penfold_trend": 0.12, "ehlers_dsp": 0.12, "acceleration": 0.04,
-        "carver_value": 0.07, "breakout": 0.07,
-    }
-    print("Using R19c fallback weights")
-
-for sig in all_24:
-    if sig not in weights:
-        weights[sig] = 0.0
-for fw in DEFAULT_FORECAST_WEIGHTS:
-    if fw.name in weights:
-        fw.weight = weights[fw.name]
+    weights = {fw.name: fw.weight for fw in DEFAULT_FORECAST_WEIGHTS}
+    print("Using DEFAULT_FORECAST_WEIGHTS (R21A-optimized)")
 
 # Delete checkpoint to start fresh
 ckpt = os.path.join("data", "backtest_checkpoint_contra_v4.pkl")
