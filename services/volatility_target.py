@@ -49,6 +49,11 @@ _R21A_EQUITY_SMA200_DEFEND = 0.55   # downtrend: equity < SMA200 × 0.98
 _R21A_EQUITY_SMA_LOOKBACK = 200     # trading days for SMA
 _R21A_COMBINED_CAP = 1.30           # max combined multiplier (HMM × SMA200)
 
+# Contra-regime: mean-reversion signals in bear get a higher vol allocation
+# so "buy the dip" actually receives meaningful position sizing.
+# Normal bear scale = 0.15×; mean-reversion override = 0.50×
+_CONTRA_REGIME_MR_BEAR_SCALE = 0.50
+
 
 @dataclass
 class VolatilityTargetConfig:
@@ -207,6 +212,36 @@ class VolatilityTarget:
 
         base *= combined_scale
         return base
+
+    def daily_cash_vol_target_for_source(self, source: str) -> float:
+        """Contra-regime vol target override for specific signal sources.
+
+        Mean-reversion signals in bear regimes get 0.50× instead of 0.15×,
+        enabling meaningful "buy the dip" position sizing while the default
+        bear scale keeps trend-following signals near-halted.
+
+        For all other source/regime combinations, returns the standard target.
+        """
+        if (
+            source in ("mean_reversion", "mr", "mean_rev")
+            and self._regime
+            and "bear" in self._regime
+        ):
+            # Recompute with MR bear override instead of standard bear scale
+            if self.cfg.vince_insurance_pct > 0:
+                base = self.active_equity * self.cfg.annual_vol_target_pct / ANNUALISATION_FACTOR
+            else:
+                base = self.annual_cash_vol_target / ANNUALISATION_FACTOR
+
+            combined_scale = _CONTRA_REGIME_MR_BEAR_SCALE  # 0.50× instead of 0.15×
+
+            equity_scale = self._equity_sma200_scale()
+            combined_scale *= equity_scale
+            combined_scale = min(combined_scale, _R21A_COMBINED_CAP)
+
+            return base * combined_scale
+
+        return self.daily_cash_vol_target
 
     def _equity_sma200_scale(self) -> float:
         """R21a equity SMA200 regime scale factor.
