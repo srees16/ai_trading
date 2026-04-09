@@ -210,6 +210,7 @@ def create_app() -> FastAPI:
     from api.routers.pipeline import router as pipeline_router
     from api.routers.v1_gateway import router as v1_gateway_router
     from api.routers.portfolio import router as portfolio_router
+    from api.routers.r22 import router as r22_router
 
     app.include_router(health_router)
     app.include_router(us_stocks_router)
@@ -220,6 +221,7 @@ def create_app() -> FastAPI:
     app.include_router(pipeline_router)
     app.include_router(v1_gateway_router)
     app.include_router(portfolio_router)
+    app.include_router(r22_router)
 
     # ------------------------------------------------------------------
     # Authentication endpoints
