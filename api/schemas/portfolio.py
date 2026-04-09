@@ -71,8 +71,8 @@ class PortfolioBacktestResponse(BaseModel):
     compounder_pct: float
     harvest_pct: float
 
-    compounder: StrategyMetrics
-    harvest: StrategyMetrics
+    compounder: Optional[StrategyMetrics] = None
+    harvest: Optional[StrategyMetrics] = None
 
     # Combined wealth = CC equity + CH equity + CH net extracted
     combined_wealth: float

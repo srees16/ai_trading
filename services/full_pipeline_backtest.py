@@ -50,7 +50,8 @@ _SAVE_FORECASTS_MODE = False  # R21a: save per-source forecasts for weight optim
 _forecast_log: list = []      # accumulator: [(day_idx, {sym: {source: val}}, {sym: next_ret})]
 _R21A_REGIME_VOL = True       # R21a: regime-adaptive vol target (aggressive uptrend, defensive downtrend)
 _R21A_REGIME_BOOST = 1.25     # uptrend vol multiplier
-_R21A_REGIME_DEFEND = 0.55    # downtrend vol multiplier
+_R21A_REGIME_DEFEND = 0.80    # downtrend vol multiplier (was 0.55 — caused zero-position trap)
+_R21A_ZERO_POS_ESCAPE_DAYS = 10  # if 0 positions for N days, relax regime defense
 
 # ── R22: Bull-Run Capital Infusion (Centurion Compounder enhancement) ──
 # Optional: user injects fresh capital at confirmed bear→bull crossover
@@ -478,6 +479,9 @@ def run_full_backtest(
     _cr_book_events: list = []        # log: [(day_idx, amount, equity_before, equity_after)]
     _cr_base_capital = capital         # original starting capital (for injection sizing)
 
+    # R21A: Zero-position escape hatch
+    _consecutive_zero_pos_days = 0     # track consecutive days with 0 active positions
+
     # R22: Bull-run capital infusion state (Centurion Compounder)
     _r22_was_bear = False              # was equity in bear regime (< SMA200*0.98) ?
     _r22_bull_streak = 0               # consecutive days in bull regime (> SMA200*1.02)
@@ -592,8 +596,13 @@ def run_full_backtest(
         if verbose:
             print(f"\n  Signal {signum} received — will save checkpoint and exit after current day", flush=True)
 
-    _prev_sigint = signal.signal(signal.SIGINT, _graceful_shutdown)
-    _prev_sigterm = signal.signal(signal.SIGTERM, _graceful_shutdown)
+    _prev_sigint = None
+    _prev_sigterm = None
+    try:
+        _prev_sigint = signal.signal(signal.SIGINT, _graceful_shutdown)
+        _prev_sigterm = signal.signal(signal.SIGTERM, _graceful_shutdown)
+    except ValueError:
+        pass  # Not on main thread (e.g. FastAPI asyncio.to_thread) — skip signal handling
 
     _consecutive_day_errors = 0
     _MAX_CONSECUTIVE_ERRORS = 10  # abort if 10+ days crash in a row
@@ -1005,7 +1014,10 @@ def run_full_backtest(
             if equity > _eq_sma200 * 1.02:
                 dynamic_daily_target *= _R21A_REGIME_BOOST  # uptrend: aggressive
             elif equity < _eq_sma200 * 0.98:
-                dynamic_daily_target *= _R21A_REGIME_DEFEND  # downtrend: defensive
+                # Escape hatch: if stuck at 0 positions too long, skip defense
+                if _consecutive_zero_pos_days < _R21A_ZERO_POS_ESCAPE_DAYS:
+                    dynamic_daily_target *= _R21A_REGIME_DEFEND  # downtrend: defensive
+                # else: skip defense to break zero-position trap
 
         # ── Centurion Harvest: inject at bear→bull, book in sustained bull ──
         if _HARVEST_ENABLED and len(daily_equity) >= 200:
@@ -1096,7 +1108,7 @@ def run_full_backtest(
                 _r22_alert_events.append((_trading_day_num_r22, _r22_date_str))
 
                 if verbose:
-                    print(f"  ★ BULL CONFIRMED Day {_trading_day_num_r22} ({_r22_date_str}): "
+                    print(f"BULL CONFIRMED Day {_trading_day_num_r22} ({_r22_date_str}): "
                           f"equity ₹{equity:,.0f} > SMA200 ₹{_r22_sma200:,.0f} "
                           f"for {_R22_BULL_CONFIRM_DAYS} consecutive days", flush=True)
 
@@ -1116,7 +1128,7 @@ def run_full_backtest(
                     sizing_equity = max(equity, capital * 0.10)
                     dynamic_daily_target = sizing_equity * annual_vol_target / 16.0
                     if verbose:
-                        print(f"  💰 CAPITAL INFUSION Day {_trading_day_num_r22}: "
+                        print(f"CAPITAL INFUSION Day {_trading_day_num_r22}: "
                               f"+₹{_R22_INFUSION_AMOUNT:,.0f} | "
                               f"equity ₹{_r22_eq_before:,.0f} → ₹{equity:,.0f} | "
                               f"total infused: ₹{_r22_total_infused:,.0f}", flush=True)
@@ -1175,9 +1187,17 @@ def run_full_backtest(
             MAX_POSITIONS = 5   # Very weak — minimal deployment
 
         MAX_HOLD_GRACE = MAX_POSITIONS + 7  # Grace zone scales with positions
-        # Rank by absolute forecast strength
-        _ranked = sorted(_all_combined.items(), key=lambda x: abs(x[1]), reverse=True)
-        _top_syms = set(s for s, _ in _ranked[:MAX_POSITIONS])      # top-20 → eligible for new entries
+        # Rank by conviction: in long-only mode, positive forecasts first (descending),
+        # then negative by abs (for grace-zone exits). Prevents bearish stocks from
+        # filling top slots and getting zeroed by long-only guard → zero-position trap.
+        if not allow_short:
+            _ranked = sorted(_all_combined.items(),
+                             key=lambda x: (x[1] > 0, x[1] if x[1] > 0 else -abs(x[1])),
+                             reverse=True)
+        else:
+            _ranked = sorted(_all_combined.items(), key=lambda x: abs(x[1]), reverse=True)
+        _top_syms_list = [s for s, _ in _ranked[:MAX_POSITIONS]]    # ordered list for min-1-share
+        _top_syms = set(_top_syms_list)                             # set for O(1) membership
         _grace_syms = set(s for s, _ in _ranked[:MAX_HOLD_GRACE])   # top-30 → held positions stay
 
         # R8 CRITICAL FIX: Dynamic weight_per_sym based on ACTUAL investable count
@@ -1291,6 +1311,12 @@ def run_full_backtest(
 
                 target_qty = round(position)
 
+                # Min 1-share rule: top-3 conviction stocks with positive forecast
+                # get at least 1 share. Prevents zero-position trap when forecasts
+                # are weak but positive and round() kills them.
+                if target_qty == 0 and forecast > 0.0 and sym in _top_syms_list[:3]:
+                    target_qty = 1
+
                 # Cap at max leverage per-symbol (dynamic based on investable count)
                 max_notional = abs(equity) * max_leverage / n_investable
                 if abs(target_qty) * price > max_notional:
@@ -1370,6 +1396,12 @@ def run_full_backtest(
                     stop_levels.pop(sym, None)
 
         daily_position_counts.append(active_count)
+
+        # Track consecutive zero-position days for escape hatch
+        if active_count == 0:
+            _consecutive_zero_pos_days += 1
+        else:
+            _consecutive_zero_pos_days = 0
 
         # FIX-LEV: Portfolio-wide leverage cap enforcement
         # Sum of all |position × price| must not exceed equity × max_leverage
@@ -1519,8 +1551,13 @@ def run_full_backtest(
             break
 
     # Restore original signal handlers
-    signal.signal(signal.SIGINT, _prev_sigint)
-    signal.signal(signal.SIGTERM, _prev_sigterm)
+    try:
+        if _prev_sigint is not None:
+            signal.signal(signal.SIGINT, _prev_sigint)
+        if _prev_sigterm is not None:
+            signal.signal(signal.SIGTERM, _prev_sigterm)
+    except ValueError:
+        pass  # Not on main thread
 
     # Clean up checkpoint on successful completion
     if os.path.exists(_checkpoint_path):
