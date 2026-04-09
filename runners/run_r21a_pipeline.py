@@ -29,35 +29,15 @@ def step1_extract():
     _CHECKPOINT = os.path.join(_root, "data", "backtest_checkpoint_extract.pkl")
     _OUTPUT = os.path.join(_root, "data", "extracted_forecasts.pkl")
 
-    _R19C_WEIGHTS = {
-        "ewmac_8_32": 0.07, "ewmac_16_64": 0.09, "ewmac_32_128": 0.00,
-        "ewmac_64_256": 0.08, "carry": 0.00, "screener": 0.05,
-        "momentum": 0.16, "pead": 0.00, "mean_reversion": 0.13,
-        "fii_flow": 0.00, "decision_engine": 0.00, "oi_signal": 0.00,
-        "cross_momentum": 0.00, "pairs_arb": 0.00, "event_driven": 0.00,
-        "penfold_trend": 0.12, "ehlers_dsp": 0.12, "intermarket": 0.00,
-        "acceleration": 0.04, "carver_value": 0.07, "skew_signal": 0.00,
-        "sentiment": 0.00, "breakout": 0.07, "order_flow": 0.00,
-    }
-    for fw in DEFAULT_FORECAST_WEIGHTS:
-        if fw.name in _R19C_WEIGHTS:
-            fw.weight = _R19C_WEIGHTS[fw.name]
+    # Use DEFAULT_FORECAST_WEIGHTS as-is (R21A-optimized)
+    # Extraction uses equal-ish weights to capture all source forecasts
 
     os.environ["CENTURION_BT_CHECKPOINT"] = _CHECKPOINT
     bt_mod._SAVE_FORECASTS_MODE = True
-    bt_mod._R20A_MAXDD_MODE = False
-    bt_mod._R20B_MAXDD_MODE = False
-    bt_mod._R20C_MAXDD_MODE = False
-    bt_mod._R20D_HYBRID_MODE = False
-    bt_mod._R19D_REGIME_MODE = False
-    bt_mod._R19E_REGIME_MODE = False
-    bt_mod._R19F_REGIME_MODE = False
-    bt_mod._R19G_REGIME_MODE = False
-    bt_mod._R19H_REGIME_MODE = False
     bt_mod._forecast_log.clear()
 
     print("=" * 70)
-    print("  STEP 1/3 — Forecast Extraction (R19c base)")
+    print("  STEP 1/3 — Forecast Extraction (R21A base)")
     print(f"  Output: {_OUTPUT}")
     print("=" * 70)
 
@@ -71,7 +51,7 @@ def step1_extract():
 
     payload = {
         "log": log,
-        "r19c_result": {
+        "extraction_result": {
             k: result.get(k)
             for k in ["sharpe", "sortino", "calmar", "max_drawdown_pct",
                        "annual_return_pct", "total_return_pct", "n_trades"]
@@ -82,7 +62,7 @@ def step1_extract():
 
     sz_mb = os.path.getsize(_OUTPUT) / 1e6
     print(f"  Saved to {_OUTPUT} ({sz_mb:.1f} MB)")
-    print(f"  R19c baseline: Sharpe={result.get('sharpe'):.3f}  CAGR={result.get('annual_return_pct'):.1f}%")
+    print(f"  Extraction baseline: Sharpe={result.get('sharpe'):.3f}  CAGR={result.get('annual_return_pct'):.1f}%")
     return True
 
 
@@ -140,15 +120,6 @@ def step3_validate():
 
     os.environ["CENTURION_BT_CHECKPOINT"] = _CHECKPOINT
     bt_mod._SAVE_FORECASTS_MODE = False
-    bt_mod._R20A_MAXDD_MODE = False
-    bt_mod._R20B_MAXDD_MODE = False
-    bt_mod._R20C_MAXDD_MODE = False
-    bt_mod._R20D_HYBRID_MODE = False
-    bt_mod._R19D_REGIME_MODE = False
-    bt_mod._R19E_REGIME_MODE = False
-    bt_mod._R19F_REGIME_MODE = False
-    bt_mod._R19G_REGIME_MODE = False
-    bt_mod._R19H_REGIME_MODE = False
 
     print("\n" + "=" * 70)
     print("  STEP 3/3 — Full Validation Backtest (R21a optimal weights)")
@@ -177,22 +148,23 @@ def step3_validate():
         lo, hi = result["bootstrap_ci_sharpe"]
         print(f"  {'sharpe_90pct_ci':25s} = [{lo:.3f}, {hi:.3f}]")
 
-    r19c_sharpe = 1.025
-    r19c_maxdd = 67.41
+    r21a_oos_sharpe = 2.093
+    r21a_oos_maxdd = 25.2
+    r21a_oos_cagr = 74.1
     r21a_sharpe = result.get("sharpe", 0)
     r21a_maxdd = result.get("max_drawdown_pct", 100)
     r21a_cagr = result.get("annual_return_pct", 0)
-    print(f"\n  ── R19c vs R21a ──")
-    print(f"  Sharpe:  {r19c_sharpe:.3f} → {r21a_sharpe:.3f}  (Δ{r21a_sharpe - r19c_sharpe:+.3f})")
-    print(f"  MaxDD:   {r19c_maxdd:.1f}% → {r21a_maxdd:.1f}%  (Δ{r21a_maxdd - r19c_maxdd:+.1f}%)")
-    print(f"  CAGR:    48.78% → {r21a_cagr:.1f}%")
+    print(f"\n  ── R21a OOS Benchmark vs This Run ──")
+    print(f"  Sharpe:  {r21a_oos_sharpe:.3f} → {r21a_sharpe:.3f}  (Δ{r21a_sharpe - r21a_oos_sharpe:+.3f})")
+    print(f"  MaxDD:   {r21a_oos_maxdd:.1f}% → {r21a_maxdd:.1f}%  (Δ{r21a_maxdd - r21a_oos_maxdd:+.1f}%)")
+    print(f"  CAGR:    {r21a_oos_cagr:.1f}% → {r21a_cagr:.1f}%")
 
     if r21a_sharpe >= 1.5 and r21a_maxdd <= 50.0 and r21a_cagr >= 50.0:
         print(f"\n  ★ TARGET HIT! ★")
-    elif r21a_sharpe > r19c_sharpe:
-        print(f"\n  ✓ IMPROVEMENT: Sharpe Δ{r21a_sharpe - r19c_sharpe:+.3f}")
+    elif r21a_sharpe > r21a_oos_sharpe:
+        print(f"\n  ✓ IMPROVEMENT: Sharpe Δ{r21a_sharpe - r21a_oos_sharpe:+.3f}")
     else:
-        print(f"\n  ✗ NO IMPROVEMENT vs R19c")
+        print(f"\n  ✗ BELOW OOS BENCHMARK")
 
     return True
 

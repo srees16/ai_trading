@@ -2,7 +2,7 @@
 R21a Runner — Optimized Signal Weights (Walk-Forward).
 
 Runs full backtest with signal weights optimized by optimize_weights_r21a.py.
-Base: pure R19c (no vol boost, no stops changes, no position floor).
+Base: R21A (sole active configuration).
 Only change: signal weight allocation.
 
 Usage:
@@ -47,17 +47,8 @@ def main():
     else:
         print(f"  WARNING: {_OPT_RESULTS} not found!")
         print(f"  Run optimize_weights_r21a.py first.")
-        print(f"  Using R19c weights as fallback.")
-        _R21A_WEIGHTS = {
-            "ewmac_8_32": 0.07, "ewmac_16_64": 0.09, "ewmac_32_128": 0.00,
-            "ewmac_64_256": 0.08, "carry": 0.00, "screener": 0.05,
-            "momentum": 0.16, "pead": 0.00, "mean_reversion": 0.13,
-            "fii_flow": 0.00, "decision_engine": 0.00, "oi_signal": 0.00,
-            "cross_momentum": 0.00, "pairs_arb": 0.00, "event_driven": 0.00,
-            "penfold_trend": 0.12, "ehlers_dsp": 0.12, "intermarket": 0.00,
-            "acceleration": 0.04, "carver_value": 0.07, "skew_signal": 0.00,
-            "sentiment": 0.00, "breakout": 0.07, "order_flow": 0.00,
-        }
+        print(f"  Using DEFAULT_FORECAST_WEIGHTS (R21A-optimized) as fallback.")
+        _R21A_WEIGHTS = {fw.name: fw.weight for fw in DEFAULT_FORECAST_WEIGHTS}
 
     for fw in DEFAULT_FORECAST_WEIGHTS:
         if fw.name in _R21A_WEIGHTS:
@@ -67,16 +58,6 @@ def main():
     import services.full_pipeline_backtest as bt_mod
 
     os.environ["CENTURION_BT_CHECKPOINT"] = _R21A_CHECKPOINT
-    # Pure R19c base — ALL enhancement modes OFF
-    bt_mod._R20A_MAXDD_MODE = False
-    bt_mod._R20B_MAXDD_MODE = False
-    bt_mod._R20C_MAXDD_MODE = False
-    bt_mod._R20D_HYBRID_MODE = False
-    bt_mod._R19D_REGIME_MODE = False
-    bt_mod._R19E_REGIME_MODE = False
-    bt_mod._R19F_REGIME_MODE = False
-    bt_mod._R19G_REGIME_MODE = False
-    bt_mod._R19H_REGIME_MODE = False
     bt_mod._SAVE_FORECASTS_MODE = False
     # R21a: Enable regime-adaptive vol target
     bt_mod._R21A_REGIME_VOL = True
@@ -85,7 +66,7 @@ def main():
 
     print("=" * 70)
     print("  R21a — Optimized Signal Weights (Walk-Forward)")
-    print("  Base: pure R19c (no vol boost, no stops changes)")
+    print("  Base: R21A (sole active configuration)")
     print("  Change: signal weight allocation only")
     print(f"  Checkpoint: {_R21A_CHECKPOINT}")
     print("=" * 70)
@@ -117,23 +98,24 @@ def main():
         lo, hi = result["bootstrap_ci_sharpe"]
         print(f"  {'sharpe_90pct_ci':25s} = [{lo:.3f}, {hi:.3f}]")
 
-    # Comparison vs R19c
-    r19c_sharpe = 1.025
-    r19c_maxdd = 67.41
+    # Comparison vs R21a OOS benchmark
+    r21a_oos_sharpe = 2.093
+    r21a_oos_maxdd = 25.2
+    r21a_oos_cagr = 74.1
     r21a_sharpe = result.get("sharpe", 0)
     r21a_maxdd = result.get("max_drawdown_pct", 100)
     r21a_cagr = result.get("annual_return_pct", 0)
-    print(f"\n  ── R19c vs R21a ──")
-    print(f"  Sharpe:  {r19c_sharpe:.3f} → {r21a_sharpe:.3f}  (Δ{r21a_sharpe - r19c_sharpe:+.3f})")
-    print(f"  MaxDD:   {r19c_maxdd:.1f}% → {r21a_maxdd:.1f}%  (Δ{r21a_maxdd - r19c_maxdd:+.1f}%)")
-    print(f"  CAGR:    48.78% → {r21a_cagr:.1f}%")
+    print(f"\n  ── R21a OOS Benchmark vs This Run ──")
+    print(f"  Sharpe:  {r21a_oos_sharpe:.3f} → {r21a_sharpe:.3f}  (Δ{r21a_sharpe - r21a_oos_sharpe:+.3f})")
+    print(f"  MaxDD:   {r21a_oos_maxdd:.1f}% → {r21a_maxdd:.1f}%  (Δ{r21a_maxdd - r21a_oos_maxdd:+.1f}%)")
+    print(f"  CAGR:    {r21a_oos_cagr:.1f}% → {r21a_cagr:.1f}%")
 
     if r21a_sharpe >= 1.5 and r21a_maxdd <= 50.0 and r21a_cagr >= 50.0:
         print(f"\n  TARGET HIT!")
-    elif r21a_sharpe > r19c_sharpe:
-        print(f"\n  IMPROVEMENT: Sharpe Δ{r21a_sharpe - r19c_sharpe:+.3f}")
+    elif r21a_sharpe > r21a_oos_sharpe:
+        print(f"\n  IMPROVEMENT: Sharpe Δ{r21a_sharpe - r21a_oos_sharpe:+.3f}")
     else:
-        print(f"\n  NO IMPROVEMENT vs R19c")
+        print(f"\n  BELOW OOS BENCHMARK")
 
 
 if __name__ == "__main__":

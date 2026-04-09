@@ -1,30 +1,22 @@
 """
 Unified Kaggle Runner — run any centurion_core task on Kaggle free tier.
 
-Supports all backtest revisions, forecast extraction, and weight optimization.
+Supports R21A backtest, forecast extraction, weight optimization, and Harvest variants.
 
 Usage (in Kaggle notebook cell):
-    !python centurion_core/cloud/run_kaggle.py --task r19c
-    !python centurion_core/cloud/run_kaggle.py --task r20c
-    !python centurion_core/cloud/run_kaggle.py --task r20d
     !python centurion_core/cloud/run_kaggle.py --task r21a
     !python centurion_core/cloud/run_kaggle.py --task extract      # forecast extraction
     !python centurion_core/cloud/run_kaggle.py --task optimize     # weight optimization
     !python centurion_core/cloud/run_kaggle.py --task pipeline     # extract + optimize + validate
     !python centurion_core/cloud/run_kaggle.py --task validate_hybrid  # H1 hybrid regime validation
-    !python centurion_core/cloud/run_kaggle.py --task contra_all   # all 5 contra-regime variants
+    !python centurion_core/cloud/run_kaggle.py --task contra_all   # all 5 Harvest variants
     !python centurion_core/cloud/run_kaggle.py --task contra_v4    # capital rotation (inject+book)
 
 Tasks:
-    r19c      – Baseline R19c backtest (all modes OFF)
-    r20a      – R20a: vol attenuation + sector caps + tight DD tiers
-    r20b      – R20b: redesigned MaxDD guardrails
-    r20c      – R20c: asymmetric vol boost (calm-only, never cuts)
-    r20d      – R20d: R20c + position floor + tighter stops
-    r21a      – R21a: optimized weights + regime-adaptive vol
-    extract   – Extract per-source forecasts for weight optimizer
-    optimize  – Run differential evolution weight optimizer
-    pipeline  – Full 3-step: extract → optimize → validate (R21a)
+    r21a      — R21A: optimized weights + regime-adaptive vol (benchmark)
+    extract   — Extract per-source forecasts for weight optimizer
+    optimize  — Run differential evolution weight optimizer
+    pipeline  — Full 3-step: extract → optimize → validate (R21a)
     contra_v0 – Contra V0: R21a baseline (control)
     contra_v1 – Contra V1: Bear dip-buyer (MR vol boost in downtrend)
     contra_v2 – Contra V2: Bull profit-taker (tighter stops in uptrend)
@@ -49,7 +41,7 @@ sys.stderr.reconfigure(line_buffering=True, encoding="utf-8", errors="replace")
 # Detect Kaggle environment
 IS_KAGGLE = os.path.exists("/kaggle/working")
 
-VALID_TASKS = ["r19c", "r20a", "r20b", "r20c", "r20d", "r21a",
+VALID_TASKS = ["r21a", "r22",
                "extract", "optimize", "pipeline", "validate_hybrid",
                "contra_v0", "contra_v1", "contra_v2", "contra_v3", "contra_v4", "contra_all"]
 
@@ -83,18 +75,10 @@ def _set_checkpoint(name: str):
 
 
 def _set_all_modes_off(bt_mod):
-    """Set all revision flags to OFF (pure R19c baseline)."""
-    bt_mod._R19D_REGIME_MODE = False
-    bt_mod._R19E_REGIME_MODE = False
-    bt_mod._R19F_REGIME_MODE = False
-    bt_mod._R19G_REGIME_MODE = False
-    bt_mod._R19H_REGIME_MODE = False
-    bt_mod._R20A_MAXDD_MODE = False
-    bt_mod._R20B_MAXDD_MODE = False
-    bt_mod._R20C_MAXDD_MODE = False
-    bt_mod._R20D_HYBRID_MODE = False
+    """Reset backtest module to clean slate (used before enabling specific config)."""
     bt_mod._SAVE_FORECASTS_MODE = False
     bt_mod._R21A_REGIME_VOL = False
+    bt_mod._R22_BULL_INFUSION = False
 
 
 def _run_backtest(bt_mod, label: str):
@@ -138,84 +122,27 @@ def _run_backtest(bt_mod, label: str):
 
 
 def _print_result_comparison(result, label: str):
-    """Print comparison vs R19c baseline."""
-    r19c_sharpe = 1.025
-    r19c_maxdd = 67.41
-    r19c_cagr = 48.28
-    sharpe = result.get("sharpe", 0)
-    maxdd = result.get("max_drawdown_pct", 100)
-    cagr = result.get("annual_return_pct", 0)
-    print(f"\n  ── R19c vs {label} ──")
-    print(f"  Sharpe:  {r19c_sharpe:.3f} → {sharpe:.3f}  (Δ{sharpe - r19c_sharpe:+.3f})")
-    print(f"  MaxDD:   {r19c_maxdd:.1f}% → {maxdd:.1f}%  (Δ{maxdd - r19c_maxdd:+.1f}%)")
-    print(f"  CAGR:    {r19c_cagr:.1f}% → {cagr:.1f}%  (Δ{cagr - r19c_cagr:+.1f}%)")
+    """Print comparison vs R21A OOS benchmark."""
+    r21a = {"sharpe": 2.093, "sortino": 3.200, "calmar": 2.937,
+            "max_drawdown_pct": 25.2, "annual_return_pct": 74.1}
+    metrics = [
+        ("Sharpe",  "sharpe",            0,   ".3f"),
+        ("Sortino", "sortino",           0,   ".3f"),
+        ("Calmar",  "calmar",            0,   ".3f"),
+        ("CAGR",    "annual_return_pct",  0,   ".1f"),
+        ("MaxDD",   "max_drawdown_pct", 100,  ".1f"),
+    ]
+    print(f"\n  ── R21A OOS vs {label} ──")
+    for name, key, default, fmt in metrics:
+        base = r21a[key]
+        curr = result.get(key, default)
+        suffix = "%" if key in ("annual_return_pct", "max_drawdown_pct") else ""
+        print(f"  {name:8s} {base:{fmt}}{suffix} → {curr:{fmt}}{suffix}  (Δ{curr - base:+{fmt}}{suffix})")
 
 
 # ───────────────────────────────────────────────────
 #  Task Runners
 # ───────────────────────────────────────────────────
-
-def task_r19c():
-    """Pure R19c baseline backtest."""
-    import services.full_pipeline_backtest as bt_mod
-    _set_all_modes_off(bt_mod)
-    _set_checkpoint("r19c")
-    _print_header("r19c")
-    result = _run_backtest(bt_mod, "R19c")
-    return result
-
-
-def task_r20a():
-    """R20a: vol attenuation + sector caps + tight DD tiers."""
-    import services.full_pipeline_backtest as bt_mod
-    _set_all_modes_off(bt_mod)
-    bt_mod._R20A_MAXDD_MODE = True
-    _set_checkpoint("r20a")
-    _print_header("r20a")
-    result = _run_backtest(bt_mod, "R20a")
-    if result:
-        _print_result_comparison(result, "R20a")
-    return result
-
-
-def task_r20b():
-    """R20b: redesigned MaxDD guardrails."""
-    import services.full_pipeline_backtest as bt_mod
-    _set_all_modes_off(bt_mod)
-    bt_mod._R20B_MAXDD_MODE = True
-    _set_checkpoint("r20b")
-    _print_header("r20b")
-    result = _run_backtest(bt_mod, "R20b")
-    if result:
-        _print_result_comparison(result, "R20b")
-    return result
-
-
-def task_r20c():
-    """R20c: asymmetric vol boost (calm-only, never cuts below R19c)."""
-    import services.full_pipeline_backtest as bt_mod
-    _set_all_modes_off(bt_mod)
-    bt_mod._R20C_MAXDD_MODE = True
-    _set_checkpoint("r20c")
-    _print_header("r20c")
-    result = _run_backtest(bt_mod, "R20c")
-    if result:
-        _print_result_comparison(result, "R20c")
-    return result
-
-
-def task_r20d():
-    """R20d: R20c + position floor (min 6) + tighter stops (8σ)."""
-    import services.full_pipeline_backtest as bt_mod
-    _set_all_modes_off(bt_mod)
-    bt_mod._R20D_HYBRID_MODE = True
-    _set_checkpoint("r20d")
-    _print_header("r20d")
-    result = _run_backtest(bt_mod, "R20d")
-    if result:
-        _print_result_comparison(result, "R20d")
-    return result
-
 
 def task_r21a():
     """R21a: optimized signal weights + regime-adaptive vol."""
@@ -230,10 +157,9 @@ def task_r21a():
     _set_checkpoint("r21a")
     _print_header("r21a")
 
-    # Load optimized weights
+    # Load optimized weights — fall back to DEFAULT_FORECAST_WEIGHTS (R21A)
     opt_path = os.path.join(_CORE_DIR, "data", "r21a_optimization_results.pkl")
     if IS_KAGGLE:
-        # Check working dir first (from optimizer output), then data dir
         for p in ["/kaggle/working/r21a_optimization_results.pkl", opt_path]:
             if os.path.exists(p):
                 opt_path = p
@@ -244,52 +170,57 @@ def task_r21a():
             opt = pickle.load(f)
         weights = opt["best_weights"]
         print(f"  Loaded optimized weights from {opt_path}")
+        for fw in DEFAULT_FORECAST_WEIGHTS:
+            if fw.name in weights:
+                fw.weight = weights[fw.name]
+            elif fw.weight > 0:
+                fw.weight = 0.0
     else:
         print(f"  WARNING: No optimized weights found!")
-        print(f"  Run: !python run_kaggle.py --task optimize")
-        print(f"  Using R19c weights as fallback.")
-        weights = {
-            "ewmac_8_32": 0.07, "ewmac_16_64": 0.09, "ewmac_64_256": 0.08,
-            "screener": 0.05, "momentum": 0.16, "mean_reversion": 0.13,
-            "penfold_trend": 0.12, "ehlers_dsp": 0.12, "acceleration": 0.04,
-            "carver_value": 0.07, "breakout": 0.07,
-        }
-
-    # Fill missing signals with 0
-    all_24 = [
-        "ewmac_8_32", "ewmac_16_64", "ewmac_32_128", "ewmac_64_256",
-        "carry", "screener", "momentum", "pead", "mean_reversion",
-        "fii_flow", "decision_engine", "oi_signal", "cross_momentum",
-        "pairs_arb", "event_driven", "penfold_trend", "ehlers_dsp",
-        "intermarket", "acceleration", "carver_value", "skew_signal",
-        "sentiment", "breakout", "order_flow",
-    ]
-    for sig in all_24:
-        if sig not in weights:
-            weights[sig] = 0.0
-
-    for fw in DEFAULT_FORECAST_WEIGHTS:
-        if fw.name in weights:
-            fw.weight = weights[fw.name]
+        print(f"  Using DEFAULT_FORECAST_WEIGHTS (R21A-optimized)")
+        weights = {fw.name: fw.weight for fw in DEFAULT_FORECAST_WEIGHTS}
 
     print("  Weights:")
-    for sig in sorted(weights, key=lambda s: weights[s], reverse=True):
-        w = weights[sig]
-        if w > 0.005:
-            print(f"    {sig:20s}  {w*100:5.1f}%")
+    for fw in sorted(DEFAULT_FORECAST_WEIGHTS, key=lambda f: f.weight, reverse=True):
+        if fw.weight > 0.005:
+            print(f"    {fw.name:20s}  {fw.weight*100:5.1f}%")
 
     result = _run_backtest(bt_mod, "R21a")
     if result:
         _print_result_comparison(result, "R21a")
-        sharpe = result.get("sharpe", 0)
-        maxdd = result.get("max_drawdown_pct", 100)
-        cagr = result.get("annual_return_pct", 0)
-        if sharpe >= 1.5 and maxdd <= 50.0 and cagr >= 50.0:
-            print(f"\n  TARGET HIT!")
-        elif sharpe > 1.025:
-            print(f"\n  IMPROVEMENT: Sharpe Δ{sharpe - 1.025:+.3f}")
-        else:
-            print(f"\n  NO IMPROVEMENT vs R19c")
+    return result
+
+
+def task_r22():
+    """R22: Centurion Compounder + Bull-Run Capital Infusion."""
+    import services.full_pipeline_backtest as bt_mod
+    _setup_r21a_base(bt_mod)
+
+    # R22-specific: enable bull-run infusion
+    bt_mod._R22_BULL_INFUSION = True
+    bt_mod._R22_INFUSION_AMOUNT = 50_000.0
+    bt_mod._R22_INFUSION_COOLDOWN_DAYS = 200
+    bt_mod._R22_BULL_CONFIRM_DAYS = 5
+
+    # Disable Harvest (this is Compounder-only)
+    bt_mod._HARVEST_ENABLED = False
+    bt_mod._HARVEST_DIP_BUYER = False
+    bt_mod._HARVEST_PROFIT_TAKER = False
+
+    _set_checkpoint("r22")
+    _print_header("r22")
+    print(f"  R22 Bull-Run Infusion: +\u20b9{bt_mod._R22_INFUSION_AMOUNT:,.0f} per event")
+    print(f"  Cooldown: {bt_mod._R22_INFUSION_COOLDOWN_DAYS}d | Bull confirm: {bt_mod._R22_BULL_CONFIRM_DAYS}d")
+
+    result = _run_backtest(bt_mod, "R22 (Bull-Run Capital Infusion)")
+    if result:
+        _print_result_comparison(result, "R22")
+        r22_data = result.get("r22_bull_infusion")
+        if r22_data:
+            print(f"\n  R22 Infusion Summary:")
+            print(f"  Bull Alerts:     {r22_data['n_alerts']}")
+            print(f"  Infusions Made:  {r22_data['n_infusions']}")
+            print(f"  Total Infused:   \u20b9{r22_data['total_infused']:,.0f}")
     return result
 
 
@@ -305,16 +236,8 @@ def task_extract():
     _set_checkpoint("extract")
     _print_header("extract")
 
-    # R19c weights
-    _R19C = {
-        "ewmac_8_32": 0.07, "ewmac_16_64": 0.09, "ewmac_64_256": 0.08,
-        "screener": 0.05, "momentum": 0.16, "mean_reversion": 0.13,
-        "penfold_trend": 0.12, "ehlers_dsp": 0.12, "acceleration": 0.04,
-        "carver_value": 0.07, "breakout": 0.07,
-    }
-    for fw in DEFAULT_FORECAST_WEIGHTS:
-        if fw.name in _R19C:
-            fw.weight = _R19C[fw.name]
+    # Use DEFAULT_FORECAST_WEIGHTS as-is (R21A-optimized) for extraction base
+    # The optimizer needs the current best weights to extract forecasts from
 
     result = _run_backtest(bt_mod, "Forecast Extraction")
 
@@ -326,7 +249,7 @@ def task_extract():
     if IS_KAGGLE:
         out_path = "/kaggle/working/extracted_forecasts.pkl"
 
-    output = {"log": log, "r19c_result": {k: result.get(k) for k in [
+    output = {"log": log, "extraction_result": {k: result.get(k) for k in [
         "sharpe", "sortino", "calmar", "max_drawdown_pct",
         "annual_return_pct", "total_return_pct", "n_trades",
     ]} if result else {}}
@@ -375,7 +298,7 @@ def task_validate_hybrid():
 # R21a benchmark: Sharpe=2.093, CAGR=74.1%, MaxDD=25.2%, Calmar=2.937
 
 def _setup_r21a_base(bt_mod):
-    """Set R21a base configuration (shared by all contra variants)."""
+    """Set R21a base configuration (shared by all Harvest variants)."""
     import pickle
     from services.forecast_combiner import DEFAULT_FORECAST_WEIGHTS
 
@@ -384,7 +307,7 @@ def _setup_r21a_base(bt_mod):
     bt_mod._R21A_REGIME_BOOST = 1.25
     bt_mod._R21A_REGIME_DEFEND = 0.55
 
-    # Load optimized weights
+    # Load optimized weights — fall back to DEFAULT_FORECAST_WEIGHTS (R21A)
     opt_path = os.path.join(_CORE_DIR, "data", "r21a_optimization_results.pkl")
     if IS_KAGGLE:
         for p in ["/kaggle/working/r21a_optimization_results.pkl", opt_path]:
@@ -392,35 +315,19 @@ def _setup_r21a_base(bt_mod):
                 opt_path = p
                 break
 
-    all_24 = [
-        "ewmac_8_32", "ewmac_16_64", "ewmac_32_128", "ewmac_64_256",
-        "carry", "screener", "momentum", "pead", "mean_reversion",
-        "fii_flow", "decision_engine", "oi_signal", "cross_momentum",
-        "pairs_arb", "event_driven", "penfold_trend", "ehlers_dsp",
-        "intermarket", "acceleration", "carver_value", "skew_signal",
-        "sentiment", "breakout", "order_flow",
-    ]
-
     if os.path.exists(opt_path):
         with open(opt_path, "rb") as f:
             opt = pickle.load(f)
         weights = opt["best_weights"]
         print(f"  Loaded optimized weights from {opt_path}")
+        for fw in DEFAULT_FORECAST_WEIGHTS:
+            if fw.name in weights:
+                fw.weight = weights[fw.name]
+            elif fw.weight > 0:
+                fw.weight = 0.0
     else:
-        print(f"  WARNING: No optimized weights — using R19c fallback")
-        weights = {
-            "ewmac_8_32": 0.07, "ewmac_16_64": 0.09, "ewmac_64_256": 0.08,
-            "screener": 0.05, "momentum": 0.16, "mean_reversion": 0.13,
-            "penfold_trend": 0.12, "ehlers_dsp": 0.12, "acceleration": 0.04,
-            "carver_value": 0.07, "breakout": 0.07,
-        }
-
-    for sig in all_24:
-        if sig not in weights:
-            weights[sig] = 0.0
-    for fw in DEFAULT_FORECAST_WEIGHTS:
-        if fw.name in weights:
-            fw.weight = weights[fw.name]
+        print(f"  WARNING: No optimized weights — using DEFAULT_FORECAST_WEIGHTS (R21A)")
+        # DEFAULT_FORECAST_WEIGHTS already has R21A-optimized values
 
 
 def _set_contra_flags(bt_mod, dip_buyer: bool, profit_taker: bool, capital_rotation: bool = False):
@@ -579,12 +486,8 @@ def task_contra_all():
 # ───────────────────────────────────────────────────
 
 TASK_MAP = {
-    "r19c": task_r19c,
-    "r20a": task_r20a,
-    "r20b": task_r20b,
-    "r20c": task_r20c,
-    "r20d": task_r20d,
     "r21a": task_r21a,
+    "r22": task_r22,
     "extract": task_extract,
     "optimize": task_optimize,
     "pipeline": task_pipeline,

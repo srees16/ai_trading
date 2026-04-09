@@ -45,21 +45,20 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-# ── R19d/R19e/R19f/R19g/R19h regime mode flags (set by runners only) ──────
-_R19D_REGIME_MODE = False   # R19d: slow regime (SMA200 only)
-_R19E_REGIME_MODE = False   # R19e: fast regime (SMA50+momentum+vol_accel)
-_R19F_REGIME_MODE = False   # R19f: sigmoid blend (continuous vol scalar + equity DD)
-_R19G_REGIME_MODE = False   # R19g: sigmoid v2 (higher floors, gentler DD overlay)
-_R19H_REGIME_MODE = False   # R19h: R19c base + circuit breaker (binary crisis guard)
-_R20A_MAXDD_MODE = False    # R20a: Phase 1 MaxDD Kill — vol attenuation + sector caps + tight DD tiers
-_R20B_MAXDD_MODE = False    # R20b: Redesigned MaxDD — surgical guardrails on R19c base
-_R20C_MAXDD_MODE = False    # R20c: R19c + asymmetric vol boost (calm-only, never cuts)
-_R20D_HYBRID_MODE = False   # R20d: R20c + position floor (min 6) + tighter stops (8σ)
+# ── R21A active configuration ──────────────────────────────────────────
 _SAVE_FORECASTS_MODE = False  # R21a: save per-source forecasts for weight optimization
 _forecast_log: list = []      # accumulator: [(day_idx, {sym: {source: val}}, {sym: next_ret})]
 _R21A_REGIME_VOL = True       # R21a: regime-adaptive vol target (aggressive uptrend, defensive downtrend)
 _R21A_REGIME_BOOST = 1.25     # uptrend vol multiplier
 _R21A_REGIME_DEFEND = 0.55    # downtrend vol multiplier
+
+# ── R22: Bull-Run Capital Infusion (Centurion Compounder enhancement) ──
+# Optional: user injects fresh capital at confirmed bear→bull crossover
+# Strategy compounds normally even WITHOUT infusion — infusion is a booster
+_R22_BULL_INFUSION = False         # master toggle
+_R22_INFUSION_AMOUNT = 50_000.0    # fixed ₹ amount per infusion event
+_R22_INFUSION_COOLDOWN_DAYS = 200  # min trading days between infusions
+_R22_BULL_CONFIRM_DAYS = 5         # require N consecutive days above SMA200+2% to confirm bull
 
 # ── Centurion Harvest (CH) flags: profit booking in bull → reinvest in bear dips ──
 # V1: Bear dip-buyer — mean-reversion signals get 3.3× vol boost in downtrend
@@ -124,63 +123,6 @@ class BacktestResult:
     dm_bias_estimate: float = 0.0
     bootstrap_ci_sharpe: tuple = (0.0, 0.0)
 
-
-# ── R20a: Vol Attenuation (Carver 2021) ──────────────────────
-# L = 2 - 1.5*Q where Q = vol quantile (0-1).
-# High-vol regime → Q≈1 → L=0.5 (halve forecast)
-# Low-vol regime  → Q≈0 → L=2.0 (double forecast, but capped by ±20)
-# Smoothed with 10-day EMA to avoid whipsaw.
-
-def _compute_vol_quantile(close: 'pd.Series', lookback: int = 252) -> float:
-    """Compute vol quantile: where current 20-day realized vol sits in
-    the lookback-day distribution.  Returns 0.0 (lowest) to 1.0 (highest)."""
-    if len(close) < max(lookback, 25):
-        return 0.5  # neutral if insufficient data
-    rets = close.pct_change().dropna()
-    if len(rets) < lookback:
-        return 0.5
-    current_vol = float(rets.iloc[-20:].std()) * np.sqrt(252)
-    hist_vols = rets.rolling(20).std().dropna() * np.sqrt(252)
-    if len(hist_vols) < 50:
-        return 0.5
-    hist_vols_arr = hist_vols.iloc[-lookback:].values
-    quantile = float(np.searchsorted(np.sort(hist_vols_arr), current_vol) / len(hist_vols_arr))
-    return max(0.0, min(1.0, quantile))
-
-
-def _vol_attenuation_multiplier(vol_quantile: float) -> float:
-    """Carver vol attenuation: L = 2 - 1.5*Q, clamped [0.5, 2.0]."""
-    L = 2.0 - 1.5 * vol_quantile
-    return max(0.5, min(2.0, L))
-
-
-def _vol_boost_multiplier(vol_quantile: float) -> float:
-    """R20c asymmetric: boost in calm, floor at 1.0 (never reduce below R19c).
-    L = max(1.0, min(1.5, 2.0 - 1.5*Q))
-    Q=0.0 (dead calm) → L=1.5  (+50% position size)
-    Q=0.5 (median)    → L=1.25 (+25%)
-    Q≥0.67            → L=1.0  (pure R19c — DD tiers handle crisis)
-    """
-    L = 2.0 - 1.5 * vol_quantile
-    return max(1.0, min(1.5, L))
-
-
-# ── R20a: Sector map loader ──────────────────────────────────
-_SECTOR_MAP: Optional[Dict[str, str]] = None
-
-def _load_sector_map() -> Dict[str, str]:
-    """Load NSE sector map from data/nse_sector_map.json."""
-    global _SECTOR_MAP
-    if _SECTOR_MAP is not None:
-        return _SECTOR_MAP
-    _map_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'nse_sector_map.json')
-    try:
-        import json
-        with open(_map_path, 'r') as f:
-            _SECTOR_MAP = json.load(f)
-    except Exception:
-        _SECTOR_MAP = {}
-    return _SECTOR_MAP
 
 
 # ── Helpers ───────────────────────────────────────────────────
@@ -536,6 +478,14 @@ def run_full_backtest(
     _cr_book_events: list = []        # log: [(day_idx, amount, equity_before, equity_after)]
     _cr_base_capital = capital         # original starting capital (for injection sizing)
 
+    # R22: Bull-run capital infusion state (Centurion Compounder)
+    _r22_was_bear = False              # was equity in bear regime (< SMA200*0.98) ?
+    _r22_bull_streak = 0               # consecutive days in bull regime (> SMA200*1.02)
+    _r22_last_infusion_day = -9999     # day_idx of last infusion
+    _r22_total_infused = 0.0           # cumulative fresh capital infused
+    _r22_infusion_events: list = []    # log: [(day_idx, amount, equity_before, equity_after)]
+    _r22_alert_events: list = []       # log: [(day_idx, date_str)] — when alert was generated (even if not infused)
+
     # FIX-DD-v2: Smooth continuous drawdown scaling (no force-liquidation)
     # Force-liquidation at bottoms caused whipsaw death spiral (-60% in bull market).
     # New approach: smooth scale-down curve, let trailing stops handle exits organically.
@@ -547,24 +497,6 @@ def run_full_backtest(
     # R13: Bear lockout REMOVED — binary exit/re-enter causes whipsaw in all variants
     # R11 (return-based) and R12 (vol-based) both destroyed equity via whipsaw.
     # R13 uses dynamic vol target (Fix C) instead — continuous, no churn.
-
-    # R20a: Vol attenuation EMA cache (sym → smoothed L multiplier)
-    _vol_atten_cache: Dict[str, float] = {}
-
-    # R20a: Sector map (loaded once)
-    _sector_map = _load_sector_map() if _R20A_MAXDD_MODE else {}
-    _R20A_MAX_SECTOR_EXPOSURE_PCT = 0.30   # max 30% notional in any one sector
-    _R20A_MAX_PER_SECTOR = 3               # max 3 positions per sector
-
-    # R20b: Sector map + config (loaded once)
-    _sector_map_b = _load_sector_map() if _R20B_MAXDD_MODE else {}
-    _R20B_MAX_SECTOR_PCT = 0.35            # 35% max per sector (less aggressive than R20a)
-    _R20B_MAX_PER_SECTOR = 4               # 4 positions per sector (India has concentrated sectors)
-
-    # R20b: Peak decay overrides — faster escape from DD traps
-    if _R20B_MAXDD_MODE:
-        PEAK_DECAY_GRACE_DAYS = 30   # 30 days (vs R19c's 60) — escape sooner
-        PEAK_DECAY_RATE = 0.02       # 2%/day (vs R19c's 1%) — blend faster
 
     # ── Pre-fetch dividend yields for carry (one-time) ─────────
     dividend_yields: Dict[str, float] = {}
@@ -665,36 +597,6 @@ def run_full_backtest(
 
     _consecutive_day_errors = 0
     _MAX_CONSECUTIVE_ERRORS = 10  # abort if 10+ days crash in a row
-
-    # R19d/R19e/R19f/R19g: Initialize default regime state (overwritten on first loop iteration)
-    if _R19D_REGIME_MODE or _R19E_REGIME_MODE or _R19F_REGIME_MODE or _R19G_REGIME_MODE:
-        from services.regime_detector import BacktestRegime, BacktestRegimeState
-        if _R19G_REGIME_MODE:
-            _init_vol = 0.60
-            _init_stop = 8.0
-        elif _R19E_REGIME_MODE or _R19F_REGIME_MODE:
-            _init_vol = 0.55
-            _init_stop = 5.0
-        else:
-            _init_vol = 0.65
-            _init_stop = 7.0
-        _current_regime_state = BacktestRegimeState(
-            regime=BacktestRegime.NEUTRAL,
-            vol_target=_init_vol,
-            stop_sigma=_init_stop,
-            index_above_sma200=True,
-            realized_vol_pct=20.0,
-            breadth_pct=0.50,
-            sma200_distance_pct=0.0,
-        )
-        if verbose:
-            _mode = 'R19g SIGMOIDv2' if _R19G_REGIME_MODE else ('R19f SIGMOID' if _R19F_REGIME_MODE else ('R19e FAST' if _R19E_REGIME_MODE else 'R19d'))
-            print(f"\n  {_mode} REGIME MODE: ON", flush=True)
-
-    # R19h: Circuit breaker state (init OFF — uses R19c base until crisis detected)
-    _circuit_breaker_active = False
-    if _R19H_REGIME_MODE and verbose:
-        print("\n  R19h HYBRID MODE: R19c base + circuit breaker guard", flush=True)
 
     for day_idx in range(_start_day_idx, n_days):
       try:
@@ -1080,80 +982,17 @@ def run_full_backtest(
         # R13: NO DD SCALING — replaced with dynamic vol target (Fix C)
         dd_scale = 1.0
 
-        if _R19D_REGIME_MODE or _R19E_REGIME_MODE or _R19F_REGIME_MODE or _R19G_REGIME_MODE:
-            # ── Regime-based vol target ───
-            # R19g/R19f: re-detect every 3 days (sigmoid is cheaper, more responsive)
-            # R19d/R19e: re-detect every 5 days
-            _recheck_interval = 3 if (_R19F_REGIME_MODE or _R19G_REGIME_MODE) else 5
-            if day_idx == _start_day_idx or (day_idx - _start_day_idx) % _recheck_interval == 0:
-                if _R19G_REGIME_MODE:
-                    from services.regime_detector import detect_backtest_regime_sigmoid_v2
-                    _current_regime_state = detect_backtest_regime_sigmoid_v2(
-                        ohlcv_slice, day_idx, equity_dd_pct=current_dd)
-                elif _R19F_REGIME_MODE:
-                    from services.regime_detector import detect_backtest_regime_sigmoid
-                    _current_regime_state = detect_backtest_regime_sigmoid(
-                        ohlcv_slice, day_idx, equity_dd_pct=current_dd)
-                elif _R19E_REGIME_MODE:
-                    from services.regime_detector import detect_backtest_regime_fast
-                    _current_regime_state = detect_backtest_regime_fast(ohlcv_slice, day_idx)
-                else:
-                    from services.regime_detector import detect_backtest_regime
-                    _current_regime_state = detect_backtest_regime(ohlcv_slice, day_idx)
-                if verbose and (day_idx - min_history) % 50 == 0:
-                    rs = _current_regime_state
-                    print(f"    regime={rs.regime.value}  vol_tgt={rs.vol_target:.2f}  "
-                          f"stop_σ={rs.stop_sigma:.1f}  sma_dist={rs.sma200_distance_pct:+.1f}%  "
-                          f"rvol={rs.realized_vol_pct:.1f}%  breadth={rs.breadth_pct:.0%}"
-                          f"  eq_dd={current_dd:.1%}" if (_R19F_REGIME_MODE or _R19G_REGIME_MODE) else "", flush=True)
-            annual_vol_target = _current_regime_state.vol_target
-        elif _R20A_MAXDD_MODE:
-            # R20a: Tightened DD vol tiers — kick in earlier, cut harder
-            # Old R19c tiers started at 10% and floored at 0.40.
-            # R20a starts at 5% DD and floors at 0.20 (aggressive de-risk).
-            if current_dd < 0.05:
-                annual_vol_target = 0.65   # Full risk (slightly lower baseline)
-            elif current_dd < 0.10:
-                annual_vol_target = 0.55   # Early pullback — cut early
-            elif current_dd < 0.15:
-                annual_vol_target = 0.45   # Moderate DD — meaningful cut
-            elif current_dd < 0.25:
-                annual_vol_target = 0.35   # Severe DD — aggressive reduction
-            else:
-                annual_vol_target = 0.20   # Extreme DD — survival mode
+        # R14: 5-tier step function — dynamic vol target based on DD depth
+        if current_dd < 0.10:
+            annual_vol_target = 0.75   # Full risk — no DD
+        elif current_dd < 0.20:
+            annual_vol_target = 0.65   # Mild pullback — slight reduction
+        elif current_dd < 0.30:
+            annual_vol_target = 0.55   # Moderate DD — meaningful reduction
+        elif current_dd < 0.40:
+            annual_vol_target = 0.45   # Severe DD — significant reduction
         else:
-            # R14: 5-tier step function — dynamic vol target based on DD depth
-            if current_dd < 0.10:
-                annual_vol_target = 0.75   # Full risk — no DD
-            elif current_dd < 0.20:
-                annual_vol_target = 0.65   # Mild pullback — slight reduction
-            elif current_dd < 0.30:
-                annual_vol_target = 0.55   # Moderate DD — meaningful reduction
-            elif current_dd < 0.40:
-                annual_vol_target = 0.45   # Severe DD — significant reduction
-            else:
-                annual_vol_target = 0.40   # Extreme DD — floor (never go to zero)
-
-            # R19h: Circuit breaker — binary crisis guard on top of R19c base
-            # Only fires when ALL 4 market features are severely negative (sig < 0.15)
-            # Applies a 15% vol reduction. No stop tightening. No continuous scaling.
-            if _R19H_REGIME_MODE:
-                _cb_interval = 5  # recheck every 5 days
-                if day_idx == _start_day_idx or (day_idx - _start_day_idx) % _cb_interval == 0:
-                    from services.regime_detector import detect_backtest_regime_sigmoid_v2
-                    _cb_state = detect_backtest_regime_sigmoid_v2(
-                        ohlcv_slice, day_idx, equity_dd_pct=0.0)  # NO equity DD pass-through
-                    _circuit_breaker_active = (_cb_state.regime.value == "CRISIS")
-                    if verbose and (day_idx - min_history) % 50 == 0:
-                        _cb_label = "TRIPPED" if _circuit_breaker_active else "OK"
-                        print(f"    circuit_breaker={_cb_label}  "
-                              f"sma_dist={_cb_state.sma200_distance_pct:+.1f}%  "
-                              f"rvol={_cb_state.realized_vol_pct:.1f}%  "
-                              f"breadth={_cb_state.breadth_pct:.0%}  "
-                              f"vol_tgt_base={annual_vol_target:.2f}  "
-                              f"eq_dd={current_dd:.1%}", flush=True)
-                if _circuit_breaker_active:
-                    annual_vol_target *= 0.85  # 15% reduction — gentle, not catastrophic
+            annual_vol_target = 0.40   # Extreme DD — floor (never go to zero)
 
         # FIX-FLOOR: Use actual equity for daily target
         sizing_equity = max(equity, capital * 0.10)  # 10% ruin floor
@@ -1223,6 +1062,65 @@ def run_full_backtest(
 
             _cr_prev_below_sma = _cr_currently_below
 
+        # ── R22: Bull-Run Capital Infusion (Centurion Compounder) ──
+        # Detects confirmed bear→bull regime transition and either:
+        #   (a) infuses fresh capital if _R22_BULL_INFUSION=True, or
+        #   (b) logs an alert event so the UI/email can notify the user
+        # Compounding continues normally regardless of infusion.
+        if len(daily_equity) >= 200:
+            _r22_sma200 = sum(daily_equity[-200:]) / 200.0
+            _r22_in_bear = (equity < _r22_sma200 * 0.98)
+            _r22_in_bull = (equity > _r22_sma200 * 1.02)
+            _trading_day_num_r22 = day_idx - min_history
+
+            if _r22_in_bear:
+                _r22_was_bear = True
+                _r22_bull_streak = 0
+            elif _r22_in_bull:
+                _r22_bull_streak += 1
+            else:
+                _r22_bull_streak = 0  # neutral zone → reset
+
+            # Confirmed bull: was in bear, now N consecutive bull days
+            if (_r22_was_bear and _r22_bull_streak >= _R22_BULL_CONFIRM_DAYS
+                    and _r22_bull_streak == _R22_BULL_CONFIRM_DAYS):
+                _r22_was_bear = False  # reset so we don't re-trigger until next bear
+                _days_since_r22 = day_idx - _r22_last_infusion_day
+
+                # Always log alert (for UI/email notification)
+                _r22_date_str = ""
+                try:
+                    _r22_date_str = ohlcv_slice[symbols[0]]["Close"].index[day_idx].strftime("%Y-%m-%d")
+                except Exception:
+                    _r22_date_str = f"Day {_trading_day_num_r22}"
+                _r22_alert_events.append((_trading_day_num_r22, _r22_date_str))
+
+                if verbose:
+                    print(f"  ★ BULL CONFIRMED Day {_trading_day_num_r22} ({_r22_date_str}): "
+                          f"equity ₹{equity:,.0f} > SMA200 ₹{_r22_sma200:,.0f} "
+                          f"for {_R22_BULL_CONFIRM_DAYS} consecutive days", flush=True)
+
+                # Infuse capital if enabled and cooldown satisfied
+                if (_R22_BULL_INFUSION
+                        and _days_since_r22 >= _R22_INFUSION_COOLDOWN_DAYS):
+                    _r22_eq_before = equity
+                    equity += _R22_INFUSION_AMOUNT
+                    capital += _R22_INFUSION_AMOUNT
+                    _r22_total_infused += _R22_INFUSION_AMOUNT
+                    _r22_last_infusion_day = day_idx
+                    _r22_infusion_events.append((
+                        _trading_day_num_r22, _R22_INFUSION_AMOUNT,
+                        _r22_eq_before, equity,
+                    ))
+                    # Recalculate sizing with new capital
+                    sizing_equity = max(equity, capital * 0.10)
+                    dynamic_daily_target = sizing_equity * annual_vol_target / 16.0
+                    if verbose:
+                        print(f"  💰 CAPITAL INFUSION Day {_trading_day_num_r22}: "
+                              f"+₹{_R22_INFUSION_AMOUNT:,.0f} | "
+                              f"equity ₹{_r22_eq_before:,.0f} → ₹{equity:,.0f} | "
+                              f"total infused: ₹{_r22_total_infused:,.0f}", flush=True)
+
         # Tick down stop cooldowns
         for sym in list(stop_cooldown.keys()):
             stop_cooldown[sym] -= 1
@@ -1236,48 +1134,6 @@ def run_full_backtest(
         # When signals are weak (avg < 3), hold few (6 positions).
         # This prevents over-deployment in low-conviction regimes without binary exit.
         
-        # R20a/R20b: Pre-compute vol attenuation multipliers (smoothed)
-        if (_R20A_MAXDD_MODE or _R20B_MAXDD_MODE) and _recompute:
-            for sym in symbols:
-                if sym not in ohlcv_slice:
-                    continue
-                c = ohlcv_slice[sym]["Close"]
-                if hasattr(c, "squeeze"):
-                    c = c.squeeze()
-                if len(c) < 50:
-                    continue
-                q = _compute_vol_quantile(c.dropna())
-                raw_L = _vol_attenuation_multiplier(q)
-                # 10-day EMA smoothing to prevent whipsaw
-                prev_L = _vol_atten_cache.get(sym, 1.0)
-                alpha = 2.0 / (10.0 + 1.0)  # EMA(10) decay
-                smoothed_L = alpha * raw_L + (1.0 - alpha) * prev_L
-                _vol_atten_cache[sym] = smoothed_L
-
-        # R20c: Asymmetric vol boost — only increases position size in calm markets
-        # Uses _vol_boost_multiplier (floor=1.0, cap=1.5) with asymmetric EMA:
-        #   fast decay toward 1.0 (α=0.3, ~6-day HL) — protection deploys quickly
-        #   slow ramp up (α=0.1, ~20-day HL) — boosting builds gradually
-        if _R20C_MAXDD_MODE and _recompute:
-            for sym in symbols:
-                if sym not in ohlcv_slice:
-                    continue
-                c = ohlcv_slice[sym]["Close"]
-                if hasattr(c, "squeeze"):
-                    c = c.squeeze()
-                if len(c) < 50:
-                    continue
-                q = _compute_vol_quantile(c.dropna())
-                raw_L = _vol_boost_multiplier(q)
-                prev_L = _vol_atten_cache.get(sym, 1.0)
-                # Asymmetric EMA: fast down, slow up
-                if raw_L < prev_L:
-                    alpha = 0.3   # fast decay to floor (~6-day half-life)
-                else:
-                    alpha = 0.1   # slow ramp up (~20-day half-life)
-                smoothed_L = alpha * raw_L + (1.0 - alpha) * prev_L
-                _vol_atten_cache[sym] = smoothed_L
-
         # Pre-compute combined forecasts for ALL symbols, then rank
         _all_combined: Dict[str, float] = {}
         for sym, fc_dict in all_forecasts.items():
@@ -1285,10 +1141,6 @@ def run_full_backtest(
                 continue
             combined = combine_forecasts(sym, fc_dict, active_weights)
             fc_val = combined.combined_forecast
-            # R20a: Apply vol attenuation to combined forecast
-            if _R20A_MAXDD_MODE:
-                va_mult = _vol_atten_cache.get(sym, 1.0)
-                fc_val = max(-20.0, min(20.0, fc_val * va_mult))
             _all_combined[sym] = fc_val
 
         # R21a: Save per-source forecasts + close prices for weight optimization
@@ -1433,19 +1285,6 @@ def run_full_backtest(
                 vol_scalar = _sym_daily_target / ivv
                 position = (forecast / 10.0) * vol_scalar * weight_per_sym * idm
 
-                # R20b: Vol attenuation at position sizing level
-                # Apply L multiplier to position SIZE, not forecast.
-                # This preserves forecast ranking while reducing exposure in high-vol.
-                if _R20B_MAXDD_MODE:
-                    va_mult = _vol_atten_cache.get(sym, 1.0)
-                    position *= va_mult
-
-                # R20c: Asymmetric vol boost at position level
-                # L >= 1.0 always — boosts in calm, never reduces below R19c
-                if _R20C_MAXDD_MODE:
-                    va_mult = _vol_atten_cache.get(sym, 1.0)
-                    position *= va_mult
-
                 # R13: NO REGIME SCALING — regime-agnostic position sizing
                 # Dynamic vol target (Fix C) handles risk continuously.
                 # No binary regime multipliers — those caused R4-R11 whipsaw.
@@ -1474,8 +1313,8 @@ def run_full_backtest(
                 prev_qty = prev_positions.get(sym, 0)
                 delta = abs(target_qty - prev_qty)
                 if delta > 0:
-                    # R14 baseline: Inertia 10% (R20b: 15% to reduce churn)
-                    _inertia_pct = 0.15 if _R20B_MAXDD_MODE else 0.10
+                    # R14 baseline: Inertia 10%
+                    _inertia_pct = 0.10
                     if abs(prev_qty) > 0 and delta / abs(prev_qty) < _inertia_pct:
                         target_qty = prev_qty
                     else:
@@ -1503,13 +1342,8 @@ def run_full_backtest(
 
                 prev_positions[sym] = target_qty
 
-                # R14 baseline: 10σ stops — adaptive in regime mode
-                if _R19D_REGIME_MODE or _R19E_REGIME_MODE or _R19F_REGIME_MODE or _R19G_REGIME_MODE:
-                    stop_sigma = _current_regime_state.stop_sigma
-                elif _R20D_HYBRID_MODE:
-                    stop_sigma = 8.0   # R20d: tighter stops — clip tail losses 20%
-                else:
-                    stop_sigma = 10.0
+                # R14 baseline: 10σ stops
+                stop_sigma = 10.0
 
                 # V2: Bull profit-taker — tighter stops in uptrend to book profits
                 if _HARVEST_PROFIT_TAKER and len(daily_equity) >= 200:
@@ -1537,124 +1371,6 @@ def run_full_backtest(
 
         daily_position_counts.append(active_count)
 
-        # R20d: Position count floor — guarantee minimum diversification
-        # When natural sizing produces fewer than MIN_POSITIONS active positions,
-        # fill the gap with the strongest-conviction unfilled stocks using the
-        # existing risk budget.  Never forces entry on |forecast| < 2.0 stocks.
-        _R20D_MIN_POSITIONS = 6
-        if _R20D_HYBRID_MODE and active_count < _R20D_MIN_POSITIONS:
-            # Find unfilled stocks with viable conviction, sorted by strength
-            _unfilled_viable = []
-            for _uf_sym, _uf_fc in _ranked:
-                if abs(_uf_fc) < 2.0:
-                    break  # _ranked is sorted by abs(fc) descending; rest are weaker
-                if prev_positions.get(_uf_sym, 0) != 0:
-                    continue  # already has a position
-                if _uf_sym in stop_cooldown:
-                    continue  # recently stopped out
-                if _uf_sym not in ohlcv_slice:
-                    continue
-                _unfilled_viable.append((_uf_sym, _uf_fc))
-
-            _slots_needed = _R20D_MIN_POSITIONS - active_count
-            for _uf_sym, _uf_fc in _unfilled_viable[:_slots_needed]:
-                # Size using the same formula as the main sizing loop
-                _uf_c = ohlcv_slice[_uf_sym]["Close"]
-                if hasattr(_uf_c, "squeeze"):
-                    _uf_c = _uf_c.squeeze()
-                _uf_close = _uf_c.dropna()
-                if len(_uf_close) < 50:
-                    continue
-                _uf_price = float(_uf_close.iloc[-1])
-                if not np.isfinite(_uf_price) or _uf_price <= 0:
-                    continue
-                _uf_dpv = daily_price_volatility(_uf_close)
-                if not np.isfinite(_uf_dpv) or _uf_dpv <= 0:
-                    _uf_dpv = 0.02
-                _uf_ivv = _uf_price * _uf_dpv
-                if _uf_ivv <= 0 or dynamic_daily_target <= 0:
-                    continue
-                _uf_vol_scalar = dynamic_daily_target / _uf_ivv
-                _uf_n_inv = max(n_investable, _R20D_MIN_POSITIONS)
-                _uf_weight = 1.0 / _uf_n_inv
-                _uf_position = (_uf_fc / 10.0) * _uf_vol_scalar * _uf_weight * idm
-                # Apply R20c vol boost if active
-                if _R20C_MAXDD_MODE:
-                    _uf_va = _vol_atten_cache.get(_uf_sym, 1.0)
-                    _uf_position *= _uf_va
-                _uf_qty = round(_uf_position)
-                if _uf_qty == 0:
-                    continue
-                # Guard: long-only
-                if not allow_short and _uf_qty < 0:
-                    continue
-                # Per-symbol leverage cap
-                _uf_max_notional = abs(equity) * max_leverage / _uf_n_inv
-                if abs(_uf_qty) * _uf_price > _uf_max_notional:
-                    _uf_qty = int(_uf_max_notional / _uf_price)
-                    if _uf_qty == 0:
-                        continue
-                # Execute: cost + tracking
-                _uf_cost = abs(_uf_qty) * _uf_price * cost_pct
-                day_pnl -= _uf_cost
-                trades_count += 1
-                entry_prices[_uf_sym] = _uf_price
-                prev_positions[_uf_sym] = _uf_qty
-                active_count += 1
-                # Set trailing stop
-                _uf_stop_sigma = 8.0  # R20d tighter stops
-                peak_prices[_uf_sym] = _uf_price
-                _uf_stop_dist = _uf_stop_sigma * _uf_dpv * _uf_price
-                stop_levels[_uf_sym] = _uf_price - _uf_stop_dist
-
-        # R20a: Sector concentration enforcement
-        # After all positions are sized, cap per-sector exposure at 30% / 3 positions
-        if _R20A_MAXDD_MODE and _sector_map:
-            # Build per-symbol notional and sector buckets
-            _sector_exposure: Dict[str, float] = defaultdict(float)  # sector → total notional
-            _sector_count: Dict[str, int] = defaultdict(int)         # sector → position count
-            _sym_notional: Dict[str, float] = {}
-            _sym_sector: Dict[str, str] = {}
-            for sym, qty in prev_positions.items():
-                if qty == 0 or sym not in ohlcv_slice:
-                    continue
-                c = ohlcv_slice[sym]["Close"]
-                if hasattr(c, "squeeze"):
-                    c = c.squeeze()
-                p = float(c.dropna().iloc[-1]) if len(c.dropna()) > 0 else 0
-                notional = abs(qty) * p
-                # Strip .NS suffix for sector lookup
-                bare = sym.replace('.NS', '').replace('.BO', '')
-                sector = _sector_map.get(bare, "Unknown")
-                _sym_notional[sym] = notional
-                _sym_sector[sym] = sector
-                _sector_exposure[sector] += notional
-                _sector_count[sector] += 1
-
-            _portfolio_notional = sum(_sym_notional.values())
-            if _portfolio_notional > 0:
-                for sector in list(_sector_exposure.keys()):
-                    sector_pct = _sector_exposure[sector] / _portfolio_notional
-                    # If sector > 30% or > 3 positions, scale down the WEAKEST forecasts in that sector
-                    if sector_pct > _R20A_MAX_SECTOR_EXPOSURE_PCT or _sector_count[sector] > _R20A_MAX_PER_SECTOR:
-                        # Collect all syms in this sector, sorted by forecast strength (weakest first)
-                        _sector_syms = [(sym, abs(_all_combined.get(sym, 0)))
-                                        for sym, s in _sym_sector.items() if s == sector and prev_positions.get(sym, 0) != 0]
-                        _sector_syms.sort(key=lambda x: x[1])  # weakest first
-                        # Kill weakest positions until within limits
-                        while (_sector_count[sector] > _R20A_MAX_PER_SECTOR or
-                               (_sector_exposure[sector] / max(_portfolio_notional, 1) > _R20A_MAX_SECTOR_EXPOSURE_PCT)):
-                            if not _sector_syms:
-                                break
-                            kill_sym, _ = _sector_syms.pop(0)
-                            kill_notional = _sym_notional.get(kill_sym, 0)
-                            prev_positions[kill_sym] = 0
-                            peak_prices.pop(kill_sym, None)
-                            stop_levels.pop(kill_sym, None)
-                            _sector_exposure[sector] -= kill_notional
-                            _sector_count[sector] -= 1
-                            _portfolio_notional -= kill_notional
-
         # FIX-LEV: Portfolio-wide leverage cap enforcement
         # Sum of all |position × price| must not exceed equity × max_leverage
         total_exposure = 0.0
@@ -1672,63 +1388,6 @@ def run_full_backtest(
             for sym in list(prev_positions.keys()):
                 if prev_positions[sym] != 0:
                     prev_positions[sym] = round(prev_positions[sym] * scale_down)
-
-        # R20a: Simplified Risk Overlay (Carver 2020)
-        # If gross exposure exceeds 2× the vol-target-implied risk budget,
-        # proportionally scale ALL positions down.  This catches correlation
-        # spikes where diversification benefit collapses.
-        if _R20A_MAXDD_MODE:
-            _target_notional = sizing_equity * annual_vol_target / 0.16  # annualized target risk in notional
-            _risk_cap = 2.0 * _target_notional  # worst-case: 2× target risk
-            if total_exposure > _risk_cap and total_exposure > 0:
-                _risk_scale = _risk_cap / total_exposure
-                for sym in list(prev_positions.keys()):
-                    if prev_positions[sym] != 0:
-                        prev_positions[sym] = round(prev_positions[sym] * _risk_scale)
-
-        # R20b: Sector concentration — SCALE DOWN, never kill
-        # After leverage cap, proportionally reduce over-concentrated sectors
-        if _R20B_MAXDD_MODE and _sector_map_b:
-            _sb_exposure: Dict[str, float] = defaultdict(float)
-            _sb_count: Dict[str, int] = defaultdict(int)
-            _sb_sym_sector: Dict[str, str] = {}
-            _sb_sym_notional: Dict[str, float] = {}
-            for sym, qty in prev_positions.items():
-                if qty == 0 or sym not in ohlcv_slice:
-                    continue
-                c = ohlcv_slice[sym]["Close"]
-                if hasattr(c, "squeeze"):
-                    c = c.squeeze()
-                p = float(c.dropna().iloc[-1]) if len(c.dropna()) > 0 else 0
-                notional = abs(qty) * p
-                bare = sym.replace('.NS', '').replace('.BO', '')
-                sector = _sector_map_b.get(bare, "Unknown")
-                _sb_sym_sector[sym] = sector
-                _sb_sym_notional[sym] = notional
-                _sb_exposure[sector] += notional
-                _sb_count[sector] += 1
-            _sb_total = sum(_sb_sym_notional.values())
-            if _sb_total > 0:
-                for sector in list(_sb_exposure.keys()):
-                    sector_pct = _sb_exposure[sector] / _sb_total
-                    if sector_pct > _R20B_MAX_SECTOR_PCT:
-                        # Scale all positions in this sector proportionally
-                        _scale = _R20B_MAX_SECTOR_PCT / sector_pct
-                        for sym, s in _sb_sym_sector.items():
-                            if s == sector and prev_positions.get(sym, 0) != 0:
-                                prev_positions[sym] = max(1, round(prev_positions[sym] * _scale))
-
-        # R20b: Risk overlay — only at EXTREME (3× target, not 2×)
-        # Uses FULL vol target (0.75 baseline) for risk budget, not the DD-reduced one
-        if _R20B_MAXDD_MODE:
-            _base_vol_target = 0.75  # R19c's full-risk baseline
-            _target_notional_b = sizing_equity * _base_vol_target / 0.16
-            _risk_cap_b = 3.0 * _target_notional_b  # 3× target (lenient, only catches extreme)
-            if total_exposure > _risk_cap_b and total_exposure > 0:
-                _risk_scale_b = _risk_cap_b / total_exposure
-                for sym in list(prev_positions.keys()):
-                    if prev_positions[sym] != 0:
-                        prev_positions[sym] = round(prev_positions[sym] * _risk_scale_b)
 
         # ── 4. Update equity ───────────────────────────────────
         if not np.isfinite(day_pnl):
@@ -2054,6 +1713,29 @@ def run_full_backtest(
             for _ev in _cr_book_events:
                 lines.append(f"    Day {_ev[0]:4d}: -₹{_ev[1]:,.0f}  (equity ₹{_ev[2]:,.0f} → ₹{_ev[3]:,.0f})")
 
+    # R22: Bull-run capital infusion summary
+    if _r22_alert_events or _r22_infusion_events:
+        lines.append(f"")
+        lines.append(f"  {'─'*40}")
+        lines.append(f"  R22 — Bull-Run Capital Infusion (Centurion Compounder):")
+        lines.append(f"  Infusion Enabled:  {'YES' if _R22_BULL_INFUSION else 'NO (alerts only)'}")
+        lines.append(f"  Bull Alerts:       {len(_r22_alert_events):>12d}")
+        lines.append(f"  Total Infused:     ₹{_r22_total_infused:>12,.0f}  ({len(_r22_infusion_events)} events)")
+        if _r22_total_infused > 0:
+            _r22_orig_capital = capital - _r22_total_infused
+            _r22_adj_equity = equity - _r22_total_infused
+            _r22_adj_ret = (_r22_adj_equity / _r22_orig_capital - 1) * 100 if _r22_orig_capital > 0 else 0
+            lines.append(f"  Adj. Total Return: {_r22_adj_ret:>11.1f}%  (excl. infusions — organic compounding)")
+        if _r22_alert_events:
+            lines.append(f"  Bull Confirmation Alerts:")
+            for _ev in _r22_alert_events:
+                _infused_tag = ""
+                for _ie in _r22_infusion_events:
+                    if _ie[0] == _ev[0]:
+                        _infused_tag = f"  → INFUSED +₹{_ie[1]:,.0f}"
+                        break
+                lines.append(f"    Day {_ev[0]:4d} ({_ev[1]}){_infused_tag}")
+
     # Aronson EBTA enrichment
     if result.detrended_sharpe or result.trimmed_sharpe:
         lines.append(f"")
@@ -2104,6 +1786,16 @@ def run_full_backtest(
             "inject_events": _cr_inject_events,
             "book_events": _cr_book_events,
         } if _HARVEST_ENABLED else None,
+        # R22: Bull-run capital infusion
+        "r22_bull_infusion": {
+            "enabled": _R22_BULL_INFUSION,
+            "infusion_amount": _R22_INFUSION_AMOUNT,
+            "total_infused": _r22_total_infused,
+            "infusion_events": _r22_infusion_events,   # [(day, amount, eq_before, eq_after)]
+            "alert_events": _r22_alert_events,           # [(day, date_str)]
+            "n_alerts": len(_r22_alert_events),
+            "n_infusions": len(_r22_infusion_events),
+        } if (_r22_alert_events or _R22_BULL_INFUSION) else None,
     }
 
 

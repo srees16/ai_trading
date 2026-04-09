@@ -1,7 +1,7 @@
 """
 R21a Phase 1 — Extract per-source forecasts for weight optimization.
 
-Runs a full R19c-config backtest with _SAVE_FORECASTS_MODE=True.
+Runs a full backtest with _SAVE_FORECASTS_MODE=True using R21A config.
 Saves daily per-source per-symbol forecasts + close prices + vols
 to data/extracted_forecasts.pkl (~5 hours).
 
@@ -29,58 +29,18 @@ _CHECKPOINT = os.path.join(_root, "data", "backtest_checkpoint_extract.pkl")
 def main():
     from services.forecast_combiner import DEFAULT_FORECAST_WEIGHTS
 
-    # ── R19c signal weights (baseline) ────
-    _R19C_WEIGHTS = {
-        "ewmac_8_32":       0.07,
-        "ewmac_16_64":      0.09,
-        "ewmac_32_128":     0.00,
-        "ewmac_64_256":     0.08,
-        "carry":            0.00,
-        "screener":         0.05,
-        "momentum":         0.16,
-        "pead":             0.00,
-        "mean_reversion":   0.13,
-        "fii_flow":         0.00,
-        "decision_engine":  0.00,
-        "oi_signal":        0.00,
-        "cross_momentum":   0.00,
-        "pairs_arb":        0.00,
-        "event_driven":     0.00,
-        "penfold_trend":    0.12,
-        "ehlers_dsp":       0.12,
-        "intermarket":      0.00,
-        "acceleration":     0.04,
-        "carver_value":     0.07,
-        "skew_signal":      0.00,
-        "sentiment":        0.00,
-        "breakout":         0.07,
-        "order_flow":       0.00,
-    }
-    for fw in DEFAULT_FORECAST_WEIGHTS:
-        if fw.name in _R19C_WEIGHTS:
-            fw.weight = _R19C_WEIGHTS[fw.name]
+    # Use DEFAULT_FORECAST_WEIGHTS as-is (R21A-optimized)
 
     # ── Enable forecast extraction ────
     import services.full_pipeline_backtest as bt_mod
 
     os.environ["CENTURION_BT_CHECKPOINT"] = _CHECKPOINT
     bt_mod._SAVE_FORECASTS_MODE = True
-    # Pure R19c — all R20 modes OFF
-    bt_mod._R20A_MAXDD_MODE = False
-    bt_mod._R20B_MAXDD_MODE = False
-    bt_mod._R20C_MAXDD_MODE = False
-    bt_mod._R20D_HYBRID_MODE = False
-    bt_mod._R19D_REGIME_MODE = False
-    bt_mod._R19E_REGIME_MODE = False
-    bt_mod._R19F_REGIME_MODE = False
-    bt_mod._R19G_REGIME_MODE = False
-    bt_mod._R19H_REGIME_MODE = False
-    # Clear any prior log
     bt_mod._forecast_log.clear()
 
     print("=" * 70)
     print("  R21a Phase 1 — Forecast Extraction")
-    print("  Config: R19c weights (baseline)")
+    print("  Config: R21A weights (DEFAULT_FORECAST_WEIGHTS)")
     print("  Saving per-source forecasts + prices + vols")
     print(f"  Output: {_OUTPUT_PATH}")
     print("=" * 70)
@@ -101,7 +61,7 @@ def main():
 
     payload = {
         "log": log,  # list of (day_idx, date_str, {sym: {src: val}}, {sym: price}, {sym: vol})
-        "r19c_result": {
+        "extraction_result": {
             k: result.get(k)
             for k in ["sharpe", "sortino", "calmar", "max_drawdown_pct",
                        "annual_return_pct", "total_return_pct", "n_trades"]
@@ -112,7 +72,7 @@ def main():
 
     sz_mb = os.path.getsize(_OUTPUT_PATH) / 1e6
     print(f"  Saved to {_OUTPUT_PATH} ({sz_mb:.1f} MB)")
-    print(f"  R19c baseline: Sharpe={result.get('sharpe'):.3f}  CAGR={result.get('annual_return_pct'):.1f}%")
+    print(f"  Extraction baseline: Sharpe={result.get('sharpe'):.3f}  CAGR={result.get('annual_return_pct'):.1f}%")
 
 
 if __name__ == "__main__":

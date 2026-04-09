@@ -759,3 +759,72 @@ class NotificationManager:
         status = "READY" if all_pass else "NOT YET"
         subject = f"{emoji} Centurion Go-Live: {status} — Sharpe {dash.sharpe_ratio:.2f}, WR {dash.win_rate:.0%}"
         return self._send_html_email(subject, html)
+
+    # ── R22: Bull-Run Capital Infusion Alert ─────────────────────────
+
+    def email_bull_run_alert(
+        self,
+        date_str: str,
+        equity: float,
+        sma200: float,
+        suggested_amount: float = 50_000.0,
+        recipients: list = None,
+    ) -> bool:
+        """Send email alert when a bear→bull regime transition is confirmed.
+
+        Called when equity crosses above SMA200+2% for N consecutive days
+        after being in bear territory, signalling an opportunity to infuse
+        fresh capital into Centurion Compounder.
+        """
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        pct_above = ((equity / sma200) - 1) * 100 if sma200 > 0 else 0
+
+        html = f"""\
+<html><body style="font-family:Segoe UI,Arial,sans-serif;background:#f9fafb;padding:20px;">
+<div style="max-width:640px;margin:0 auto;background:#fff;border-radius:10px;
+            box-shadow:0 2px 8px rgba(0,0,0,0.08);overflow:hidden;">
+  <div style="background:linear-gradient(135deg,#064e3b,#059669);padding:16px 24px;">
+    <h2 style="margin:0;color:#fff;font-size:18px;">
+      &#x2605; Bull Run Confirmed — Capital Infusion Opportunity
+    </h2>
+    <p style="margin:4px 0 0;color:#a7f3d0;font-size:13px;">{now}</p>
+  </div>
+  <div style="padding:20px 24px;">
+    <div style="background:#dcfce7;border:2px solid #15803d;border-radius:8px;
+                padding:16px;margin:0 0 16px;text-align:center;">
+      <h3 style="margin:0;color:#15803d;">Bear &rarr; Bull Transition Detected</h3>
+      <p style="margin:8px 0 0;color:#166534;">
+        Equity has crossed above the 200-day SMA and held for multiple consecutive
+        sessions, confirming a new bull phase.
+      </p>
+    </div>
+    <table style="border-collapse:collapse;width:100%;font-size:14px;">
+      <tr><td style="padding:8px 12px;border:1px solid #e5e7eb;color:#666;">Date</td>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:bold;">{date_str}</td></tr>
+      <tr><td style="padding:8px 12px;border:1px solid #e5e7eb;color:#666;">Current Equity</td>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:bold;color:#15803d;">
+            &#8377;{equity:,.0f}</td></tr>
+      <tr><td style="padding:8px 12px;border:1px solid #e5e7eb;color:#666;">Equity SMA200</td>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;">&#8377;{sma200:,.0f}</td></tr>
+      <tr><td style="padding:8px 12px;border:1px solid #e5e7eb;color:#666;">Above SMA200</td>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;color:#15803d;">{pct_above:+.1f}%</td></tr>
+      <tr><td style="padding:8px 12px;border:1px solid #e5e7eb;color:#666;">Suggested Infusion</td>
+          <td style="padding:8px 12px;border:1px solid #e5e7eb;font-weight:bold;">
+            &#8377;{suggested_amount:,.0f}</td></tr>
+    </table>
+    <div style="margin:16px 0;padding:12px;background:#f0fdf4;border-radius:6px;
+                border-left:4px solid #15803d;">
+      <p style="margin:0;font-size:13px;color:#166534;">
+        <strong>Action:</strong> Consider infusing &#8377;{suggested_amount:,.0f} into your
+        Centurion Compounder portfolio to capitalize on the new bull phase.
+        This is optional — your existing positions will continue to compound normally.
+      </p>
+    </div>
+  </div>
+  <div style="padding:12px 24px;background:#f3f4f6;font-size:12px;color:#9ca3af;text-align:center;">
+    &copy; 2026 Centurion Capital LLC &mdash; R22 Bull-Run Capital Infusion
+  </div>
+</div></body></html>"""
+
+        subject = f"★ Bull Run Alert — Infuse ₹{suggested_amount:,.0f} into Compounder ({date_str})"
+        return self._send_html_email(subject, html, recipients=recipients)

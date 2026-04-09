@@ -6,6 +6,7 @@ with a user-defined capital split and returns combined results.
 """
 
 import logging
+import os
 import time
 from typing import Dict, Optional
 
@@ -13,6 +14,9 @@ from config import Config
 from services.forecast_combiner import DEFAULT_FORECAST_WEIGHTS
 
 logger = logging.getLogger(__name__)
+
+# Absolute path to centurion_core/ root (matches Kaggle runner convention)
+_CORE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Harvest parameter presets
 HARVEST_PRESETS = {
@@ -24,54 +28,33 @@ HARVEST_PRESETS = {
                      "min_gain_to_book": 0.10, "inject_cooldown_days": 200},
 }
 
-# R19c fallback weights (used when optimized weights not found)
-_R19C_WEIGHTS = {
-    "ewmac_8_32": 0.07, "ewmac_16_64": 0.09, "ewmac_64_256": 0.08,
-    "screener": 0.05, "momentum": 0.16, "mean_reversion": 0.13,
-    "penfold_trend": 0.12, "ehlers_dsp": 0.12, "acceleration": 0.04,
-    "carver_value": 0.07, "breakout": 0.07,
-}
 
-_ALL_24_SOURCES = [
-    "ewmac_8_32", "ewmac_16_64", "ewmac_32_128", "ewmac_64_256",
-    "carry", "screener", "momentum", "pead", "mean_reversion",
-    "fii_flow", "decision_engine", "oi_signal", "cross_momentum",
-    "pairs_arb", "event_driven", "penfold_trend", "ehlers_dsp",
-    "intermarket", "acceleration", "carver_value", "skew_signal",
-    "sentiment", "breakout", "order_flow",
-]
 
 
 def _configure_base(bt_mod):
     """Set R21A base configuration and weights on the backtest module."""
-    # Disable all legacy modes
-    for attr in ("_R19D_REGIME_MODE", "_R19E_REGIME_MODE", "_R19F_REGIME_MODE",
-                 "_R19G_REGIME_MODE", "_R19H_REGIME_MODE",
-                 "_R20A_MAXDD_MODE", "_R20B_MAXDD_MODE", "_R20C_MAXDD_MODE",
-                 "_R20D_HYBRID_MODE", "_SAVE_FORECASTS_MODE"):
-        setattr(bt_mod, attr, False)
-
     # Enable R21A regime scaling
     bt_mod._R21A_REGIME_VOL = True
     bt_mod._R21A_REGIME_BOOST = 1.25
     bt_mod._R21A_REGIME_DEFEND = 0.55
 
-    # Apply weights
-    import os, pickle
-    opt_path = os.path.join("data", "r21a_optimization_results.pkl")
+    # Apply weights: prefer optimized pkl, fall back to DEFAULT_FORECAST_WEIGHTS (R21A)
+    import pickle
+    opt_path = os.path.join(_CORE_DIR, "data", "r21a_optimization_results.pkl")
     if os.path.exists(opt_path):
         with open(opt_path, "rb") as f:
             opt = pickle.load(f)
         weights = opt["best_weights"]
+        # Overwrite DEFAULT_FORECAST_WEIGHTS from pkl
+        for fw in DEFAULT_FORECAST_WEIGHTS:
+            if fw.name in weights:
+                fw.weight = weights[fw.name]
+            elif fw.weight > 0:
+                fw.weight = 0.0  # zero out any signal not in optimized set
     else:
-        weights = dict(_R19C_WEIGHTS)
-
-    for sig in _ALL_24_SOURCES:
-        if sig not in weights:
-            weights[sig] = 0.0
-    for fw in DEFAULT_FORECAST_WEIGHTS:
-        if fw.name in weights:
-            fw.weight = weights[fw.name]
+        # DEFAULT_FORECAST_WEIGHTS already contains R21A-optimized values
+        logger.warning("No r21a_optimization_results.pkl found — using DEFAULT_FORECAST_WEIGHTS (R21A)")
+        weights = {fw.name: fw.weight for fw in DEFAULT_FORECAST_WEIGHTS}
 
     return weights
 
@@ -141,24 +124,40 @@ def run_dual_backtest(
     # ── Run 1: Centurion Compounder (CC) ──
     import services.full_pipeline_backtest as bt_mod
     _configure_base(bt_mod)
+    # Explicitly disable ALL Harvest flags (defensive — mirrors R21A baseline exactly)
     bt_mod._HARVEST_DIP_BUYER = False
     bt_mod._HARVEST_PROFIT_TAKER = False
     bt_mod._HARVEST_ENABLED = False
+    bt_mod._HARVEST_MR_BEAR_VOL_MULT = 3.33   # default (unused when DIP_BUYER=False)
+    bt_mod._HARVEST_BULL_STOP_SIGMA = 6.0      # default (unused when PROFIT_TAKER=False)
+    bt_mod._HARVEST_INJECT_PCT = 0.20
+    bt_mod._HARVEST_BOOK_PCT = 0.15
+    bt_mod._HARVEST_BULL_SUSTAIN_DAYS = 30
+    bt_mod._HARVEST_MIN_GAIN_TO_BOOK = 0.10
+    bt_mod._HARVEST_INJECT_COOLDOWN_DAYS = 200
+    # Isolate checkpoint path so CC/CH never collide
+    os.environ["CENTURION_BT_CHECKPOINT"] = os.path.join(
+        _CORE_DIR, "data", "backtest_checkpoint_cc.pkl")
     logger.info("Running Centurion Compounder (CC) with ₹%s ...", f"{cc_capital:,.0f}")
     cc_result = _run_single(bt_mod, cc_capital, start_date, end_date, Config.STRATEGY_COMPOUNDER)
 
     # ── Run 2: Centurion Harvest (CH) ──
     import importlib
-    importlib.reload(bt_mod)
-    _configure_base(bt_mod)
+    importlib.reload(bt_mod)   # Clean module state between runs
+    _configure_base(bt_mod)    # Same R21A base + weights as CC
     bt_mod._HARVEST_DIP_BUYER = True
     bt_mod._HARVEST_PROFIT_TAKER = True
     bt_mod._HARVEST_ENABLED = True
+    bt_mod._HARVEST_MR_BEAR_VOL_MULT = hp.get("mr_bear_vol_mult", 3.33)
+    bt_mod._HARVEST_BULL_STOP_SIGMA = hp.get("bull_stop_sigma", 6.0)
     bt_mod._HARVEST_INJECT_PCT = hp["inject_pct"]
     bt_mod._HARVEST_BOOK_PCT = hp["book_pct"]
     bt_mod._HARVEST_BULL_SUSTAIN_DAYS = hp["sustain_days"]
     bt_mod._HARVEST_MIN_GAIN_TO_BOOK = hp["min_gain_to_book"]
     bt_mod._HARVEST_INJECT_COOLDOWN_DAYS = hp["inject_cooldown_days"]
+    # Isolate checkpoint path for CH
+    os.environ["CENTURION_BT_CHECKPOINT"] = os.path.join(
+        _CORE_DIR, "data", "backtest_checkpoint_ch.pkl")
     logger.info("Running Centurion Harvest (CH) with ₹%s ...", f"{ch_capital:,.0f}")
     ch_result = _run_single(bt_mod, ch_capital, start_date, end_date, Config.STRATEGY_HARVEST)
 
