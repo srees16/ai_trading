@@ -787,7 +787,153 @@ class PaperTrader:
         cloud = self._get_cloud()
         if cloud:
             cloud.sync_snapshot(snapshot)
+
+        # ── Distribution shift detection (best-effort) ────────
+        try:
+            self._run_distribution_shift(conn=None)
+        except Exception as exc:
+            logger.debug("Distribution shift check failed (non-fatal): %s", exc)
+
         return snapshot
+
+    def _run_distribution_shift(self, conn=None) -> Optional[dict]:
+        """Compare live daily returns against backtest returns if ≥30 days exist.
+
+        On regime_break: reduces position size multiplier to 0.5 and sends
+        a notification alert. On stable: restores full sizing.
+        """
+        import pickle
+        import numpy as np
+
+        _close_conn = False
+        if conn is None:
+            conn = sqlite3.connect(str(_DB_PATH))
+            conn.row_factory = sqlite3.Row
+            _close_conn = True
+
+        try:
+            rows = conn.execute(
+                "SELECT date, equity FROM daily_snapshots ORDER BY date"
+            ).fetchall()
+
+            if len(rows) < 31:  # need ≥30 returns (31 equity points)
+                return None
+
+            equities = np.array([r["equity"] for r in rows], dtype=np.float64)
+            live_returns = np.diff(equities) / equities[:-1]
+
+            # Load backtest returns from optimization results
+            bt_returns = None
+            candidates = [
+                _DB_PATH.parent / "r21a_optimization_results.pkl",
+                _DB_PATH.parent / "r21a_oos_evaluation.pkl",
+            ]
+            for path in candidates:
+                if path.exists():
+                    with open(path, "rb") as f:
+                        data = pickle.load(f)
+                    # Look for daily returns in test or full results
+                    for key in ("best_test", "best_full", "r21a_test", "r21a_full"):
+                        res = data.get(key, {})
+                        if isinstance(res, dict) and "daily_returns" in res:
+                            bt_returns = np.asarray(res["daily_returns"])
+                            break
+                    if bt_returns is not None:
+                        break
+
+            if bt_returns is None or len(bt_returns) < 30:
+                logger.debug("No backtest returns available for shift detection")
+                return None
+
+            from services.distribution_shift import (
+                detect_distribution_shift,
+                detect_distribution_shift_rolling,
+            )
+
+            result = detect_distribution_shift(bt_returns, live_returns)
+
+            # Rolling window analysis (60-day) for drift onset detection
+            if len(live_returns) >= 60:
+                rolling = detect_distribution_shift_rolling(
+                    bt_returns, live_returns, window=60, step=5,
+                )
+                result["rolling"] = rolling
+                # Find when drift first appeared
+                for entry in rolling:
+                    if entry["verdict"] != "stable":
+                        result["drift_onset_day"] = entry["window_start"]
+                        break
+
+            if result["verdict"] != "insufficient_data":
+                logger.info(
+                    "Distribution shift: %s  Wasserstein=%.4f  KL=%.4f  (live=%d days)",
+                    result["verdict"], result["wasserstein"],
+                    result["kl_divergence"], result["n_live"],
+                )
+
+            # ── Take action based on verdict ──
+            if result["verdict"] == "regime_break":
+                logger.warning(
+                    "REGIME BREAK detected — live returns diverge significantly "
+                    "from backtest. Reducing position sizing to 50%%."
+                )
+                # Persist shift state for position sizer to read
+                _shift_state_path = _DB_PATH.parent / "distribution_shift_state.json"
+                import json as _json
+                _shift_state_path.write_text(_json.dumps({
+                    "verdict": result["verdict"],
+                    "wasserstein": result["wasserstein"],
+                    "kl_divergence": result["kl_divergence"],
+                    "position_size_multiplier": 0.5,
+                    "updated_at": datetime.now(_IST).isoformat(),
+                    "n_live_days": result["n_live"],
+                    "drift_onset_day": result.get("drift_onset_day"),
+                }))
+                # Send notification (best-effort)
+                try:
+                    from services.notifications.manager import NotificationManager
+                    nm = NotificationManager()
+                    nm.send_alert(
+                        subject="REGIME BREAK — Distribution Shift Detected",
+                        body=(
+                            f"Live returns diverge from backtest.\n"
+                            f"Wasserstein={result['wasserstein']:.4f}  "
+                            f"KL={result['kl_divergence']:.4f}\n"
+                            f"Position sizing reduced to 50%. Review strategy weights."
+                        ),
+                    )
+                except Exception:
+                    pass
+
+            elif result["verdict"] == "drifting":
+                logger.info("Distribution DRIFTING — monitoring, no action yet.")
+                _shift_state_path = _DB_PATH.parent / "distribution_shift_state.json"
+                import json as _json
+                _shift_state_path.write_text(_json.dumps({
+                    "verdict": result["verdict"],
+                    "wasserstein": result["wasserstein"],
+                    "kl_divergence": result["kl_divergence"],
+                    "position_size_multiplier": 0.75,
+                    "updated_at": datetime.now(_IST).isoformat(),
+                    "n_live_days": result["n_live"],
+                }))
+
+            elif result["verdict"] == "stable":
+                # Restore full sizing if previously reduced
+                _shift_state_path = _DB_PATH.parent / "distribution_shift_state.json"
+                if _shift_state_path.exists():
+                    import json as _json
+                    _shift_state_path.write_text(_json.dumps({
+                        "verdict": "stable",
+                        "position_size_multiplier": 1.0,
+                        "updated_at": datetime.now(_IST).isoformat(),
+                        "n_live_days": result["n_live"],
+                    }))
+
+            return result
+        finally:
+            if _close_conn:
+                conn.close()
 
     def log_signals(self, date_str: str, signals: list) -> None:
         """Persist forecast signals for backtest-vs-live comparison.

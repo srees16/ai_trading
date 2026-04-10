@@ -12,7 +12,7 @@ from services.forecast_combiner import DEFAULT_FORECAST_WEIGHTS
 # Enable R21A base
 bt._R21A_REGIME_VOL = True
 bt._R21A_REGIME_BOOST = 1.25
-bt._R21A_REGIME_DEFEND = 0.55
+bt._R21A_REGIME_DEFEND = 0.15
 
 # Enable Centurion Harvest (all flags)
 bt._HARVEST_DIP_BUYER = True

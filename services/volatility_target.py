@@ -45,7 +45,7 @@ REGIME_VOL_SCALE = {
 #   SMA200 = "is MY PORTFOLIO trending?" (equity curve based, R21a-optimized)
 # Combined multiplier is capped to prevent double-amplification.
 _R21A_EQUITY_SMA200_BOOST = 1.25    # uptrend: equity > SMA200 × 1.02
-_R21A_EQUITY_SMA200_DEFEND = 0.55   # downtrend: equity < SMA200 × 0.98
+_R21A_EQUITY_SMA200_DEFEND = 0.15   # P1f: near-cash in portfolio downtrend (was 0.55)
 _R21A_EQUITY_SMA_LOOKBACK = 200     # trading days for SMA
 _R21A_COMBINED_CAP = 1.30           # max combined multiplier (HMM × SMA200)
 

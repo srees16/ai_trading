@@ -62,7 +62,7 @@ def main():
     # R21a: Enable regime-adaptive vol target
     bt_mod._R21A_REGIME_VOL = True
     bt_mod._R21A_REGIME_BOOST = 1.25   # 25% more aggressive in uptrends
-    bt_mod._R21A_REGIME_DEFEND = 0.55  # 45% less exposure in downtrends
+    bt_mod._R21A_REGIME_DEFEND = 0.15  # P1f: near-cash in downtrends (was 0.55)
 
     print("=" * 70)
     print("  R21a — Optimized Signal Weights (Walk-Forward)")

@@ -35,17 +35,17 @@ if _root not in sys.path:
 
 _INPUT_PATH = os.path.join(_root, "data", "extracted_forecasts.pkl")
 
-# ── 10 active signals from R19c ──
+# ── 10 active signals (v26-Sol2: ewmac_8_32 dropped — 2% at floor) ──
 ACTIVE_SIGNALS = [
-    "ewmac_8_32", "ewmac_16_64", "ewmac_64_256",
+    "ewmac_16_64", "ewmac_64_256",
     "screener", "momentum", "mean_reversion",
     "penfold_trend", "ehlers_dsp", "acceleration",
     "carver_value", "breakout",
 ]
-# Note: 11 signals (carver_value was re-enabled in R19c). Breakout also active.
+# Note: 10 signals. ewmac_8_32 removed (at lower bound in all 10 neighborhood solutions).
 
 R19C_WEIGHTS = {
-    "ewmac_8_32": 0.07, "ewmac_16_64": 0.09, "ewmac_64_256": 0.08,
+    "ewmac_16_64": 0.09, "ewmac_64_256": 0.08,
     "screener": 0.05, "momentum": 0.16, "mean_reversion": 0.13,
     "penfold_trend": 0.12, "ehlers_dsp": 0.12, "acceleration": 0.04,
     "carver_value": 0.07, "breakout": 0.07,
@@ -54,23 +54,17 @@ R19C_WEIGHTS = {
 # R19c static correlation matrix (key pairs for FDM calc)
 # Subset relevant to active signals
 CORR_PAIRS = {
-    ("ewmac_8_32", "ewmac_16_64"): 0.90,
-    ("ewmac_8_32", "ewmac_64_256"): 0.50,
     ("ewmac_16_64", "ewmac_64_256"): 0.60,
-    ("ewmac_8_32", "momentum"): 0.55,
     ("ewmac_16_64", "momentum"): 0.55,
     ("ewmac_64_256", "momentum"): 0.50,
-    ("ewmac_8_32", "breakout"): 0.50,
     ("ewmac_16_64", "breakout"): 0.50,
     ("ewmac_64_256", "breakout"): 0.40,
-    ("ewmac_8_32", "penfold_trend"): 0.50,
     ("ewmac_16_64", "penfold_trend"): 0.50,
     ("ewmac_64_256", "penfold_trend"): 0.45,
     ("momentum", "penfold_trend"): 0.65,
     ("momentum", "breakout"): 0.55,
     ("penfold_trend", "breakout"): 0.65,
     ("momentum", "mean_reversion"): -0.20,
-    ("ewmac_8_32", "mean_reversion"): -0.15,
     ("ewmac_16_64", "mean_reversion"): -0.20,
     ("ewmac_64_256", "mean_reversion"): -0.25,
     ("penfold_trend", "mean_reversion"): -0.10,
@@ -87,7 +81,6 @@ CORR_PAIRS = {
     ("screener", "mean_reversion"): -0.05,
     ("screener", "ehlers_dsp"): 0.30,
     ("momentum", "acceleration"): 0.70,
-    ("ewmac_8_32", "acceleration"): 0.65,
     ("ewmac_16_64", "acceleration"): 0.60,
     ("ewmac_64_256", "acceleration"): 0.40,
     ("acceleration", "penfold_trend"): 0.50,
@@ -103,7 +96,6 @@ CORR_PAIRS = {
     ("carver_value", "breakout"): 0.05,
     ("carver_value", "screener"): 0.10,
     ("carver_value", "acceleration"): 0.05,
-    ("ewmac_8_32", "carver_value"): 0.10,
     ("ewmac_16_64", "carver_value"): 0.10,
 }
 DEFAULT_CORR = 0.25  # fallback for undefined pairs
@@ -225,8 +217,9 @@ def _simulate_equity(
     capital: float = 500_000.0,
     cost_bps: float = 33.0,
     regime_adaptive: bool = False,
-    idm: float = 2.0,
-    inertia: float = 0.10,
+    idm: float = 1.3,
+    inertia: float = 0.20,
+    return_daily_returns: bool = False,
 ) -> Dict:
     """
     Equity curve simulation matching the real backtest engine.
@@ -263,6 +256,11 @@ def _simulate_equity(
 
     # Track positions in SHARES (not notional) — matches real engine
     held_shares = {}  # sym_idx -> shares (float, can be negative for shorts)
+    peak_prices_opt = {}   # P3a: trailing stop peak prices
+    stop_levels_opt = {}   # P3a: trailing stop levels
+    _last_combined = {}    # P3c: cached combined forecasts (recompute every 5 days)
+    _recomp_counter = 0    # P3c: days since last recompute
+    _RECOMPUTE_FREQ = 5    # P3c: match real engine 5-day recompute
 
     # Equity history for regime detection (200-day lookback)
     equity_history = []
@@ -270,69 +268,69 @@ def _simulate_equity(
     for d in range(start_day, end_day - 1):
         equity_history.append(equity)
 
-        # ── DD tiers — set annual_vol_target directly (matching real engine) ──
+        # P1c: DD tiers — matching recalibrated real engine (50% base, 35% halt)
         dd_pct = (peak - equity) / peak * 100.0 if peak > 0 else 0.0
-        if dd_pct >= 40:
-            annual_vol_target = 0.40
+        if dd_pct >= 35:
+            annual_vol_target = 0.0    # P1c: HARD HALT at 35% DD
         elif dd_pct >= 30:
-            annual_vol_target = 0.45
+            annual_vol_target = 0.30
         elif dd_pct >= 20:
-            annual_vol_target = 0.55
+            annual_vol_target = 0.40
         elif dd_pct >= 10:
-            annual_vol_target = 0.65
+            annual_vol_target = 0.45
         else:
-            annual_vol_target = 0.75   # Full risk at no DD
+            annual_vol_target = 0.50   # Full risk at no DD (was 0.75)
 
         # ── Daily target (matching real engine exactly) ──
         sizing_equity = max(equity, capital * 0.10)  # 10% ruin floor
         dynamic_daily_target = sizing_equity * annual_vol_target / 16.0
 
-        # ── Regime-adaptive vol: multiply daily target (after DD tier) ──
+        # P1f: Regime-adaptive vol: multiply daily target (after DD tier)
         if regime_adaptive and len(equity_history) >= 200:
             sma_200 = np.mean(equity_history[-200:])
             if equity > sma_200 * 1.02:
                 dynamic_daily_target *= 1.25   # Uptrend boost
             elif equity < sma_200 * 0.98:
-                dynamic_daily_target *= 0.55   # Downtrend defend
+                dynamic_daily_target *= 0.15   # P1f: Downtrend defend (was 0.55)
 
         # Compute combined forecasts for all symbols
         fc_slice = forecasts[d]  # (n_syms, n_sigs)
         px_slice = prices[d]  # (n_syms,)
         vol_slice = vols[d]  # (n_syms,)
 
-        combined = {}  # sym_idx -> combined_forecast
-        for si in range(n_syms):
-            fc_row = fc_slice[si]
-            if np.all(np.isnan(fc_row)):
-                continue
-            if np.isnan(px_slice[si]) or np.isnan(vol_slice[si]):
-                continue
-            fc_clean = np.where(np.isnan(fc_row), 0.0, fc_row)
-            avail_mask = ~np.isnan(fc_slice[si])
-            w_avail = w_arr * avail_mask
-            w_avail_sum = w_avail.sum()
-            if w_avail_sum <= 0:
-                continue
-            w_norm = w_avail / w_avail_sum
-            raw = float(np.dot(w_norm, fc_clean))
-            scaled = raw * fdm
-            scaled = max(-20.0, min(20.0, scaled))
-            combined[si] = scaled
-
-        # ── Adaptive MAX_POSITIONS (matching real engine) ──
-        ranked_abs = sorted(combined.values(), key=lambda x: abs(x), reverse=True)
-        top15_avg = np.mean([abs(f) for f in ranked_abs[:15]]) if ranked_abs else 0.0
-        if top15_avg > 8.0:
-            max_pos = 15
-        elif top15_avg > 5.0:
-            max_pos = 12
-        elif top15_avg > 3.0:
-            max_pos = 8
+        # P3c: Only recompute forecasts every 5 days (matching real engine)
+        _recomp_counter += 1
+        if _recomp_counter >= _RECOMPUTE_FREQ or not _last_combined:
+            _recomp_counter = 0
+            combined = {}  # sym_idx -> combined_forecast
+            for si in range(n_syms):
+                fc_row = fc_slice[si]
+                if np.all(np.isnan(fc_row)):
+                    continue
+                if np.isnan(px_slice[si]) or np.isnan(vol_slice[si]):
+                    continue
+                fc_clean = np.where(np.isnan(fc_row), 0.0, fc_row)
+                avail_mask = ~np.isnan(fc_slice[si])
+                w_avail = w_arr * avail_mask
+                w_avail_sum = w_avail.sum()
+                if w_avail_sum <= 0:
+                    continue
+                w_norm = w_avail / w_avail_sum
+                raw = float(np.dot(w_norm, fc_clean))
+                scaled = raw * fdm
+                scaled = max(-20.0, min(20.0, scaled))
+                combined[si] = scaled
+            _last_combined = combined
         else:
-            max_pos = 5
+            combined = _last_combined
 
-        # Rank by absolute forecast
-        ranked = sorted(combined.items(), key=lambda x: abs(x[1]), reverse=True)
+        # P2c: Fixed 10-position portfolio (was adaptive 5/8/12/15)
+        max_pos = 10
+
+        # P3b: Positive-first ranking (matching real engine long-only fix)
+        ranked = sorted(combined.items(),
+                        key=lambda x: (x[1] > 0, x[1] if x[1] > 0 else -abs(x[1])),
+                        reverse=True)
         top_syms_set = set(si for si, _ in ranked[:max_pos])
         grace_set = set(si for si, _ in ranked[:max_pos + 7])
 
@@ -342,7 +340,7 @@ def _simulate_equity(
         weight_per_sym = 1.0 / n_investable
 
         # Compute target shares for top positions
-        max_leverage = 3.0  # Portfolio-wide leverage cap (matches real engine)
+        max_leverage = 2.0  # P1b: was 3.0, now matches config CARVER_MAX_LEVERAGE
         target_shares = {}
         for si, fc_val in ranked[:max_pos]:
             if abs(fc_val) < 1.0:
@@ -410,6 +408,37 @@ def _simulate_equity(
                 if not np.isnan(px_d) and px_d > 0:
                     day_cost += abs(cur_sh) * px_d * cost_frac
 
+        # P3a: Apply trailing stops (5σ) — matches real engine
+        for si in list(new_held.keys()):
+            sh = new_held[si]
+            if sh <= 0:
+                continue
+            px_d = px_slice[si]
+            if np.isnan(px_d) or px_d <= 0:
+                continue
+            vol_d = vol_slice[si]
+            if np.isnan(vol_d) or vol_d <= 0:
+                continue
+            # Track peak price
+            pk = max(peak_prices_opt.get(si, px_d), px_d)
+            peak_prices_opt[si] = pk
+            # 5σ trailing stop
+            stop_dist = 5.0 * vol_d * pk
+            new_stop = pk - stop_dist
+            stop_levels_opt[si] = max(stop_levels_opt.get(si, 0), new_stop)
+            if px_d < stop_levels_opt[si]:
+                # Stop triggered — exit position
+                day_cost += abs(sh) * px_d * cost_frac
+                new_held[si] = 0
+                peak_prices_opt.pop(si, None)
+                stop_levels_opt.pop(si, None)
+
+        # Clean zero positions from peak/stop tracking
+        for si in list(peak_prices_opt.keys()):
+            if si not in new_held or new_held.get(si, 0) == 0:
+                peak_prices_opt.pop(si, None)
+                stop_levels_opt.pop(si, None)
+
         # ── Portfolio-wide leverage cap (real engine: FIX-LEV) ──
         # Total |position × price| must not exceed sizing_equity × max_leverage
         total_exposure = 0.0
@@ -461,7 +490,7 @@ def _simulate_equity(
     cagr = (total_ret ** (1.0 / years) - 1.0) * 100.0 if years > 0 and total_ret > 0 else 0.0
     calmar = cagr / max_dd if max_dd > 0 else 0.0
 
-    return {
+    result = {
         "sharpe": round(sharpe, 4),
         "cagr": round(cagr, 2),
         "max_dd": round(max_dd, 2),
@@ -470,6 +499,9 @@ def _simulate_equity(
         "n_days": len(daily_returns),
         "final_equity": round(equity, 0),
     }
+    if return_daily_returns:
+        result["daily_returns"] = daily_returns
+    return result
 
 
 def _weights_from_vector(x: np.ndarray) -> Dict[str, float]:
@@ -508,12 +540,12 @@ def _objective_parallel(x: np.ndarray) -> float:
     # Multi-objective: 50% Sharpe + 30% Calmar + CAGR bonus
     base_score = 0.50 * sharpe + 0.30 * calmar + 0.002 * max(0, cagr - 40)
 
-    # Heavy penalty for MaxDD > 50%
-    dd_penalty = max(0, (max_dd - 50)) * 0.03
+    # Heavy penalty for MaxDD > 35% (was 50% — aligned with hard halt)
+    dd_penalty = max(0, (max_dd - 35)) * 0.05
 
-    # Concentration penalty
+    # Concentration penalty (aligned with 15% cap)
     max_w = max(weights.values())
-    conc_penalty = max(0, (max_w - 0.25)) * 2.0
+    conc_penalty = max(0, (max_w - 0.15)) * 3.0
 
     # Diversity bonus
     w_arr = np.array(list(weights.values()))
@@ -525,7 +557,7 @@ def _objective_parallel(x: np.ndarray) -> float:
 
 
 def run_optimization():
-    """Main optimization loop with multiprocessing."""
+    """Main optimization loop — sequential (workers=1)."""
     global _G_FORECASTS, _G_PRICES, _G_VOLS, _G_SIGNALS, _G_CORR
     global _G_TRAIN_END, _G_R19C_TRAIN_SHARPE
     from scipy.optimize import differential_evolution
@@ -534,8 +566,9 @@ def run_optimization():
     n_cpus = multiprocessing.cpu_count()
 
     print("=" * 70)
-    print("  R21a — Walk-Forward Signal Weight Optimizer (PARALLEL)")
-    print(f"  CPUs: {n_cpus}")
+    print("  R21a — Walk-Forward Signal Weight Optimizer  [ds-v27]")
+    print(f"  CPUs: {n_cpus} (workers=1 to avoid fork deadlock)")
+    print(f"  Phase 1-3: vol=50%, lev=2x, IDM=1.3, bear=0.15, stops=5σ, pos=10, bounds=[0.01,0.15]")
     print("=" * 70)
 
     print("\n  Loading extracted forecasts...")
@@ -582,9 +615,9 @@ def run_optimization():
     print(f"  R19c full:  Sharpe={r19c_full['sharpe']:.3f}  CAGR={r19c_full['cagr']:.1f}%  MaxDD={r19c_full['max_dd']:.1f}%  Calmar={r19c_full.get('calmar',0):.3f}")
     _G_R19C_TRAIN_SHARPE = r19c_train["sharpe"]
 
-    # Bounds: each weight between 0.01 and 0.40
+    # P3d: Bounds — max 15% per signal (was 40%, allowed carver_value to dominate)
     n_signals = len(ACTIVE_SIGNALS)
-    bounds = [(0.01, 0.40)] * n_signals
+    bounds = [(0.01, 0.15)] * n_signals
 
     # ── Checkpoint config ──
     _CKPT_NAME = "r21a_optimizer_checkpoint.pkl"
@@ -598,14 +631,15 @@ def run_optimization():
         _CKPT_PATHS.insert(1, "/kaggle/input/centurion-core/" + _CKPT_NAME)
         _CKPT_PATHS.insert(2, "/kaggle/input/centurion-core/centurion_core/optimizer/" + _CKPT_NAME)
     _CKPT_EVERY = 5  # save every N generations
-    _MAX_ITER = 150
-    _POP_SIZE = 60
+    _MAX_ITER = 30   # ~5 min/gen sequential → ~2.5 hours total (fits 12h limit)
+    _POP_SIZE = 5    # multiplier: actual pop = 5 × 11 dims = 55 members
 
-    print(f"\n  Running differential evolution (population={_POP_SIZE}, maxiter={_MAX_ITER}, workers={n_cpus})...")
+    actual_pop = _POP_SIZE * n_signals
+    print(f"\n  Running differential evolution (popsize_mult={_POP_SIZE}, actual_pop={actual_pop}, maxiter={_MAX_ITER}, workers=1)...")
     print(f"  Optimizing {n_signals} weights on simplex")
     print(f"  Objective: 50% Sharpe + 30% Calmar + CAGR bonus - DD penalty")
     print(f"  Target: Sharpe>=1.3, CAGR>50%, MaxDD<=50%")
-    print(f"  Regime: adaptive vol (1.25x uptrend, 0.55x downtrend)")
+    print(f"  Regime: adaptive vol (1.25x uptrend, 0.15x downtrend)")
     print(f"  Checkpoint every {_CKPT_EVERY} generations")
 
     # ── Check for checkpoint to resume ──
@@ -628,32 +662,20 @@ def run_optimization():
                 ckpt = None
 
     # ── Build solver (using manual iteration for checkpoint support) ──
-    try:
-        solver = DifferentialEvolutionSolver(
-            _objective_parallel,
-            bounds,
-            seed=42,
-            maxiter=_MAX_ITER,
-            popsize=_POP_SIZE,
-            tol=1e-5,
-            mutation=(0.5, 1.5),
-            recombination=0.8,
-            workers=n_cpus,
-            updating='deferred',
-        )
-    except TypeError:
-        # Older scipy: 'seed' not supported — use positional rng
-        solver = DifferentialEvolutionSolver(
-            _objective_parallel,
-            bounds,
-            maxiter=_MAX_ITER,
-            popsize=_POP_SIZE,
-            tol=1e-5,
-            mutation=(0.5, 1.5),
-            recombination=0.8,
-            workers=n_cpus,
-            updating='deferred',
-        )
+    np.random.seed(42)  # reproducibility (seed= kwarg not supported in all scipy versions)
+    # workers=1: avoids multiprocessing.Pool fork() deadlocks on Kaggle Linux
+    # with cached extraction, optimizer alone runs ~3h sequential — fits 12h limit
+    solver = DifferentialEvolutionSolver(
+        _objective_parallel,
+        bounds,
+        maxiter=_MAX_ITER,
+        popsize=_POP_SIZE,
+        tol=1e-5,
+        mutation=(0.5, 1.5),
+        recombination=0.8,
+        workers=1,
+        updating='immediate',
+    )
 
     start_gen = 0
     elapsed_prior = 0.0
@@ -768,9 +790,9 @@ def run_optimization():
     best_weights = _weights_from_vector(result.x)
 
     # Evaluate on all periods
-    best_train = _simulate_equity(best_weights, forecasts, prices, vols, signals, corr_matrix, 0, train_end, regime_adaptive=True)
-    best_test = _simulate_equity(best_weights, forecasts, prices, vols, signals, corr_matrix, test_start, len(dates), regime_adaptive=True)
-    best_full = _simulate_equity(best_weights, forecasts, prices, vols, signals, corr_matrix, 0, len(dates), regime_adaptive=True)
+    best_train = _simulate_equity(best_weights, forecasts, prices, vols, signals, corr_matrix, 0, train_end, regime_adaptive=True, return_daily_returns=True)
+    best_test = _simulate_equity(best_weights, forecasts, prices, vols, signals, corr_matrix, test_start, len(dates), regime_adaptive=True, return_daily_returns=True)
+    best_full = _simulate_equity(best_weights, forecasts, prices, vols, signals, corr_matrix, 0, len(dates), regime_adaptive=True, return_daily_returns=True)
 
     print(f"\n{'='*70}")
     print(f"  OPTIMAL WEIGHTS (R21a)")
@@ -829,6 +851,66 @@ def run_optimization():
         wstr = ", ".join(f"{k}={v*100:.0f}%" for k, v in top3)
         print(f"         top3: {wstr}")
 
+    # ── CSCV Probability of Backtest Overfitting (PBO) ──
+    # Uses the real top neighborhood solutions (genuinely different weight
+    # configs) rather than random perturbations, to avoid anti-conservative
+    # bias from correlated return streams.
+    print(f"\n  Computing CSCV Probability of Backtest Overfitting (PBO)...")
+    pbo_result = {}
+    try:
+        _tts_ch05_path = os.path.join(
+            _root, "references", "testune", "applied",
+            "ch05_estimating_future_performance_unbiased.py",
+        )
+        import importlib.util
+        _spec = importlib.util.spec_from_file_location("tts_ch05", _tts_ch05_path)
+        _mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        cscv_superiority = _mod.cscv_superiority
+
+        # Collect daily returns for the real top neighborhood solutions
+        pbo_configs = best_solutions[:20]  # genuine alternatives from exploration
+        returns_rows = []
+        for cfg in pbo_configs:
+            res_full = _simulate_equity(
+                cfg["weights"], forecasts, prices, vols, signals, corr_matrix,
+                0, len(dates), regime_adaptive=True, return_daily_returns=True,
+            )
+            dr = res_full.get("daily_returns")
+            if dr is not None and len(dr) > 100:
+                returns_rows.append(np.array(dr))
+
+        if len(returns_rows) >= 3:
+            min_len = min(len(r) for r in returns_rows)
+            ret_matrix = np.row_stack([r[:min_len] for r in returns_rows])
+
+            cscv = cscv_superiority(ret_matrix, n_blocks=8)
+            pbo_val = cscv["pbo"]
+            pbo_result = {
+                "pbo": round(pbo_val, 4),
+                "n_combos": cscv["n_combos"],
+                "n_less": cscv["n_less"],
+                "n_configs": len(returns_rows),
+            }
+
+            if pbo_val < 0.30:
+                pbo_verdict = "LIKELY REAL (PBO < 30%)"
+            elif pbo_val < 0.50:
+                pbo_verdict = "CAUTION (30% <= PBO < 50%)"
+            else:
+                pbo_verdict = "REJECT — likely overfit (PBO >= 50%)"
+
+            pbo_result["verdict"] = pbo_verdict
+            print(f"    PBO = {pbo_val:.1%}  ({cscv['n_less']}/{cscv['n_combos']} combos, {len(returns_rows)} configs)")
+            print(f"    Verdict: {pbo_verdict}")
+        else:
+            print(f"    SKIPPED: only {len(returns_rows)} valid configs (need >= 3)")
+            pbo_result = {"pbo": None, "skipped": True,
+                          "reason": f"only {len(returns_rows)} configs"}
+    except Exception as e:
+        print(f"    ERROR computing PBO: {e}")
+        pbo_result = {"pbo": None, "error": str(e)}
+
     # Save results
     output = {
         "best_weights": best_weights,
@@ -840,6 +922,7 @@ def run_optimization():
         "r19c_full": r19c_full,
         "top_solutions": best_solutions[:10],
         "n_evals": result.nfev,
+        "pbo": pbo_result,
     }
     out_path = os.path.join(_root, "data", "r21a_optimization_results.pkl")
     # On Kaggle, also save to /kaggle/working/ for easy download

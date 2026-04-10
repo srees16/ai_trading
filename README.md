@@ -1,6 +1,6 @@
 # Centurion Capital LLC — Enterprise AI Trading Platform
 
-A Python-based enterprise trading platform built on a **Carver systematic trading framework** (23 forecast sources, FDM combination, volatility-targeted position sizing with AFML meta-labeling). Combines multi-source news scraping, AI-powered sentiment analysis, fundamental & technical analysis, strategy backtesting, HMM regime detection, 7-layer drawdown protection, RL confidence modifier, and automated live Indian market trading via Zerodha Kite Connect. Includes a RAG-powered document intelligence pipeline for research. Built with a **Next.js 14 frontend** (React, TanStack Query, Tailwind CSS) and a **FastAPI backend**, plus a Streamlit UI for legacy workflows. Backed by PostgreSQL/Neon persistence, MinIO/Cloudflare R2 object storage, Upstash Redis caching, ChromaDB vector search, multi-provider LLM integration (Claude / OpenAI / Ollama), Sentry error tracking, and Better Stack log aggregation. Deployable on HF Spaces + Vercel with GitHub Actions CI/CD.
+A Python-based enterprise trading platform built on a **Carver systematic trading framework** (23 forecast sources, FDM combination, volatility-targeted position sizing with AFML meta-labeling). Combines multi-source news scraping, AI-powered sentiment analysis, fundamental & technical analysis, strategy backtesting, HMM regime detection, 7-layer drawdown protection, RL confidence modifier, and automated live Indian market trading via Zerodha Kite Connect. Includes a RAG-powered document intelligence pipeline for research and a **walk-forward signal weight optimizer** (R21a) with Kaggle cloud compute support. Built with a **Next.js 14 frontend** (React, TanStack Query, Tailwind CSS) and a **FastAPI backend**. Backed by PostgreSQL/Neon persistence, MinIO/Cloudflare R2 object storage, Upstash Redis caching, ChromaDB vector search, multi-provider LLM integration (Claude / OpenAI / Ollama), Sentry error tracking, and Better Stack log aggregation. Deployable on HF Spaces + Vercel with GitHub Actions CI/CD.
 
 ---
 
@@ -11,7 +11,7 @@ A Python-based enterprise trading platform built on a **Carver systematic tradin
 ### Step 1 — Clone & install dependencies
 
 ```powershell/bash
-git clone -b develop https://github.com/srees16/centurion_core.git
+git clone -b c.core/iterative https://github.com/srees16/centurion_core.git
 cd centurion_core
 python -m venv myenv 
 myenv\Scripts\activate (macOS/Linux: source myenv/bin/activate)
@@ -19,9 +19,9 @@ pip install -r requirements.txt
 ```
 > Install Next.js frontend dependencies
 ```
-cd frontend
+cd ../centurion_core-fe
 npm install
-cd ..
+cd ../centurion_core
 ```
 ---
 
@@ -29,12 +29,12 @@ cd ..
 
 **Windows PowerShell:**
 ```powershell
-$env:ZERODHA_API_KEY='YOUR_API_KEY'; $env:ZERODHA_API_SECRET='YOUR_API_SECRET'; $env:ZERODHA_USER_ID='YOUR_ZERODHA_ID'; $env:ZERODHA_PASSWORD='YOUR_ZERODHA_PASSWORD'; $env:ZERODHA_TOTP_SECRET='YOUR_BASE32_TOTP_SECRET'; $env:ANTHROPIC_API_KEY='YOUR_ANTHROPIC_API_KEY'; $env:CENTURION_EMAIL_USER='YOUR_GMAIL_ID'; $env:CENTURION_EMAIL_PASS='YOUR_GMAIL_APP_PASSWORD'; $env:CENTURION_DATABASE_URL='postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require'; $env:UPSTASH_REDIS_URL='rediss://default:token@host.upstash.io:6379'; $env:SENTRY_DSN='https://YOUR_KEY@YOUR_ORG.ingest.sentry.io/YOUR_PROJECT_ID'; $env:LOGTAIL_TOKEN='YOUR_LOGTAIL_SOURCE_TOKEN'; $env:CENTURION_RAG_LLM_PROVIDER='claude'; $env:CENTURION_RAG_CLAUDE_MODEL='claude-opus-4-20250514'; $env:CENTURION_RAG_CLAUDE_MAX_TOKENS='1024'; $env:CENTURION_RAG_CLAUDE_TEMPERATURE='0.2'; $env:CENTURION_EMAIL_HOST='smtp.gmail.com'; $env:CENTURION_EMAIL_PORT='587'; $env:STREAMLIT_SERVER_PORT='9000'; $env:API_PORT='9001'; $env:CENTURION_DB_HOST='localhost'; $env:CENTURION_DB_PORT='9003'; $env:CENTURION_DB_NAME='centurion_rag'; $env:CENTURION_DB_USER='postgres'; $env:CENTURION_DB_PASSWORD='superadmin1'; $env:KITE_DB_HOST='localhost'; $env:KITE_DB_PORT='9003'; $env:KITE_DB_NAME='livestocks_ind'; $env:KITE_DB_USER='postgres'; $env:KITE_DB_PASSWORD='superadmin1'; $env:KITE_POOL_MAXSIZE='40'; $env:MINIO_ENDPOINT='localhost:9004'; $env:MINIO_ACCESS_KEY='minioadmin'; $env:MINIO_SECRET_KEY='minioadmin123'; $env:MINIO_SECURE='false'; $env:MINIO_BUCKET='centurion-backtests'; $env:MINIO_ENABLED='true'; $env:MINIO_REGION='auto'; $env:CENTURION_DEFAULT_ADMIN_PASSWORD='admin123'; $env:CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'; $env:CENTURION_RAG_LLM_URL='http://localhost:11434'; $env:RAG_MODEL='qwen2.5:3b'; $env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300'; $env:CENTURION_RAG_LLM_CHUNK_TIMEOUT='30'; $env:CENTURION_RAG_LLM_NUM_CTX='4096'; $env:CENTURION_RAG_LLM_NUM_PREDICT='500'; $env:CENTURION_RAG_LLM_MAX_TOKENS='500'; $env:CENTURION_RAG_LLM_TEMPERATURE='0.2'; $env:CENTURION_RAG_CHROMA_DIR='./data/chroma_db'; $env:CENTURION_RAG_EMBEDDING_MODEL='BAAI/bge-base-en-v1.5'; $env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET='2000'; $env:CENTURION_RAG_MAX_CONTEXT_CHUNKS='8'; $env:CENTURION_RAG_TOP_K='15'; $env:CENTURION_RAG_SIMILARITY_THRESHOLD='0.70'; $env:CENTURION_RAG_QUERY_BUDGET='300'; $env:CENTURION_RAG_QUERY_REWRITE='false'; $env:CENTURION_RAG_STREAMING='true'; $env:CENTURION_RAG_CACHE_ENABLED='false'; $env:CENTURION_RAG_FAQ_ENABLED='false'; $env:RAG_FAST_MODE='false'; $env:SENTRY_TRACES_SAMPLE_RATE='0.2'; $env:SENTRY_ENVIRONMENT='development'
+$env:ZERODHA_API_KEY='YOUR_API_KEY'; $env:ZERODHA_API_SECRET='YOUR_API_SECRET'; $env:ZERODHA_USER_ID='YOUR_ZERODHA_ID'; $env:ZERODHA_PASSWORD='YOUR_ZERODHA_PASSWORD'; $env:ZERODHA_TOTP_SECRET='YOUR_BASE32_TOTP_SECRET'; $env:ANTHROPIC_API_KEY='YOUR_ANTHROPIC_API_KEY'; $env:CENTURION_EMAIL_USER='YOUR_GMAIL_ID'; $env:CENTURION_EMAIL_PASS='YOUR_GMAIL_APP_PASSWORD'; $env:CENTURION_DATABASE_URL='postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require'; $env:UPSTASH_REDIS_URL='rediss://default:token@host.upstash.io:6379'; $env:SENTRY_DSN='https://YOUR_KEY@YOUR_ORG.ingest.sentry.io/YOUR_PROJECT_ID'; $env:LOGTAIL_TOKEN='YOUR_LOGTAIL_SOURCE_TOKEN'; $env:CENTURION_RAG_LLM_PROVIDER='claude'; $env:CENTURION_RAG_CLAUDE_MODEL='claude-opus-4-20250514'; $env:CENTURION_RAG_CLAUDE_MAX_TOKENS='1024'; $env:CENTURION_RAG_CLAUDE_TEMPERATURE='0.2'; $env:CENTURION_EMAIL_HOST='smtp.gmail.com'; $env:CENTURION_EMAIL_PORT='587'; $env:API_PORT='9001'; $env:CENTURION_DB_HOST='localhost'; $env:CENTURION_DB_PORT='9003'; $env:CENTURION_DB_NAME='centurion_rag'; $env:CENTURION_DB_USER='postgres'; $env:CENTURION_DB_PASSWORD='superadmin1'; $env:KITE_DB_HOST='localhost'; $env:KITE_DB_PORT='9003'; $env:KITE_DB_NAME='livestocks_ind'; $env:KITE_DB_USER='postgres'; $env:KITE_DB_PASSWORD='superadmin1'; $env:KITE_POOL_MAXSIZE='40'; $env:MINIO_ENDPOINT='localhost:9004'; $env:MINIO_ACCESS_KEY='minioadmin'; $env:MINIO_SECRET_KEY='minioadmin123'; $env:MINIO_SECURE='false'; $env:MINIO_BUCKET='centurion-backtests'; $env:MINIO_ENABLED='true'; $env:MINIO_REGION='auto'; $env:CENTURION_DEFAULT_ADMIN_PASSWORD='admin123'; $env:CENTURION_DEFAULT_ANALYST_PASSWORD='analyst123'; $env:CENTURION_RAG_LLM_URL='http://localhost:11434'; $env:RAG_MODEL='qwen2.5:3b'; $env:CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT='300'; $env:CENTURION_RAG_LLM_CHUNK_TIMEOUT='30'; $env:CENTURION_RAG_LLM_NUM_CTX='4096'; $env:CENTURION_RAG_LLM_NUM_PREDICT='500'; $env:CENTURION_RAG_LLM_MAX_TOKENS='500'; $env:CENTURION_RAG_LLM_TEMPERATURE='0.2'; $env:CENTURION_RAG_CHROMA_DIR='./data/chroma_db'; $env:CENTURION_RAG_EMBEDDING_MODEL='BAAI/bge-base-en-v1.5'; $env:CENTURION_RAG_CONTEXT_TOKEN_BUDGET='2000'; $env:CENTURION_RAG_MAX_CONTEXT_CHUNKS='8'; $env:CENTURION_RAG_TOP_K='15'; $env:CENTURION_RAG_SIMILARITY_THRESHOLD='0.70'; $env:CENTURION_RAG_QUERY_BUDGET='300'; $env:CENTURION_RAG_QUERY_REWRITE='false'; $env:CENTURION_RAG_STREAMING='true'; $env:CENTURION_RAG_CACHE_ENABLED='false'; $env:CENTURION_RAG_FAQ_ENABLED='false'; $env:RAG_FAST_MODE='false'; $env:SENTRY_TRACES_SAMPLE_RATE='0.2'; $env:SENTRY_ENVIRONMENT='development'
 ```
 
 **macOS / Linux:**
 ```bash
-export ZERODHA_API_KEY="YOUR_API_KEY" && export ZERODHA_API_SECRET="YOUR_API_SECRET" && export ZERODHA_USER_ID="YOUR_ZERODHA_ID" && export ZERODHA_PASSWORD="YOUR_ZERODHA_PASSWORD" && export ZERODHA_TOTP_SECRET="YOUR_BASE32_TOTP_SECRET" && export ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY" && export CENTURION_EMAIL_USER="YOUR_GMAIL_ID" && export CENTURION_EMAIL_PASS="YOUR_GMAIL_APP_PASSWORD" && export CENTURION_DATABASE_URL="postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require" && export UPSTASH_REDIS_URL="rediss://default:token@host.upstash.io:6379" && export SENTRY_DSN="https://YOUR_KEY@YOUR_ORG.ingest.sentry.io/YOUR_PROJECT_ID" && export LOGTAIL_TOKEN="YOUR_LOGTAIL_SOURCE_TOKEN" && export CENTURION_RAG_LLM_PROVIDER="claude" && export CENTURION_RAG_CLAUDE_MODEL="claude-opus-4-20250514" && export CENTURION_RAG_CLAUDE_MAX_TOKENS="1024" && export CENTURION_RAG_CLAUDE_TEMPERATURE="0.2" && export CENTURION_EMAIL_HOST="smtp.gmail.com" && export CENTURION_EMAIL_PORT="587" && export STREAMLIT_SERVER_PORT="9000" && export API_PORT="9001" && export CENTURION_DB_HOST="localhost" && export CENTURION_DB_PORT="9003" && export CENTURION_DB_NAME="centurion_rag" && export CENTURION_DB_USER="postgres" && export CENTURION_DB_PASSWORD="superadmin1" && export KITE_DB_HOST="localhost" && export KITE_DB_PORT="9003" && export KITE_DB_NAME="livestocks_ind" && export KITE_DB_USER="postgres" && export KITE_DB_PASSWORD="superadmin1" && export KITE_POOL_MAXSIZE="40" && export MINIO_ENDPOINT="localhost:9004" && export MINIO_ACCESS_KEY="minioadmin" && export MINIO_SECRET_KEY="minioadmin123" && export MINIO_SECURE="false" && export MINIO_BUCKET="centurion-backtests" && export MINIO_ENABLED="true" && export MINIO_REGION="auto" && export CENTURION_DEFAULT_ADMIN_PASSWORD="admin123" && export CENTURION_DEFAULT_ANALYST_PASSWORD="analyst123" && export CENTURION_RAG_LLM_URL="http://localhost:11434" && export RAG_MODEL="qwen2.5:3b" && export CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT="300" && export CENTURION_RAG_LLM_CHUNK_TIMEOUT="30" && export CENTURION_RAG_LLM_NUM_CTX="4096" && export CENTURION_RAG_LLM_NUM_PREDICT="500" && export CENTURION_RAG_LLM_MAX_TOKENS="500" && export CENTURION_RAG_LLM_TEMPERATURE="0.2" && export CENTURION_RAG_CHROMA_DIR="./data/chroma_db" && export CENTURION_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5" && export CENTURION_RAG_CONTEXT_TOKEN_BUDGET="2000" && export CENTURION_RAG_MAX_CONTEXT_CHUNKS="8" && export CENTURION_RAG_TOP_K="15" && export CENTURION_RAG_SIMILARITY_THRESHOLD="0.70" && export CENTURION_RAG_QUERY_BUDGET="300" && export CENTURION_RAG_QUERY_REWRITE="false" && export CENTURION_RAG_STREAMING="true" && export CENTURION_RAG_CACHE_ENABLED="false" && export CENTURION_RAG_FAQ_ENABLED="false" && export RAG_FAST_MODE="false" && export SENTRY_TRACES_SAMPLE_RATE="0.2" && export SENTRY_ENVIRONMENT="development"
+export ZERODHA_API_KEY="YOUR_API_KEY" && export ZERODHA_API_SECRET="YOUR_API_SECRET" && export ZERODHA_USER_ID="YOUR_ZERODHA_ID" && export ZERODHA_PASSWORD="YOUR_ZERODHA_PASSWORD" && export ZERODHA_TOTP_SECRET="YOUR_BASE32_TOTP_SECRET" && export ANTHROPIC_API_KEY="YOUR_ANTHROPIC_API_KEY" && export CENTURION_EMAIL_USER="YOUR_GMAIL_ID" && export CENTURION_EMAIL_PASS="YOUR_GMAIL_APP_PASSWORD" && export CENTURION_DATABASE_URL="postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require" && export UPSTASH_REDIS_URL="rediss://default:token@host.upstash.io:6379" && export SENTRY_DSN="https://YOUR_KEY@YOUR_ORG.ingest.sentry.io/YOUR_PROJECT_ID" && export LOGTAIL_TOKEN="YOUR_LOGTAIL_SOURCE_TOKEN" && export CENTURION_RAG_LLM_PROVIDER="claude" && export CENTURION_RAG_CLAUDE_MODEL="claude-opus-4-20250514" && export CENTURION_RAG_CLAUDE_MAX_TOKENS="1024" && export CENTURION_RAG_CLAUDE_TEMPERATURE="0.2" && export CENTURION_EMAIL_HOST="smtp.gmail.com" && export CENTURION_EMAIL_PORT="587" && export API_PORT="9001" && export CENTURION_DB_HOST="localhost" && export CENTURION_DB_PORT="9003" && export CENTURION_DB_NAME="centurion_rag" && export CENTURION_DB_USER="postgres" && export CENTURION_DB_PASSWORD="superadmin1" && export KITE_DB_HOST="localhost" && export KITE_DB_PORT="9003" && export KITE_DB_NAME="livestocks_ind" && export KITE_DB_USER="postgres" && export KITE_DB_PASSWORD="superadmin1" && export KITE_POOL_MAXSIZE="40" && export MINIO_ENDPOINT="localhost:9004" && export MINIO_ACCESS_KEY="minioadmin" && export MINIO_SECRET_KEY="minioadmin123" && export MINIO_SECURE="false" && export MINIO_BUCKET="centurion-backtests" && export MINIO_ENABLED="true" && export MINIO_REGION="auto" && export CENTURION_DEFAULT_ADMIN_PASSWORD="admin123" && export CENTURION_DEFAULT_ANALYST_PASSWORD="analyst123" && export CENTURION_RAG_LLM_URL="http://localhost:11434" && export RAG_MODEL="qwen2.5:3b" && export CENTURION_RAG_LLM_FIRST_TOKEN_TIMEOUT="300" && export CENTURION_RAG_LLM_CHUNK_TIMEOUT="30" && export CENTURION_RAG_LLM_NUM_CTX="4096" && export CENTURION_RAG_LLM_NUM_PREDICT="500" && export CENTURION_RAG_LLM_MAX_TOKENS="500" && export CENTURION_RAG_LLM_TEMPERATURE="0.2" && export CENTURION_RAG_CHROMA_DIR="./data/chroma_db" && export CENTURION_RAG_EMBEDDING_MODEL="BAAI/bge-base-en-v1.5" && export CENTURION_RAG_CONTEXT_TOKEN_BUDGET="2000" && export CENTURION_RAG_MAX_CONTEXT_CHUNKS="8" && export CENTURION_RAG_TOP_K="15" && export CENTURION_RAG_SIMILARITY_THRESHOLD="0.70" && export CENTURION_RAG_QUERY_BUDGET="300" && export CENTURION_RAG_QUERY_REWRITE="false" && export CENTURION_RAG_STREAMING="true" && export CENTURION_RAG_CACHE_ENABLED="false" && export CENTURION_RAG_FAQ_ENABLED="false" && export RAG_FAST_MODE="false" && export SENTRY_TRACES_SAMPLE_RATE="0.2" && export SENTRY_ENVIRONMENT="development"
 ```
 
 > **Tip:** Instead of setting env vars inline, you can copy `.env.example` to `.env` in the project root. The app loads it via `python-dotenv` automatically. See **Section 11, Step 6** or **Section 16.8** for the complete `.env` reference.
@@ -109,23 +109,11 @@ Backend API at: **http://localhost:9001** — API docs at **http://localhost:900
 ### Step 8 — Terminal 2: Launch Next.js frontend
 
 Open a new terminal:
-> cd centurion_core/frontend
+> cd centurion_core-fe
 ```
 npm run dev
 ```
 Opens at: **http://localhost:3000** — login with `admin` / `admin123`
-
----
-
-### Step 9 (Optional) — Terminal 3: Launch Streamlit
-
-> Set env variables from Step 2 in this new terminal too, then run:
-```
-streamlit run app.py
-```
-Opens at: **http://localhost:9000** — login with `admin` / `admin123`
-
-> **SSO:** Logging into the Streamlit app or the FastAPI docs shares session cookies. Both URLs must use `localhost` (not `127.0.0.1`) for this to work.
 
 MinIO console at: **http://localhost:9002/login** — login with `minioadmin` / `minioadmin123`
 
@@ -160,6 +148,16 @@ Jump to **Section 15: Troubleshooting** or **Section 12: Installation** for deta
 ## Changelog
 
 ### April 2026
+
+**R21a Walk-Forward Optimizer** — New `optimizer/optimize_weights_r21a.py` uses scipy differential evolution (population=60, maxiter=150) to find optimal signal weights for the 11-source Carver backtester. Features: checkpoint every 5 generations with resume support, Kaggle cloud compute via `cloud/run_cloud_kaggle.py` (free tier: 4 CPU, 29 GB RAM, 12-hr sessions). Current best at Gen 50: Sharpe 1.780, CAGR 56.7%, MaxDD 22.4%.
+
+**Cloud Runners** — New `cloud/` folder with Kaggle, Colab, and Modal runners for offloading heavy compute. Dataset management via Kaggle CLI with `--dir-mode zip` for folder uploads.
+
+**CLI Runners** — New `runners/` folder consolidating entry points: `run_backtest.py`, `run_r21a.py`, `run_extract_forecasts.py`, `run_r21a_pipeline.py`, `run_contra_v4.py`.
+
+**Paper Trading Frontend** — Trade Monitor page (`/ind-stocks/trade-monitor`) with Paper Validation tab showing cumulative performance metrics (Sharpe, Sortino, Calmar, CAGR, Max DD, Win Rate), equity curve, daily P&L, weekly checkpoints, signal audit, and pass/fail verdict. Daily Detail tab for per-day drill-down. Automated via GitHub Actions.
+
+**Streamlit Removal** — Removed legacy Streamlit UI (`app.py`, `ui/` folder, `auth/authenticator.py`). Next.js 14 is now the sole frontend.
 
 **Signal Quality Evaluator** — New `services/signal_quality_evaluator.py` provides regime-conditioned signal analysis with CAGR estimation, stress testing, and auto-generated documentation.
 
@@ -290,7 +288,7 @@ New `services/aronson_validator.py` implements Evidence-Based Technical Analysis
 
 ## 1. Architecture Overview
 
-The application follows a modular, deferred-import architecture with dual frontends and a **Carver-inspired systematic trading pipeline** at its core:
+The application follows a modular, deferred-import architecture with a **Carver-inspired systematic trading pipeline** at its core:
 
 ```
 Next.js 14 Frontend (primary — port 3000)
@@ -303,11 +301,6 @@ FastAPI Backend (port 9001)
   ├── /api/v1/* — 50+ REST + SSE endpoints
   ├── Auth: itsdangerous signed tokens (8h TTL)
   └── Delegates to: scrapers, sentiment, metrics, forecast_combiner, rag_pipeline
-
-app.py (Streamlit Router — legacy, port 9000)
-  ├── apply_custom_styles() initialize_session_state() check_authentication()
-  ├── Page routing via st.session_state.current_page
-  └── All page imports deferred to route branches
 ```
 
 ### Signal-to-Execution Pipeline
@@ -688,7 +681,7 @@ Full statistical arbitrage pipeline via the Binance public REST API (no API key 
 
 ## 5. Live Trading — Zerodha Kite Connect
 
-Streamlit dashboard for real-time Indian equity monitoring, order management, option chain analysis, and **Carver-pipeline automated trading**.
+Real-time Indian equity monitoring, order management, option chain analysis, and **Carver-pipeline automated trading**.
 
 ### Components
 
@@ -735,7 +728,7 @@ Push-based tick distribution via Kite WebSocket (KiteTicker) with an internal ev
 |-----------|--------|
 | `webhooks/ticker.py` | `KiteWebSocketService` — manages KiteTicker connection, batch-flushes ticks every 0.5 s |
 | `webhooks/dispatcher.py` | `WebhookDispatcher` — singleton fan-out to subscribers via ThreadPoolExecutor |
-| `webhooks/handlers.py` | `DBTickHandler` (PostgreSQL), `UITickCache` (Streamlit), `NSEMarketStatusMonitor`, `SessionWatchdog` |
+| `webhooks/handlers.py` | `DBTickHandler` (PostgreSQL), `UITickCache`, `NSEMarketStatusMonitor`, `SessionWatchdog` |
 | `webhooks/alert_engine.py` | `PriceAlertEngine` — evaluates price/volume/change conditions on every tick batch |
 | `webhooks/timescale_handler.py` | `TimescaleTickHandler` — writes raw ticks to a hypertable; continuous aggregates for 1m/5m/15m/1h OHLC |
 | `webhooks/service.py` | `WebhookService` — orchestrator that wires all components at startup |
@@ -967,7 +960,6 @@ Based on *Advances in Financial Machine Learning* by Marcos López de Prado. 19 
 | Portfolio | ML Asset Allocation (HRP) |
 | Computation | Multiprocessing & Vectorization, Brute Force & Quantum |
 
-Streamlit page: `ui/pages/finance_ml_page.py` — Route: `finance_ml`
 Next.js page: `frontend/app/(dashboard)/financial-ml/page.tsx` — Route: `/financial-ml` — with ticker input (Default / Manual / CSV), calendar popover date pickers, chapter selection, spinner progress, and collapsible results
 
 ### Test & Tune (TTMTS)
@@ -983,7 +975,6 @@ Based on *Testing and Tuning Market Trading Systems* by Timothy Masters (2018). 
 
 C++ algorithms from the book are converted to Python (NumPy/SciPy). Each chapter has a companion reading in `testune_trade_sys/readings/`.
 
-Streamlit page: `ui/pages/testune_page.py` — Route: `testune_ts`
 Next.js page: `frontend/app/(dashboard)/test-tune/page.tsx` — Route: `/test-tune`
 
 ### Shared Architecture
@@ -992,7 +983,7 @@ Both modules follow the same pattern:
 - `sample_data.py` — Data generators with yfinance caching to `_cache/` (parquet)
 - `applied/chNN_*.py` — Chapter scripts with algorithm functions and a `main()` entry point
 - `readings/chNN_*.md` — Companion documentation
-- Streamlit page with `ANALYSIS_TABS` registry, `_execute_chapter()` via `importlib`, matplotlib figure capture (PNG bytes), MinIO + PostgreSQL persistence
+- Chapter execution via `importlib`, matplotlib figure capture (PNG bytes), MinIO + PostgreSQL persistence
 
 ---
 
@@ -1000,7 +991,6 @@ Both modules follow the same pattern:
 
 ```
 centurion_core/
-├── app.py                        # Streamlit application router
 ├── main.py                       # Core orchestration (AlgoTradingSystem)
 ├── config.py                     # Configuration (~140 settings, CENTURION_* env vars)
 ├── models.py                     # Data models (NewsItem, StockMetrics, TradingSignal)
@@ -1016,61 +1006,26 @@ centurion_core/
 │   └── workflows/
 │       └── deploy.yml            # CI/CD: HF Spaces backend + Vercel frontend deployment
 │
-├── frontend/                     # Next.js 14 frontend (primary UI)
-│   ├── package.json              # Node.js dependencies
-│   ├── next.config.js            # API proxy rewrites, standalone output
-│   ├── tailwind.config.js        # Tailwind CSS + Radix UI theme tokens
-│   ├── middleware.ts             # Auth redirect middleware
-│   ├── vercel.json               # Vercel deployment config with API rewrites
-│   ├── app/
-│   │   ├── layout.tsx            # Root layout (ThemeProvider, QueryClient)
-│   │   ├── providers.tsx         # next-themes + TanStack QueryClientProvider
-│   │   ├── login/page.tsx        # Login page
-│   │   └── (dashboard)/
-│   │       ├── layout.tsx        # Auth guard, sidebar, header, footer
-│   │       ├── settings/page.tsx # Settings (profile, appearance, change password)
-│   │       ├── us-stocks/        # US stock pages (main, fundamentals, backtest, verdict, holdings, history)
-│   │       ├── ind-stocks/       # Indian stock pages (main, fly-kite, fundamentals, screener, verdict, backtest, options, history)
-│   │       ├── financial-ml/     # Financial ML chapter runner (ticker/date inputs, calendar popovers, collapsible results)
-│   │       ├── test-tune/        # Test & Tune chapter runner
-│   │       ├── crypto/           # Crypto strategies
-│   │       └── rag-engine/       # RAG document Q&A
-│   ├── components/
-│   │   ├── layout/               # Sidebar, HeaderBar, UserMenu, Footer
-│   │   ├── rag/                  # PDF uploader, streaming answer, knowledge base, source selector
-│   │   ├── ui/                   # Radix primitives (button, input, dropdown-menu, tabs, popover, calendar, etc.)
-│   │   ├── charts/               # Chart components
-│   │   ├── tables/               # Data tables
-│   │   └── common/               # Spinner, shared components
-│   ├── hooks/                    # React hooks (use-auth, use-rag, use-analysis, use-backtest, etc.)
-│   ├── lib/                      # API client, types, constants, utilities
-│   └── styles/globals.css        # CSS custom properties (light/dark), component styles
+├── optimizer/                    # Walk-forward signal weight optimisation
+│   ├── optimize_weights_r21a.py  # R21a — differential evolution on 11 signals, checkpoint resume
+│   └── analyze_r21a.py           # Post-optimisation analysis and reporting
 │
-├── ui/                           # Streamlit UI layer (legacy)
-│   ├── components.py             # Header, footer, navigation, metrics cards
-│   ├── charts.py                 # Plotly charts (decision, sentiment, scores)
-│   ├── tables.py                 # Data tables with CSV download
-│   ├── styles.py                 # CSS styling and colour constants
-│   ├── assets/                   # Logo, background images
-│   └── pages/
-│       ├── main_page.py          # Dashboard & control panel (US)
-│       ├── analysis_page.py      # Analysis results with CSS spinner
-│       ├── fundamental_page.py   # Fundamental analysis drill-down
-│       ├── backtesting_page.py   # Strategy backtesting + MinIO/DB integration
-│       ├── crypto_page.py        # Crypto strategy page (Binance API)
-│       ├── history_page.py       # Historical results browser
-│       ├── us_holdings_page.py   # US portfolio holdings view
-│       ├── finance_ml_page.py    # Financial ML chapter analyses (AFML)
-│       ├── testune_page.py       # Test & Tune chapter analyses (TTMTS)
-│       ├── ind_main_page.py      # Indian equities analysis + auto-order execution
-│       ├── screener_page.py      # NSE screener → IntegratedScorer → risk → order pipeline
-│       ├── verdict_page.py       # IntegratedScorer verdict detail view
-│       ├── verdict_page.py       # IntegratedScorer verdict detail view
-│       └── options_page.py       # Option chain analysis page
+├── runners/                      # CLI entry points for standalone tasks
+│   ├── run_backtest.py           # Full pipeline backtest runner
+│   ├── run_r21a.py               # R21a validation with real engine
+│   ├── run_extract_forecasts.py  # Extract per-source daily forecasts to .pkl
+│   ├── run_r21a_pipeline.py      # End-to-end R21a pipeline (extract → optimise → validate)
+│   └── run_contra_v4.py          # Contra regime strategy runner
+│
+├── cloud/                        # Cloud compute runners (Kaggle, Colab, Modal)
+│   ├── run_cloud_kaggle.py       # Kaggle free-tier runner (4 CPU, 29 GB RAM, 12-hr sessions)
+│   ├── run_cloud_colab.py        # Google Colab runner
+│   ├── run_cloud_modal.py        # Modal serverless runner
+│   └── run_kaggle.py             # Kaggle dataset + notebook management
 │
 ├── auth/                         # Authentication
-│   ├── authenticator.py          # Login/session management
-│   └── credentials.yaml          # User credentials (SHA-256 hashed)
+│   ├── shared_session.py         # Cross-app SSO token signing (itsdangerous)
+│   └── credentials.yaml          # User credentials (bcrypt hashed)
 │
 ├── database/                     # PostgreSQL persistence layer (local + Neon serverless)
 │   ├── connection.py             # SQLAlchemy engine (QueuePool, SSL, DATABASE_URL, Neon auto-detect)
@@ -1119,7 +1074,7 @@ centurion_core/
 │   └── risk_engine.py            # Pre-trade + post-trade risk checks, drawdown circuit breaker
 │
 ├── services/                     # Business logic & analysis services
-│   ├── analysis.py               # Analysis orchestration (async, Streamlit-free)
+│   ├── analysis.py               # Analysis orchestration (async)
 │   ├── integrated_scorer.py      # 2-layer evaluation pipeline (core 45% + strategy/robustness 55%)
 │   ├── forecast_combiner.py      # Carver 11-source forecast combination with FDM (~1.35)
 │   ├── volatility_target.py      # 20% annual vol target, Half-Kelly sizing, rolling capital
@@ -1135,7 +1090,6 @@ centurion_core/
 │   ├── survivorship_filter.py    # Delisted/suspended/dead stock detector (4 methods)
 │   ├── fundamental_freshness.py  # Intra-quarter freshness (bulk deals, promoter pledges, MF holdings)
 │   ├── portfolio_analyzer.py     # Kite holdings analysis (sector weights, allocation drift)
-│   ├── session.py                # Streamlit session state initialisation
 │   ├── cache.py                  # SessionCache (TTL-aware, thread-safe)
 │   └── drivewealth.py            # DriveWealth API client for US brokerage
 │
@@ -1173,7 +1127,6 @@ centurion_core/
 │   └── _output/                  # Analysis outputs (git-ignored)
 │
 ├── kite_connect/                 # Zerodha live trading (Indian markets)
-│   ├── zerodha_live.py           # Main Streamlit dashboard
 │   ├── auth/                     # OAuth + Selenium auto-login + TOTP auto-fill (pyotp)
 │   ├── core/                     # Config, PostgreSQL, Selenium (headless)
 │   ├── nse/                      # NSE universe download + 3-stage screener
@@ -1221,7 +1174,7 @@ centurion_core/
 │   │   ├── llm_service.py        # Ollama / Claude / OpenAI abstraction
 │   │   ├── evaluation.py         # IR metrics + LLM-as-Judge
 │   │   └── code_applier.py       # RAG → strategy code applicator
-│   ├── ui/                       # RAG Streamlit widgets
+│   ├── ui/                       # RAG UI widgets
 │   │   └── ui_components.py      # Upload, query, response UI
 │   └── utils/                    # Pipeline utilities
 │       ├── token_counter.py      # tiktoken / heuristic counter
@@ -1330,7 +1283,7 @@ cd ..
 
 **Expected output:**
 ```
-Successfully installed streamlit==1.X.X psycopg2-binary==2.9.X ...
+Successfully installed psycopg2-binary==2.9.X ...
 ```
 
 ---
@@ -1424,9 +1377,6 @@ If you already set environment variables in Step 2 of the Quick Start, you can s
 # ═══════════════════════════════════════════════════════════════════
 # CRITICAL: Copy this entire block to .env (replace YOUR_*_HERE)
 # ═══════════════════════════════════════════════════════════════════
-
-# ─── Streamlit App ─────────────────────────────────────────────────
-STREAMLIT_SERVER_PORT=9000
 
 # ─── FastAPI Backend ──────────────────────────────────────────────
 API_PORT=9001
@@ -1587,30 +1537,20 @@ python run_api.py
 
 Backend API at: **http://localhost:9001** — API docs at **http://localhost:9001/docs**
 
-**Terminal 2 — Next.js Frontend (primary UI):**
+**Terminal 2 — Next.js Frontend:**
 
 ```powershell
-cd centurion_core/frontend
+cd centurion_core-fe
 npm run dev
 ```
 
 Opens at: **http://localhost:3000** — login with `admin` / `admin123`
 
-**Terminal 3 — Streamlit UI (optional, legacy):**
-
-```powershell
-cd centurion_core
-.\myenv\Scripts\Activate.ps1
-streamlit run app.py
-```
-
-Opens at: **http://localhost:9000**
-
 ---
 
 ### Step 9: Login & Verify Application
 
-1. Open http://localhost:3000 (Next.js) or http://localhost:9000 (Streamlit) in your browser
+1. Open http://localhost:3000 in your browser
 2. Login with default credentials:
    - **Username**: `admin`
    - **Password**: `admin123`
@@ -1633,7 +1573,7 @@ Opens at: **http://localhost:9000**
 | `connection to server ... failed` | PostgreSQL not running | `docker ps` and check container status |
 | `database "centurion_rag" does not exist` | Setup script didn't run | Run `python setup_database.py` again |
 | `[Errno 48] Address already in use` | Port conflict (9000/9004) | Check `Test-NetConnection` or change `.env` ports |
-| `ModuleNotFoundError: No module named 'streamlit'` | Dependencies not installed | Run `pip install -r requirements.txt` |
+| `ModuleNotFoundError: No module named 'X'` | Dependencies not installed | Run `pip install -r requirements.txt` |
 | `Connection refused to port 9003` | PostgreSQL password mismatch | Verify `CENTURION_DB_PASSWORD=superadmin1` in `.env` |
 | `MinIO bucket not found` | Bucket not created | Run `docker exec centurion-minio mc mb minio/centurion-backtests` |
 | `SSL: CERTIFICATE_VERIFY_FAILED` | SSL cert issue (news scraping) | Usually auto-resolved; check internet connection |
@@ -1762,9 +1702,9 @@ Tab-based sub-navigation per market section:
 
 ### REST API (FastAPI)
 
-A full REST API runs alongside the Streamlit UI on a separate port (default `9001`).
+A full REST API serves the Next.js frontend on a separate port (default `9001`).
 
-**Interactive docs** — **http://localhost:9001/docs** (Swagger UI) and **http://localhost:9001/redoc** (ReDoc) are available after authenticating. On first visit you are redirected to a login page; use the same credentials as the Streamlit app (e.g. `admin` / `admin123`). A signed session cookie (8-hour TTL) keeps you logged in.
+**Interactive docs** — **http://localhost:9001/docs** (Swagger UI) and **http://localhost:9001/redoc** (ReDoc) are available after authenticating. On first visit you are redirected to a login page; use the same credentials as the frontend (e.g. `admin` / `admin123`). A signed session cookie (8-hour TTL) keeps you logged in.
 
 | Module | Prefix | Endpoints | Examples |
 |--------|--------|-----------|----------|
@@ -1895,7 +1835,7 @@ docker-compose down -v
 | Symptom | Fix |
 |---------|-----|
 | Import errors | `pip install -r requirements.txt --upgrade` |
-| Port in use | `streamlit run app.py --server.port 9005` |
+| Port in use | Change port in `.env` or kill the conflicting process |
 | Slow first run | DistilBERT model download (~250 MB); subsequent runs are fast |
 
 ---
@@ -1904,7 +1844,7 @@ docker-compose down -v
 
 | Category | Packages |
 |---|---|
-| **Web Framework** | streamlit, plotly, **Next.js 14** (React 18, Tailwind CSS, TanStack Query v5, react-day-picker v9, date-fns) |
+| **Web Framework** | **Next.js 14** (React 18, Tailwind CSS, TanStack Query v5, react-day-picker v9, date-fns), plotly |
 | **Data** | pandas, numpy, openpyxl |
 | **Financial Data** | yfinance |
 | **Crypto Data** | Binance public REST API (no key required) |
@@ -1965,7 +1905,6 @@ User → Vercel (Next.js frontend)
 | **Backend API (prod)** | https://srees16-centurion-core.hf.space | HF Spaces — FastAPI |
 | **Backend API (local)** | http://localhost:9001 | `python run_api.py` |
 | **API Docs (local)** | http://localhost:9001/docs | Swagger UI (auth-gated) |
-| **Streamlit (local)** | http://localhost:9000 | `streamlit run app.py` (legacy UI) |
 | **Neon Console** | https://console.neon.tech | Database management, SQL editor, branching |
 | **Upstash Console** | https://console.upstash.com | Redis data browser, CLI, usage metrics |
 | **Cloudflare Dashboard** | https://dash.cloudflare.com | R2 bucket browser, API tokens, usage |

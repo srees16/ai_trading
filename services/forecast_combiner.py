@@ -68,37 +68,40 @@ class ForecastWeight:
 # avg forecast ~6-7 (vs Carver target 10), sufficient diversification to avoid
 # single-signal blowups, decorrelated styles (trend + momentum + adaptive + breakout).
 DEFAULT_FORECAST_WEIGHTS: List[ForecastWeight] = [
-    ForecastWeight("ewmac_8_32", 0.196),     # R21a: ↑ from 7% — fast trend-following heavily upweighted
-    ForecastWeight("ewmac_16_64", 0.008),    # R21a: ↓ from 9% — nearly eliminated (redundant with 8_32)
+    ForecastWeight("ewmac_8_32", 0.00),      # dropped: at floor in all 10 v27 solutions
+    ForecastWeight("ewmac_16_64", 0.0137),   # v27-Champ: tail signal (1.4%)
     ForecastWeight("ewmac_32_128", 0.00),    # zeroed — redundant
-    ForecastWeight("ewmac_64_256", 0.108),   # R21a: ↑ from 8% — positional trend boosted
+    ForecastWeight("ewmac_64_256", 0.1151),  # v27-Champ: CORE ↑ from 9.1% — positional trend promoted
     ForecastWeight("carry", 0.00),           # zeroed — weak for equities
-    ForecastWeight("screener", 0.018),       # R21a: ↓ from 5% — low alpha contribution
-    ForecastWeight("momentum", 0.112),       # R21a: ↓ from 16% — still important, less dominant
+    ForecastWeight("screener", 0.1015),      # v27-Champ: ↓ from 15.9% — still significant
+    ForecastWeight("momentum", 0.1587),      # v27-Champ: CORE ≈ stable — 3rd highest
     ForecastWeight("pead", 0.00),            # DEAD: 0% hit rate
-    ForecastWeight("mean_reversion", 0.027), # R21a: ↓ from 13% — counter-trend heavily trimmed
+    ForecastWeight("mean_reversion", 0.0552),# v27-Champ: ≈ from 6.1% — stable counter-trend
     ForecastWeight("fii_flow", 0.00),        # DEAD: 0% hit rate
     ForecastWeight("decision_engine", 0.00), # zeroed — circular dependency
     ForecastWeight("oi_signal", 0.00),       # HARMFUL: t-stat = -69.8
     ForecastWeight("cross_momentum", 0.00),  # zeroed — conflicts with long-only
     ForecastWeight("pairs_arb", 0.00),       # HARMFUL: t-stat = -190.7
     ForecastWeight("event_driven", 0.00),    # DEAD: 0% hit rate
-    ForecastWeight("penfold_trend", 0.012),  # R21a: ↓ from 12% — nearly eliminated
-    ForecastWeight("ehlers_dsp", 0.188),     # R21a: ↑ from 12% — adaptive DSP heavily boosted
+    ForecastWeight("penfold_trend", 0.0180), # v27-Champ: ↓ from 4.3% — tail signal
+    ForecastWeight("ehlers_dsp", 0.1779),    # v27-Champ: CORE ↑↑ from 3.9% — DSP #2 weight now
     ForecastWeight("intermarket", 0.00),     # zeroed — noisy
-    ForecastWeight("acceleration", 0.119),   # R21a: ↑ from 4% — acceleration tripled
-    ForecastWeight("carver_value", 0.196),   # R21a: ↑ from 7% — value signal co-top weight
+    ForecastWeight("acceleration", 0.1563),  # v27-Champ: CORE ↑ from 11.2% — 4th highest
+    ForecastWeight("carver_value", 0.1878),  # v27-Champ: CORE #1 weight — value signal dominant
     ForecastWeight("skew_signal", 0.00),     # zeroed — weak signal
     ForecastWeight("sentiment", 0.00),       # DEAD: 0% hit rate
-    ForecastWeight("breakout", 0.016),       # R21a: ↓ from 7% — low alpha contribution
+    ForecastWeight("breakout", 0.0159),      # v27-Champ: ↓ from 4.7% — tail signal
     ForecastWeight("order_flow", 0.00),      # zeroed — microstructure noise
-    # Total: 1.00 exact (24 sources, 11 active)
-    # R21a OOS validated: Sharpe=2.09, CAGR=74.1%, MaxDD=25.2%, Calmar=2.94
-    # vs R19c baseline:  Sharpe=1.02, CAGR=48.8%, MaxDD=67.4%, Calmar=0.71
-    # Top signals: ewmac_8_32(19.6%), carver_value(19.6%), ehlers_dsp(18.8%),
-    #              acceleration(11.9%), momentum(11.2%), ewmac_64_256(10.8%)
-    # Trimmed:     mean_reversion(2.7%), screener(1.8%), breakout(1.6%),
-    #              penfold_trend(1.2%), ewmac_16_64(0.8%)
+    # Total: 1.0001 (24 sources, 10 active — ewmac_8_32 dropped)
+    # v27 Champion (ds-v27, bear=0.15 fixed, ewmac_8_32 dropped):
+    #   Train: Sharpe=1.036, CAGR=24.4%, MaxDD=23.0%
+    #   Test:  Sharpe=1.323, CAGR=47.1%, MaxDD=29.6%
+    #   Full:  Sharpe=1.181, CAGR=32.7%, MaxDD=29.6%
+    #   PBO=27.1% — LIKELY REAL (under 30% threshold)
+    # CORE (std<5%): carver_value(18.8%), ehlers_dsp(17.8%), momentum(15.9%),
+    #                acceleration(15.6%), ewmac_64_256(11.5%)
+    # Stable:        screener(10.1%), mean_reversion(5.5%), penfold_trend(1.8%),
+    #                breakout(1.6%), ewmac_16_64(1.4%)
 ]
 
 # Rule-of-thumb correlations between forecast sources (Carver Appendix C):

@@ -301,12 +301,16 @@ class RiskManager:
             logger.warning("VIX panic regime — no new BUY orders generated")
             return []
 
-        # Sort by absolute forecast strength (strongest conviction first)
+        # Sort by conviction: positive forecasts first (descending), then negative
+        # by abs. Prevents bearish stocks from wasting top slots in long-only mode.
         df_sorted = screened_df.copy()
-        df_sorted["_abs_forecast"] = df_sorted["symbol"].map(
-            lambda s: abs(combined_forecasts.get(s, 0))
+        df_sorted["_forecast"] = df_sorted["symbol"].map(
+            lambda s: combined_forecasts.get(s, 0)
         )
-        df_sorted = df_sorted.sort_values("_abs_forecast", ascending=False)
+        df_sorted["_rank_key"] = df_sorted["_forecast"].apply(
+            lambda f: (f > 0, f if f > 0 else -abs(f))
+        )
+        df_sorted = df_sorted.sort_values("_rank_key", ascending=False)
 
         for _, row in df_sorted.head(limit).iterrows():
             if available <= 0:

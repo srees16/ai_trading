@@ -68,7 +68,7 @@ HMM_REGIME_SCALES = {
 
 # ── Hybrid H1 constants (from volatility_target.py) ──
 H1_SMA200_BOOST = 1.25
-H1_SMA200_DEFEND = 0.55
+H1_SMA200_DEFEND = 0.15
 H1_COMBINED_CAP = 1.30
 
 # ── Checkpoint config ──

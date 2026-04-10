@@ -153,7 +153,7 @@ def task_r21a():
     _set_all_modes_off(bt_mod)
     bt_mod._R21A_REGIME_VOL = True
     bt_mod._R21A_REGIME_BOOST = 1.25
-    bt_mod._R21A_REGIME_DEFEND = 0.55
+    bt_mod._R21A_REGIME_DEFEND = 0.15
     _set_checkpoint("r21a")
     _print_header("r21a")
 
@@ -305,7 +305,7 @@ def _setup_r21a_base(bt_mod):
     _set_all_modes_off(bt_mod)
     bt_mod._R21A_REGIME_VOL = True
     bt_mod._R21A_REGIME_BOOST = 1.25
-    bt_mod._R21A_REGIME_DEFEND = 0.55
+    bt_mod._R21A_REGIME_DEFEND = 0.15
 
     # Load optimized weights — fall back to DEFAULT_FORECAST_WEIGHTS (R21A)
     opt_path = os.path.join(_CORE_DIR, "data", "r21a_optimization_results.pkl")

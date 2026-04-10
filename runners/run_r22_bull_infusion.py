@@ -66,7 +66,7 @@ def main(infusion_amount: float = 50_000.0, infuse: bool = True):
     bt_mod._SAVE_FORECASTS_MODE = False
     bt_mod._R21A_REGIME_VOL = True
     bt_mod._R21A_REGIME_BOOST = 1.25
-    bt_mod._R21A_REGIME_DEFEND = 0.55
+    bt_mod._R21A_REGIME_DEFEND = 0.15
 
     # R22-specific flags
     bt_mod._R22_BULL_INFUSION = infuse

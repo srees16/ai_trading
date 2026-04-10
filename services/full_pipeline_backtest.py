@@ -50,8 +50,7 @@ _SAVE_FORECASTS_MODE = False  # R21a: save per-source forecasts for weight optim
 _forecast_log: list = []      # accumulator: [(day_idx, {sym: {source: val}}, {sym: next_ret})]
 _R21A_REGIME_VOL = True       # R21a: regime-adaptive vol target (aggressive uptrend, defensive downtrend)
 _R21A_REGIME_BOOST = 1.25     # uptrend vol multiplier
-_R21A_REGIME_DEFEND = 0.80    # downtrend vol multiplier (was 0.55 — caused zero-position trap)
-_R21A_ZERO_POS_ESCAPE_DAYS = 10  # if 0 positions for N days, relax regime defense
+_R21A_REGIME_DEFEND = 0.15     # P1f: downtrend vol multiplier — was 0.55, causing only ~45% cut; 0.15 = near-cash in bear
 
 # ── R22: Bull-Run Capital Infusion (Centurion Compounder enhancement) ──
 # Optional: user injects fresh capital at confirmed bear→bull crossover
@@ -442,8 +441,13 @@ def run_full_backtest(
 
     # ── Transaction costs ──────────────────────────────────────
     # T3-3: Realistic transaction costs (NSE delivery: STT+brokerage+GST+slippage)
+    # P2a: Size-adaptive costs (was flat 33bps for all IND)
+    # NIFTY50 = 18bps (tight spreads), NEXT50 = 33bps, rest = 63bps
+    _nifty50_cost = 0.0018
+    _next50_cost  = 0.0033
+    _smallcap_cost = 0.0063
     if market == "IND":
-        cost_pct = 0.0033   # 33 bps round-trip (0.10% STT + 0.05% brokerage + 0.18% stamp+GST+slippage)
+        cost_pct = _next50_cost   # default; per-symbol override below
     else:
         cost_pct = 0.0015   # 15 bps round-trip (US zero-commission + spread slippage)
 
@@ -478,9 +482,6 @@ def run_full_backtest(
     _cr_inject_events: list = []      # log: [(day_idx, amount, equity_before, equity_after)]
     _cr_book_events: list = []        # log: [(day_idx, amount, equity_before, equity_after)]
     _cr_base_capital = capital         # original starting capital (for injection sizing)
-
-    # R21A: Zero-position escape hatch
-    _consecutive_zero_pos_days = 0     # track consecutive days with 0 active positions
 
     # R22: Bull-run capital infusion state (Centurion Compounder)
     _r22_was_bear = False              # was equity in bear regime (< SMA200*0.98) ?
@@ -991,17 +992,17 @@ def run_full_backtest(
         # R13: NO DD SCALING — replaced with dynamic vol target (Fix C)
         dd_scale = 1.0
 
-        # R14: 5-tier step function — dynamic vol target based on DD depth
+        # P1c: 5-tier vol target with 35% DD hard halt (was 0.75/0.65/0.55/0.45/0.40)
         if current_dd < 0.10:
-            annual_vol_target = 0.75   # Full risk — no DD
+            annual_vol_target = 0.50   # Full risk — no DD (was 0.75)
         elif current_dd < 0.20:
-            annual_vol_target = 0.65   # Mild pullback — slight reduction
+            annual_vol_target = 0.45   # Mild pullback (was 0.65)
         elif current_dd < 0.30:
-            annual_vol_target = 0.55   # Moderate DD — meaningful reduction
-        elif current_dd < 0.40:
-            annual_vol_target = 0.45   # Severe DD — significant reduction
+            annual_vol_target = 0.40   # Moderate DD (was 0.55)
+        elif current_dd < 0.35:
+            annual_vol_target = 0.30   # Severe DD (was 0.45)
         else:
-            annual_vol_target = 0.40   # Extreme DD — floor (never go to zero)
+            annual_vol_target = 0.0    # P1c: HARD HALT at 35% DD — go to cash (was 0.40 floor)
 
         # FIX-FLOOR: Use actual equity for daily target
         sizing_equity = max(equity, capital * 0.10)  # 10% ruin floor
@@ -1014,10 +1015,7 @@ def run_full_backtest(
             if equity > _eq_sma200 * 1.02:
                 dynamic_daily_target *= _R21A_REGIME_BOOST  # uptrend: aggressive
             elif equity < _eq_sma200 * 0.98:
-                # Escape hatch: if stuck at 0 positions too long, skip defense
-                if _consecutive_zero_pos_days < _R21A_ZERO_POS_ESCAPE_DAYS:
-                    dynamic_daily_target *= _R21A_REGIME_DEFEND  # downtrend: defensive
-                # else: skip defense to break zero-position trap
+                dynamic_daily_target *= _R21A_REGIME_DEFEND  # downtrend: defensive
 
         # ── Centurion Harvest: inject at bear→bull, book in sustained bull ──
         if _HARVEST_ENABLED and len(daily_equity) >= 200:
@@ -1108,7 +1106,7 @@ def run_full_backtest(
                 _r22_alert_events.append((_trading_day_num_r22, _r22_date_str))
 
                 if verbose:
-                    print(f"BULL CONFIRMED Day {_trading_day_num_r22} ({_r22_date_str}): "
+                    print(f"Bull Confirmed Day {_trading_day_num_r22} ({_r22_date_str}): "
                           f"equity ₹{equity:,.0f} > SMA200 ₹{_r22_sma200:,.0f} "
                           f"for {_R22_BULL_CONFIRM_DAYS} consecutive days", flush=True)
 
@@ -1128,7 +1126,7 @@ def run_full_backtest(
                     sizing_equity = max(equity, capital * 0.10)
                     dynamic_daily_target = sizing_equity * annual_vol_target / 16.0
                     if verbose:
-                        print(f"CAPITAL INFUSION Day {_trading_day_num_r22}: "
+                        print(f"Capital Infusion Day {_trading_day_num_r22}: "
                               f"+₹{_R22_INFUSION_AMOUNT:,.0f} | "
                               f"equity ₹{_r22_eq_before:,.0f} → ₹{equity:,.0f} | "
                               f"total infused: ₹{_r22_total_infused:,.0f}", flush=True)
@@ -1177,14 +1175,8 @@ def run_full_backtest(
         # Adaptive position count based on top-15 average forecast strength
         _ranked_for_count = sorted(_all_combined.values(), key=lambda x: abs(x), reverse=True)
         _top15_avg = np.mean([abs(f) for f in _ranked_for_count[:15]]) if _ranked_for_count else 0.0
-        if _top15_avg > 8.0:
-            MAX_POSITIONS = 15  # Strong consensus — deploy widely
-        elif _top15_avg > 5.0:
-            MAX_POSITIONS = 12  # Moderate consensus
-        elif _top15_avg > 3.0:
-            MAX_POSITIONS = 8   # Weak consensus — concentrate
-        else:
-            MAX_POSITIONS = 5   # Very weak — minimal deployment
+        # P2c: Fixed 10-position portfolio (was adaptive 5/8/12/15 — caused over-concentration)
+        MAX_POSITIONS = 10
 
         MAX_HOLD_GRACE = MAX_POSITIONS + 7  # Grace zone scales with positions
         # Rank by conviction: in long-only mode, positive forecasts first (descending),
@@ -1311,12 +1303,6 @@ def run_full_backtest(
 
                 target_qty = round(position)
 
-                # Min 1-share rule: top-3 conviction stocks with positive forecast
-                # get at least 1 share. Prevents zero-position trap when forecasts
-                # are weak but positive and round() kills them.
-                if target_qty == 0 and forecast > 0.0 and sym in _top_syms_list[:3]:
-                    target_qty = 1
-
                 # Cap at max leverage per-symbol (dynamic based on investable count)
                 max_notional = abs(equity) * max_leverage / n_investable
                 if abs(target_qty) * price > max_notional:
@@ -1339,8 +1325,8 @@ def run_full_backtest(
                 prev_qty = prev_positions.get(sym, 0)
                 delta = abs(target_qty - prev_qty)
                 if delta > 0:
-                    # R14 baseline: Inertia 10%
-                    _inertia_pct = 0.10
+                    # P2b: Inertia 20% — kills noise trades (was 10%)
+                    _inertia_pct = 0.20
                     if abs(prev_qty) > 0 and delta / abs(prev_qty) < _inertia_pct:
                         target_qty = prev_qty
                     else:
@@ -1368,10 +1354,10 @@ def run_full_backtest(
 
                 prev_positions[sym] = target_qty
 
-                # R14 baseline: 10σ stops
-                stop_sigma = 10.0
+                # P1d: 5σ stops — was 10σ (too loose, never triggered)
+                stop_sigma = 5.0
 
-                # V2: Bull profit-taker — tighter stops in uptrend to book profits
+                # V2: Bull profit-taker — tighter stops in uptrend to book profits (Harvest only)
                 if _HARVEST_PROFIT_TAKER and len(daily_equity) >= 200:
                     _eq_sma = sum(daily_equity[-200:]) / 200.0
                     if equity > _eq_sma * 1.02:  # uptrend
@@ -1396,12 +1382,6 @@ def run_full_backtest(
                     stop_levels.pop(sym, None)
 
         daily_position_counts.append(active_count)
-
-        # Track consecutive zero-position days for escape hatch
-        if active_count == 0:
-            _consecutive_zero_pos_days += 1
-        else:
-            _consecutive_zero_pos_days = 0
 
         # FIX-LEV: Portfolio-wide leverage cap enforcement
         # Sum of all |position × price| must not exceed equity × max_leverage

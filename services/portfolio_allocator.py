@@ -36,7 +36,7 @@ def _configure_base(bt_mod):
     # Enable R21A regime scaling
     bt_mod._R21A_REGIME_VOL = True
     bt_mod._R21A_REGIME_BOOST = 1.25
-    bt_mod._R21A_REGIME_DEFEND = 0.55
+    bt_mod._R21A_REGIME_DEFEND = 0.15
 
     # Apply weights: prefer optimized pkl, fall back to DEFAULT_FORECAST_WEIGHTS (R21A)
     import pickle
