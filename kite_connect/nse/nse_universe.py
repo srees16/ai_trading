@@ -41,47 +41,47 @@ NSE_INDEX_REGISTRY: Dict[str, List[Tuple[str, str]]] = {
         ("ind_nifty100list.csv",                     "NIFTY 100"),
         ("ind_nifty200list.csv",                     "NIFTY 200"),
         ("ind_nifty500list.csv",                     "NIFTY 500"),
-        ("ind_niftytotalmarketlist.csv",             "NIFTY Total Market"),
+        ("ind_niftytotalmarket_list.csv",            "NIFTY Total Market"),
         ("ind_nifty500multicap502525list.csv",       "NIFTY500 Multicap 50:25:25"),
         ("ind_nifty500largemidsmallecwlist.csv",     "NIFTY500 LargeMidSmall Equal-Cap"),
         ("ind_niftymidcap50list.csv",                "NIFTY Midcap 50"),
         ("ind_niftymidcap100list.csv",               "NIFTY Midcap 100"),
         ("ind_niftymidcap150list.csv",               "NIFTY Midcap 150"),
-        ("ind_niftymidcapselectlist.csv",            "NIFTY Midcap Select"),
+        ("ind_niftymidcapselect_list.csv",           "NIFTY Midcap Select"),
         ("ind_niftysmallcap50list.csv",              "NIFTY Smallcap 50"),
         ("ind_niftysmallcap100list.csv",             "NIFTY Smallcap 100"),
         ("ind_niftysmallcap250list.csv",             "NIFTY Smallcap 250"),
-        ("ind_niftysmallcap500list.csv",             "NIFTY Smallcap 500"),
+        ("ind_niftysmallcap500list.csv",             "NIFTY Smallcap 500"),  # CSV 404; JSON API fallback
         ("ind_niftymicrocap250_list.csv",            "NIFTY Microcap 250"),
         ("ind_niftylargemidcap250list.csv",          "NIFTY LargeMidcap 250"),
         ("ind_niftymidsmallcap400list.csv",          "NIFTY MidSmallcap 400"),
-        ("ind_niftyindiafpi150list.csv",             "NIFTY India FPI 150"),
+        ("ind_niftyindiafpi150list.csv",             "NIFTY India FPI 150"),  # CSV 404; JSON API fallback
     ],
     # ── Sectoral Indices (25 — full niftyindices.com/sectoral-indices) ────────
     "sectoral": [
         ("ind_niftyautolist.csv",                    "NIFTY Auto"),
         ("ind_niftybanklist.csv",                    "NIFTY Bank"),
-        ("ind_niftycementlist.csv",                  "NIFTY Cement"),
-        ("ind_niftychemicalslist.csv",               "NIFTY Chemicals"),
-        ("ind_niftyfinancialserviceslist.csv",       "NIFTY Financial Services"),
-        ("ind_niftyfinservexbanklist.csv",           "NIFTY Financial Services Ex Bank"),
+        ("ind_niftycementlist.csv",                  "NIFTY Cement"),  # CSV 404; JSON API fallback
+        ("ind_niftychemicalslist.csv",               "NIFTY Chemicals"),  # CSV 404; JSON API fallback
+        ("ind_niftyfinancialservices25_50list.csv",  "NIFTY Financial Services"),
+        ("ind_niftyfinservexbanklist.csv",           "NIFTY Financial Services Ex Bank"),  # CSV 404; JSON API fallback
         ("ind_niftyfmcglist.csv",                    "NIFTY FMCG"),
         ("ind_niftyhealthcarelist.csv",              "NIFTY Healthcare"),
         ("ind_niftyitlist.csv",                      "NIFTY IT"),
         ("ind_niftymedialist.csv",                   "NIFTY Media"),
         ("ind_niftymetallist.csv",                   "NIFTY Metal"),
         ("ind_niftypharmalist.csv",                  "NIFTY Pharma"),
-        ("ind_niftypvtbanklist.csv",                 "NIFTY Private Bank"),
+        ("ind_niftypvtbanklist.csv",                 "NIFTY Private Bank"),  # CSV 404; JSON API fallback
         ("ind_niftypsubanklist.csv",                 "NIFTY PSU Bank"),
         ("ind_niftyrealtylist.csv",                  "NIFTY Realty"),
-        ("ind_niftyreitsrealtylist.csv",             "NIFTY REITs & Realty"),
+        ("ind_niftyreitsrealtylist.csv",             "NIFTY REITs & Realty"),  # CSV 404; JSON API fallback
         ("ind_niftyconsumerdurableslist.csv",        "NIFTY Consumer Durables"),
         ("ind_niftyoilgaslist.csv",                  "NIFTY Oil and Gas"),
         ("ind_niftyenergylist.csv",                  "NIFTY Energy"),
-        ("ind_nifty500healthcarelist.csv",           "NIFTY500 Healthcare"),
-        ("ind_niftymidsmallfinservlist.csv",         "NIFTY MidSmall Financial Services"),
-        ("ind_niftymidsmallhealthcarelist.csv",      "NIFTY MidSmall Healthcare"),
-        ("ind_niftymidsmallit_telecomlist.csv",      "NIFTY MidSmall IT & Telecom"),
+        ("ind_nifty500healthcarelist.csv",           "NIFTY500 Healthcare"),  # CSV 404; JSON API fallback
+        ("ind_niftymidsmallfinservlist.csv",          "NIFTY MidSmall Financial Services"),  # CSV 404; JSON API fallback
+        ("ind_niftymidsmallhealthcare_list.csv",     "NIFTY MidSmall Healthcare"),
+        ("ind_niftymidsmallit_telecomlist.csv",      "NIFTY MidSmall IT & Telecom"),  # CSV 404; JSON API fallback
         ("ind_niftyindiadefence_list.csv",           "NIFTY India Defence"),
         ("ind_niftyindiadigital_list.csv",           "NIFTY India Digital"),
     ],
@@ -96,6 +96,48 @@ NSE_INDEX_REGISTRY: Dict[str, List[Tuple[str, str]]] = {
         ("ind_niftymidcap150quality50list.csv",      "NIFTY Midcap150 Quality 50"),
     ],
 }
+
+# ── JSON API fallback for indices whose CSV endpoint returns 404 ──
+# NSE migrated some constituent lists to the v2 JSON API.
+# Map: label used in NSE_INDEX_REGISTRY → NSE API index name.
+_NSE_API_BASE = "https://www.nseindia.com/api/equity-stockIndices"
+_NSE_API_INDEX_MAP: Dict[str, str] = {
+    "NIFTY500 Multicap 50:25:25":        "NIFTY500 MULTICAP 50:25:25",
+    "NIFTY500 LargeMidSmall Equal-Cap":  "NIFTY500 LARGEMIDSMALL EQUAL-CAP WEIGHTED",
+    "NIFTY Smallcap 500":                "NIFTY SMALLCAP 500",  # Deprecated by NSE; covered by TotalMarket+Smallcap250
+    "NIFTY India FPI 150":               "NIFTY INDIA FPI 150",
+    "NIFTY Cement":                      "NIFTY CEMENT",  # Deprecated by NSE; stocks in broader sectoral indices
+    "NIFTY Chemicals":                   "NIFTY CHEMICALS",
+    "NIFTY Financial Services Ex Bank":  "NIFTY FINANCIAL SERVICES EX-BANK",
+    "NIFTY Private Bank":                "NIFTY PRIVATE BANK",
+    "NIFTY REITs & Realty":              "NIFTY REALTY",
+    "NIFTY500 Healthcare":               "NIFTY500 HEALTHCARE",
+    "NIFTY MidSmall Financial Services": "NIFTY MIDSMALL FINANCIAL SERVICES",
+    "NIFTY MidSmall IT & Telecom":       "NIFTY MIDSMALL IT & TELECOM",
+}
+
+
+def _fetch_via_json_api(label: str, session) -> List[str]:
+    """Fallback: fetch index constituents via NSE v2 JSON API."""
+    api_name = _NSE_API_INDEX_MAP.get(label)
+    if not api_name:
+        return []
+    import requests as _req
+    try:
+        url = f"{_NSE_API_BASE}?index={_req.utils.quote(api_name)}"
+        resp = session.get(url, headers=_NSE_HEADERS, timeout=15)
+        if resp.status_code != 200:
+            return []
+        data = resp.json()
+        stocks = data.get("data", [])
+        symbols = [s["symbol"] for s in stocks
+                    if s.get("symbol") and s["symbol"] != api_name]
+        if symbols:
+            logger.info("  %s: %d symbols (JSON API fallback)", label, len(symbols))
+        return symbols
+    except Exception as exc:
+        logger.debug("  %s JSON API failed: %s", label, exc)
+        return []
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -235,7 +277,12 @@ def _fetch_index_category(category: str, session=None) -> List[str]:
             all_syms.update(syms)
             logger.debug("  %s: %d symbols", label, len(syms))
         except Exception as exc:
-            logger.warning("  %s download failed (%s): %s", label, csv_name, exc)
+            # CSV failed — try JSON API fallback
+            api_syms = _fetch_via_json_api(label, session)
+            if api_syms:
+                all_syms.update(api_syms)
+            else:
+                logger.warning("  %s download failed (%s): %s", label, csv_name, exc)
         # Small delay to avoid rate limiting from NSE
         time.sleep(0.3)
 

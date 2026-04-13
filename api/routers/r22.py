@@ -45,7 +45,7 @@ def _run_backtest(capital: float, start_date: str, end_date: str,
     # R21A base config
     bt_mod._R21A_REGIME_VOL = True
     bt_mod._R21A_REGIME_BOOST = 1.25
-    bt_mod._R21A_REGIME_DEFEND = 0.15
+    bt_mod._R21A_REGIME_DEFEND = 0.55
     bt_mod._SAVE_FORECASTS_MODE = False
 
     # R22 config

@@ -521,3 +521,130 @@ def wf_permutation_test(
         logger.warning("WF permutation test failed: %s", exc)
 
     return summary
+
+
+# ── C4 FIX: Export forecast weights for forecast_combiner integration ──
+
+_WF_FORECAST_WEIGHTS_PATH = _WF_PARAMS_DIR / "forecast_weights.json"
+
+
+def export_forecast_weights(
+    signal_oos_sharpes: Dict[str, float],
+    min_sharpe: float = 0.1,
+) -> Dict[str, float]:
+    """C4: Convert per-signal OOS Sharpe ratios into forecast weights.
+
+    Uses Sharpe-squared weighting (Kelly-optimal):
+        w_i = max(0, sharpe_i²) / sum(max(0, sharpe_j²))
+
+    Saves to data/wf_params/forecast_weights.json for forecast_combiner
+    to load via load_wf_optimal_weights().
+
+    Parameters
+    ----------
+    signal_oos_sharpes : dict[str, float]
+        {signal_name: out-of-sample Sharpe ratio from walk-forward}
+    min_sharpe : float
+        Minimum OOS Sharpe to receive non-zero weight.
+
+    Returns
+    -------
+    dict[str, float]
+        Normalised weights summing to 1.0.
+    """
+    if not signal_oos_sharpes:
+        return {}
+
+    # Filter and compute Sharpe² weights
+    filtered = {k: max(0.0, v) for k, v in signal_oos_sharpes.items()
+                if v >= min_sharpe}
+
+    if not filtered:
+        return {}
+
+    sharpe_sq = {k: v * v for k, v in filtered.items()}
+    total = sum(sharpe_sq.values())
+    if total <= 0:
+        return {}
+
+    weights = {k: round(v / total, 6) for k, v in sharpe_sq.items()}
+
+    # Persist for forecast_combiner
+    try:
+        _WF_PARAMS_DIR.mkdir(parents=True, exist_ok=True)
+        _record = {
+            "weights": weights,
+            "source_sharpes": {k: round(v, 4) for k, v in signal_oos_sharpes.items()},
+            "min_sharpe_threshold": min_sharpe,
+            "updated_at": datetime.now().isoformat(),
+        }
+        _WF_FORECAST_WEIGHTS_PATH.write_text(json.dumps(_record, indent=2))
+        logger.info("C4: Exported %d forecast weights to %s", len(weights), _WF_FORECAST_WEIGHTS_PATH)
+    except Exception as exc:
+        logger.warning("C4: Failed to export forecast weights: %s", exc)
+
+    return weights
+
+
+# ── L2 FIX: Per-signal decay monitoring ────────────────────────
+
+_DECAY_MONITOR_PATH = _WF_PARAMS_DIR.parent / "strategy_decay_state.json"
+
+
+def update_signal_decay_state(
+    signal_recent_sharpes: Dict[str, float],
+    signal_long_sharpes: Dict[str, float],
+    decay_threshold: float = 0.5,
+) -> Dict[str, Dict]:
+    """L2: Monitor per-signal decay and update strategy_decay_state.json.
+
+    Compares recent (60-day) Sharpe to long-term (252-day) Sharpe.
+    If ratio < decay_threshold, marks signal as "INVERTED" or "DEAD".
+
+    Parameters
+    ----------
+    signal_recent_sharpes : dict[str, float]
+        {signal_name: recent 60-day Sharpe}
+    signal_long_sharpes : dict[str, float]
+        {signal_name: long-term 252-day Sharpe}
+    decay_threshold : float
+        Threshold for recent/long ratio below which signal is decaying.
+
+    Returns
+    -------
+    dict with decay states per signal
+    """
+    decay_state = {}
+
+    for name in set(signal_recent_sharpes) | set(signal_long_sharpes):
+        recent = signal_recent_sharpes.get(name, 0.0)
+        long_term = signal_long_sharpes.get(name, 0.0)
+
+        if long_term > 0:
+            ratio = recent / long_term
+        else:
+            ratio = 0.0
+
+        if recent < -0.5:
+            status = "INVERTED"
+        elif ratio < decay_threshold and long_term > 0.2:
+            status = "DECAYING"
+        else:
+            status = "ACTIVE"
+
+        decay_state[name] = {
+            "status": status,
+            "recent_sharpe": round(recent, 4),
+            "long_sharpe": round(long_term, 4),
+            "decay_ratio": round(ratio, 4),
+        }
+
+    # Persist
+    try:
+        _DECAY_MONITOR_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _DECAY_MONITOR_PATH.write_text(json.dumps(decay_state, indent=2))
+        logger.info("L2: Updated decay state for %d signals", len(decay_state))
+    except Exception as exc:
+        logger.warning("L2: Failed to save decay state: %s", exc)
+
+    return decay_state

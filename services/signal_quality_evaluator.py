@@ -1505,7 +1505,7 @@ def _download_ohlcv(
     ohlcv = {}
     for sym in tickers:
         try:
-            suffix = ".NS" if market == "IND" and "." not in sym else ""
+            suffix = ".NS" if market == "IND" and not any(c in sym for c in '.-=^') else ""
             ticker = f"{sym}{suffix}"
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")

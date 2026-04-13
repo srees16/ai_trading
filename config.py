@@ -128,13 +128,126 @@ class Config:
     # Carver Systematic Trading Framework (Robert Carver)
     # =================================================================
     CARVER_ENABLED: bool = True             # Enable Carver vol-targeted sizing (False = legacy Kelly)
-    CARVER_ANNUAL_VOL_TARGET: float = 0.50  # P1a: 50% vol — Half-Kelly optimal for SR~1.0; was 75% → 75% MaxDD
+    CARVER_ANNUAL_VOL_TARGET: float = 0.40  # H2: \u2193 from 50% — lower vol target reduces DD
     CARVER_INITIAL_CAPITAL: float = 500_000.0  # Starting capital (₹)
     CARVER_DEFAULT_IDM: float = 1.3         # P1e: IDM 1.3 — calibrated for NIFTY avg_corr ~0.5; was 2.3
     CARVER_MAX_LEVERAGE: float = 2.0        # P1b: 2× — was 4×. Bull regime can selectively go to 3×.
-    CARVER_INERTIA_THRESHOLD: float = 0.20  # P2b: 20% inertia — kills noise trades from stale signal rebalancing; was 10%
+    CARVER_INERTIA_THRESHOLD: float = 0.25  # H5: \u2191 from 20% — wider inertia reduces churn
     CARVER_COST_SPEED_LIMIT: float = 3.0    # SR must exceed 3× cost drag
     CARVER_TRADE_HORIZON: str = "swing"     # "swing" (3σ bear/5σ bull) or "positional"
+
+    # =================================================================
+    # R21A Regime-Adaptive Vol Scaling (centralized source of truth)
+    # =================================================================
+    R21A_REGIME_VOL: bool = True            # Enable equity-curve regime scaling
+    R21A_REGIME_BOOST: float = 1.25         # Uptrend vol multiplier (equity > SMA200×1.02)
+    R21A_REGIME_DEFEND: float = 0.55        # Downtrend vol multiplier (equity < SMA200×0.98)
+    R21A_SMA_LOOKBACK: int = 200            # SMA lookback for equity-curve regime
+
+    # =================================================================
+    # Phase 1 Enhancements — Signal Quality Improvements
+    # =================================================================
+    # Meta-labeling (AFML Ch.3) — filter false signals via RF meta-classifier
+    META_LABELING_ENABLED: bool = True      # Wire meta-labeling into backtest loop
+    META_LABEL_MIN_PROBABILITY: float = 0.50  # Only trade when meta_prob > this
+
+    # Regime-adaptive stops (replaces fixed 5σ) — M3: tightened for better DD control
+    STOP_SIGMA_BULL: float = 3.0            # RESTORED: tighter stops chopped valid trades
+    STOP_SIGMA_BEAR: float = 2.0            # Rapid exit in downtrend (kept)
+    STOP_SIGMA_NEUTRAL: float = 4.0         # RESTORED from 3.0
+    STOP_SIGMA_STRONG_TREND: float = 5.0    # RESTORED from 4.0
+
+    # Time-based exits — regime-adaptive max hold days
+    TIME_EXIT_ENABLED: bool = True
+
+    # Tiered signal recompute frequency (trading days)
+    RECOMPUTE_FREQ_FAST: int = 1            # ewmac_8_32, breakout (daily)
+    RECOMPUTE_FREQ_MEDIUM: int = 3          # momentum, ehlers_dsp, acceleration, penfold_trend
+    RECOMPUTE_FREQ_SLOW: int = 5            # carver_value, ewmac_64_256, mean_reversion
+
+    # Forecast-proportional position sizing (replaces flat 1/N)
+    FORECAST_PROPORTIONAL_SIZING: bool = True
+    FORECAST_SIZING_FLOOR: float = 3.0      # min |forecast| for sizing (prevents tiny positions)
+
+    # Empirical FDM toggle
+    EMPIRICAL_FDM_ENABLED: bool = True
+
+    # Smooth bear defense — sigmoid interpolation (replaces binary threshold)
+    SMOOTH_BEAR_DEFENSE: bool = True
+    SMOOTH_DEFENSE_STEEPNESS: float = 10.0  # sigmoid steepness parameter
+
+    # Sector concentration enforcement in backtest
+    MAX_STOCKS_PER_SECTOR: int = 3          # Max positions per GICS sector
+    SECTOR_ENFORCEMENT_ENABLED: bool = True
+
+    # Cost-aware inertia (replaces fixed 20%)
+    COST_AWARE_INERTIA: bool = True
+    INERTIA_ALPHA_COST_RATIO: float = 2.0   # Only trade if expected_alpha > N × expected_cost
+
+    # Block bootstrap for Sharpe CI
+    BOOTSTRAP_BLOCK_LENGTH: int = 40  # L4: ~2× trading month, better autocorrelation
+    CHECKPOINT_INTERVAL_DAYS: int = 50  # L1: configurable checkpoint frequency
+
+    # Turnover penalty for weight optimization
+    TURNOVER_PENALTY_LAMBDA: float = 0.005  # Sharpe_adj = Sharpe - λ × annual_turnover
+
+    # =================================================================
+    # Phase 2 — Multi-Timeframe & Multi-Asset
+    # =================================================================
+    MULTI_TIMEFRAME_ENABLED: bool = True
+    WEEKLY_SIGNAL_WEIGHT: float = 0.25      # Weight for weekly TF signals in combined forecast
+    MONTHLY_SIGNAL_WEIGHT: float = 0.10     # Weight for monthly TF signals
+    DAILY_SIGNAL_WEIGHT: float = 0.65       # Weight for daily TF signals (remainder)
+
+    # Multi-asset diversification (NSE-listed ETFs/futures)
+    MULTI_ASSET_ENABLED: bool = True
+    MULTI_ASSET_TICKERS_IND: List[str] = [
+        "GOLDBEES.NS",       # Gold ETF — uncorrelated with equity
+        "GOLDIETF.NS",       # Gold ETF alternate
+        "CPSEETF.NS",        # CPSE ETF — govt enterprises
+        "LIQUIDBEES.NS",     # Liquid fund — near-cash parking
+    ]
+    MULTI_ASSET_MAX_ALLOCATION: float = 0.15  # Max 15% of portfolio in non-equity
+
+    # New Alpha Sources (Phase 4) — C5: non-zero initial weights
+    NEW_ALPHA_SOURCES_ENABLED: bool = True   # Master switch for 6 new sources
+    CRYPTO_TICKER: str = "BTC-USD"           # Bitcoin ticker for crypto correlation
+    CALENDAR_EFFECTS_WEIGHT: float = 0.02    # C5: starter weight (was 0.00)
+    FUNDAMENTAL_MOMENTUM_WEIGHT: float = 0.03  # C5: starter weight
+    INSIDER_ACTIVITY_WEIGHT: float = 0.02    # C5: starter weight
+    DISPERSION_WEIGHT: float = 0.02          # C5: starter weight
+    GOLD_EQUITY_ROTATION_WEIGHT: float = 0.02  # C5: starter weight
+    CRYPTO_CORRELATION_WEIGHT: float = 0.01  # C5: smallest — most speculative
+
+    # =================================================================
+    # Godmode Gap Fixes (April 2026)
+    # =================================================================
+    # M1: Minimum forecast strength gate — DISABLED (was filtering valid trades)
+    MIN_FORECAST_GATE_BULL: float = 0.0      # DISABLED: gate killed returns
+    MIN_FORECAST_GATE_NEUTRAL: float = 0.0   # DISABLED
+    MIN_FORECAST_GATE_BEAR: float = 0.0      # DISABLED
+
+    # M8: Distribution shift detector integration
+    DISTRIBUTION_SHIFT_ENABLED: bool = True   # Wire shift detector into backtest loop
+
+    # C1: PBO/CSCV parameters
+    PBO_N_PARTITIONS: int = 10               # CSCV partitions (even number)
+    PBO_OVERFIT_THRESHOLD: float = 0.35      # PBO > 35% = likely overfit
+
+    # H1/H2: True peak DD tracking (always on — critical fix)
+    TRUE_PEAK_DD_HALT: float = 0.35          # Hard halt at 35% TRUE DD from absolute peak
+
+    # C6: Risk-managed momentum — DISABLED (double-stacks with regime blend)
+    RISK_MANAGED_MOMENTUM_ENABLED: bool = False
+
+    # =================================================================
+    # Phase 3 — Dynamic Leverage & Risk
+    # =================================================================
+    DYNAMIC_LEVERAGE_ENABLED: bool = True
+    LEVERAGE_BULL_CONFIRMED: float = 2.0    # H4: \u2193 from 2.5 — less aggressive to reduce DD
+    LEVERAGE_NEUTRAL: float = 1.5           # H4: \u2193 from 2.0 — more conservative
+    LEVERAGE_BEAR: float = 0.5              # H4: \u2193 from 1.0 — half leverage in bear
+    BULL_CONFIRM_DAYS_LEVERAGE: int = 20    # Consecutive days to confirm bull for leverage boost
 
     # Vince Money Management — active/inactive equity insurance
     # Floor = HWM × insurance_pct.  0.15 = protect 15% of HWM as floor.
@@ -143,10 +256,10 @@ class Config:
     VINCE_INSURANCE_PCT_US: float = 0.10    # US: 10% floor (more conservative for manual)
     VINCE_REGIME_SHRINK_ENABLED: bool = True  # Enable Vince shrink/stretch per regime
 
-    # Drawdown thresholds — graduated for 65% vol target
-    PORTFOLIO_DRAWDOWN_WARNING: float = 0.15    # Recal: 15% DD → smooth scale-down begins (tighter to protect capital)
-    PORTFOLIO_DRAWDOWN_CRITICAL: float = 0.25   # Recal: 25% DD → aggressive scale-down
-    PORTFOLIO_DRAWDOWN_HALT: float = 0.35       # Recal: 35% DD → halt all new trades (survive worst bear markets)
+    # Drawdown thresholds — restored to pre-Godmode levels (true peak tracking still active)
+    PORTFOLIO_DRAWDOWN_WARNING: float = 0.15    # RESTORED from 0.10 (too sensitive)
+    PORTFOLIO_DRAWDOWN_CRITICAL: float = 0.25   # RESTORED from 0.20
+    PORTFOLIO_DRAWDOWN_HALT: float = 0.35       # H2: hard halt (unchanged, but now from TRUE peak)
 
     # Carver — US Stocks overrides (USD-based)
     CARVER_US_ENABLED: bool = True          # Enable Carver for US stocks pipeline

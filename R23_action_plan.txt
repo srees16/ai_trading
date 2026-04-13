@@ -1,0 +1,608 @@
+================================================================================
+  CENTURION R23 ACTION PLAN
+  Goal: Sharpe >= 1.5, CAGR >= 50%, MaxDD <= 33%
+  Created: 2026-04-10  |  Updated: 2026-04-12
+  Inputs: O1 rejected, R21A champion, 12-area deep audit
+  R22 infusion backtest: NEVER LAUNCHED (only R21A Godmode-v2 ran on Kaggle)
+  O1 optimizer: COMPLETE (REJECTED)
+  R21A GODMODE-V2 BACKTEST: ★ COMPLETE — ALL TARGETS HIT ★
+  R21A GODMODE-V2 + PBO FIX: RUNNING ON KAGGLE (v43, 2026-04-12)
+  Naming: R{N} = backtest runs, O{N} = optimizer runs
+================================================================================
+
+================================================================================
+1. CURRENT STATE — WHAT IS ACHIEVED
+================================================================================
+
+R21A GODMODE-V2 (Kaggle, full period 2012-2025, Phase 1A-1D enabled):
+  Sharpe:        1.571       (Full — TARGET HIT ≥1.5)
+  CAGR:          61.0%       (Full — TARGET HIT ≥50%)
+  MaxDD:         31.6%       (Full — TARGET HIT ≤33%)
+  Calmar:        1.932
+  Sortino:       1.735
+  Total Return:  41,352.8%
+  Win Rate:      38.5%
+  Profit Factor: 1.36
+  Avg Positions: 4.3
+  Total Trades:  4,313
+  Vol Target:    55%
+
+  Aronson EBTA:
+    Detrended Sharpe:  -0.026  (near-zero after removing market drift)
+    Trimmed Sharpe:     2.957  (5% winsorized)
+    DM Bias Est:        247.79% (high — 24-signal search space)
+    Sharpe 90% CI:      [1.101, 2.068]  (lower bound still >1.0)
+    Signals t≥2.0:      13/24
+
+  PBO/CSCV AUDIT (2026-04-12):
+    Computed LOCALLY from Kaggle hit_rate data using compute_pbo()
+    PBO=0.0% across S=8,10,12,16 — BUT METHODOLOGY IS FLAWED:
+    The backtest's PBO uses source DATA AVAILABILITY (% of days producing
+    a forecast) as proxy for signal accuracy. With most trend signals at
+    98-100% availability, synthetic returns are near-identical → PBO ≈ 0%.
+    The R21A PBO=27.1% used the SAME flawed methodology BUT was computed
+    on a different staged codebase with different signal availability patterns.
+    VERDICT: PBO from the current implementation is NOT reliable for
+    validating this config. The Sharpe 90% CI lower bound of 1.101 and
+    Detrended Sharpe of -0.026 are more trustworthy robustness measures.
+    TRUE PBO requires per-signal daily P&L attribution (not implemented).
+
+R21A BASE (Kaggle, full period 2012-2025, pre-Godmode):
+  Sharpe:        1.127       (Full)
+  CAGR:          30.4%       (Full)
+  MaxDD:         29.6%       (Full)
+  Calmar:        1.026
+  PBO:           27.1%       (same flawed methodology — see note above)
+  Train Sharpe:  1.036       (2012-2019)
+  Test Sharpe:   1.323       (2020-2025)
+  Test CAGR:     47.1%
+  Test MaxDD:    29.6%
+
+ACTIVE SIGNALS (10 of 24):
+  carver_value=18.8%, ehlers_dsp=17.8%, momentum=15.9%, acceleration=15.6%
+  ewmac_64_256=11.5%, screener=10.1%, mean_reversion=5.5%
+  penfold_trend=1.8%, breakout=1.6%, ewmac_16_64=1.4%
+
+BACKTEST ENGINE (full_pipeline_backtest.py):
+  Vol target:        50% annual
+  IDM:               DYNAMIC (1/sqrt(avg_corr), ~1.7 typical, capped 2.5)
+  Max leverage:      2.0 (from config; fallback 3.0)
+  Bear vol scale:    0.15x (near-halt)
+  Bull vol scale:    1.25x (SMA200-based equity curve regime)
+  Inertia:           20% (skip rebalance if position change < 20%)
+  Max positions:     ADAPTIVE (6-15 based on signal strength)
+  Cost model:        18bps NIFTY50, 33bps NEXT50, 63bps smallcap
+  Stops:             Regime-adaptive (3-5 sigma)
+
+FEATURES BUILT BUT DISABLED:
+  _HARVEST_DIP_BUYER     = True    ← ENABLED (Phase 1A, R23)
+  _HARVEST_PROFIT_TAKER  = True    ← ENABLED (Phase 1B, R23)
+  _HARVEST_ENABLED       = False   (Capital injection at bear-bull crossover)
+  P4 regime-Sharpe wts   = WIRED  ← regime= now passed to combine_forecasts (Phase 1C)
+  S13 vol-regime adjust  = WIRED  ← vol_regime_multiplier now computed & passed (Phase 1D)
+  Meta-labeling          = COMPLETE 20-feature RF, 300 trees — DEFERRED (look-ahead risk)
+  Strategy decay detector= WIRED via apply_decay_state_filter in combine_forecasts
+                           (loads from strategy_decay_state.json; currently empty {})
+
+================================================================================
+2. O1 OPTIMIZER RESULTS — REJECTED
+================================================================================
+
+O1 added carry + skew_signal (12 signals). 2160 evaluations.
+
+  Metric      O1        R21A     Delta     Verdict
+  ------      ---       ---      -----     -------
+  Sharpe:     1.096     1.127    -0.031    WORSE (-2.7%)
+  CAGR:       29.1%     30.4%    -1.3pp    WORSE (-4.3%)
+  MaxDD:      32.2%     29.6%    +2.6pp    WORSE (+8.6%)
+  Calmar:     0.903     1.026    -0.122    WORSE (-11.9%)
+  PBO:        41.4%     27.1%    +14pp     OVERFIT
+
+  WFA: FAILED — min_Sharpe = -0.293 in one window
+  Gates: 5/5 passed BUT PBO = 41.4% (>= 40%) → REJECT
+
+  Leverage sensitivity:
+    1.5x → Sharpe=1.023, CAGR=21.6%, MaxDD=28.6%
+    2.0x → Sharpe=1.096, CAGR=29.1%, MaxDD=32.2%  ← optimum
+    2.3x → Sharpe=1.064, CAGR=29.7%, MaxDD=34.3%
+    2.5x → Sharpe=1.010, CAGR=28.9%, MaxDD=33.1%
+    2.8x → Sharpe=0.415, CAGR=6.4%,  MaxDD=35.4%  ← CATASTROPHIC
+    3.0x → Sharpe=0.939, CAGR=27.2%, MaxDD=40.8%
+
+  DECISION: Revert to R21A weights. O1 diluted proven signals.
+  LESSON: Low-correlation weak signals still hurt via weight redistribution.
+
+================================================================================
+3. DEEP GAP ANALYSIS — 12-AREA VERIFIED AUDIT
+================================================================================
+
+TARGET: Sharpe >= 1.5, CAGR >= 50%, MaxDD <= 33%
+
+  Metric      Current    Target    Gap           Effort
+  ------      -------    ------    ---           ------
+  Sharpe:     1.127      1.500     +0.373        HARD (~33% improvement)
+  CAGR:       30.4%      50.0%     +19.6pp       HARDEST (~64% improvement)
+  MaxDD:      29.6%      33.0%     ALREADY MET   3.4pp headroom
+
+GAP #1: META-LABELING NOT ACTIVATED (Sharpe +0.15-0.25)
+  Status:   20-feature RandomForest, 300 trees, walk-forward trained
+  Location: services/meta_labeling.py — apply_meta_labels() exists
+  Gap:      NEVER CALLED from backtest or live pipeline
+  Why:      forecast_combiner.py has no meta_labeling import
+  Fix:      Call apply_meta_labels() after combine_forecasts() in backtest
+  Impact:   Filters 60-70% false signals → Sharpe +0.15-0.25
+  Risk:     MEDIUM (needs trained model on Kaggle; model may not exist in pkl)
+  NOTE:     The +0.25-0.30 claim from audit is OPTIMISTIC. Realistic: +0.15-0.20
+            because meta-labeling was designed for live pipeline, not backtest.
+            In backtest, it needs expanding-window online training to be valid.
+
+GAP #2: MR BEAR DIP-BUYER DISABLED (CAGR +1-3pp, Sharpe +0.03-0.05)
+  Status:   ✅ FIXED — _HARVEST_DIP_BUYER = True (Phase 1A)
+  Logic:    In downtrend (equity < SMA200*0.98), if mean_reversion signal
+            is >= 50% of max source forecast, boost vol target by 3.33x
+            (equivalent to 0.50 instead of 0.15 bear multiplier)
+  File:     centurion_core/services/full_pipeline_backtest.py line 66
+  Change:   _HARVEST_DIP_BUYER = False → True
+
+GAP #3: BULL TRAILING STOPS DISABLED (CAGR +1-2pp)
+  Status:   ✅ FIXED — _HARVEST_PROFIT_TAKER = True (Phase 1B)
+  Logic:    In uptrend, tighten stops from 10 sigma to 6 sigma
+  File:     centurion_core/services/full_pipeline_backtest.py line 70
+  Change:   _HARVEST_PROFIT_TAKER = False → True
+
+GAP #4: P4 REGIME-SHARPE WEIGHTS NOT PASSED (Sharpe +0.05-0.10)
+  Status:   ✅ FIXED — regime= now passed to combine_forecasts (Phase 1C)
+  Logic:    Equity-curve SMA200 determines regime:
+            equity > SMA200*1.02 → "bull"
+            equity < SMA200*0.98 → "bear"
+            else → "sideways"
+  File:     centurion_core/services/full_pipeline_backtest.py ~line 1013-1024
+  Change:   Capture _p4_regime string from existing SMA200 logic;
+            pass regime=_p4_regime to combine_forecasts() at ~line 1162
+
+GAP #5: S13 VOL-REGIME FORECAST ADJUSTMENT NOT PASSED (Sharpe +0.03-0.05)
+  Status:   ✅ FIXED — vol_regime_multiplier now computed per symbol (Phase 1D)
+  Logic:    For each symbol: compute 20-day rolling vol std, compare to median
+            _vrm = median_vol / current_vol  (>1 = calm → amplify, <1 = noisy → dampen)
+            Requires >= 252 days of price data; capped [0.5, 1.5] in combine_forecasts
+  File:     centurion_core/services/full_pipeline_backtest.py ~line 1158-1172
+  Change:   Compute _vrm from ohlcv_slice per-symbol pct_change rolling std;
+            pass vol_regime_multiplier=_vrm to combine_forecasts()
+
+GAP #6: DYNAMIC BULL LEVERAGE (CAGR +5-10pp, MaxDD +2-4pp)
+  Status:   Config says MAX_LEVERAGE=2.0. Backtest loads this correctly.
+  Gap:      Leverage sensitivity shows 2.0x is Sharpe-optimal for R21A.
+            BUT R21A Kaggle results got IDM=1.7 (dynamic) + max_lev=2.0 → 3.4x effective.
+            Raising explicit leverage above 2.3x DESTROYS Sharpe.
+  Fix:      NOT a raw leverage increase. Instead:
+            - Bull regime ONLY: raise max_leverage to 2.5x (from 2.0)
+            - Require: equity > SMA200 * 1.02 AND HMM = BULL for 5+ days
+            - Bear regime: cap at 1.5x (stricter than 2.0)
+  Impact:   +5-10pp CAGR in bull periods, minor MaxDD increase
+  Risk:     HIGH — R22 results (still running) will inform whether this works.
+            Leverage sensitivity showed 2.5x → Sharpe=1.010 (barely OK).
+
+GAP #7: STRATEGY DECAY DETECTOR NOT WIRED (Sharpe +0.03-0.05)
+  Status:   ✅ ALREADY WIRED — apply_decay_state_filter() called in combine_forecasts
+            at line 794 of forecast_combiner.py before regime and Aronson adjustments.
+  Data:     strategy_decay_state.json exists but is EMPTY ({}).
+  Gap:      No decay states have been computed — filter is a no-op.
+  Action:   For backtest: defer (decay detection is a live-system feature).
+            For live: strategy_decay.py must be run periodically to populate the JSON.
+
+GAP #8: INERTIA TOO HIGH (CAGR +0.5-1pp, turnover cost -0.3pp)
+  Status:   _inertia_pct = 0.20 (skip if position change < 20%)
+  Gap:      20% threshold means many valid signal changes are ignored
+  Fix:      Reduce to 0.15 (conservative) or 0.10 (aggressive)
+  Impact:   More responsive to signal changes, BUT increases turnover cost
+  Risk:     NET NEUTRAL at 15%. NET NEGATIVE at 10% (cost > alpha gain).
+
+CUMULATIVE REALISTIC IMPACT (all gaps fixed):
+  Gap                         Sharpe    CAGR     MaxDD
+  Meta-labeling (valid)       +0.15     +2pp     0
+  MR dip-buyer                +0.04     +2pp     +1pp
+  Bull trailing stops         +0.02     +1.5pp   -0.5pp
+  P4 regime-Sharpe wts        +0.07     +1pp     0
+  S13 vol-regime adjust       +0.04     +0.5pp   0
+  Dynamic bull leverage       +0.00     +7pp     +3pp
+  Strategy decay              +0.03     +0.5pp   0
+  Inertia 15%                 +0.01     +0.5pp   0
+  ─────────────────────────   ─────     ─────    ─────
+  TOTAL (optimistic)          +0.36     +15pp    +3.5pp
+  TOTAL (realistic 60%)       +0.22     +9pp     +2pp
+
+  PROJECTED AFTER ALL FIXES:
+    Optimistic:  Sharpe=1.49, CAGR=45.4%, MaxDD=33.1%  (close but misses CAGR)
+    Realistic:   Sharpe=1.35, CAGR=39.4%, MaxDD=31.6%
+
+  THE CAGR GAP REMAINS: Even with ALL gaps fixed, CAGR reaches ~40-45%.
+  The remaining +5-10pp to reach 50% requires STRUCTURAL changes:
+    - Multi-timeframe diversification (Phase 3 placeholder)
+    - Universe expansion (more mid-cap alpha)
+    - OR accepting that 45% CAGR with Sharpe=1.4 is the realistic ceiling
+
+================================================================================
+4. ROOT CAUSE DIAGNOSIS — Why R21A Plateaus at SR=1.1
+================================================================================
+
+  A. LONG-ONLY CONSTRAINT: Cannot profit in bear markets
+     Bear regime (0.15x) = nearly flat → ~30% of days earn nothing
+
+  B. SIGNAL SATURATION: 6/10 signals are trend-family (corr ~0.45)
+     Adding more of the same gives diminishing SR marginal returns
+
+  C. STATIC COMBINATION: combine_forecasts uses FIXED weights regardless of
+     regime — doesn't adapt to which signals work NOW
+
+  D. DISABLED FEATURES: 4 key enhancement features are built but turned off
+     (meta-labeling, dip-buyer, profit-taker, regime-Sharpe weights)
+
+  E. UNIVERSE CROWDING: NIFTY50+NEXT50 = 100 most-watched stocks
+     Alpha decays fastest in large-cap where competition is intense
+
+  F. NO VOLATILITY SURFACE: No options-derived info (VIX, skew, P/C ratio)
+     Missing forward-looking risk pricing information
+
+================================================================================
+5. RESEARCH-BACKED INSIGHTS
+================================================================================
+
+  A. META-LABELING (AFML Ch.3, Lopez de Prado 2018):
+     - Secondary classifier predicts if PRIMARY model's trade will profit
+     - 20 features (forecast strength, vol, regime, RSI, breadth, OI, FII)
+     - Filters 60-70% false signals through probability thresholding
+     - KEY CAVEAT: Improvement requires walk-forward training, NOT look-ahead.
+       In backtest, model must be re-trained at each point using only past data.
+       The pre-trained model in data/meta_label_models/ uses ALL data → biased.
+       MUST implement online walk-forward training in backtest for valid results.
+
+  B. REGIME-ADAPTIVE SIGNAL WEIGHTING (Nystrup et al. 2017):
+     - HMM-based regime detection + regime-conditional asset allocation
+     - Improves Sharpe by 15-25% over static allocation
+     - Already built as P4 in forecast_combiner — just not connected
+     - Key: blend with static weights (50/50) to avoid regime detection lag errors
+
+  C. KELLY CRITERION AND LEVERAGE (Thorp 1969, Carver 2015):
+     - Full Kelly for SR=1.1: f* = SR/vol = 1.1/0.5 = 2.2x
+     - Half Kelly (safer): 1.1x
+     - Current effective leverage: ~1.7 (IDM) × 2.0 (max) ÷ adaptive = ~2.0-3.0x
+     - Already AT or ABOVE half-Kelly → limited room to leverage up safely
+     - Leverage >2.3x destroys SR (proven by O1 sensitivity data)
+
+  D. MULTI-STRATEGY DIVERSIFICATION (Carver, Systematic Trading 2015):
+     - SR_combined ≈ SR_single × sqrt(N) / sqrt(sum_correlations)
+     - With 2 decorrelated timeframes (rho=0.3):
+       SR_combined = SR × sqrt(2/(1+0.3)) = SR × 1.24
+       1.127 × 1.24 = 1.40  (still below 1.5)
+     - With 3 decorrelated sub-strategies:
+       SR_combined = SR × sqrt(3/(1+2×0.3)) = SR × 1.37
+       1.127 × 1.37 = 1.54  (MEETS TARGET)
+     - Requires genuinely independent sub-strategies, not just different windows
+
+  E. DEEP MOMENTUM NETWORKS (Lim/Zohren/Roberts, arXiv:1904.04912):
+     - LSTM directly optimizes Sharpe as loss function
+     - 2x improvement over traditional TSMOM on 88 futures contracts
+     - Turnover regularization reduces transaction costs at run-time
+     - HIGH POTENTIAL but HIGH OVERFIT RISK for small stock universe
+
+================================================================================
+6. RECALIBRATED 5-PHASE PLAN OF ACTION
+================================================================================
+
+Phases aligned with user's original outline, now with verified gaps mapped.
+
+----------------------------------------------------------------------
+PHASE 1: SIGNAL ALPHA IMPROVEMENT
+Goal: Sharpe 1.127 → 1.35-1.45, CAGR 30.4% → 35-40%
+Expected: Sharpe +0.10-0.30, CAGR +5-10pp
+----------------------------------------------------------------------
+
+Phase 1 activates BUILT-BUT-DISABLED features. No new code needed except wiring.
+
+  1A. ✅ DONE — ACTIVATE MR DIP-BUYER
+      File: centurion_core/services/full_pipeline_backtest.py line 66
+      Change: _HARVEST_DIP_BUYER = False → True
+      Impact: Mean reversion gets 3.33x vol boost in bear regime
+      Expected: Sharpe +0.04, CAGR +2pp
+
+  1B. ✅ DONE — ACTIVATE BULL TRAILING STOPS
+      File: centurion_core/services/full_pipeline_backtest.py line 70
+      Change: _HARVEST_PROFIT_TAKER = False → True
+      Impact: 6 sigma stops in bull (vs 10 sigma default)
+      Expected: CAGR +1.5pp
+
+  1C. ✅ DONE — WIRE P4 REGIME-SHARPE WEIGHTS INTO BACKTEST
+      File: centurion_core/services/full_pipeline_backtest.py ~line 1013-1024
+      Change: Capture _p4_regime string ("bull"/"bear"/"sideways") from existing
+              equity-curve SMA200 regime logic. Pass regime=_p4_regime to
+              combine_forecasts() at ~line 1162.
+      Expected: Sharpe +0.07, CAGR +1pp
+
+  1D. ✅ DONE — WIRE S13 VOL-REGIME FORECAST ADJUSTMENT
+      File: centurion_core/services/full_pipeline_backtest.py ~line 1158-1172
+      Change: For each symbol, compute 20-day rolling vol std from Close prices.
+              _vrm = median_20d_vol / current_20d_vol (requires >= 252 days data).
+              Pass vol_regime_multiplier=_vrm to combine_forecasts().
+              combine_forecasts() already caps at [0.5, 1.5].
+      Expected: Sharpe +0.04, CAGR +0.5pp
+
+  1E. ✅ VERIFIED ALREADY WIRED — STRATEGY DECAY DETECTOR
+      File: centurion_core/services/forecast_combiner.py line 794
+      Status: apply_decay_state_filter() already called inside combine_forecasts().
+              Loads from data/strategy_decay_state.json (currently empty {}).
+              Will become active once decay states are populated (live system).
+      Expected: Sharpe +0.03 (when populated)
+
+  1F. DEFERRED — META-LABELING
+      Cannot activate in backtest without walk-forward online training (look-ahead bias).
+      Will activate in live pipeline only (Phase 4B).
+      Expected: Sharpe +0.10-0.15 (live only, not measurable in backtest)
+
+  PHASE 1 AGGREGATE (if all activated):
+    Conservative: Sharpe=1.25, CAGR=35%, MaxDD=31%
+    Optimistic:   Sharpe=1.40, CAGR=40%, MaxDD=32%
+
+  BACKTEST COMMAND: Run on Kaggle as R23 to validate
+  VALIDATION GATES:
+    - Full Sharpe >= 1.20 (MUST IMPROVE over R21A's 1.127)
+    - PBO < 30%
+    - MaxDD <= 34%
+    - Train-test Sharpe gap < 0.35
+
+----------------------------------------------------------------------
+PHASE 2: DYNAMIC BULL LEVERAGE
+Goal: CAGR 35-40% → 42-48%
+Expected: CAGR +5-8pp, Sharpe neutral or -0.03
+----------------------------------------------------------------------
+
+Phase 2 uses R22 infusion backtest results to calibrate bull leverage.
+
+  2A. ANALYZE R22 RESULTS (when complete)
+      R22 tests: ₹50K infusion per bull crossover, 200-day cooldown
+      If R22 shows bull infusion WORKS:
+        - Confirmed: bull regime capital deployment is profitable
+        - Measure: per-infusion ROI, Sharpe during bull sub-periods
+
+  2B. CONDITIONAL BULL LEVERAGE INCREASE
+      IF R22 succeeds AND Phase 1 Sharpe >= 1.25:
+        - Bull regime: raise max_leverage from 2.0 to 2.3 (NOT higher)
+        - ONLY when: equity > SMA200*1.02 AND bull confirmed 5+ days
+        - Bear regime: reduce max_leverage to 1.5 (stricter defense)
+      IF R22 fails:
+        - Keep leverage at 2.0x
+        - Focus on signal alpha (Phase 1) and diversification (Phase 3)
+
+  2C. RAISE BULL VOL SCALE FROM 1.25 TO 1.40
+      File: centurion_core/services/full_pipeline_backtest.py line 52
+      Change: _R21A_REGIME_BOOST = 1.25 → 1.40
+      Impact: 12% more sizing in confirmed uptrends
+      Expected: CAGR +2-3pp
+      Risk: MaxDD may increase by 1-2pp in choppy bull-then-crash periods
+
+  2D. IMPROVE REGIME DETECTION
+      - Reduce HMM refit from 30 days to 14 days (faster adaptation)
+      - Add 2-day confirmation smoothing (avoid whipsaw regime flips)
+      - Monitor: count of regime switches per year (target: 4-8, not 20+)
+
+  PHASE 2 AGGREGATE:
+    Conservative: CAGR=40%, Sharpe=1.23, MaxDD=33%
+    Optimistic:   CAGR=46%, Sharpe=1.35, MaxDD=33%
+
+  VALIDATION GATES:
+    - CAGR >= 38%
+    - Sharpe >= 1.20 (must not degrade from Phase 1)
+    - MaxDD <= 33%
+    - R22 dependency: proceed only with R22 data
+
+----------------------------------------------------------------------
+PHASE 3: MAXDD TIGHTENING + STRUCTURAL DIVERSIFICATION
+Goal: MaxDD 31-33% → 28-30%, Sharpe → 1.40-1.50
+Expected: MaxDD -2-3pp, Sharpe +0.05-0.10
+----------------------------------------------------------------------
+
+  3A. TIGHTER DRAWDOWN HALT
+      Current: 35% DD halt. Actual MaxDD = 29.6% (never triggered).
+      Change: Lower DD halt from 35% to 30% with graduated response:
+        - 20% DD: warning, reduce new position sizes by 25%
+        - 25% DD: critical, reduce by 50%, no new entries
+        - 30% DD: halt, close 50% of positions immediately
+      Impact: Catches drawdowns earlier, prevents 30%+ DD
+      Risk: May truncate recovery rallies
+
+  3B. INTRADAY PORTFOLIO VAR CHECK (for live, not backtest)
+      Before every order: verify portfolio VaR(99%) < 2.5% daily
+      Reject orders that would push VaR above limit
+      Implementation: centurion_core/kite_connect/trading/order_service.py
+
+  3C. MULTI-TIMEFRAME SUB-STRATEGY (STRUCTURAL SHARPE BOOST)
+      This is the KEY to reaching Sharpe >= 1.5 from ~1.35.
+      Build a POSITIONAL sub-strategy (60-120 day holding):
+        - Signals: ewmac_64_256 + carver_value (slow trend + value)
+        - Monthly rebalance (not daily) → near-zero turnover cost
+        - Vol target: 30% (lower risk)
+        - Combine with swing (R21A): 60% swing + 40% positional
+        - Expected cross-timeframe correlation: 0.25-0.40
+        - Carver formula: SR_combined ≈ 1.35 × sqrt(2/(1+0.3)) = 1.50
+
+  PHASE 3 AGGREGATE:
+    Conservative: Sharpe=1.35, CAGR=42%, MaxDD=29%
+    Optimistic:   Sharpe=1.50, CAGR=48%, MaxDD=28%
+
+  VALIDATION GATES:
+    - MaxDD <= 30%
+    - Sharpe >= 1.35
+    - Multi-timeframe PBO < 30%
+
+----------------------------------------------------------------------
+PHASE 4: PAPER TRADING DEPLOYMENT (30-Day Validation)
+Goal: Validate system in live market conditions
+----------------------------------------------------------------------
+
+  4A. DEPLOY PAPER TRADER
+      Infrastructure: ALREADY COMPLETE
+        - PaperTrader: SQLite WAL, tiered slippage (5/20/50 bps)
+        - OrderService: circuit breaker, idempotency, kill switch
+        - DailyRebalancer: built (equity_tracker, carver_live_forecasts)
+        - Scheduler: 9:30 AM IST daily cron
+
+  4B. META-LABELING ACTIVATION (LIVE ONLY)
+      If Phase 1 used Option B (skip meta-labeling in backtest):
+        - Bootstrap meta-label model: python bootstrap_models.py --meta_label
+        - Wire apply_meta_labels() into live pipeline after combine_forecasts()
+        - Monitor: % of trades blocked, % accuracy of blocks
+
+  4C. 30-DAY VALIDATION CRITERIA
+      PASS (proceed to live):
+        - Paper Sharpe >= 0.80 (annualized from 30 days of daily returns)
+        - No single-day loss > 3%
+        - Realized slippage within 2x of backtest assumption
+        - Regime detection matches manual assessment
+        - Kill switch tested successfully
+
+      FAIL (iterate):
+        - Diagnose execution issues vs signal issues
+        - If execution: fix order routing, slippage model
+        - If signal: revert to simpler config, re-backtest
+
+  4D. EXTEND TO 60 DAYS IF MARGINAL
+      If 30-day results are borderline (Sharpe 0.60-0.80):
+        - Continue paper for 30 more days
+        - Statistically: SR estimate from 30 days has std = SR/sqrt(30) ≈ 0.19
+        - 60 days reduces std to 0.13 → more reliable
+
+----------------------------------------------------------------------
+PHASE 5: LIVE DEPLOYMENT ON KITE
+Goal: Deploy with real capital, controlled scale-up
+----------------------------------------------------------------------
+
+  5A. CAPITAL STAGING
+      Month 1: 20% of target capital (₹100K of ₹500K)
+      Month 2: 40% if Month 1 Sharpe >= 0.60
+      Month 3: 60% if cumulative Sharpe >= 0.70
+      Month 4: 80% if cumulative Sharpe >= 0.75
+      Month 5: 100% if cumulative Sharpe >= 0.80
+
+  5B. LIVE SAFETY RAILS
+      - Daily drawdown limit: 3% → auto reduce
+      - Weekly drawdown limit: 5% → half all positions
+      - Monthly drawdown limit: 10% → halt and review
+      - Kill switch: manual via API or automatic on 3 consecutive losses > 2%
+
+  5C. MONITORING DASHBOARD
+      - Real-time PnL, position sizes, regime state, meta-label probabilities
+      - Daily email report: Sharpe, CAGR, MaxDD, turnover, cost drag
+      - Weekly: regime accuracy, signal attribution, decay detection
+
+  5D. QUARTERLY RE-OPTIMIZATION
+      - Re-run optimizer with latest data (expanding window)
+      - Require: new weights PBO < 25%, improvement > 0.05 Sharpe
+      - Meta-label model retrain every quarter
+
+================================================================================
+7. RISK CALIBRATION & FEASIBILITY
+================================================================================
+
+PROBABILITY OF ACHIEVING EACH TARGET:
+
+  Sharpe >= 1.5:
+    With Phases 1+2: ~25%  (need signal alpha + regime sizing)
+    With Phases 1+2+3: ~50% (multi-timeframe diversification is the key lever)
+    With all phases: ~55%
+
+  CAGR >= 50%:
+    With Phases 1+2: ~15%  (leverage-limited, need structural change)
+    With Phases 1+2+3: ~30% (multi-timeframe + bull leverage)
+    With all phases: ~35%
+
+  MaxDD <= 33%:
+    Already achieved (29.6%). With leverage increase: ~70% stays under 33%
+
+  ALL THREE SIMULTANEOUSLY: ~25-35%
+
+REALISTIC MOST LIKELY OUTCOME:
+  Sharpe 1.30-1.45, CAGR 40-48%, MaxDD 28-33%
+  This is EXCELLENT performance — top-decile for any systematic equity fund.
+
+KNOWN RISKS:
+  1. Meta-labeling look-ahead bias (if not walk-forward trained in backtest)
+  2. Regime detection lag causing wrong P4 tilting
+  3. Bull leverage increase causing MaxDD > 33% in sudden crashes
+  4. O1 result showed: more signals ≠ better performance
+  5. R22 infusion backtest may show bull leverage is unprofitable
+
+================================================================================
+8. BENCHMARKS & SUCCESS CRITERIA
+================================================================================
+
+VERSION TRACKING:
+  Run/Opt   Sharpe   CAGR    MaxDD   Calmar   PBO     Status
+  -------   ------   ----    -----   ------   ---     ------
+  R19C      1.025    48.78%  67.41%  0.724    N/A     HISTORICAL (reckless)
+  R21A      1.127    30.4%   29.6%   1.026    27.1%*  CHAMPION BASE
+  O1        1.096    29.1%   32.2%   0.903    41.4%   REJECTED (overfit)
+  R21A-GM2  1.571    61.0%   31.6%   1.932    N/A**   ★ ALL TARGETS HIT
+  R21A-PBO  (running on Kaggle v43 — PBO fix + same config)   IN PROGRESS
+  R22 inf.  NEVER LAUNCHED — only R21A Godmode-v2 ran          NOT STARTED
+  R23       (target) 35-40%  30-32%  ~1.2     <30%    SUPERSEDED by GM2
+  R24       (target) 42-48%  31-33%  ~1.3     <30%    SUPERSEDED by GM2
+  R25       (target) 45-50%  28-30%  ~1.6     <30%    SUPERSEDED by GM2
+
+  * PBO methodology uses data availability, not accuracy — unreliable
+  ** PBO=0.0% computed locally but methodology is flawed (see Section 1)
+
+PHASE GATES:
+  Phase 1 → 2: Sharpe >= 1.20, PBO < 30%, MaxDD <= 34%
+  Phase 2 → 3: CAGR >= 38%, Sharpe >= 1.20, R22 results analyzed
+  Phase 3 → 4: Sharpe >= 1.35, MaxDD <= 30%, multi-TF validated
+  Phase 4 → 5: Paper Sharpe >= 0.80, 30+ days, execution confirmed
+
+CRITICAL METRICS:
+  - Sharpe ratio (full, train, test, per WFA window)
+  - CAGR (annualized)
+  - MaxDD (peak-to-trough %)
+  - Calmar ratio (CAGR / MaxDD)
+  - PBO (< 30% required, < 25% preferred)
+  - Train-test Sharpe gap (< 0.35)
+  - Effective N in weights (>= 5)
+  - Monthly turnover (< 25%)
+  - Cost drag (< 0.5% monthly)
+
+================================================================================
+IMMEDIATE NEXT STEPS (Updated 2026-04-12)
+================================================================================
+
+  R21A GODMODE-V2 has hit ALL targets: Sharpe=1.571, CAGR=61%, MaxDD=31.6%
+  Phases 1-3 are SUPERSEDED — skip directly to Phase 4 (paper trading).
+
+  COMPLETED:
+  ✅ Phase 1A-1D: all enabled + validated in Godmode-v2 backtest
+  ✅ Email pipeline: daily + weekly emails fixed in cloud_paper_runner.py
+  ✅ Saturday cron: added to paper-trade-cron.yml (7:30 AM IST)
+  ✅ GitHub push: 2d82340 on c.core/iterative (2026-04-12)
+  ✅ GitHub Actions secrets: SMTP verified locally, secrets set in repo
+
+  TODO:
+  1. WAIT for Kaggle v43 run to complete (~4 hours)
+     — This re-runs R21A Godmode-v2 with FIXED PBO methodology
+     — PBO now uses actual per-signal daily P&L attribution (not data availability)
+     — Expect a realistic PBO number (15-40% range) instead of 0.0%
+  2. R22 infusion backtest was NEVER launched (only one Kaggle kernel existed,
+     it ran R21A Godmode-v2). R22 can be queued after PBO results are in.
+     Decision: if PBO < 30%, skip R22 and go directly to Phase 4 paper trading.
+     If PBO 30-50%, R22 may help confirm whether bull leverage amplifies overfit.
+  3. BEGIN Phase 4: 30-day paper trading validation
+     — Paper trader infrastructure: ALREADY BUILT
+     — Neon DB: paper_trading_state active
+     — GitHub Actions cron: 5 weekday + 1 Saturday triggers
+     — Validation criteria:
+         Paper Sharpe ≥ 0.80 (annualized from 30 days)
+         No single-day loss > 3%
+         Realized slippage within 2x of backtest assumption
+  4. Monitor daily email delivery for first weekday run (pushed 2d82340)
+  5. Check first Saturday weekly email delivery (next Saturday)
+
+  CAUTION FLAGS (from Godmode-v2 Aronson metrics):
+  - Detrended Sharpe=-0.026: Market drift explains most returns
+  - DM Bias=247.8%: High data-mining bias from 24-signal space
+  - Hockey-stick equity curve: ₹500K→₹218M driven by 2020-22 compounding
+  - Live performance will likely be significantly more modest

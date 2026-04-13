@@ -42,7 +42,8 @@ sys.stderr.reconfigure(line_buffering=True, encoding="utf-8", errors="replace")
 IS_KAGGLE = os.path.exists("/kaggle/working")
 
 VALID_TASKS = ["r21a", "r22",
-               "extract", "optimize", "pipeline", "validate_hybrid",
+               "extract", "optimize", "optimize_v28", "pipeline", "pipeline_v28",
+               "validate_hybrid",
                "contra_v0", "contra_v1", "contra_v2", "contra_v3", "contra_v4", "contra_all"]
 
 
@@ -153,7 +154,7 @@ def task_r21a():
     _set_all_modes_off(bt_mod)
     bt_mod._R21A_REGIME_VOL = True
     bt_mod._R21A_REGIME_BOOST = 1.25
-    bt_mod._R21A_REGIME_DEFEND = 0.15
+    bt_mod._R21A_REGIME_DEFEND = 0.55  # R21A original (v25) — was 0.15 (P1f over-correction)
     _set_checkpoint("r21a")
     _print_header("r21a")
 
@@ -260,10 +261,16 @@ def task_extract():
 
 
 def task_optimize():
-    """Run differential evolution weight optimizer."""
+    """Run differential evolution weight optimizer (v27: 10 signals)."""
     _print_header("optimize")
-    # Import and run the standalone optimizer
     from optimizer.optimize_weights_r21a import run_optimization
+    run_optimization()
+
+
+def task_optimize_v28():
+    """Run v28 optimizer (12 signals: +carry, +skew_signal, stricter guards)."""
+    _print_header("optimize_v28")
+    from optimizer.optimize_weights_v28 import run_optimization
     run_optimization()
 
 
@@ -279,6 +286,17 @@ def task_pipeline():
 
     print("\n  ═══ STEP 3/3: R21a Validation Backtest ═══\n")
     task_r21a()
+
+
+def task_pipeline_v28():
+    """v28 pipeline: extract → optimize_v28 (12 signals + anti-overfit)."""
+    _print_header("pipeline_v28")
+
+    print("\n  ═══ STEP 1/2: Forecast Extraction ═══\n")
+    task_extract()
+
+    print("\n  ═══ STEP 2/2: v28 Weight Optimization (12 signals) ═══\n")
+    task_optimize_v28()
 
 
 def task_validate_hybrid():
@@ -305,7 +323,7 @@ def _setup_r21a_base(bt_mod):
     _set_all_modes_off(bt_mod)
     bt_mod._R21A_REGIME_VOL = True
     bt_mod._R21A_REGIME_BOOST = 1.25
-    bt_mod._R21A_REGIME_DEFEND = 0.15
+    bt_mod._R21A_REGIME_DEFEND = 0.55  # R21A original (v25) — was 0.15 (P1f over-correction)
 
     # Load optimized weights — fall back to DEFAULT_FORECAST_WEIGHTS (R21A)
     opt_path = os.path.join(_CORE_DIR, "data", "r21a_optimization_results.pkl")
@@ -490,7 +508,9 @@ TASK_MAP = {
     "r22": task_r22,
     "extract": task_extract,
     "optimize": task_optimize,
+    "optimize_v28": task_optimize_v28,
     "pipeline": task_pipeline,
+    "pipeline_v28": task_pipeline_v28,
     "validate_hybrid": task_validate_hybrid,
     "contra_v0": task_contra_v0,
     "contra_v1": task_contra_v1,

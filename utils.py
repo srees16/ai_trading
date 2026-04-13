@@ -316,7 +316,7 @@ def download_ind_ohlcv_batch(
         import yfinance as yf
         for t in missed:
             try:
-                ns = t if "." in t else f"{t}.NS"
+                ns = t if any(c in t for c in '.-=^') else f"{t}.NS"
                 df = yf.download(ns, period=period, start=start, end=end,
                                  progress=False, auto_adjust=True)
                 if isinstance(df.columns, pd.MultiIndex):
@@ -375,7 +375,7 @@ def _try_yfinance(
 ) -> Optional[pd.DataFrame]:
     """Attempt to fetch OHLCV from yfinance with retry on crumb/auth errors."""
     import yfinance as yf
-    ns = ticker if "." in ticker else f"{ticker}.NS"
+    ns = ticker if any(c in ticker for c in '.-=^') else f"{ticker}.NS"
 
     for attempt in range(2):
         try:

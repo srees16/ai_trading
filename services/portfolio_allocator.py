@@ -36,25 +36,12 @@ def _configure_base(bt_mod):
     # Enable R21A regime scaling
     bt_mod._R21A_REGIME_VOL = True
     bt_mod._R21A_REGIME_BOOST = 1.25
-    bt_mod._R21A_REGIME_DEFEND = 0.15
+    bt_mod._R21A_REGIME_DEFEND = 0.55
 
-    # Apply weights: prefer optimized pkl, fall back to DEFAULT_FORECAST_WEIGHTS (R21A)
-    import pickle
-    opt_path = os.path.join(_CORE_DIR, "data", "r21a_optimization_results.pkl")
-    if os.path.exists(opt_path):
-        with open(opt_path, "rb") as f:
-            opt = pickle.load(f)
-        weights = opt["best_weights"]
-        # Overwrite DEFAULT_FORECAST_WEIGHTS from pkl
-        for fw in DEFAULT_FORECAST_WEIGHTS:
-            if fw.name in weights:
-                fw.weight = weights[fw.name]
-            elif fw.weight > 0:
-                fw.weight = 0.0  # zero out any signal not in optimized set
-    else:
-        # DEFAULT_FORECAST_WEIGHTS already contains R21A-optimized values
-        logger.warning("No r21a_optimization_results.pkl found — using DEFAULT_FORECAST_WEIGHTS (R21A)")
-        weights = {fw.name: fw.weight for fw in DEFAULT_FORECAST_WEIGHTS}
+    # R21A original weights live in DEFAULT_FORECAST_WEIGHTS (11 signals, ewmac_8_32=19.6%)
+    # PKL loading DISABLED — stale pkl contained v27 weights (10 signals) which silently
+    # overrode the correct R21A config. Always use DEFAULT_FORECAST_WEIGHTS as source of truth.
+    weights = {fw.name: fw.weight for fw in DEFAULT_FORECAST_WEIGHTS}
 
     return weights
 

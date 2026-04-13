@@ -45,9 +45,43 @@ REGIME_VOL_SCALE = {
 #   SMA200 = "is MY PORTFOLIO trending?" (equity curve based, R21a-optimized)
 # Combined multiplier is capped to prevent double-amplification.
 _R21A_EQUITY_SMA200_BOOST = 1.25    # uptrend: equity > SMA200 × 1.02
-_R21A_EQUITY_SMA200_DEFEND = 0.15   # P1f: near-cash in portfolio downtrend (was 0.55)
+_R21A_EQUITY_SMA200_DEFEND = 0.55   # R21A original: downtrend portfolio vol scale (synced with config/backtest)
 _R21A_EQUITY_SMA_LOOKBACK = 200     # trading days for SMA
 _R21A_COMBINED_CAP = 1.30           # max combined multiplier (HMM × SMA200)
+
+# Try to load from centralized config (single source of truth)
+try:
+    from config import Config as _VTCfg
+    _R21A_EQUITY_SMA200_BOOST = getattr(_VTCfg, 'R21A_REGIME_BOOST', _R21A_EQUITY_SMA200_BOOST)
+    _R21A_EQUITY_SMA200_DEFEND = getattr(_VTCfg, 'R21A_REGIME_DEFEND', _R21A_EQUITY_SMA200_DEFEND)
+    _R21A_EQUITY_SMA_LOOKBACK = getattr(_VTCfg, 'R21A_SMA_LOOKBACK', _R21A_EQUITY_SMA_LOOKBACK)
+except Exception:
+    pass
+
+
+def smooth_regime_scale(equity: float, sma200: float,
+                        boost: float = None, defend: float = None,
+                        steepness: float = 10.0) -> float:
+    """Smooth sigmoid interpolation between defend and boost based on equity/SMA200 ratio.
+
+    Replaces binary threshold (equity > SMA200×1.02 → boost, < 0.98 → defend).
+    Returns a continuous multiplier in [defend, boost] using a sigmoid.
+
+    sigmoid(x) = defend + (boost - defend) / (1 + exp(-steepness × (ratio - 1.0)))
+    """
+    import math
+    if boost is None:
+        boost = _R21A_EQUITY_SMA200_BOOST
+    if defend is None:
+        defend = _R21A_EQUITY_SMA200_DEFEND
+    if sma200 <= 0:
+        return 1.0
+    ratio = equity / sma200
+    x = steepness * (ratio - 1.0)
+    # Clamp to avoid overflow
+    x = max(-20.0, min(20.0, x))
+    sig = 1.0 / (1.0 + math.exp(-x))
+    return defend + (boost - defend) * sig
 
 # Contra-regime: mean-reversion signals in bear get a higher vol allocation
 # so "buy the dip" actually receives meaningful position sizing.
