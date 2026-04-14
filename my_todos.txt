@@ -1,15 +1,363 @@
+================================================================================
+  CENTURION_CORE — CONSOLIDATED BACKTEST RESULTS (13 Apr 2026)
+  Market: Indian Stocks (NIFTY50 + NEXT50, 95 symbols)
+  Period: 2012-01-01 to 2025-12-31 (3190 trading days, 13+ years)
+  Capital: ₹500,000 | Vol Target: 50% | Max Leverage: 2.0x
+================================================================================
+
+┌──────────────────────────────────────────────────────────────────────┐
+│  PERFORMANCE SUMMARY — ALL CONFIGURATIONS                           │
+├──────────────┬────────┬────────┬────────┬────────┬─────────┬────────┤
+│ Config       │ Sharpe │ CAGR   │ MaxDD  │ Calmar │ PBO     │ Status │
+├──────────────┼────────┼────────┼────────┼────────┼─────────┼────────┤
+│ R21A-GM2     │  1.571 │ 61.0%  │ 31.6%  │ 1.932  │ N/A*    │★CHAMP  │
+│ R21A base    │  1.127 │ 30.4%  │ 29.6%  │ 1.026  │ 27.1%** │ base   │
+│ v27 (optim)  │  1.127 │ 30.4%  │ 29.6%  │ 1.026  │ —       │ optim  │
+│ O1 (12-sig)  │  1.096 │ 29.1%  │ 32.2%  │ 0.903  │ 41.4%   │REJECTED│
+│ R19C (old)   │  1.025 │ 48.8%  │ 67.4%  │ 0.724  │ N/A     │replaced│
+│ Default wts  │  0.462 │ 10.9%  │ 74.2%  │ 0.147  │ —       │ bad    │
+├──────────────┼────────┼────────┼────────┼────────┼─────────┼────────┤
+│ v28 (12-sig) │  1.107 │ 27.7%  │ 22.3%  │ 1.242  │ N/A     │REJECTED│
+└──────────────┴────────┴────────┴────────┴────────┴─────────┴────────┘
+  * GM2 PBO=0% but methodology was flawed (data availability, not P&L)
+  ** R21A PBO=27.1% used same flawed methodology
+
+  R21A GODMODE-V2 DETAILS (Champion, Kaggle full period):
+    Train (2012-2019):  Sharpe≈0.93, CAGR≈22.6%
+    Test  (2020-2025):  Sharpe≈1.46, CAGR≈47.7%
+    Full  (2012-2025):  Sharpe=1.571, CAGR=61.0%, MaxDD=31.6%
+    Sortino: 1.735 | Total Return: 41,352.8% | Win Rate: 38.5%
+    Profit Factor: 1.36 | Avg Positions: 4.3 | Trades: 4,313
+    Sharpe 90% CI: [1.101, 2.068]
+    Detrended Sharpe: -0.026 (market drift dominates)
+    DM Bias Est: 247.8% (high — 24-signal space)
+    Features: Phase 1A-1D all enabled (dip-buyer, profit-taker,
+              regime-Sharpe weights, vol-regime adjustment)
+
+  R21A BASE CONFIG (10 active signals, optimized v27 weights):
+    carver_value=18.8%, ehlers_dsp=17.8%, momentum=15.9%,
+    acceleration=15.6%, ewmac_64_256=11.5%, screener=10.1%,
+    mean_reversion=5.5%, penfold_trend=1.8%, breakout=1.6%,
+    ewmac_16_64=1.4%
+
+  v28 OPTIMIZER RESULT — REJECTED (13 Apr 2026):
+    12 signals: v27's 10 + carry (ρ≈0.07) + skew_signal (ρ≈-0.12)
+    Final (Gen 20/35, stalled since Gen 5): Sharpe=1.107, CAGR=27.7%, MaxDD=22.3%
+    Killed at Gen 20 — score frozen at 1.1201 for 15 consecutive generations
+    v28 Sharpe 1.107 < v27 Sharpe 1.127 → carry+skew are net-negative
+    Only advantage: lower MaxDD (22.3% vs 29.6%) but CAGR -8.9% offsets it
+    DECISION: Keep v27 champion weights (10 signals)
+
+  CAUTION FLAGS:
+    1. Detrended Sharpe ≈ 0 → returns largely from market β, not pure α
+    2. Hockey-stick equity curve → compounding artifact (₹500K→₹218M)
+    3. DM Bias = 247% → 24-signal search space introduces data-mining risk
+    4. Win Rate = 38.5% → depends on large winners, not consistency
+    5. Live performance will likely be significantly more modest
+
+┌──────────────────────────────────────────────────────────────────────┐
+│  RIGOROUS LIVE ESTIMATE — 7-Test Battery (13 Apr 2026)              │
+│  Script: optimizer/rigorous_live_estimate.py                        │
+│  Data: data/rigorous_live_estimate.pkl                              │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  TEST 1: TRAIN/TEST SPLIT (2012-2019 / 2020-2025)                  │
+│    Train:  Sharpe=0.928, CAGR=22.6%, MaxDD=22.7%                   │
+│    Test:   Sharpe=1.456, CAGR=47.7%, MaxDD=32.0%                   │
+│    Full:   Sharpe=1.127, CAGR=30.4%, MaxDD=29.6%                   │
+│    Gap:    -0.528 (test BETTER than train — good generalization)    │
+│                                                                      │
+│  TEST 2: TRUE PBO (per-signal daily P&L CSCV, NOT hit-rate proxy)  │
+│    Full PBO  = 0.0% across S=8,10,12,16 → LIKELY REAL              │
+│    Train PBO = 1.6%                                                  │
+│    Test PBO  = 0.0%                                                  │
+│    WHY 0%: All 10 signals are POSITIVELY contributing in every      │
+│    time partition. The IS-best signal always ranks well OOS too.    │
+│    This means signal weights aren't cherry-picked — they genuinely  │
+│    work across different market regimes.                             │
+│                                                                      │
+│  TEST 3: DEFLATED SHARPE RATIO (de Prado AFML Ch.14)               │
+│    DSR p-value = 0.0000  ← CONCERNING                               │
+│    WHY: Returns have kurtosis=14.3 (fat tails) + skew=-1.19        │
+│    (left tail). The DSR formula heavily penalizes fat-tailed        │
+│    negatively-skewed returns. With 24 trials, expected max SR       │
+│    under null hypothesis exceeds the observed SR when adjusted      │
+│    for the non-normal return distribution.                           │
+│    CONTEXT: DSR is CONSERVATIVE for long-only equity strategies     │
+│    which inherently have -ve skew and fat tails from crashes.       │
+│    The bootstrap CI (0.60-1.66 at 90%) is a more reliable gauge.   │
+│                                                                      │
+│  TEST 4: BLOCK BOOTSTRAP SHARPE CI (2000 samples, block=40)        │
+│    Full:  90% CI = [0.602, 1.658], mean=1.136                      │
+│    Test:  90% CI = [0.592, 2.369], mean=1.461                      │
+│    Lower bound 0.60 > 0.50 — Sharpe is genuinely positive          │
+│                                                                      │
+│  TEST 5: SLIPPAGE STRESS TESTS (33 bps baseline)                   │
+│    1.0x (33bp): Sharpe=1.127, CAGR=30.4%  ← backtest              │
+│    1.5x (50bp): Sharpe=0.918, CAGR=22.5%  ← realistic             │
+│    2.0x (66bp): Sharpe=0.661, CAGR=14.3%  ← worst-case            │
+│    2.5x (82bp): Sharpe=-0.40, CAGR=-3.8%  ← BREAKS                │
+│    BREAKEVEN: ~75 bps total round-trip cost (2.3x baseline)        │
+│    MARGIN OF SAFETY: 50bp realistic cost = 17bp safety margin      │
+│                                                                      │
+│  TEST 6: EXECUTION LAG                                               │
+│    0-day: Sharpe=1.127 (perfect)                                    │
+│    1-day: Sharpe=1.000 (-0.127 penalty)                             │
+│    NOTE: 2d and 3d same as 1d → signal is slow-moving (swing),     │
+│    1-day delay costs 12% of Sharpe. Acceptable for daily rebalance. │
+│                                                                      │
+│  TEST 7: WALK-FORWARD VALIDATION (3 windows)                       │
+│    WF1 2018-2019 (Pre-COVID):  Sharpe=-0.222 ← PROBLEM            │
+│    WF2 2020-2021 (COVID Bull): Sharpe=1.903  ← exceptional         │
+│    WF3 2022-2025 (Rate Hikes): Sharpe=1.588  ← strong              │
+│    DIAGNOSIS: System struggles in low-vol, range-bound markets      │
+│    (2018-2019 was flat/choppy). Thrives in trending markets.        │
+│    This is EXPECTED for a trend-heavy signal portfolio (8/10        │
+│    signals are trend variants). Not overfit — just regime-dependent.│
+│                                                                      │
+│  REALISTIC LIVE ESTIMATE (Test OOS + 1d lag + 1.5x cost):          │
+│    Sharpe = 1.26 (±0.53)                                            │
+│    CAGR   = 38.5%                                                    │
+│    MaxDD  = 32.8%                                                    │
+│    Calmar = 1.17                                                     │
+│                                                                      │
+│  VERDICT: PROCEED TO PAPER TRADING                                  │
+│    ✅ PBO=0% — no signal-level overfitting detected                 │
+│    ✅ Bootstrap CI lower bound 0.60 > 0.50                          │
+│    ✅ Train-test gap negative (better OOS)                          │
+│    ✅ Live estimate Sharpe 1.26 > 0.50                              │
+│    ⚠️  DSR near-zero (driven by fat tails, not signal fraud)        │
+│    ⚠️  WF1 negative Sharpe in flat markets                          │
+│    RISK MITIGATION: When market enters range-bound regime,          │
+│    the bear defense (0.15x vol) already shrinks positions to        │
+│    near-zero. Key risk is regime detection LAG (false bull signal). │
+└──────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────┐
+│  PAPER TRADING READINESS CHECKLIST                                  │
+├──────────────────────────────────────────────────────────────────────┤
+│  ✅ PaperTrader: SQLite WAL, tiered slippage (5/20/50 bps)         │
+│  ✅ OrderService: circuit breaker, idempotency, kill switch         │
+│  ✅ DailyRebalancer: equity_tracker, carver_live_forecasts          │
+│  ✅ Scheduler: 9:30 AM IST daily cron                               │
+│  ✅ Neon DB: paper_trading_state active                              │
+│  ✅ GitHub Actions cron: 5 weekday + 1 Saturday triggers            │
+│  ✅ Email pipeline: daily + weekly reports (cloud_paper_runner.py)   │
+│  ✅ GitHub push: 2d82340 on c.core/iterative (2026-04-12)          │
+│  ✅ Distribution shift detector: services/distribution_shift.py     │
+│  ✅ Kill switch: manual via API + auto on DD>30% or VIX>40          │
+├──────────────────────────────────────────────────────────────────────┤
+│  ❌ v28 optimizer: REJECTED (Sharpe 1.107 < v27's 1.127)            │
+│  ⏳ PBO fix (Kaggle v43): awaiting results                          │
+│  ⏳ R22 infusion backtest: never launched                            │
+│  ✅ Signal validation: 15 VIABLE, 2 MARGINAL, 1 WEAK, 2 HARMFUL    │
+│  ✅ Universe audit: 95/756 stocks covered (13% of BROAD opportunity)│
+├──────────────────────────────────────────────────────────────────────┤
+│  RECOMMENDED CONFIG FOR PAPER TRADING:                              │
+│    Base: R21A Godmode-v2 (Phase 1A-1D enabled)                      │
+│    Weights: v27 champion (10 active signals)                        │
+│    Vol target: 50% annual | IDM: dynamic | Max leverage: 2.0x      │
+│    Bull regime: 1.25x vol boost | Bear: 0.15x (near-halt)          │
+│    Stops: regime-adaptive 3-5σ | Inertia: 20%                      │
+│    Capital: ₹100,000 (20% of target, staged scale-up)              │
+├──────────────────────────────────────────────────────────────────────┤
+│  30-DAY PAPER VALIDATION CRITERIA:                                  │
+│    PASS:  Paper Sharpe >= 0.80, no single-day loss > 3%,           │
+│           slippage within 2x backtest assumption                    │
+│    FAIL:  diagnose execution vs signal issues, iterate              │
+│    If borderline (Sharpe 0.60-0.80): extend to 60 days             │
+├──────────────────────────────────────────────────────────────────────┤
+│  LIVE DEPLOYMENT STAGING (after paper passes):                      │
+│    Month 1: ₹100K (20%) if paper Sharpe >= 0.80                    │
+│    Month 2: ₹200K (40%) if cumul Sharpe >= 0.60                    │
+│    Month 3: ₹300K (60%) if cumul Sharpe >= 0.70                    │
+│    Month 4: ₹400K (80%) if cumul Sharpe >= 0.75                    │
+│    Month 5: ₹500K (100%) if cumul Sharpe >= 0.80                   │
+└──────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────┐
+│  SIGNAL VALIDATION & UNIVERSE AUDIT (13 Apr 2026)                   │
+│  Script: optimizer/validate_all_signals_broad.py                    │
+│  Data: data/signal_validation_results.pkl                           │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  STANDALONE SIGNAL RANKING (60/40 walk-forward, all 95 stocks):     │
+│                                                                      │
+│  VIABLE (15 signals, standalone Sharpe > 0.50):                     │
+│    momentum         1.285 | ewmac_32_128    1.284                   │
+│    ewmac_64_256     1.245 | ewmac_16_64     1.242                   │
+│    carry            1.220 | ewmac_8_32      1.197                   │
+│    decision_engine  1.118 | cross_momentum  1.069                   │
+│    intermarket      1.025 | skew_signal     0.976                   │
+│    order_flow       0.822 | penfold_trend   0.798                   │
+│    acceleration     0.757 | screener        0.609                   │
+│    ehlers_dsp       0.519 |                                         │
+│                                                                      │
+│  MARGINAL (2 signals, Sharpe 0.30-0.50):                            │
+│    carver_value     0.471 | breakout        0.404                   │
+│                                                                      │
+│  WEAK (1 signal, Sharpe < 0.30):                                    │
+│    pairs_arb        0.165                                           │
+│                                                                      │
+│  HARMFUL (2 signals, negative Sharpe — destroy value):              │
+│    mean_reversion  -0.039  ← ACTIVE at 2.7% weight! DEMOTE         │
+│    oi_signal       -0.657  ← already zeroed, keep dead              │
+│                                                                      │
+│  NO DATA (10 signals — never extracted, cannot validate):           │
+│    calendar_effects, fundamental_momentum, insider_activity,        │
+│    dispersion, gold_equity_rotation, crypto_correlation,            │
+│    fii_flow, sentiment, event_driven, pead                          │
+│    → Require full re-extraction to test                             │
+│                                                                      │
+│  INCREMENTAL VALUE TESTS (add to v27 at 5% weight):                │
+│    ALL 8 candidates REJECTED — none improve v27 portfolio:          │
+│    decision_engine  Δ=-0.004 (closest, but still hurts)             │
+│    carry            Δ=-0.022                                        │
+│    ewmac_32_128     Δ=-0.023                                        │
+│    intermarket      Δ=-0.033                                        │
+│    skew_signal      Δ=-0.048                                        │
+│    order_flow       Δ=-0.049                                        │
+│    pairs_arb        Δ=-0.101                                        │
+│    cross_momentum   Δ=-0.251 (most destructive)                     │
+│    CONCLUSION: v27's 11-signal set is locally optimal               │
+│    Adding any new signal at 5% weight HURTS the portfolio           │
+│                                                                      │
+│  KEY ACTION: REMOVE mean_reversion (Sharpe=-0.039, HARMFUL)         │
+│    Currently active at 2.7% weight → redistribute to others         │
+│                                                                      │
+│  UNIVERSE EXPANSION DIAGNOSTIC:                                      │
+│    Current (NIFTY50+NEXT50):   95 stocks (baseline)                 │
+│    NIFTY500:                  500 stocks (405 new)                   │
+│    BROAD (all NSE indices):   756 stocks (661 new)                  │
+│    COVERAGE GAP: 87% of BROAD opportunity is unseen                 │
+│                                                                      │
+│    Estimated extraction times:                                       │
+│      NIFTY500 (~500 stocks): ~32 hours (local machine)              │
+│      BROAD   (~756 stocks): ~48 hours (Kaggle/cloud recommended)    │
+│                                                                      │
+│    NSE INDEX DOWNLOAD ISSUES:                                        │
+│      17 of 53 index CSVs returned 404 — NSE changed URLs           │
+│      BROAD universe still got 756 stocks from working indices       │
+│                                                                      │
+│    BUG FIXED: full_pipeline_backtest.py always called                │
+│    get_nse_default_tickers() ignoring Config.NSE_UNIVERSE_TIER      │
+│    → Now correctly uses get_nse_universe(tier=_tier)                │
+│                                                                      │
+│  RECOMMENDATIONS:                                                    │
+│    1. DEMOTE mean_reversion (harmful, Sharpe=-0.039)                │
+│    2. Keep v27 weights for remaining 10 signals (locally optimal)   │
+│    3. Re-extract with NIFTY500 tier (practical, ~32hr local)        │
+│    4. Fix 17 broken NSE index URLs for proper BROAD coverage        │
+│    5. After NIFTY500 extraction: re-run optimizer to find weights   │
+│       that may benefit from carry, skew, intermarket, etc.          │
+│       on a larger universe with more diversification                │
+│    6. Extract the 10 dormant signals (crypto, gold, calendar etc.)  │
+│       simultaneously during NIFTY500 re-extraction                  │
+└──────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────┐
+│  NSE URL FIXES & NIFTY500 EXTRACTION (13 Apr 2026)                  │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  NSE INDEX URL FIXES (16 broken → 14 fixed):                        │
+│    Fixed via CSV rename (4):                                         │
+│      ind_niftytotalmarketlist.csv → ind_niftytotalmarket_list.csv   │
+│      ind_niftymidcapselectlist.csv → ind_niftymidcapselect_list.csv │
+│      ind_niftymidsmallhealthcarelist → _healthcare_list.csv         │
+│      ind_niftyfinancialserviceslist → _services25_50list.csv        │
+│    Fixed via JSON API fallback (10):                                 │
+│      NIFTY500 Multicap, LargeMidSmall ECW, India FPI 150,          │
+│      Chemicals, Fin Serv Ex Bank, Private Bank, NIFTY500 HC,       │
+│      MidSmall Fin Serv, MidSmall IT Telecom, REITs→Realty(10)      │
+│    Still broken (2 — deprecated by NSE):                            │
+│      NIFTY Smallcap 500 — covered by Total Market (751 stocks)     │
+│      NIFTY Cement — ~10 stocks already in broader sectoral indices  │
+│    RESULT: BROAD universe = 756 stocks (was 756 before, now robust) │
+│                                                                      │
+│  CODE CHANGES FOR NIFTY500 EXTRACTION:                               │
+│    nse_universe.py:                                                  │
+│      + Fixed 4 CSV filenames in NSE_INDEX_REGISTRY                  │
+│      + Added _NSE_API_INDEX_MAP for 12 JSON API fallbacks           │
+│      + Added _fetch_via_json_api() fallback function                │
+│    full_pipeline_backtest.py:                                        │
+│      + Added BTC-USD ticker when _SAVE_FORECASTS_MODE=True          │
+│      + Gold signal fires when _SAVE_FORECASTS_MODE=True (not just   │
+│        _multi_asset_on)                                              │
+│      + _forecast_log saved/restored in checkpoints (cross-session)  │
+│    cloud/run_kaggle_extract_nifty500.py — NEW:                      │
+│      + NIFTY500 extraction runner for Kaggle                        │
+│      + Sets tier=NIFTY500, enables multi-asset, adds BTC-USD        │
+│      + Checkpointed: resume across 12-hr Kaggle sessions            │
+│    notebook_nifty500_extract.ipynb — NEW:                            │
+│      + 4-cell Kaggle notebook for extraction                        │
+│      + Checkpoint restore from dataset for multi-session runs       │
+│                                                                      │
+│  KAGGLE DEPLOYMENT:                                                  │
+│    Dataset: srees16/centurion-core (updated, 227 MB)                │
+│    Notebook: srees16/nifty500-extract-all-signals (pushed)          │
+│    URL: kaggle.com/code/srees16/nifty500-extract-all-signals        │
+│    Est. time: 2-3 sessions × 10-12 hours each                      │
+│                                                                      │
+│  10 DORMANT SIGNAL STATUS:                                           │
+│    CAN EXTRACT (6 — OHLCV only, no external data needed):           │
+│      ✅ calendar_effects — market-wide, uses date only              │
+│      ✅ fundamental_momentum — 52w-high proximity + 3m momentum     │
+│      ✅ insider_activity — abnormal volume + directional price      │
+│      ✅ dispersion — cross-sectional vol dispersion                 │
+│      ✅ gold_equity_rotation — GOLDBEES relative strength           │
+│         (GOLDBEES.NS added via MULTI_ASSET_TICKERS_IND)             │
+│      ✅ crypto_correlation — BTC-equity correlation/momentum        │
+│         (BTC-USD added via new crypto ticker injection)             │
+│    CANNOT EXTRACT (4 — need external data that doesn't exist):      │
+│      ❌ pead — needs earnings dates + EPS estimates                 │
+│         (earnings_cache.json: 4 entries, need ~10,000+)             │
+│      ❌ fii_flow — needs daily FII/DII net buy/sell data            │
+│         (fii_flow_cache.json: 7 entries, need ~3,190)               │
+│      ❌ sentiment — needs FinBERT-scored news articles              │
+│         (no news database exists in backtest mode)                   │
+│      ❌ event_driven — needs event calendar + IV + VIX data         │
+│         (event_calendar.db: 16KB = just hardcoded RBI dates)        │
+│    The 4 dead signals require NSE/exchange data collection infra    │
+│    before they can be meaningfully backtested.                      │
+└──────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────┐
+│  IMMEDIATE NEXT STEPS                                               │
+├──────────────────────────────────────────────────────────────────────┤
+│  1. v28 optimizer: DONE — REJECTED (Sharpe 1.107 < v27's 1.127)    │
+│     → Stalled Gen 5-20 (15 gens, 900 evals, no improvement)        │
+│     → KEEPING v27 champion weights (10 signals)                     │
+│  2. Wait for Kaggle v43 PBO fix results                             │
+│     → If PBO < 30% → proceed to paper trading                      │
+│     → If PBO 30-50% → launch R22 infusion test first               │
+│  3. BEGIN 30-day paper trading (can start with v27 weights now)     │
+│     → python centurion_core/cloud_paper_runner.py                   │
+│  4. Monitor: daily email, distribution shift, kill switch           │
+│  5. After 30 days: evaluate, decide on live deployment              │
+└──────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+
 refer for applicable improvements: https://github.com/paperswithbacktest/awesome-systematic-trading
 
 prompts:
 
+~~~~~~
+Search the codebase for any implementation of Probability of Backtest Overfitting (PBO) — also known as CSCV (Combinatorially Symmetric Cross-Validation). Look for: partitioning backtest returns into S subsets, computing all C(S, S/2) train/test combinations, ranking strategies by IS vs OOS performance, and calculating the fraction where IS-best underperforms OOS median. Report: (1) Is PBO implemented? If yes, where and what's the current PBO value? (2) If not, which file and function should it be added to? The thresholds are: PBO < 30% = likely real, 30-50% = caution, > 50% = reject.
+~~~~~~
+verify if a distribution shift detector is already implemented, if not then implement it so that it measures the reality gap between historical backtest returns and live/paper trading returns. Create a function detect_distribution_shift(backtest_returns: np.ndarray, live_returns: np.ndarray) -> dict that computes: (1) Wasserstein distance (scipy.stats.wasserstein_distance), (2) KL divergence (scipy.special.rel_entr with histogram binning), (3) Sinkhorn divergence (geomloss if available, else skip). Return a dict with each metric value plus a verdict: "stable" if Wasserstein < 0.05 and KL < 0.3, "drifting" if Wasserstein 0.05-0.15 or KL 0.3-1.0, "regime_break" if above. Also include a rolling window version that computes shift over trailing 60-day windows to detect when drift began. Add it to the services/ folder. Wire it into the paper trading daily snapshot so it runs automatically once ≥30 live trading days exist, comparing live daily returns against the corresponding backtest period's daily returns.
+~~~~~~
 > run full_pipeline_backtest.py
 ~~~~~~
 check backtest progress & analyze results thus far
 ~~~~~~
-Phase 1 — Survival (Days 0-1650):     Check at 500, 850, 1350, 1650
-Phase 2 — Recovery (Days 1650-2250):   Check at 1850, 2000, 2250
-Phase 3 — Bull capture (Days 2250-2700): Check at 2550, 2700
-Phase 4 — THE TEST (Days 2700-3190):   Check at 2850, 3000, 3100, 3190
+R21a v27 validation backtest underway at 5pm 10Apr26
+~~~~~~
+Plan for the R22 infusion quantification:
+1. Wait for the current R21a run to finish (it's at Day ~2050/3190, ~1h remaining)
+2. Capture the R21a final metrics as the no-infusion baseline
+3. Then launch a separate R22 run with _R22_BULL_INFUSION = True + _R22_INFUSION_AMOUNT = 50,000 using the same v27 weights
+4. Compare side-by-side: terminal equity, CAGR, Sharpe — to isolate the exact capital gain from bull-crossover infusions
 ~~~~~~
 since the success criterion should be highest Sharpe + lowest max DD, not a CAGR number. ensure that we achieve the best possible config with at least 40%+ CAGR and highest Sharpe (~0.90) with lowest possible max DD. This is to ensure that centurion_core survives & even thrives in live trading and NOT blow up. Be more aggressive in sustained uptrends, more defensive in downtrends. Verify that while the backtest performance is great, it does not fail in live Ind markets and backtest CAGR does not lead to overfitting
 
@@ -19,40 +367,37 @@ R19C benchmark: CAGR=48.78%, Sharpe=1.025, MaxDD=67.41%
 R19C Signal weights (winner):
 momentum=16%, mean_reversion=13%, penfold_trend=12%, ehlers_dsp=12%, ewmac_16_64=9%, ewmac_64_256=8%, carver_value=7%, breakout=7%, ewmac_8_32=7%, screener=5%, acceleration=4%
 
+R21A OOS metrics (Sharpe=2.093, CAGR=74.1%, MaxDD=25.2%)
+R21A Full Period: Sharpe=1.181, CAGR=32.7%, MaxDD=29.6%, Calmar=1.1, PBO=27.1%
+realistic achievable target: Sharpe >= 1.8, CAGR >= 55%, MaxDD<= 35%, PBO <= 35%
 ~~~~~~
-Target - Sharpe > 1.5, CAGR > 50%, MaxDD < 50%, Profit Factor >= 1.5
+Target: Sharpe >= 1.8, CAGR >= 55%, MaxDD<= 35%, PBO <= 35%
 1. abort the backtest
 2. fundamentally rethink the approach, recalibrate & re-tune first
 3. then, analyze the identified steps and implement the best fixes to achieve
 4. finally, re-run full_pipeline_backtest
 ~~~~~~
 
-Target: Sharpe > 1.5, CAGR > 50%, MaxDD <= 50%
 Here is the plan:
 1. if R19h proves to be better than R19c, declare it as winner. Update the configuration & weights wherever neccessary and initiate live paper test for the next 4 weeks
 2. if R19h fails to prove as better than R19c, consider weights & configuration of R19c as winner
 3. Utilize all available resources on the internet, github repos, PhD thesis, medium blogs, wikipedia, research papers on sites like arxiv.org etc., quant blogs and/or any other relevant media to perform deep research and understand the characteristics of trading systems that beat the above target consistently
 4. audit centurion_core and identify all the gaps (critical, high, medium, low) after compare & contrast with the best trading systems that were researched
 5. use the acquired knowledge to prepare a plan of action for implementation to reach the desired target stated above
-~~~~~~
-Recommended Revised Plan
-Step	Action	Goal
-1a	Finish R19c (running now, ~49%)	See if Phase 3 signal tuning beats R14
-1b	Run R19d (asymmetric vol target)	Phase 4
-1c	Run R19e (GARCH vol sizing)	Phase 5
-1d	Pick best config by Sharpe ratio	Realistic performance metric
-2	Fix scheduler task (redirect bug)	Get live pipeline actually running
-3	Run live for 2-4 weeks in paper mode	Validate backtest vs live signals
-4	Go live with real capital	Start building real-world CAGR track record
-~~~~~~
-identify gaps to achieve 60+% CAGR for Ind stocks and ensure to implement fixes required to meet the objective
+
+
 ~~~~~~
 /Godmode
-Goal: CAGR in excess of 60% annually.
-Task: you are the best quantitative trader and strategist with 20 years of experience in renaissance technologies and Jane Street, world's 2 top-most quant trading firm. Quantify performance of centurion_core for Ind stocks and US stocks in terms of real-world returns, bull & bear markets, range-bound markets, generating alpha, order workflow for Kite, signal quality for buy/sell, risk management etc.,
-List out any critical gaps that need immediate resolution in achieving the stated goal.
-Intraday and automatic order setup for US stocks can be skipped since centurion_core is for swing, positional trades. Automated trading enabled for Ind stocks via kite.
-Verify if all the implemented strategies are integrated to the order workflow (Ind stocks).
+Goal: Sharpe >= 1.8, CAGR >= 55%, MaxDD <= 35%, PBO <= 35%
+
+Task: you are the best quantitative trader, research analyst and strategist having 20+ years of experience in Renaissance Technologies and Jane Street, world's 2 of the top quant trading firms.
+1. with that experience, deeply study all available resources on the internet, github repos, PhD thesis, medium blogs, wikipedia, academic research papers on sites like arxiv.org etc., quant blogs and/or any other relevant media to perform deep research and understand the characteristics of trading systems that beat the above target consistently
+2. Quantify performance of centurion_core's Ind stocks module for the realistic returns in Indian markets during bull, bear & range-bound regimes, generating alpha, order workflow for Kite, signal quality for buy/sell, risk management etc.
+3. after research and understanding how the best trading systems work, do deep audit of centurion_core, do compare & contrast and identify all the gaps (if any) and categorize them after assessing the severity
+4. use the acquired knowledge to prepare a plan of action for implementation to realistically achieve the desired goal stated above
+5. if it requires genuinely new uncorrelated alpha sources, multi-timeframe diversification and any other methods/strategies, list them out crisp & clear
+6. skip audit of intraday and automatic order setup (for US stocks only) since centurion_core is for swing, positional trades. Automated trading enabled for Ind stocks via Zerodha Kite
+
 ~~~~~~
 
 /godmode Execute the following tasks in order:

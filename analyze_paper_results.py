@@ -210,9 +210,66 @@ def analyze():
 
     # ── Verdict ────────────────────────────────────────────────
     print(f"\n  {'=' * 60}")
+
+    # ── Distribution shift analysis ────────────────────────────
+    shift_result = None
+    if snapshots and len(snapshots) >= 31:
+        try:
+            import pickle
+            from services.distribution_shift import (
+                detect_distribution_shift,
+                detect_distribution_shift_rolling,
+            )
+
+            eq_arr = np.array([s["equity"] for s in snapshots], dtype=float)
+            live_rets = np.diff(eq_arr) / eq_arr[:-1]
+
+            bt_returns = None
+            data_dir = _DB_PATH.parent
+            for pkl_name in ("r21a_optimization_results.pkl", "r21a_oos_evaluation.pkl"):
+                pkl_path = data_dir / pkl_name
+                if pkl_path.exists():
+                    with open(pkl_path, "rb") as f:
+                        pkl_data = pickle.load(f)
+                    for key in ("best_test", "best_full", "r21a_test", "r21a_full"):
+                        res = pkl_data.get(key, {})
+                        if isinstance(res, dict) and "daily_returns" in res:
+                            bt_returns = np.asarray(res["daily_returns"])
+                            break
+                    if bt_returns is not None:
+                        break
+
+            if bt_returns is not None and len(bt_returns) >= 30:
+                shift_result = detect_distribution_shift(bt_returns, live_rets)
+                print(f"\n  ── Distribution Shift (Backtest vs Live) ──")
+                print(f"  Wasserstein   : {shift_result['wasserstein']:.6f}")
+                print(f"  KL divergence : {shift_result['kl_divergence']:.6f}")
+                if shift_result.get("sinkhorn") is not None:
+                    print(f"  Sinkhorn      : {shift_result['sinkhorn']:.6f}")
+                print(f"  Verdict       : {shift_result['verdict'].upper()}")
+
+                if len(live_rets) >= 60:
+                    rolling = detect_distribution_shift_rolling(
+                        bt_returns, live_rets, window=60, step=5,
+                    )
+                    if rolling:
+                        drift_windows = [r for r in rolling if r["verdict"] != "stable"]
+                        if drift_windows:
+                            first = drift_windows[0]
+                            print(f"  Drift onset   : day {first['window_start']} "
+                                  f"(Wass={first['wasserstein']:.4f})")
+                        regime_breaks = [r for r in rolling if r["verdict"] == "regime_break"]
+                        if regime_breaks:
+                            print(f"  Regime breaks : {len(regime_breaks)}/{len(rolling)} windows")
+        except Exception as e:
+            print(f"  Distribution shift analysis failed: {e}")
+
     if snapshots and len(snapshots) >= 15:
         if sharpe >= 0.5 and max_dd < 0.30:
-            print("  VERDICT: PASS — Ready for live trading")
+            if shift_result and shift_result.get("verdict") == "regime_break":
+                print("  VERDICT: HOLD — Metrics pass but REGIME BREAK detected. Investigate.")
+            else:
+                print("  VERDICT: PASS — Ready for live trading")
         elif sharpe >= 0.2:
             print("  VERDICT: MARGINAL — Consider extending paper period")
         else:

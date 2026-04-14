@@ -139,7 +139,7 @@ def _fetch_dividend_yield(symbol: str) -> Optional[float]:
     """Fetch trailing dividend yield from yfinance."""
     try:
         import yfinance as yf
-        ns = symbol if "." in symbol else f"{symbol}.NS"
+        ns = symbol if any(c in symbol for c in '.-=^') else f"{symbol}.NS"
         info = yf.Ticker(ns).info
         dy = info.get("dividendYield") or info.get("trailingAnnualDividendYield")
         if dy is not None and dy > 0:
@@ -155,7 +155,7 @@ def fetch_dividend_yields_batch(symbols: list[str]) -> Dict[str, float]:
     try:
         import yfinance as yf
         for sym in symbols:
-            ns = sym if "." in sym else f"{sym}.NS"
+            ns = sym if any(c in sym for c in '.-=^') else f"{sym}.NS"
             try:
                 info = yf.Ticker(ns).info
                 dy = info.get("dividendYield") or info.get("trailingAnnualDividendYield")

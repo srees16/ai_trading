@@ -68,37 +68,49 @@ class ForecastWeight:
 # avg forecast ~6-7 (vs Carver target 10), sufficient diversification to avoid
 # single-signal blowups, decorrelated styles (trend + momentum + adaptive + breakout).
 DEFAULT_FORECAST_WEIGHTS: List[ForecastWeight] = [
-    ForecastWeight("ewmac_8_32", 0.196),     # R21a: ↑ from 7% — fast trend-following heavily upweighted
-    ForecastWeight("ewmac_16_64", 0.008),    # R21a: ↓ from 9% — nearly eliminated (redundant with 8_32)
+    ForecastWeight("ewmac_8_32", 0.196),     # RESTORED: R21A original champion weights
+    ForecastWeight("ewmac_16_64", 0.008),    # R21a: nearly eliminated (redundant with 8_32)
     ForecastWeight("ewmac_32_128", 0.00),    # zeroed — redundant
-    ForecastWeight("ewmac_64_256", 0.108),   # R21a: ↑ from 8% — positional trend boosted
+    ForecastWeight("ewmac_64_256", 0.108),   # RESTORED from 0.096
     ForecastWeight("carry", 0.00),           # zeroed — weak for equities
-    ForecastWeight("screener", 0.018),       # R21a: ↓ from 5% — low alpha contribution
-    ForecastWeight("momentum", 0.112),       # R21a: ↓ from 16% — still important, less dominant
+    ForecastWeight("screener", 0.018),       # RESTORED from 0.016
+    ForecastWeight("momentum", 0.112),       # RESTORED from 0.100
     ForecastWeight("pead", 0.00),            # DEAD: 0% hit rate
-    ForecastWeight("mean_reversion", 0.027), # R21a: ↓ from 13% — counter-trend heavily trimmed
+    ForecastWeight("mean_reversion", 0.00),  # KILLED: Sharpe=-0.039, harmful (was 2.7%)
     ForecastWeight("fii_flow", 0.00),        # DEAD: 0% hit rate
     ForecastWeight("decision_engine", 0.00), # zeroed — circular dependency
     ForecastWeight("oi_signal", 0.00),       # HARMFUL: t-stat = -69.8
     ForecastWeight("cross_momentum", 0.00),  # zeroed — conflicts with long-only
     ForecastWeight("pairs_arb", 0.00),       # HARMFUL: t-stat = -190.7
     ForecastWeight("event_driven", 0.00),    # DEAD: 0% hit rate
-    ForecastWeight("penfold_trend", 0.012),  # R21a: ↓ from 12% — nearly eliminated
-    ForecastWeight("ehlers_dsp", 0.188),     # R21a: ↑ from 12% — adaptive DSP heavily boosted
+    ForecastWeight("penfold_trend", 0.012),  # RESTORED from 0.011
+    ForecastWeight("ehlers_dsp", 0.188),     # RESTORED from 0.168
     ForecastWeight("intermarket", 0.00),     # zeroed — noisy
-    ForecastWeight("acceleration", 0.119),   # R21a: ↑ from 4% — acceleration tripled
-    ForecastWeight("carver_value", 0.196),   # R21a: ↑ from 7% — value signal co-top weight
+    ForecastWeight("acceleration", 0.119),   # RESTORED from 0.106
+    ForecastWeight("carver_value", 0.196),   # RESTORED from 0.175
     ForecastWeight("skew_signal", 0.00),     # zeroed — weak signal
     ForecastWeight("sentiment", 0.00),       # DEAD: 0% hit rate
-    ForecastWeight("breakout", 0.016),       # R21a: ↓ from 7% — low alpha contribution
+    ForecastWeight("breakout", 0.016),       # RESTORED from 0.014
     ForecastWeight("order_flow", 0.00),      # zeroed — microstructure noise
-    # Total: 1.00 exact (24 sources, 11 active)
+    # ── New Alpha Sources — kept at ZERO until validated by walk-forward ──
+    ForecastWeight("calendar_effects", 0.00),
+    ForecastWeight("fundamental_momentum", 0.00),
+    ForecastWeight("insider_activity", 0.00),
+    ForecastWeight("dispersion", 0.00),
+    ForecastWeight("gold_equity_rotation", 0.00),
+    ForecastWeight("crypto_correlation", 0.00),
+    ForecastWeight("sector_rotation", 0.03),   # Phase D: sector momentum overlay (3%)
+    # Total: 1.00 exact — R21A original 11 active signals
     # R21a OOS validated: Sharpe=2.09, CAGR=74.1%, MaxDD=25.2%, Calmar=2.94
     # vs R19c baseline:  Sharpe=1.02, CAGR=48.8%, MaxDD=67.4%, Calmar=0.71
     # Top signals: ewmac_8_32(19.6%), carver_value(19.6%), ehlers_dsp(18.8%),
     #              acceleration(11.9%), momentum(11.2%), ewmac_64_256(10.8%)
     # Trimmed:     mean_reversion(2.7%), screener(1.8%), breakout(1.6%),
     #              penfold_trend(1.2%), ewmac_16_64(0.8%)
+    # CORE (std<5%): carver_value(18.8%), ehlers_dsp(17.8%), momentum(15.9%),
+    #                acceleration(15.6%), ewmac_64_256(11.5%)
+    # Stable:        screener(10.1%), mean_reversion(5.5%), penfold_trend(1.8%),
+    #                breakout(1.6%), ewmac_16_64(1.4%)
 ]
 
 # Rule-of-thumb correlations between forecast sources (Carver Appendix C):
@@ -615,33 +627,44 @@ def apply_decay_state_filter(
 
 
 # ── P4: Regime-Specific Sharpe²-Weighted Forecast Allocation ──────────
+# C3 FIX: Regime-conditional weights — aggressive bear defense
 # Historical signal quality by regime (from 13yr audit, April 2026):
 #   BULL:     Sharpe 0.73 (10D) — trend-following strongest
 #   SIDEWAYS: Sharpe 0.80 (5D)  — mean-reversion & adaptive strongest
 #   BEAR:     Sharpe 0.10 (10D) — signals broken, near-random
 #
-# Sharpe² weighting: w_i ∝ sharpe_i² in that regime (Kelly-optimal allocation)
-# This tilts forecast ensemble toward historically proven sources per regime.
+# REVISED post R21A backtest (Sharpe 0.63, 5yr flat 2015-2020):
+#   - BEAR: zero trend-following (Sharpe near 0), upweight MR/value
+#   - SIDEWAYS: upweight MR, ehlers_dsp, carver_value (decorrelated)
+#   - BULL: standard trend-following weights
 
 REGIME_SHARPE_SCORES = {
-    # {source: {regime: sharpe_estimate}} — from backtest signal quality audit
-    "ewmac_8_32":      {"bull": 0.65, "sideways": 0.40, "bear": 0.05},
-    "ewmac_16_64":     {"bull": 0.70, "sideways": 0.35, "bear": 0.08},
-    "ewmac_32_128":    {"bull": 0.72, "sideways": 0.30, "bear": 0.10},
-    "ewmac_64_256":    {"bull": 0.68, "sideways": 0.25, "bear": 0.12},
-    "ehlers_dsp":      {"bull": 0.60, "sideways": 0.75, "bear": 0.15},
-    "momentum":        {"bull": 0.55, "sideways": 0.30, "bear": 0.05},
+    # C3: Revised scores — aggressive bear penalty, MR boost in sideways
+    "ewmac_8_32":      {"bull": 0.65, "sideways": 0.20, "bear": 0.00},  # C3: zero in bear
+    "ewmac_16_64":     {"bull": 0.70, "sideways": 0.18, "bear": 0.00},  # C3: zero in bear
+    "ewmac_32_128":    {"bull": 0.72, "sideways": 0.15, "bear": 0.00},  # C3: zero in bear
+    "ewmac_64_256":    {"bull": 0.68, "sideways": 0.12, "bear": 0.00},  # C3: zero in bear
+    "ehlers_dsp":      {"bull": 0.60, "sideways": 0.80, "bear": 0.25},  # C3: best in sideways
+    "momentum":        {"bull": 0.55, "sideways": 0.15, "bear": 0.00},  # C3: zero in bear
     "intermarket":     {"bull": 0.50, "sideways": 0.45, "bear": 0.20},
-    "penfold_trend":   {"bull": 0.65, "sideways": 0.35, "bear": 0.08},
-    "cross_momentum":  {"bull": 0.50, "sideways": 0.25, "bear": 0.10},
-    "screener":        {"bull": 0.40, "sideways": 0.50, "bear": 0.10},
-    "acceleration":    {"bull": 0.55, "sideways": 0.30, "bear": 0.05},
-    "breakout":        {"bull": 0.60, "sideways": 0.55, "bear": 0.08},
-    "skew_signal":     {"bull": 0.30, "sideways": 0.40, "bear": 0.25},
+    "penfold_trend":   {"bull": 0.65, "sideways": 0.20, "bear": 0.00},  # C3: zero in bear
+    "cross_momentum":  {"bull": 0.50, "sideways": 0.15, "bear": 0.00},  # C3: zero in bear
+    "screener":        {"bull": 0.40, "sideways": 0.50, "bear": 0.15},
+    "acceleration":    {"bull": 0.55, "sideways": 0.15, "bear": 0.00},  # C3: zero in bear
+    "breakout":        {"bull": 0.60, "sideways": 0.55, "bear": 0.05},
+    "skew_signal":     {"bull": 0.30, "sideways": 0.40, "bear": 0.30},  # C3: regime-neutral
     "decision_engine": {"bull": 0.35, "sideways": 0.45, "bear": 0.10},
-    "carver_value":    {"bull": 0.20, "sideways": 0.55, "bear": 0.15},
+    "carver_value":    {"bull": 0.20, "sideways": 0.70, "bear": 0.40},  # C3: strong in bear/sideways
     "carry":           {"bull": 0.25, "sideways": 0.30, "bear": 0.10},
     "order_flow":      {"bull": 0.30, "sideways": 0.35, "bear": 0.10},
+    "mean_reversion":  {"bull": 0.15, "sideways": 0.85, "bear": 0.50},  # C3: BEST in sideways/bear
+    # C5: New alpha sources — initial regime estimates
+    "calendar_effects":       {"bull": 0.30, "sideways": 0.35, "bear": 0.20},
+    "fundamental_momentum":   {"bull": 0.50, "sideways": 0.25, "bear": 0.10},
+    "insider_activity":       {"bull": 0.40, "sideways": 0.30, "bear": 0.15},
+    "dispersion":             {"bull": 0.20, "sideways": 0.45, "bear": 0.35},
+    "gold_equity_rotation":   {"bull": 0.15, "sideways": 0.30, "bear": 0.50},
+    "crypto_correlation":     {"bull": 0.35, "sideways": 0.20, "bear": 0.10},
 }
 
 
@@ -748,6 +771,120 @@ def get_aronson_adjusted_weights(
     return adjusted
 
 
+# ── C4 FIX: Walk-Forward Optimal Weight Loading ──────────────
+_wf_weights_loaded: bool = False
+_wf_weights: Optional[Dict[str, float]] = None
+_WF_WEIGHTS_PATH = Path(__file__).resolve().parent.parent / "data" / "wf_params" / "forecast_weights.json"
+
+
+def load_wf_optimal_weights(
+    base_weights: List[ForecastWeight],
+) -> List[ForecastWeight]:
+    """C4: Load walk-forward optimized forecast weights if available.
+
+    Reads from data/wf_params/forecast_weights.json (written by walk_forward.py).
+    Uses shrinkage blend: 70% base + 30% WF-optimized to avoid overfitting.
+    Falls back to base_weights if no WF data.
+    """
+    global _wf_weights_loaded, _wf_weights
+    if not _wf_weights_loaded:
+        _wf_weights_loaded = True
+        try:
+            if _WF_WEIGHTS_PATH.exists():
+                import json
+                raw = json.loads(_WF_WEIGHTS_PATH.read_text())
+                if isinstance(raw, dict) and raw:
+                    _wf_weights = raw
+                    logger.info("C4: Loaded WF optimal weights: %d sources", len(_wf_weights))
+        except Exception as exc:
+            logger.debug("C4: WF weight load failed: %s", exc)
+            _wf_weights = None
+
+    if not _wf_weights:
+        return base_weights
+
+    # Shrinkage blend: 70% base + 30% WF-optimized
+    WF_BLEND = 0.30
+    adjusted = []
+    for fw in base_weights:
+        wf_w = _wf_weights.get(fw.name, fw.weight)
+        blended = (1.0 - WF_BLEND) * fw.weight + WF_BLEND * wf_w
+        adjusted.append(ForecastWeight(fw.name, blended))
+
+    total = sum(fw.weight for fw in adjusted if fw.weight > 0)
+    if total > 0:
+        adjusted = [
+            ForecastWeight(fw.name, fw.weight / total) if fw.weight > 0 else fw
+            for fw in adjusted
+        ]
+    return adjusted
+
+
+# ── C6 FIX: Risk-Managed Momentum (Barroso & Santa-Clara 2012) ──────
+def apply_risk_managed_momentum(
+    base_weights: List[ForecastWeight],
+    regime: str = "",
+) -> List[ForecastWeight]:
+    """C6: Per-signal volatility scaling — downweight volatile signals.
+
+    Barroso & Santa-Clara (2012): scaling momentum by inverse realized vol
+    nearly doubles Sharpe. Apply same principle to all forecast sources.
+
+    In bear regime, apply extra penalty to high-momentum signals (they
+    reverse hard in bear markets). In bull, allow full weight.
+    """
+    if not regime:
+        return base_weights
+
+    regime_key = regime.lower().replace("trending_", "").replace("range_bound", "sideways")
+    regime_key = regime_key.replace("high_volatility", "bear").replace("crisis", "bear")
+    regime_key = regime_key.replace("severe_bear", "bear").replace("strong_bull", "bull")
+    if regime_key not in ("bull", "sideways", "bear"):
+        return base_weights
+
+    # In bear: penalize pure momentum/trend signals more aggressively
+    # These signals are negatively skewed and reverse hard
+    MOMENTUM_SIGNALS = {
+        "ewmac_8_32", "ewmac_16_64", "ewmac_32_128", "ewmac_64_256",
+        "momentum", "acceleration", "penfold_trend", "cross_momentum",
+    }
+    DEFENSIVE_SIGNALS = {
+        "mean_reversion", "carver_value", "ehlers_dsp", "skew_signal",
+        "dispersion", "gold_equity_rotation",
+    }
+
+    adjusted = []
+    for fw in base_weights:
+        if fw.weight <= 0:
+            adjusted.append(fw)
+            continue
+
+        if regime_key == "bear":
+            if fw.name in MOMENTUM_SIGNALS:
+                adjusted.append(ForecastWeight(fw.name, fw.weight * 0.10))  # C6: 90% penalty
+            elif fw.name in DEFENSIVE_SIGNALS:
+                adjusted.append(ForecastWeight(fw.name, fw.weight * 2.0))   # C6: 2× boost
+            else:
+                adjusted.append(ForecastWeight(fw.name, fw.weight * 0.5))
+        elif regime_key == "sideways":
+            if fw.name in MOMENTUM_SIGNALS:
+                adjusted.append(ForecastWeight(fw.name, fw.weight * 0.40))  # C6: 60% penalty
+            elif fw.name in DEFENSIVE_SIGNALS:
+                adjusted.append(ForecastWeight(fw.name, fw.weight * 1.5))   # C6: 1.5× boost
+            else:
+                adjusted.append(fw)
+        else:
+            adjusted.append(fw)  # Bull: no change
+
+    total = sum(fw.weight for fw in adjusted if fw.weight > 0)
+    if total > 0:
+        adjusted = [
+            ForecastWeight(fw.name, fw.weight / total) if fw.weight > 0 else fw
+            for fw in adjusted
+        ]
+    return adjusted
+
+
 def combine_forecasts(
     symbol: str,
     forecasts: Dict[str, float],
@@ -789,9 +926,13 @@ def combine_forecasts(
     weights = weights or DEFAULT_FORECAST_WEIGHTS
     # G1 FIX: Zero-weight inverted/dead strategies BEFORE Aronson adjustment
     weights = apply_decay_state_filter(weights)
-    # P4: Apply regime-specific Sharpe²-weighted allocation
+    # C4 FIX: Load walk-forward optimized weights if available
+    weights = load_wf_optimal_weights(weights)
+    # C3: Regime blend at 0.50 (RESTORED from 0.70 — too aggressive in zeroing trend signals)
     if regime:
-        weights = apply_regime_sharpe_weights(weights, regime=regime, blend_factor=0.5)
+        weights = apply_regime_sharpe_weights(weights, regime=regime, blend_factor=0.50)
+    # C6: Risk-managed momentum — DISABLED (double-stacks with regime blend)
+    # weights = apply_risk_managed_momentum(weights, regime=regime)
     # Apply Aronson EBTA validation multipliers (penalise unvalidated signals)
     weights = get_aronson_adjusted_weights(weights)
     weight_map = {fw.name: fw.weight for fw in weights}

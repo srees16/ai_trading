@@ -99,9 +99,9 @@ def main():
 
     # ── 6. Evaluate R21a optimized (train / test / full) ────────
     print(f"  Computing R21a optimized (regime-adaptive)...")
-    r21a_train = _simulate_equity(best_weights, forecasts, prices, vols, signals, corr_matrix, 0, train_end, regime_adaptive=True)
-    r21a_test = _simulate_equity(best_weights, forecasts, prices, vols, signals, corr_matrix, test_start, len(dates), regime_adaptive=True)
-    r21a_full = _simulate_equity(best_weights, forecasts, prices, vols, signals, corr_matrix, 0, len(dates), regime_adaptive=True)
+    r21a_train = _simulate_equity(best_weights, forecasts, prices, vols, signals, corr_matrix, 0, train_end, regime_adaptive=True, return_daily_returns=True)
+    r21a_test = _simulate_equity(best_weights, forecasts, prices, vols, signals, corr_matrix, test_start, len(dates), regime_adaptive=True, return_daily_returns=True)
+    r21a_full = _simulate_equity(best_weights, forecasts, prices, vols, signals, corr_matrix, 0, len(dates), regime_adaptive=True, return_daily_returns=True)
 
     # ── 7. Print comparison table ───────────────────────────────
     print(f"\n{'='*70}")
@@ -154,15 +154,47 @@ def main():
     else:
         print(f"    ✓ PASS: Test Sharpe ({r21a_test['sharpe']:.3f}) ≥ 0.8.")
 
+    # ── 9b. PBO from optimizer results (avoid duplicate computation) ────
+    pbo_result = ckpt.get("pbo", {})
+    if pbo_result and pbo_result.get("pbo") is not None:
+        print(f"\n  CSCV Probability of Backtest Overfitting (PBO):")
+        print(f"    PBO = {pbo_result['pbo']:.1%}  "
+              f"({pbo_result.get('n_less', '?')}/{pbo_result.get('n_combos', '?')} combos, "
+              f"{pbo_result.get('n_configs', '?')} configs)")
+        print(f"    Verdict: {pbo_result.get('verdict', 'N/A')}")
+    else:
+        # Try loading from optimization results pkl
+        opt_results_path = os.path.join(_root, "data", "r21a_optimization_results.pkl")
+        if os.path.exists(opt_results_path):
+            try:
+                with open(opt_results_path, "rb") as f:
+                    opt_data = pickle.load(f)
+                pbo_result = opt_data.get("pbo", {})
+                if pbo_result and pbo_result.get("pbo") is not None:
+                    print(f"\n  CSCV Probability of Backtest Overfitting (PBO):")
+                    print(f"    PBO = {pbo_result['pbo']:.1%}  (from optimizer results)")
+                    print(f"    Verdict: {pbo_result.get('verdict', 'N/A')}")
+                else:
+                    print(f"\n  PBO: not available (optimizer didn't compute it)")
+            except Exception as e:
+                print(f"\n  PBO: could not load optimizer results: {e}")
+        else:
+            print(f"\n  PBO: not available (no optimizer results found)")
+
     # ── 10. Summary verdict ─────────────────────────────────────
     print(f"\n{'='*70}")
     oos_sharpe = r21a_test["sharpe"]
     oos_calmar = r21a_test["calmar"]
     oos_cagr = r21a_test["cagr"]
     oos_dd = r21a_test["max_dd"]
+    pbo_val = pbo_result.get("pbo")
 
-    if oos_sharpe >= 1.3 and oos_dd <= 35 and train_test_gap <= 0.5:
+    if pbo_val is not None and pbo_val >= 0.50:
+        verdict = "REJECT — PBO >= 50%, likely overfit"
+    elif oos_sharpe >= 1.3 and oos_dd <= 35 and train_test_gap <= 0.5:
         verdict = "ACCEPT — Strong OOS, low drawdown, no overfit"
+        if pbo_val is not None and pbo_val >= 0.30:
+            verdict += " (PBO CAUTION)"
     elif oos_sharpe >= 0.8 and oos_dd <= 50 and train_test_gap <= 0.5:
         verdict = "ACCEPT (MARGINAL) — Passes minimum thresholds"
     elif train_test_gap > 0.5:
@@ -174,6 +206,8 @@ def main():
 
     print(f"  VERDICT: {verdict}")
     print(f"  OOS: Sharpe={oos_sharpe:.3f}  CAGR={oos_cagr:.1f}%  MaxDD={oos_dd:.1f}%  Calmar={oos_calmar:.3f}")
+    if pbo_val is not None:
+        print(f"  PBO: {pbo_val:.1%}")
     print(f"{'='*70}")
 
     # ── 11. Save results ────────────────────────────────────────
@@ -188,6 +222,7 @@ def main():
         "r19c_test": r19c_test,
         "r19c_full": r19c_full,
         "train_test_gap": train_test_gap,
+        "pbo": pbo_result,
         "verdict": verdict,
     }
     with open(results_path, "wb") as f:

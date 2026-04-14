@@ -1,4 +1,4 @@
-﻿"""
+"""
 Auto-Order Execution Engine for Zerodha Kite Connect.
 
 Orchestrates the full pipeline:
@@ -1027,6 +1027,26 @@ class AutoExecutor:
         except Exception as exc:
             logger.warning("Correlation filter failed (non-fatal): %s", exc)
             return plans
+
+    # -- Daily Carver Rebalance mode --
+
+    def run_rebalance(self, progress_callback=None):
+        """Run a daily Carver portfolio rebalance instead of the screener pipeline.
+
+        This uses the DailyRebalancer which generates the same 10-source
+        forecasts as the backtest, computes target vs current position
+        deltas, and places orders.
+
+        Returns a RebalanceReport (not an ExecutionReport).
+        """
+        from kite_connect.trading.daily_rebalancer import DailyRebalancer
+
+        paper = self.kite is None or not self.auto_place
+        rebalancer = DailyRebalancer(
+            kite=self.kite,
+            paper_mode=paper,
+        )
+        return rebalancer.run(progress_callback=progress_callback)
     # â”€â”€ Live price enrichment â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     def _enrich_with_ltp(

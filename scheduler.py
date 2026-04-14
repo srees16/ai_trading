@@ -2839,6 +2839,40 @@ def start_scheduler():
     )
     logger.info("  Trade returns   : 16:00 IST, Mon-Fri (MC bootstrap)")
 
+    # ── Job: Daily Carver Rebalance — 9:30 AM IST, Mon-Fri ──
+    # Bridges backtest→live: generates 10-source Carver forecasts,
+    # computes target portfolio, and places delta orders via Kite.
+    def _run_daily_rebalance():
+        _jid = _log_job_start("daily_rebalance", "Daily Carver Rebalance")
+        try:
+            from kite_connect.trading.daily_rebalancer import DailyRebalancer
+            kite = _get_scheduler_kite()
+            paper = os.getenv("CENTURION_PAPER_MODE", "true").lower() == "true"
+            rebalancer = DailyRebalancer(kite=kite, paper_mode=paper)
+            report = rebalancer.run(progress_callback=lambda m: logger.info("[rebalance] %s", m))
+            _save_run("daily_rebalance", {
+                "universe_size": report.symbols_forecasted,
+                "screened_count": report.positive_forecasts,
+                "buy_signals": len(report.new_entries),
+                "sell_signals": len(report.exits),
+                "status": "success" if not report.errors else "error",
+            })
+            _log_job_end(_jid, "ok",
+                         f"regime={report.regime} dd={report.dd_tier} "
+                         f"entries={len(report.new_entries)} exits={len(report.exits)}")
+        except Exception as e:
+            logger.exception("Daily rebalance failed: %s", e)
+            _log_job_end(_jid, "error", str(e))
+
+    scheduler.add_job(
+        _run_daily_rebalance,
+        CronTrigger(hour=9, minute=30, day_of_week="mon-fri", timezone="Asia/Kolkata"),
+        id="daily_carver_rebalance",
+        name="Daily Carver Rebalance (v27)",
+        misfire_grace_time=600,
+    )
+    logger.info("  Carver rebalance: 09:30 IST, Mon-Fri")
+
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):

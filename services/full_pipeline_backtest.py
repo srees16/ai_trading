@@ -45,12 +45,23 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# ── Centralized config import (single source of truth for all params) ──
+try:
+    from config import Config as _Cfg
+except ImportError:
+    _Cfg = None
+
+# ── Rolling forecast history for empirical FDM (C3 fix) ──
+from collections import deque
+_rolling_forecast_history: Dict[str, deque] = {}  # {source_name: deque(maxlen=252)}
+_ROLLING_FDM_LOOKBACK = 252  # 1 year of daily forecasts
+
 # ── R21A active configuration ──────────────────────────────────────────
 _SAVE_FORECASTS_MODE = False  # R21a: save per-source forecasts for weight optimization
 _forecast_log: list = []      # accumulator: [(day_idx, {sym: {source: val}}, {sym: next_ret})]
 _R21A_REGIME_VOL = True       # R21a: regime-adaptive vol target (aggressive uptrend, defensive downtrend)
-_R21A_REGIME_BOOST = 1.25     # uptrend vol multiplier
-_R21A_REGIME_DEFEND = 0.55    # downtrend vol multiplier
+_R21A_REGIME_BOOST = getattr(_Cfg, 'R21A_REGIME_BOOST', 1.25) if _Cfg else 1.25
+_R21A_REGIME_DEFEND = getattr(_Cfg, 'R21A_REGIME_DEFEND', 0.55) if _Cfg else 0.55
 
 # ── R22: Bull-Run Capital Infusion (Centurion Compounder enhancement) ──
 # Optional: user injects fresh capital at confirmed bear→bull crossover
@@ -122,6 +133,7 @@ class BacktestResult:
     per_signal_tstats: Dict[str, float] = field(default_factory=dict)
     dm_bias_estimate: float = 0.0
     bootstrap_ci_sharpe: tuple = (0.0, 0.0)
+    turnover_penalized_ci: tuple = (0.0, 0.0)  # L5: turnover-penalized bootstrap CI
 
 
 
@@ -133,7 +145,9 @@ def _download(sym: str, period: str, market: str,
     try:
         import yfinance as yf
         import warnings
-        suffix = ".NS" if market == "IND" and "." not in sym else ""
+        # Add .NS for IND market, but NOT for symbols already suffixed (.NS/.BO)
+        # or non-NSE tickers like BTC-USD, USDINR=X, ^NSEI
+        suffix = ".NS" if market == "IND" and not any(c in sym for c in '.-=^') else ""
         ticker = f"{sym}{suffix}"
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -152,6 +166,29 @@ def _download(sym: str, period: str, market: str,
     except Exception as e:
         logger.warning("Download failed for %s: %s", sym, e)
     return None
+
+
+def _annual_yield_at(sym: str, date, div_history: Dict[str, pd.Series],
+                     price: float) -> float:
+    """Compute trailing-12-month dividend yield at a given date (point-in-time).
+
+    Sums all dividend payments in [date - 365d, date] and divides by current price.
+    Returns 0.0 if no dividends found or price is invalid.
+    """
+    if price <= 0 or not np.isfinite(price):
+        return 0.0
+    divs = div_history.get(sym)
+    if divs is None or len(divs) == 0:
+        return 0.0
+    # Convert date to Timestamp for comparison
+    if not isinstance(date, pd.Timestamp):
+        date = pd.Timestamp(date)
+    start = date - pd.Timedelta(days=365)
+    mask = (divs.index >= start) & (divs.index <= date)
+    trailing_divs = divs.loc[mask]
+    if len(trailing_divs) == 0:
+        return 0.0
+    return float(trailing_divs.sum()) / price
 
 
 def _build_oi_proxy(ohlcv_slice: Dict[str, pd.DataFrame]) -> Dict[str, Dict]:
@@ -300,6 +337,9 @@ def run_full_backtest(
     from services.event_strategy import generate_event_forecasts
     from services.sentiment_forecast import compute_sentiment_batch
 
+    # Phase B: Point-in-time universe flag (read once, used in ticker loading + sim loop)
+    _pit_universe_on = getattr(_Cfg, 'PIT_UNIVERSE_ENABLED', False) if _Cfg else False
+
     # ── Default tickers ────────────────────────────────────────
     if tickers is None:
         if market == "US":
@@ -309,21 +349,32 @@ def run_full_backtest(
                 "JNJ",
             ]
         else:
-            # FIX: Use NSE universe (respects Config.NSE_UNIVERSE_TIER)
-            # instead of hardcoded 15-stock list.  Default tier is
-            # Config.NSE_UNIVERSE_TIER = "BROAD" for NIFTY50+NEXT50+
-            # sectoral+thematic (~800-1200 stocks).  For backtesting
-            # we use DEFAULT tier (~100 NIFTY50+NEXT50) for speed;
-            # override via Config.NSE_UNIVERSE_TIER for broader runs.
+            # FIX (v29): Respect Config.NSE_UNIVERSE_TIER instead of
+            # always using get_nse_default_tickers (95 stocks).
+            # Tiers: DEFAULT=~100, NIFTY500=~500, BROAD=~800-1200
+            # Phase B: If PIT_UNIVERSE_ENABLED, download the union of ALL historical
+            # NIFTY500 constituents (~800 unique tickers). The sim loop will filter
+            # to the correct ~500 at each point in time.
             try:
-                from kite_connect.nse.nse_universe import get_nse_default_tickers
-                raw_syms = get_nse_default_tickers()
-                if raw_syms and len(raw_syms) >= 10:
-                    tickers = [f"{s}.NS" for s in raw_syms]
-                    if verbose:
-                        print(f"  NSE universe: {len(tickers)} tickers (NIFTY50+NEXT50)")
+                from kite_connect.nse.nse_universe import get_nse_universe
+                if _pit_universe_on:
+                    from kite_connect.nse.nse_universe import get_nse_universe_pit_union
+                    raw_syms = get_nse_universe_pit_union()
+                    if raw_syms and len(raw_syms) >= 10:
+                        tickers = [f"{s}.NS" for s in raw_syms]
+                        if verbose:
+                            print(f"  NSE universe: {len(tickers)} tickers (PIT union)")
+                    else:
+                        raise ValueError("PIT union returned too few symbols")
                 else:
-                    raise ValueError("NSE download returned too few symbols")
+                    _tier = getattr(_Cfg, 'NSE_UNIVERSE_TIER', 'DEFAULT') if _Cfg else 'DEFAULT'
+                    raw_syms = get_nse_universe(tier=_tier)
+                    if raw_syms and len(raw_syms) >= 10:
+                        tickers = [f"{s}.NS" for s in raw_syms]
+                        if verbose:
+                            print(f"  NSE universe: {len(tickers)} tickers (tier={_tier})")
+                    else:
+                        raise ValueError(f"NSE universe ({_tier}) returned too few symbols")
             except Exception as exc:
                 logger.warning("NSE universe fetch failed (%s), using fallback", exc)
                 # Fallback: hardcoded NIFTY50+NEXT50 core names
@@ -335,6 +386,25 @@ def run_full_backtest(
                     print(f"  NSE fallback: {len(tickers)} tickers (hardcoded NIFTY50+NEXT50)")
     if pairs is None:
         pairs = DEFAULT_PAIRS_US if market == "US" else DEFAULT_PAIRS_IND
+
+    # ── Godmode Phase 2b: Multi-asset diversification ──────────
+    # Add uncorrelated assets (gold ETFs, CPSE, liquid) to reduce portfolio correlation.
+    _multi_asset_on = getattr(_Cfg, 'MULTI_ASSET_ENABLED', False) if _Cfg else False
+    if _multi_asset_on and market == "IND":
+        _ma_tickers = getattr(_Cfg, 'MULTI_ASSET_TICKERS_IND', []) if _Cfg else []
+        for _mat in _ma_tickers:
+            if _mat not in tickers:
+                tickers.append(_mat)
+        if verbose and _ma_tickers:
+            print(f"  Multi-asset: +{len(_ma_tickers)} tickers ({', '.join(_ma_tickers)})")
+
+    # ── Crypto ticker for crypto_correlation signal ────────────
+    if _SAVE_FORECASTS_MODE or _multi_asset_on:
+        _crypto_tk = getattr(_Cfg, 'CRYPTO_TICKER', 'BTC-USD') if _Cfg else 'BTC-USD'
+        if _crypto_tk and _crypto_tk not in tickers:
+            tickers.append(_crypto_tk)
+            if verbose:
+                print(f"  Crypto proxy: +{_crypto_tk} (for crypto_correlation signal)")
 
     # ── Download data ──────────────────────────────────────────
     if verbose:
@@ -405,7 +475,7 @@ def run_full_backtest(
     # T3-2: Match live 24-source parity for realistic backtest
     available_sources = {
         "ewmac_8_32", "ewmac_16_64", "ewmac_32_128", "ewmac_64_256",
-        "carry", "screener", "momentum", "pead", "mean_reversion",
+        "carry", "screener", "momentum", "pead",
         "fii_flow", "decision_engine", "oi_signal", "cross_momentum",
         "pairs_arb", "event_driven", "penfold_trend", "ehlers_dsp",
         "intermarket", "acceleration", "carver_value", "skew_signal",
@@ -440,11 +510,42 @@ def run_full_backtest(
         print()
 
     # ── Transaction costs ──────────────────────────────────────
-    # T3-3: Realistic transaction costs (NSE delivery: STT+brokerage+GST+slippage)
+    # Phase 2: Per-symbol Zerodha delivery costs (replaces flat cost_pct)
+    # Zerodha equity delivery: ₹0 brokerage. Costs = STT + exchange txn + GST + stamp + SEBI
+    # Buy-side: ~0.059% (stamp 0.015% + exchange 0.00345% + GST 0.000621% + SEBI 0.0001%)
+    # Sell-side: ~0.159% (STT 0.1% + exchange 0.00345% + GST 0.000621% + SEBI 0.0001%)
+    # Round-trip statutory: ~0.218% ≈ 22 bps
+    _statutory_rt_cost = 0.0022  # 22 bps round-trip (Zerodha equity delivery)
+    # Tiered slippage by market-cap tier
+    _slip_nifty50 = 0.0005   # 5 bps — NIFTY50 very liquid
+    _slip_next50  = 0.0020   # 20 bps — mid-cap
+    _slip_small   = 0.0050   # 50 bps — smallcap / illiquid
+    _nifty50_cost = _statutory_rt_cost + _slip_nifty50  # 27 bps
+    _next50_cost  = _statutory_rt_cost + _slip_next50   # 42 bps
+    _smallcap_cost = _statutory_rt_cost + _slip_small   # 72 bps
+    # H2 FIX: kept for backward compat in report line
+    _slippage_bps = 0.0020  # default mid-cap slippage
     if market == "IND":
-        cost_pct = 0.0033   # 33 bps round-trip (0.10% STT + 0.05% brokerage + 0.18% stamp+GST+slippage)
+        cost_pct = _next50_cost   # default fallback (mid-cap)
+        # Build per-symbol cost lookup from INDEX_CONSTITUENTS
+        try:
+            from kite_connect.core.config import INDEX_CONSTITUENTS as _IDX
+            _n50_set = set(_IDX.get("NIFTY50", []))
+            _nn50_set = set(_IDX.get("NIFTY_NEXT50", []))
+        except ImportError:
+            _n50_set, _nn50_set = set(), set()
+        _sym_cost_map: Dict[str, float] = {}
+        for sym in symbols:
+            _bare = sym.replace('.NS', '').replace('.BO', '')
+            if _bare in _n50_set:
+                _sym_cost_map[sym] = _nifty50_cost
+            elif _bare in _nn50_set:
+                _sym_cost_map[sym] = _next50_cost
+            else:
+                _sym_cost_map[sym] = _smallcap_cost
     else:
-        cost_pct = 0.0015   # 15 bps round-trip (US zero-commission + spread slippage)
+        cost_pct = 0.0015 + 0.0003   # 15 bps cost + 3 bps slippage (US)
+        _sym_cost_map = {sym: cost_pct for sym in symbols}
 
     # ── VolatilityTarget ───────────────────────────────────────
     vol_target = VolatilityTarget(VolatilityTargetConfig(
@@ -467,6 +568,8 @@ def run_full_backtest(
     source_hits: Dict[str, int] = defaultdict(int)
     source_total: Dict[str, int] = defaultdict(int)
     daily_position_counts: List[int] = []
+    # PBO-FIX: Per-signal daily return attribution for valid CSCV
+    source_daily_returns: Dict[str, List[float]] = defaultdict(list)
 
     # V4: Capital rotation state — bear-bottom injection + bull profit booking
     _cr_prev_below_sma = False        # was equity below SMA200 yesterday?
@@ -490,6 +593,7 @@ def run_full_backtest(
     # Force-liquidation at bottoms caused whipsaw death spiral (-60% in bull market).
     # New approach: smooth scale-down curve, let trailing stops handle exits organically.
     peak_equity = capital
+    _true_peak_equity = capital  # H1 FIX: TRUE peak that NEVER decays — used for DD halt
     dd_deep_days = 0          # consecutive days with DD > 25% (for gradual peak decay)
     PEAK_DECAY_GRACE_DAYS = 60  # R14 baseline
     PEAK_DECAY_RATE = 0.01      # R14 baseline: 1%/day blend
@@ -498,24 +602,42 @@ def run_full_backtest(
     # R11 (return-based) and R12 (vol-based) both destroyed equity via whipsaw.
     # R13 uses dynamic vol target (Fix C) instead — continuous, no churn.
 
-    # ── Pre-fetch dividend yields for carry (one-time) ─────────
-    dividend_yields: Dict[str, float] = {}
+    # ── Pre-fetch historical dividend series for carry (point-in-time) ────
+    # Phase 3: Use historical dividend payments instead of current yield (look-ahead fix)
+    # Stores full dividend payment series per symbol → compute trailing-12m yield at any date
+    dividend_yields: Dict[str, float] = {}  # backward compat: stores latest yield as fallback
+    _dividend_history: Dict[str, pd.Series] = {}  # sym → DatetimeIndex Series of dividend payments
     if include_carry:
         try:
             import yfinance as yf
-            import warnings
+            import warnings, io, contextlib
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 for sym in symbols:
+                    # Skip non-equity symbols (no dividends for crypto, FX, indices)
+                    if "-" in sym or sym.startswith("^") or "=" in sym:
+                        dividend_yields[sym] = 0.0
+                        continue
                     try:
-                        info = yf.Ticker(sym).info
-                        dy = info.get("dividendYield") or info.get("trailingAnnualDividendYield")
-                        if dy and dy > 0:
-                            dividend_yields[sym] = float(dy)
+                        suffix = ".NS" if market == "IND" and not any(c in sym for c in '.-=^') else ""
+                        _tk = f"{sym}{suffix}"
+                        with contextlib.redirect_stdout(io.StringIO()), \
+                             contextlib.redirect_stderr(io.StringIO()):
+                            _divs = yf.Ticker(_tk).dividends
+                        if _divs is not None and len(_divs) > 0:
+                            # Ensure timezone-naive index for comparison with simulation dates
+                            if _divs.index.tz is not None:
+                                _divs.index = _divs.index.tz_localize(None)
+                            _dividend_history[sym] = _divs
+                            # Also store latest trailing yield as fallback
+                            dividend_yields[sym] = 0.01  # placeholder — real yield computed point-in-time
+                        else:
+                            dividend_yields[sym] = 0.0
                     except Exception:
-                        pass
+                        dividend_yields[sym] = 0.0  # store 0 to prevent per-day re-fetch
             if verbose:
-                print(f"  Dividend yields fetched: {len(dividend_yields)}/{n_symbols}")
+                _actual = sum(1 for v in _dividend_history.values() if len(v) > 0)
+                print(f"  Dividend history fetched: {_actual}/{n_symbols} symbols with dividends")
         except ImportError:
             pass
 
@@ -529,10 +651,14 @@ def run_full_backtest(
     # OPT: Pre-load config once outside the loop
     try:
         from config import Config as _BtCfg
-        max_leverage = getattr(_BtCfg, 'CARVER_MAX_LEVERAGE', 3.0)
+        max_leverage = getattr(_BtCfg, 'CARVER_MAX_LEVERAGE', 2.0)
     except Exception:
-        max_leverage = 3.0
+        max_leverage = 2.0
     allow_short = False  # FIX-SHORT: disabled — short Sharpe ≈ -0.01, bleeds in secular bull
+
+    # Phase 4: Execution gap model — penalty for close→open gap on new entries/exits
+    _EXECUTION_GAP_ENABLED = getattr(_Cfg, 'EXECUTION_GAP_ENABLED', True) if _Cfg else True
+    _EXECUTION_GAP_BPS = getattr(_Cfg, 'EXECUTION_GAP_BPS', 0.0050) if _Cfg else 0.0050  # 50 bps
 
     # ── Checkpoint save/resume ─────────────────────────────────
     import pickle, os, signal, traceback
@@ -547,7 +673,13 @@ def run_full_backtest(
             with open(_checkpoint_path, 'rb') as _ckf:
                 _ckpt = pickle.load(_ckf)
             # Validate checkpoint matches current run config
-            if (_ckpt.get('n_symbols') == n_symbols
+            # In extraction mode, allow n_symbols drift (NIFTY500 may vary ±5% across sessions)
+            _ckpt_n_sym = _ckpt.get('n_symbols', 0)
+            if _SAVE_FORECASTS_MODE:
+                _sym_match = abs(_ckpt_n_sym - n_symbols) <= max(20, int(n_symbols * 0.10))
+            else:
+                _sym_match = (_ckpt_n_sym == n_symbols)
+            if (_sym_match
                     and _ckpt.get('capital') == capital
                     and _ckpt.get('n_days') == n_days):
                 _start_day_idx = _ckpt['day_idx'] + 1  # resume from next day
@@ -564,11 +696,20 @@ def run_full_backtest(
                 source_total = defaultdict(int, _ckpt['source_total'])
                 daily_position_counts = _ckpt['daily_position_counts']
                 peak_equity = _ckpt['peak_equity']
+                _true_peak_equity = _ckpt.get('true_peak_equity', peak_equity)  # H1: restore true peak
                 dd_deep_days = _ckpt['dd_deep_days']
                 _cached_forecasts = _ckpt.get('cached_forecasts', {})
                 _cached_idm = _ckpt.get('cached_idm', 1.7)
                 trade_pnls = _ckpt.get('trade_pnls', [])
                 entry_prices = _ckpt.get('entry_prices', {})
+                # PBO-FIX: restore per-signal daily returns
+                _sdr = _ckpt.get('source_daily_returns', {})
+                if _sdr:
+                    source_daily_returns = defaultdict(list, {k: list(v) for k, v in _sdr.items()})
+                # Restore forecast log for extraction mode resume
+                if _SAVE_FORECASTS_MODE and 'forecast_log' in _ckpt:
+                    _forecast_log.clear()
+                    _forecast_log.extend(_ckpt['forecast_log'])
                 if verbose:
                     _resume_day = _start_day_idx - min_history
                     print(f"\n  Resuming from checkpoint: Day {_resume_day}/{n_days - min_history} "
@@ -592,11 +733,50 @@ def run_full_backtest(
         if verbose:
             print(f"\n  Signal {signum} received — will save checkpoint and exit after current day", flush=True)
 
-    _prev_sigint = signal.signal(signal.SIGINT, _graceful_shutdown)
-    _prev_sigterm = signal.signal(signal.SIGTERM, _graceful_shutdown)
+    _prev_sigint = None
+    _prev_sigterm = None
+    try:
+        _prev_sigint = signal.signal(signal.SIGINT, _graceful_shutdown)
+        _prev_sigterm = signal.signal(signal.SIGTERM, _graceful_shutdown)
+    except ValueError:
+        pass  # Not on main thread (e.g. FastAPI asyncio.to_thread) — skip signal handling
+
+    # ── Timer-based graceful exit for cloud environments (Kaggle 12h limit) ──
+    # If CENTURION_MAX_RUNTIME_SECS is set, schedule a graceful exit before the
+    # cloud platform kills the process with SIGKILL (no chance to save).
+    _max_runtime = int(os.environ.get("CENTURION_MAX_RUNTIME_SECS", "0"))
+    _deadline_timer = None
+    if _max_runtime > 0:
+        import threading
+
+        def _deadline_shutdown():
+            nonlocal _graceful_exit_requested
+            _graceful_exit_requested = True
+            if verbose:
+                print(f"\n  ⏱ Runtime limit ({_max_runtime}s) reached — saving checkpoint and exiting", flush=True)
+
+        _deadline_timer = threading.Timer(_max_runtime, _deadline_shutdown)
+        _deadline_timer.daemon = True
+        _deadline_timer.start()
+        if verbose:
+            print(f"  Timer: graceful exit in {_max_runtime // 3600}h {(_max_runtime % 3600) // 60}m")
 
     _consecutive_day_errors = 0
     _MAX_CONSECUTIVE_ERRORS = 10  # abort if 10+ days crash in a row
+
+    # ── Phase B: Point-in-Time universe state ──────────────────
+    # Tracks which subset of downloaded symbols are valid NIFTY500 constituents
+    # at the current simulation date.  Updated at semi-annual boundaries.
+    _pit_active_set: Optional[set] = None   # set of ".NS" tickers currently in-universe
+    _pit_last_period: Optional[str] = None  # "YYYY-MM" of last universe reload
+    if _pit_universe_on and market == "IND":
+        from kite_connect.nse.nse_universe import get_nse_universe_pit
+        # Initialize with earliest period
+        _pit_syms = get_nse_universe_pit("2012-01-01")
+        _pit_active_set = {f"{s}.NS" for s in _pit_syms}
+        _pit_last_period = "2012-03"
+        if verbose:
+            print(f"  PIT Universe: initialized with {len(_pit_active_set)} symbols (2012-03)")
 
     for day_idx in range(_start_day_idx, n_days):
       try:
@@ -608,7 +788,54 @@ def run_full_backtest(
         current_date = master_index[day_idx]
         if hasattr(current_date, 'date'):
             current_date = current_date.date()
+
+        # ── Phase B: PIT universe rotation at semi-annual boundaries ──
+        if _pit_active_set is not None:
+            import datetime as _dt
+            _cd = current_date if isinstance(current_date, _dt.date) else _dt.date.fromisoformat(str(current_date))
+            _m = _cd.month
+            if _m >= 9:
+                _cur_period = f"{_cd.year}-09"
+            elif _m >= 3:
+                _cur_period = f"{_cd.year}-03"
+            else:
+                _cur_period = f"{_cd.year - 1}-09"
+            if _cur_period != _pit_last_period:
+                _pit_syms_new = get_nse_universe_pit(_cd)
+                _pit_new_set = {f"{s}.NS" for s in _pit_syms_new}
+                _removed = _pit_active_set - _pit_new_set
+                _added = _pit_new_set - _pit_active_set
+                # Force-sell positions in removed tickers (delisted / dropped from index)
+                for _rsym in _removed:
+                    _rqty = prev_positions.get(_rsym, 0)
+                    if _rqty != 0 and _rsym in ohlcv_full:
+                        _rc = ohlcv_full[_rsym]["Close"]
+                        if hasattr(_rc, "squeeze"):
+                            _rc = _rc.squeeze()
+                        _ridx = day_idx - sym_start.get(_rsym, 0)
+                        if 0 < _ridx < len(_rc):
+                            _rpx = float(_rc.iloc[_ridx])
+                            if np.isfinite(_rpx) and _rpx > 0:
+                                day_pnl -= abs(_rqty) * _rpx * _sym_cost_map.get(_rsym, cost_pct)
+                                trades_count += 1
+                                if _rsym in entry_prices and entry_prices[_rsym] > 0:
+                                    _ep = entry_prices.pop(_rsym)
+                                    if _rqty > 0:
+                                        trade_pnls.append((_rpx - _ep) / _ep * 100)
+                                    else:
+                                        trade_pnls.append((_ep - _rpx) / _ep * 100)
+                        prev_positions[_rsym] = 0
+                        peak_prices.pop(_rsym, None)
+                        stop_levels.pop(_rsym, None)
+                _pit_active_set = _pit_new_set
+                _pit_last_period = _cur_period
+                if verbose and (_removed or _added):
+                    print(f"  PIT Rebalance {_cur_period}: +{len(_added)} / -{len(_removed)} → {len(_pit_active_set)} symbols", flush=True)
+
         for sym, df in ohlcv_full.items():
+            # Phase B: Skip symbols not in current PIT universe
+            if _pit_active_set is not None and sym not in _pit_active_set:
+                continue
             # Compute how many bars this symbol has up to current master day_idx
             local_len = day_idx - sym_start.get(sym, 0) + 1
             actual_len = len(df)
@@ -644,7 +871,7 @@ def run_full_backtest(
                         exit_price = stop_levels[sym]
                         daily_ret = (exit_price - prev_price) / prev_price
                         day_pnl += prev_qty * prev_price * daily_ret
-                        day_pnl -= abs(prev_qty) * exit_price * cost_pct
+                        day_pnl -= abs(prev_qty) * exit_price * _sym_cost_map.get(sym, cost_pct)
                         trades_count += 1
                         if sym in entry_prices and entry_prices[sym] > 0:
                             trade_pnls.append((exit_price - entry_prices[sym]) / entry_prices[sym] * 100)
@@ -652,7 +879,7 @@ def run_full_backtest(
                         prev_positions[sym] = 0
                         peak_prices.pop(sym, None)
                         stop_levels.pop(sym, None)
-                        stop_cooldown[sym] = 5
+                        stop_cooldown[sym] = 2  # Phase C: reduced from 5 → 2 days
                         continue
                 elif prev_qty < 0:
                     high_col = ohlcv_slice[sym]["High"]
@@ -663,7 +890,7 @@ def run_full_backtest(
                         exit_price = stop_levels[sym]
                         daily_ret = (prev_price - exit_price) / prev_price
                         day_pnl += abs(prev_qty) * prev_price * daily_ret
-                        day_pnl -= abs(prev_qty) * exit_price * cost_pct
+                        day_pnl -= abs(prev_qty) * exit_price * _sym_cost_map.get(sym, cost_pct)
                         trades_count += 1
                         if sym in entry_prices and entry_prices[sym] > 0:
                             trade_pnls.append((entry_prices[sym] - exit_price) / entry_prices[sym] * 100)
@@ -671,7 +898,7 @@ def run_full_backtest(
                         prev_positions[sym] = 0
                         peak_prices.pop(sym, None)
                         stop_levels.pop(sym, None)
-                        stop_cooldown[sym] = 5
+                        stop_cooldown[sym] = 2  # Phase C: reduced from 5 → 2 days
                         continue
 
             # Normal MTM
@@ -684,16 +911,40 @@ def run_full_backtest(
                     day_pnl += abs(prev_qty) * prev_price * daily_ret
 
         # ── 2. Compute ALL forecasts ───────────────────────────
-        # Optimization: expensive signals recomputed every RECOMPUTE_FREQ days,
-        # cached between. EWMAC/momentum change slowly over 5 days.
-        _RECOMPUTE_FREQ = 5  # R14 baseline: recompute every 5 days
+        # Optimization: tiered recompute — fast signals daily, slow signals every 5 days.
+        # Fast:   ewmac_8_32, breakout (daily)
+        # Medium: momentum, ehlers_dsp, acceleration, penfold_trend (3-day)
+        # Slow:   carver_value, ewmac_64_256, mean_reversion, carry (5-day)
+        _RECOMPUTE_FREQ_FAST = getattr(_Cfg, 'RECOMPUTE_FREQ_FAST', 1) if _Cfg else 1
+        _RECOMPUTE_FREQ_MED = getattr(_Cfg, 'RECOMPUTE_FREQ_MEDIUM', 3) if _Cfg else 3
+        _RECOMPUTE_FREQ_SLOW = getattr(_Cfg, 'RECOMPUTE_FREQ_SLOW', 5) if _Cfg else 5
         _trading_day = day_idx - min_history
-        _recompute = (_trading_day % _RECOMPUTE_FREQ == 0)
+        _recompute_fast = (_trading_day % _RECOMPUTE_FREQ_FAST == 0)
+        _recompute_med = (_trading_day % _RECOMPUTE_FREQ_MED == 0)
+        _recompute_slow = (_trading_day % _RECOMPUTE_FREQ_SLOW == 0)
+        _recompute = _recompute_fast  # at minimum, fast signals recompute daily
 
         if not _recompute:
             all_forecasts = {sym: dict(fc) for sym, fc in _cached_forecasts.items()}
         else:  # ── full signal recompute (serial) ──
             all_forecasts: Dict[str, Dict[str, float]] = {sym: {} for sym in symbols}
+            # C5 FIX: For slow signals, reuse cache unless _recompute_slow is True.
+            # Pre-seed from cache so slow signals carry forward on non-slow days.
+            if not _recompute_slow and _cached_forecasts:
+                _slow_sources = {'carver_value', 'ewmac_64_256', 'mean_reversion', 'carry', 'skew_signal'}
+                for sym, cached_fc in _cached_forecasts.items():
+                    if sym in all_forecasts:
+                        for src, val in cached_fc.items():
+                            if src in _slow_sources:
+                                all_forecasts[sym][src] = val
+            if not _recompute_med and _cached_forecasts:
+                _med_sources = {'momentum', 'ehlers_dsp', 'acceleration', 'penfold_trend',
+                                'cross_momentum', 'intermarket'}
+                for sym, cached_fc in _cached_forecasts.items():
+                    if sym in all_forecasts:
+                        for src, val in cached_fc.items():
+                            if src in _med_sources:
+                                all_forecasts[sym][src] = val
 
             # 2a. EWMAC (3 variations)
             for sym, df in ohlcv_slice.items():
@@ -727,20 +978,33 @@ def run_full_backtest(
             except Exception as e:
                 logger.debug("Momentum failed at day %d: %s", day_idx, e)
 
-            # 2c. Mean reversion
-            try:
+            # 2c. Mean reversion (SLOW signal — skip if cached on non-slow days)
+            if _recompute_slow or not any('mean_reversion' in fc for fc in all_forecasts.values() if fc):
+              try:
                 mr_forecasts = compute_mean_reversion_batch(ohlcv_slice)
                 for sym, fc in mr_forecasts.items():
                     if sym in all_forecasts:
                         all_forecasts[sym]["mean_reversion"] = fc
-            except Exception as e:
+              except Exception as e:
                 logger.debug("Mean reversion failed at day %d: %s", day_idx, e)
 
-            # 2d. Carry
-            if include_carry:
+            # 2d. Carry (SLOW signal — skip if cached on non-slow days)
+            if include_carry and (_recompute_slow or not any('carry' in fc for fc in all_forecasts.values() if fc)):
                 try:
+                    # Phase 3: Compute point-in-time dividend yields for this date
+                    _pit_yields: Dict[str, float] = {}
+                    for _csym, _cdf in ohlcv_slice.items():
+                        if _csym in _dividend_history:
+                            _cc = _cdf["Close"]
+                            if hasattr(_cc, "squeeze"):
+                                _cc = _cc.squeeze()
+                            _cpx = float(_cc.dropna().iloc[-1]) if len(_cc.dropna()) > 0 else 0.0
+                            _pit_yields[_csym] = _annual_yield_at(
+                                _csym, current_date, _dividend_history, _cpx)
+                        else:
+                            _pit_yields[_csym] = dividend_yields.get(_csym, 0.0)
                     carry_results = compute_carry_batch(
-                        ohlcv_slice, dividend_yields=dividend_yields,
+                        ohlcv_slice, dividend_yields=_pit_yields,
                     )
                     for sym, cf in carry_results.items():
                         if sym in all_forecasts:
@@ -790,7 +1054,8 @@ def run_full_backtest(
                     logger.debug("Pairs failed at day %d: %s", day_idx, e)
 
             # 2h. Cross-sectional momentum (long top, short bottom)
-            # Rank stocks by 6-month return, tilt forecasts for top/bottom tercile
+            # M1 FIX: Percentile-scaled forecasts instead of fixed ±8
+            # H5 FIX: Bottom tercile = 0 in long-only mode (can't short anyway)
             xmom_returns = {}
             for sym, df in ohlcv_slice.items():
                 if sym not in all_forecasts:
@@ -804,13 +1069,18 @@ def run_full_backtest(
                         xmom_returns[sym] = ret
             if len(xmom_returns) >= 6:
                 sorted_syms = sorted(xmom_returns.keys(), key=lambda s: xmom_returns[s])
-                n_tercile = max(1, len(sorted_syms) // 3)
-                bottom = sorted_syms[:n_tercile]      # worst performers → short
-                top = sorted_syms[-n_tercile:]         # best performers → long
-                for sym in bottom:
-                    all_forecasts[sym]["cross_momentum"] = -8.0
-                for sym in top:
-                    all_forecasts[sym]["cross_momentum"] = +8.0
+                _n_xmom = len(sorted_syms)
+                for _rank_i, sym in enumerate(sorted_syms):
+                    # Percentile: 0 (worst) → 1 (best)
+                    _pctl = _rank_i / max(_n_xmom - 1, 1)
+                    # Scale to [-20, +20] forecast range, centered at 0
+                    _xmom_fc = (_pctl - 0.5) * 40.0  # e.g. top=+20, bottom=-20
+                    _xmom_fc = max(-20.0, min(20.0, _xmom_fc))
+                    # H5: floor at 0 for long-only (negative xmom drags combined forecast
+                    # for stocks we can't short — just wastes forecast weight)
+                    if not allow_short and _xmom_fc < 0:
+                        _xmom_fc = 0.0
+                    all_forecasts[sym]["cross_momentum"] = _xmom_fc
 
             # ── 2i. Penfold Trend (Turtle + ATR + Retracement + Dow filter) ──
             try:
@@ -866,56 +1136,84 @@ def run_full_backtest(
             except Exception as e:
                 logger.debug("Skew signal failed at day %d: %s", day_idx, e)
 
-            # ── 2o. PEAD (Post-Earnings Announcement Drift) ──
-            # T3-1: pass as_of_date to prevent look-ahead bias
-            try:
-                pead = PEADStrategy()
-                for sym in symbols:
-                    if sym not in all_forecasts:
-                        continue
-                    try:
-                        pead_fc = pead.get_forecast(sym, as_of_date=current_date)
-                    except TypeError:
-                        pead_fc = pead.get_forecast(sym)
-                    if pead_fc is not None and np.isfinite(pead_fc):
-                        all_forecasts[sym]["pead"] = pead_fc
-            except Exception as e:
-                logger.debug("PEAD failed at day %d: %s", day_idx, e)
+            # ── 2o-2r. DEAD SIGNALS SKIPPED (M4 FIX) ──────────
+            # PEAD, fii_flow, event_driven, sentiment: all at 0% weight with
+            # 0% hit rate in backtest. Skip computation to save ~40% per-day time.
+            # Re-enable when proper data sources are available.
 
-            # ── 2p. FII Flow (institutional net buy/sell) ──
-            try:
-                fii_fc = compute_fii_forecast()
-                if fii_fc is not None and np.isfinite(fii_fc):
-                    for sym in symbols:
-                        if sym in all_forecasts:
-                            all_forecasts[sym]["fii_flow"] = fii_fc
-            except Exception as e:
-                logger.debug("FII flow failed at day %d: %s", day_idx, e)
+            # ── NEW ALPHA SOURCES (6 uncorrelated) ──────────────
 
-            # ── 2q. Event-Driven (earnings/RBI/expiry/rebalance) ──
-            # T3-1: pass as_of_date to prevent look-ahead bias
+            # ── 2o-new. Calendar Effects (month-end, expiry, budget, Diwali) ──
             try:
-                try:
-                    event_fcs = generate_event_forecasts(symbols, as_of_date=current_date)
-                except TypeError:
-                    event_fcs = generate_event_forecasts(symbols)
-                if isinstance(event_fcs, dict):
-                    for sym, fc_val in event_fcs.items():
-                        if sym in all_forecasts and fc_val is not None:
-                            f_v = fc_val.forecast if hasattr(fc_val, 'forecast') else fc_val
-                            if np.isfinite(f_v):
-                                all_forecasts[sym]["event_driven"] = f_v
-            except Exception as e:
-                logger.debug("Event-driven failed at day %d: %s", day_idx, e)
-
-            # ── 2r. Sentiment (FinBERT news-based) ──
-            try:
-                sent_fc = compute_sentiment_batch(symbols)
-                for sym, fc in sent_fc.items():
+                from strategies.calendar_effects import compute_calendar_forecast_batch
+                cal_fc = compute_calendar_forecast_batch(ohlcv_slice)
+                for sym, fc in cal_fc.items():
                     if sym in all_forecasts:
-                        all_forecasts[sym]["sentiment"] = fc
+                        all_forecasts[sym]["calendar_effects"] = fc
             except Exception as e:
-                logger.debug("Sentiment failed at day %d: %s", day_idx, e)
+                logger.debug("Calendar effects failed at day %d: %s", day_idx, e)
+
+            # ── 2p-new. Fundamental Momentum (52w-high proximity + 3m momentum) ──
+            try:
+                from strategies.fundamental_momentum import compute_fundamental_momentum_batch
+                fmom_fc = compute_fundamental_momentum_batch(ohlcv_slice)
+                for sym, fc in fmom_fc.items():
+                    if sym in all_forecasts:
+                        all_forecasts[sym]["fundamental_momentum"] = fc
+            except Exception as e:
+                logger.debug("Fundamental momentum failed at day %d: %s", day_idx, e)
+
+            # ── 2q-new. Insider Activity (volume surge + directional proxy) ──
+            try:
+                from strategies.insider_activity import compute_insider_activity_batch
+                insider_fc = compute_insider_activity_batch(ohlcv_slice)
+                for sym, fc in insider_fc.items():
+                    if sym in all_forecasts:
+                        all_forecasts[sym]["insider_activity"] = fc
+            except Exception as e:
+                logger.debug("Insider activity failed at day %d: %s", day_idx, e)
+
+            # ── 2r-new. Dispersion Trading (constituent vol vs portfolio vol) ──
+            try:
+                from strategies.dispersion_trading import compute_dispersion_forecast_batch
+                disp_fc = compute_dispersion_forecast_batch(ohlcv_slice)
+                for sym, fc in disp_fc.items():
+                    if sym in all_forecasts:
+                        all_forecasts[sym]["dispersion"] = fc
+            except Exception as e:
+                logger.debug("Dispersion trading failed at day %d: %s", day_idx, e)
+
+            # ── 2s-new. Gold-Equity Rotation (GOLDBEES relative strength) ──
+            if _multi_asset_on or _SAVE_FORECASTS_MODE:
+                try:
+                    from strategies.gold_equity_rotation import compute_gold_equity_rotation_batch
+                    gold_fc = compute_gold_equity_rotation_batch(ohlcv_slice)
+                    for sym, fc in gold_fc.items():
+                        if sym in all_forecasts:
+                            all_forecasts[sym]["gold_equity_rotation"] = fc
+                except Exception as e:
+                    logger.debug("Gold-equity rotation failed at day %d: %s", day_idx, e)
+
+            # ── 2t-new. Crypto Correlation (BTC as risk-on indicator) ──
+            try:
+                from strategies.crypto_correlation import compute_crypto_correlation_batch
+                crypto_fc = compute_crypto_correlation_batch(ohlcv_slice)
+                for sym, fc in crypto_fc.items():
+                    if sym in all_forecasts:
+                        all_forecasts[sym]["crypto_correlation"] = fc
+            except Exception as e:
+                logger.debug("Crypto correlation failed at day %d: %s", day_idx, e)
+
+            # ── 2u-new. Sector Rotation Signal (macro sector momentum overlay) ──
+            if _recompute_slow or not any('sector_rotation' in fc for fc in all_forecasts.values() if fc):
+                try:
+                    from strategies.sector_rotation_signal import compute_sector_rotation_forecast_batch
+                    sr_fc = compute_sector_rotation_forecast_batch(ohlcv_slice)
+                    for sym, fc in sr_fc.items():
+                        if sym in all_forecasts:
+                            all_forecasts[sym]["sector_rotation"] = fc
+                except Exception as e:
+                    logger.debug("Sector rotation signal failed at day %d: %s", day_idx, e)
 
             # ── 2s. Screener + Decision Engine (composite technical/fundamental) ──
             # In backtest mode these use simplified technical proxies
@@ -957,6 +1255,57 @@ def run_full_backtest(
             except Exception as e:
                 logger.debug("Order flow failed at day %d: %s", day_idx, e)
 
+            # ── 2u. Multi-timeframe EWMAC blending (Godmode Phase 2) ──
+            # Compute weekly and monthly EWMAC and blend into daily signals.
+            # Daily signals keep DAILY_SIGNAL_WEIGHT, remaining split weekly+monthly.
+            _mtf_enabled = getattr(_Cfg, 'MULTI_TIMEFRAME_ENABLED', False) if _Cfg else False
+            if _mtf_enabled:
+                _w_daily = getattr(_Cfg, 'DAILY_SIGNAL_WEIGHT', 0.65) if _Cfg else 0.65
+                _w_weekly = getattr(_Cfg, 'WEEKLY_SIGNAL_WEIGHT', 0.25) if _Cfg else 0.25
+                _w_monthly = getattr(_Cfg, 'MONTHLY_SIGNAL_WEIGHT', 0.10) if _Cfg else 0.10
+                for sym, df in ohlcv_slice.items():
+                    if sym not in all_forecasts:
+                        continue
+                    c = df["Close"]
+                    if hasattr(c, "squeeze"):
+                        c = c.squeeze()
+                    close = c.dropna()
+                    if len(close) < 270:
+                        continue
+                    dpv = daily_price_volatility(close)
+                    if dpv <= 0:
+                        dpv = 0.02
+                    # Weekly: resample to 5-day bars, compute EWMAC(4,16) ~ weekly 8_32
+                    try:
+                        weekly_close = close.iloc[::5]  # subsample every 5 bars
+                        if len(weekly_close) >= 20:
+                            w_fast = weekly_close.ewm(span=4, adjust=False).mean()
+                            w_slow = weekly_close.ewm(span=16, adjust=False).mean()
+                            w_raw = float(w_fast.iloc[-1] - w_slow.iloc[-1])
+                            w_dpv = max(dpv * np.sqrt(5), 1e-6)  # weekly vol scale
+                            w_fc = max(-20.0, min(20.0, w_raw / (float(close.iloc[-1]) * w_dpv)))
+                            # Blend EWMAC signals: daily_fc × w_daily + weekly_fc × w_weekly
+                            for key in list(all_forecasts[sym].keys()):
+                                if key.startswith("ewmac_"):
+                                    daily_fc = all_forecasts[sym][key]
+                                    all_forecasts[sym][key] = daily_fc * _w_daily + w_fc * _w_weekly
+                    except Exception:
+                        pass
+                    # Monthly: resample to ~21-day bars, compute EWMAC(2,8) ~ monthly 64_256
+                    try:
+                        monthly_close = close.iloc[::21]
+                        if len(monthly_close) >= 10:
+                            m_fast = monthly_close.ewm(span=2, adjust=False).mean()
+                            m_slow = monthly_close.ewm(span=8, adjust=False).mean()
+                            m_raw = float(m_fast.iloc[-1] - m_slow.iloc[-1])
+                            m_dpv = max(dpv * np.sqrt(21), 1e-6)
+                            m_fc = max(-20.0, min(20.0, m_raw / (float(close.iloc[-1]) * m_dpv)))
+                            for key in list(all_forecasts[sym].keys()):
+                                if key.startswith("ewmac_"):
+                                    all_forecasts[sym][key] += m_fc * _w_monthly
+                    except Exception:
+                        pass
+
 
             _cached_forecasts = {sym: dict(fc) for sym, fc in all_forecasts.items()}
         # ── 3. Combine forecasts + size positions ──────────────
@@ -965,7 +1314,10 @@ def run_full_backtest(
         # either creates death spiral or amplifies whipsaw losses.
         # R12 approach: STAY INVESTED through corrections, exit ONLY on panic vol.
         peak_equity = max(peak_equity, equity)
+        _true_peak_equity = max(_true_peak_equity, equity)  # H1 FIX: TRUE peak never decays
         current_dd = (peak_equity - equity) / peak_equity if peak_equity > 0 else 0.0
+        # H1/H2 FIX: True drawdown from absolute peak for halt decisions
+        _true_dd = (_true_peak_equity - equity) / _true_peak_equity if _true_peak_equity > 0 else 0.0
 
         # R14: Gradual peak decay — prevents unreachable peak trapping vol target
         # at low levels forever, but does NOT snap DD to zero (which re-enabled
@@ -982,17 +1334,19 @@ def run_full_backtest(
         # R13: NO DD SCALING — replaced with dynamic vol target (Fix C)
         dd_scale = 1.0
 
-        # R14: 5-tier step function — dynamic vol target based on DD depth
-        if current_dd < 0.10:
-            annual_vol_target = 0.75   # Full risk — no DD
-        elif current_dd < 0.20:
-            annual_vol_target = 0.65   # Mild pullback — slight reduction
+        # REVERTED: Use current_dd (decaying peak) for vol tier decisions.
+        # _true_dd from non-decaying peak caused permanent halt — system went
+        # to 0 positions at day ~100 and NEVER recovered (true peak never decays).
+        if current_dd < 0.15:
+            annual_vol_target = 0.50   # Full risk — no DD
+        elif current_dd < 0.25:
+            annual_vol_target = 0.45   # Mild pullback
         elif current_dd < 0.30:
-            annual_vol_target = 0.55   # Moderate DD — meaningful reduction
-        elif current_dd < 0.40:
-            annual_vol_target = 0.45   # Severe DD — significant reduction
+            annual_vol_target = 0.35   # Moderate DD
+        elif current_dd < 0.35:
+            annual_vol_target = 0.20   # Severe DD
         else:
-            annual_vol_target = 0.40   # Extreme DD — floor (never go to zero)
+            annual_vol_target = 0.05   # Near-halt (NOT zero — allow slow recovery)
 
         # FIX-FLOOR: Use actual equity for daily target
         sizing_equity = max(equity, capital * 0.10)  # 10% ruin floor
@@ -1000,12 +1354,43 @@ def run_full_backtest(
 
         # R21a: Regime-adaptive vol target
         # Aggressive in sustained uptrends, defensive in downtrends
-        if _R21A_REGIME_VOL and len(daily_equity) >= 200:
+        # Godmode: smooth sigmoid interpolation (replaces binary threshold)
+        # C1 FIX: Determine equity-curve regime for sizing, stops, leverage
+        _eq_regime = 'neutral'  # default
+        if len(daily_equity) >= 200:
             _eq_sma200 = sum(daily_equity[-200:]) / 200.0
-            if equity > _eq_sma200 * 1.02:
-                dynamic_daily_target *= _R21A_REGIME_BOOST  # uptrend: aggressive
+            if equity < _eq_sma200 * 0.95:
+                _eq_regime = 'severe_bear'   # C1: go to ZERO exposure
             elif equity < _eq_sma200 * 0.98:
-                dynamic_daily_target *= _R21A_REGIME_DEFEND  # downtrend: defensive
+                _eq_regime = 'bear'
+            elif equity > _eq_sma200 * 1.05:
+                _eq_regime = 'strong_bull'
+            elif equity > _eq_sma200 * 1.02:
+                _eq_regime = 'bull'
+        else:
+            _eq_sma200 = equity  # not enough data
+
+        # C1: BEAR regime → floor at 10% of normal exposure (was 0.0 — positions=0 trap)
+        _SEVERE_BEAR_FLOOR = getattr(_Cfg, 'SEVERE_BEAR_EXPOSURE_FLOOR', 0.10) if _Cfg else 0.10
+        if _eq_regime == 'severe_bear':
+            dynamic_daily_target = max(dynamic_daily_target * _SEVERE_BEAR_FLOOR,
+                                       sizing_equity * 0.05 / 16.0)  # absolute min: 5% vol target
+        elif _R21A_REGIME_VOL and len(daily_equity) >= 200:
+            _use_smooth = getattr(_Cfg, 'SMOOTH_BEAR_DEFENSE', False) if _Cfg else False
+            if _use_smooth:
+                from services.volatility_target import smooth_regime_scale
+                _steepness = getattr(_Cfg, 'SMOOTH_DEFENSE_STEEPNESS', 10.0) if _Cfg else 10.0
+                _regime_mult = smooth_regime_scale(
+                    equity, _eq_sma200,
+                    boost=_R21A_REGIME_BOOST, defend=_R21A_REGIME_DEFEND,
+                    steepness=_steepness,
+                )
+                dynamic_daily_target *= _regime_mult
+            else:
+                if equity > _eq_sma200 * 1.02:
+                    dynamic_daily_target *= _R21A_REGIME_BOOST
+                elif equity < _eq_sma200 * 0.98:
+                    dynamic_daily_target *= _R21A_REGIME_DEFEND
 
         # ── Centurion Harvest: inject at bear→bull, book in sustained bull ──
         if _HARVEST_ENABLED and len(daily_equity) >= 200:
@@ -1063,11 +1448,8 @@ def run_full_backtest(
             _cr_prev_below_sma = _cr_currently_below
 
         # ── R22: Bull-Run Capital Infusion (Centurion Compounder) ──
-        # Detects confirmed bear→bull regime transition and either:
-        #   (a) infuses fresh capital if _R22_BULL_INFUSION=True, or
-        #   (b) logs an alert event so the UI/email can notify the user
-        # Compounding continues normally regardless of infusion.
-        if len(daily_equity) >= 200:
+        # Only runs when R22 is explicitly enabled — no detection/logging in R21A-only runs.
+        if _R22_BULL_INFUSION and len(daily_equity) >= 200:
             _r22_sma200 = sum(daily_equity[-200:]) / 200.0
             _r22_in_bear = (equity < _r22_sma200 * 0.98)
             _r22_in_bull = (equity > _r22_sma200 * 1.02)
@@ -1087,7 +1469,7 @@ def run_full_backtest(
                 _r22_was_bear = False  # reset so we don't re-trigger until next bear
                 _days_since_r22 = day_idx - _r22_last_infusion_day
 
-                # Always log alert (for UI/email notification)
+                # Log alert (for UI/email notification)
                 _r22_date_str = ""
                 try:
                     _r22_date_str = ohlcv_slice[symbols[0]]["Close"].index[day_idx].strftime("%Y-%m-%d")
@@ -1096,13 +1478,12 @@ def run_full_backtest(
                 _r22_alert_events.append((_trading_day_num_r22, _r22_date_str))
 
                 if verbose:
-                    print(f"  ★ BULL CONFIRMED Day {_trading_day_num_r22} ({_r22_date_str}): "
+                    print(f"Bull Confirmed Day {_trading_day_num_r22} ({_r22_date_str}): "
                           f"equity ₹{equity:,.0f} > SMA200 ₹{_r22_sma200:,.0f} "
                           f"for {_R22_BULL_CONFIRM_DAYS} consecutive days", flush=True)
 
-                # Infuse capital if enabled and cooldown satisfied
-                if (_R22_BULL_INFUSION
-                        and _days_since_r22 >= _R22_INFUSION_COOLDOWN_DAYS):
+                # Infuse capital if cooldown satisfied
+                if _days_since_r22 >= _R22_INFUSION_COOLDOWN_DAYS:
                     _r22_eq_before = equity
                     equity += _R22_INFUSION_AMOUNT
                     capital += _R22_INFUSION_AMOUNT
@@ -1116,7 +1497,7 @@ def run_full_backtest(
                     sizing_equity = max(equity, capital * 0.10)
                     dynamic_daily_target = sizing_equity * annual_vol_target / 16.0
                     if verbose:
-                        print(f"  💰 CAPITAL INFUSION Day {_trading_day_num_r22}: "
+                        print(f"Capital Infusion Day {_trading_day_num_r22}: "
                               f"+₹{_R22_INFUSION_AMOUNT:,.0f} | "
                               f"equity ₹{_r22_eq_before:,.0f} → ₹{equity:,.0f} | "
                               f"total infused: ₹{_r22_total_infused:,.0f}", flush=True)
@@ -1139,9 +1520,123 @@ def run_full_backtest(
         for sym, fc_dict in all_forecasts.items():
             if not fc_dict:
                 continue
-            combined = combine_forecasts(sym, fc_dict, active_weights)
+            # C3 FIX: Pass rolling forecast history for empirical FDM
+            _fh_for_sym = None
+            _use_empirical_fdm = getattr(_Cfg, 'EMPIRICAL_FDM_ENABLED', False) if _Cfg else False
+            if _use_empirical_fdm and _rolling_forecast_history:
+                _fh_for_sym = {
+                    src: list(vals) for src, vals in _rolling_forecast_history.items()
+                    if len(vals) >= 30
+                }
+                if len(_fh_for_sym) < 3:
+                    _fh_for_sym = None  # not enough history yet
+            combined = combine_forecasts(
+                sym, fc_dict, active_weights,
+                forecast_history=_fh_for_sym,
+                regime=_eq_regime,
+            )
             fc_val = combined.combined_forecast
             _all_combined[sym] = fc_val
+
+        # ── Godmode: Meta-labeling filter (AFML Ch.3) ──────────
+        # Scale forecasts by meta-label probability to filter false signals.
+        _meta_labeling_on = getattr(_Cfg, 'META_LABELING_ENABLED', False) if _Cfg else False
+        if _meta_labeling_on and _recompute:
+            try:
+                from services.meta_labeling import apply_meta_labels
+                _meta_min_prob = getattr(_Cfg, 'META_LABEL_MIN_PROBABILITY', 0.50) if _Cfg else 0.50
+                _meta_result = apply_meta_labels(
+                    combined_forecasts=_all_combined,
+                    ohlcv_cache=ohlcv_slice,
+                    min_probability=_meta_min_prob,
+                    market=market,
+                )
+                _all_combined = dict(_meta_result.scaled_forecasts)
+            except Exception as _ml_err:
+                logger.debug("Meta-labeling skipped at day %d: %s", day_idx, _ml_err)
+
+        # ── H3/M1: Signal strength gate — DISABLED (was filtering valid trades) ──
+        # Keeping code but all thresholds at 0.0 so no filtering occurs
+        _MIN_FORECAST_BULL = 0.0     # DISABLED: gate killed returns
+        _MIN_FORECAST_NEUTRAL = 0.0  # DISABLED
+        _MIN_FORECAST_BEAR = 0.0     # DISABLED
+        if _eq_regime in ('severe_bear', 'bear'):
+            _min_fc_gate = _MIN_FORECAST_BEAR
+        elif _eq_regime in ('bull', 'strong_bull'):
+            _min_fc_gate = _MIN_FORECAST_BULL
+        else:
+            _min_fc_gate = _MIN_FORECAST_NEUTRAL
+        _gated_combined = {}
+        for _gs, _gf in _all_combined.items():
+            if abs(_gf) >= _min_fc_gate:
+                _gated_combined[_gs] = _gf
+            else:
+                _gated_combined[_gs] = 0.0  # Zero forecast = no new position
+        _all_combined = _gated_combined
+
+        # ── M8 FIX: Distribution shift detector — scale down in regime breaks ──
+        _dist_shift_on = getattr(_Cfg, 'DISTRIBUTION_SHIFT_ENABLED', True) if _Cfg else True
+        if _dist_shift_on and len(daily_returns) >= 90:
+            try:
+                from services.distribution_shift import detect_distribution_shift
+                _recent_rets = np.array(daily_returns[-60:])
+                _baseline_rets = np.array(daily_returns[-252:-60]) if len(daily_returns) > 252 else np.array(daily_returns[:-60])
+                if len(_baseline_rets) >= 30:
+                    _shift = detect_distribution_shift(_baseline_rets, _recent_rets)
+                    if _shift.get('verdict') == 'regime_break':
+                        # Severe shift — halve all forecasts
+                        _all_combined = {s: f * 0.50 for s, f in _all_combined.items()}
+                    elif _shift.get('verdict') == 'drifting':
+                        # Moderate shift — reduce by 25%
+                        _all_combined = {s: f * 0.75 for s, f in _all_combined.items()}
+            except Exception:
+                pass
+
+        # C3 FIX: Accumulate rolling forecast history for empirical FDM
+        # Uses first symbol's per-source values as representative (cross-sectional avg)
+        if _recompute:
+            _src_avg: Dict[str, List[float]] = defaultdict(list)
+            for sym, fc_dict in all_forecasts.items():
+                for src, val in fc_dict.items():
+                    if np.isfinite(val):
+                        _src_avg[src].append(val)
+            for src, vals in _src_avg.items():
+                if src not in _rolling_forecast_history:
+                    _rolling_forecast_history[src] = deque(maxlen=_ROLLING_FDM_LOOKBACK)
+                _rolling_forecast_history[src].append(float(np.mean(vals)))
+
+        # M5 FIX: Time-based exits — force close positions held too long
+        _time_exit_on = getattr(_Cfg, 'TIME_EXIT_ENABLED', False) if _Cfg else False
+        if _time_exit_on:
+            _max_hold = 15  # default
+            try:
+                _max_hold = _Cfg.get_regime_hold_days(_eq_regime) if _Cfg else 15
+            except Exception:
+                pass
+            for sym in list(prev_positions.keys()):
+                if prev_positions.get(sym, 0) == 0:
+                    continue
+                if sym in entry_prices:
+                    # entry_day tracked via day_idx offset
+                    _held_days = _trading_day - entry_prices.get(f'_day_{sym}', _trading_day)
+                    if _held_days >= _max_hold:
+                        # Force exit stale position
+                        if sym in ohlcv_slice:
+                            _exit_c = ohlcv_slice[sym]["Close"]
+                            if hasattr(_exit_c, "squeeze"):
+                                _exit_c = _exit_c.squeeze()
+                            _exit_price = float(_exit_c.iloc[-1])
+                            day_pnl -= abs(prev_positions[sym]) * _exit_price * _sym_cost_map.get(sym, cost_pct)
+                            trades_count += 1
+                            if sym in entry_prices and entry_prices[sym] > 0:
+                                ep = entry_prices.pop(sym)
+                                if prev_positions[sym] > 0:
+                                    trade_pnls.append((_exit_price - ep) / ep * 100)
+                                else:
+                                    trade_pnls.append((ep - _exit_price) / ep * 100)
+                        prev_positions[sym] = 0
+                        peak_prices.pop(sym, None)
+                        stop_levels.pop(sym, None)
 
         # R21a: Save per-source forecasts + close prices for weight optimization
         if _SAVE_FORECASTS_MODE:
@@ -1165,29 +1660,65 @@ def run_full_backtest(
         # Adaptive position count based on top-15 average forecast strength
         _ranked_for_count = sorted(_all_combined.values(), key=lambda x: abs(x), reverse=True)
         _top15_avg = np.mean([abs(f) for f in _ranked_for_count[:15]]) if _ranked_for_count else 0.0
-        if _top15_avg > 8.0:
-            MAX_POSITIONS = 15  # Strong consensus — deploy widely
-        elif _top15_avg > 5.0:
-            MAX_POSITIONS = 12  # Moderate consensus
-        elif _top15_avg > 3.0:
-            MAX_POSITIONS = 8   # Weak consensus — concentrate
-        else:
-            MAX_POSITIONS = 5   # Very weak — minimal deployment
+        # Phase C: Increased from 10 → 15 for broader signal capture on NIFTY500
+        MAX_POSITIONS = 15
 
         MAX_HOLD_GRACE = MAX_POSITIONS + 7  # Grace zone scales with positions
-        # Rank by absolute forecast strength
-        _ranked = sorted(_all_combined.items(), key=lambda x: abs(x[1]), reverse=True)
-        _top_syms = set(s for s, _ in _ranked[:MAX_POSITIONS])      # top-20 → eligible for new entries
+        # Rank by conviction: in long-only mode, positive forecasts first (descending),
+        # then negative by abs (for grace-zone exits). Prevents bearish stocks from
+        # filling top slots and getting zeroed by long-only guard → zero-position trap.
+        if not allow_short:
+            # Phase 1 fix: split positive and negative — only positive can fill top slots
+            _positive_ranked = sorted([(s, f) for s, f in _all_combined.items() if f > 0],
+                                      key=lambda x: x[1], reverse=True)
+            _negative_ranked = sorted([(s, f) for s, f in _all_combined.items() if f <= 0],
+                                      key=lambda x: -abs(x[1]))
+            _ranked = _positive_ranked + _negative_ranked
+        else:
+            _ranked = sorted(_all_combined.items(), key=lambda x: abs(x[1]), reverse=True)
+        _top_syms_list = [s for s, _ in _ranked[:MAX_POSITIONS]]    # ordered list for min-1-share
+        _top_syms = set(_top_syms_list)                             # set for O(1) membership
         _grace_syms = set(s for s, _ in _ranked[:MAX_HOLD_GRACE])   # top-30 → held positions stay
 
+        # ── Godmode: Sector enforcement — max N stocks per sector ──
+        _sector_enforce = getattr(_Cfg, 'SECTOR_ENFORCEMENT_ENABLED', False) if _Cfg else False
+        if _sector_enforce:
+            _max_per_sector = getattr(_Cfg, 'MAX_STOCKS_PER_SECTOR', 3) if _Cfg else 3
+            _sector_map = getattr(_Cfg, 'NSE_SECTOR_MAP', {}) if _Cfg else {}
+            _sector_counts: Dict[str, int] = defaultdict(int)
+            _filtered_top: List[str] = []
+            for s, _ in _ranked:
+                _sym_clean = s.replace('.NS', '').replace('.BO', '')
+                _sector = _sector_map.get(_sym_clean, 'Unknown')
+                if _sector_counts[_sector] < _max_per_sector:
+                    _filtered_top.append(s)
+                    _sector_counts[_sector] += 1
+                if len(_filtered_top) >= MAX_POSITIONS:
+                    break
+            _top_syms_list = _filtered_top
+            _top_syms = set(_top_syms_list)
+
         # R8 CRITICAL FIX: Dynamic weight_per_sym based on ACTUAL investable count
-        # Bug in R4-R7: weight_per_sym = 1/MAX_POSITIONS = 1/20 = 5% always.
-        # When only 5 stocks have strong signals, 75% of capital sat idle.
-        # Fix: count stocks with |forecast| > 2.0 in top set, use that for weight.
-        # Floor at 5 (prevent over-concentration), cap at MAX_POSITIONS.
-        _investable = [s for s in _top_syms if abs(_all_combined.get(s, 0)) > 2.0]
+        # Phase C: Lowered threshold from 2.0 → 1.0 to fill more position slots
+        _investable = [s for s in _top_syms if abs(_all_combined.get(s, 0)) > 1.0]
         n_investable = max(5, min(len(_investable), MAX_POSITIONS))
-        weight_per_sym = 1.0 / n_investable
+
+        # ── Godmode: Forecast-proportional sizing (replaces flat 1/N) ──
+        _fc_prop_sizing = getattr(_Cfg, 'FORECAST_PROPORTIONAL_SIZING', False) if _Cfg else False
+        _fc_sizing_floor = getattr(_Cfg, 'FORECAST_SIZING_FLOOR', 3.0) if _Cfg else 3.0
+        _sym_weights: Dict[str, float] = {}
+        if _fc_prop_sizing and _investable:
+            _abs_fcs = {s: max(abs(_all_combined.get(s, 0)), _fc_sizing_floor) for s in _investable}
+            _total_fc = sum(_abs_fcs.values())
+            if _total_fc > 0:
+                for s in _investable:
+                    _sym_weights[s] = _abs_fcs[s] / _total_fc
+            else:
+                for s in _investable:
+                    _sym_weights[s] = 1.0 / n_investable
+            weight_per_sym = 1.0  # weight_per_sym is now per-sym via _sym_weights
+        else:
+            weight_per_sym = 1.0 / n_investable
 
         # IDM: T3-6 — compute dynamically from instrument return correlations
         # IDM = 1/sqrt(avg_pairwise_correlation) for >6 instruments
@@ -1248,7 +1779,7 @@ def run_full_backtest(
                             _exit_c = _exit_c.squeeze()
                         _exit_price = float(_exit_c.iloc[-1])
                         _exit_qty = prev_positions[sym]
-                        day_pnl -= abs(_exit_qty) * _exit_price * cost_pct
+                        day_pnl -= abs(_exit_qty) * _exit_price * _sym_cost_map.get(sym, cost_pct)
                         trades_count += 1
                     prev_positions[sym] = 0
                     peak_prices.pop(sym, None)
@@ -1283,7 +1814,9 @@ def run_full_backtest(
                             _sym_daily_target *= _HARVEST_MR_BEAR_VOL_MULT
 
                 vol_scalar = _sym_daily_target / ivv
-                position = (forecast / 10.0) * vol_scalar * weight_per_sym * idm
+                # Godmode: use per-symbol weight if forecast-proportional sizing is on
+                _w = _sym_weights.get(sym, weight_per_sym) if _fc_prop_sizing else weight_per_sym
+                position = (forecast / 10.0) * vol_scalar * _w * idm
 
                 # R13: NO REGIME SCALING — regime-agnostic position sizing
                 # Dynamic vol target (Fix C) handles risk continuously.
@@ -1313,19 +1846,48 @@ def run_full_backtest(
                 prev_qty = prev_positions.get(sym, 0)
                 delta = abs(target_qty - prev_qty)
                 if delta > 0:
-                    # R14 baseline: Inertia 10%
-                    _inertia_pct = 0.10
-                    if abs(prev_qty) > 0 and delta / abs(prev_qty) < _inertia_pct:
-                        target_qty = prev_qty
+                    # Godmode: Cost-aware inertia — only trade if expected alpha > N × cost
+                    _cost_aware = getattr(_Cfg, 'COST_AWARE_INERTIA', False) if _Cfg else False
+                    if _cost_aware and abs(prev_qty) > 0:
+                        # H5 FIX: Regime-adaptive alpha-cost ratio
+                        # Bear: require 4× alpha/cost (more conservative trading)
+                        # Bull: require 1.5× (trade more freely)
+                        if _eq_regime in ('severe_bear', 'bear'):
+                            _alpha_cost_ratio = 4.0  # H5: very conservative in bear
+                        elif _eq_regime in ('bull', 'strong_bull'):
+                            _alpha_cost_ratio = 1.5  # H5: permissive in bull
+                        else:
+                            _alpha_cost_ratio = 2.5  # H5: moderate in neutral/sideways
+                        _expected_cost = delta * price * _sym_cost_map.get(sym, cost_pct)
+                        # H3 FIX: Correct alpha estimate — forecast-implied daily PnL
+                        # alpha = |forecast/10| × vol_target_weight × daily_vol_target
+                        _w = _sym_weights.get(sym, weight_per_sym) if _fc_prop_sizing else weight_per_sym
+                        _expected_alpha = abs(forecast / 10.0) * _w * dynamic_daily_target
+                        if _expected_alpha < _alpha_cost_ratio * _expected_cost:
+                            target_qty = prev_qty  # cost exceeds alpha — skip trade
+                        else:
+                            cost = delta * price * _sym_cost_map.get(sym, cost_pct)
+                            day_pnl -= cost
+                            trades_count += 1
                     else:
-                        cost = delta * price * cost_pct
-                        day_pnl -= cost
-                        trades_count += 1
+                        # Legacy: fixed 20% inertia threshold
+                        _inertia_pct = 0.20
+                        if abs(prev_qty) > 0 and delta / abs(prev_qty) < _inertia_pct:
+                            target_qty = prev_qty
+                        else:
+                            cost = delta * price * _sym_cost_map.get(sym, cost_pct)
+                            day_pnl -= cost
+                            trades_count += 1
 
                 # ── Per-trade tracking (round-trip PnL) ───────
                 if prev_qty == 0 and target_qty != 0:
-                    # New position opened — record entry price
+                    # New position opened — record entry price + day
                     entry_prices[sym] = price
+                    entry_prices[f'_day_{sym}'] = _trading_day  # M5: track holding period
+                    # Phase 4: Execution gap penalty — new entry fills at next-day open (approx 50bps penalty)
+                    if _EXECUTION_GAP_ENABLED:
+                        _gap_penalty = abs(target_qty) * price * _EXECUTION_GAP_BPS
+                        day_pnl -= _gap_penalty
                 elif prev_qty != 0 and target_qty == 0:
                     # Position fully closed — log round-trip PnL
                     if sym in entry_prices and entry_prices[sym] > 0:
@@ -1334,6 +1896,10 @@ def run_full_backtest(
                             trade_pnls.append((price - ep) / ep * 100)
                         else:
                             trade_pnls.append((ep - price) / ep * 100)
+                    # Phase 4: Execution gap penalty on full exits too
+                    if _EXECUTION_GAP_ENABLED:
+                        _gap_penalty = abs(prev_qty) * price * _EXECUTION_GAP_BPS
+                        day_pnl -= _gap_penalty
                 elif prev_qty != 0 and target_qty != 0 and abs(target_qty) != abs(prev_qty):
                     # Position resized — update VWAP entry
                     if sym in entry_prices and abs(target_qty) > abs(prev_qty):
@@ -1342,10 +1908,20 @@ def run_full_backtest(
 
                 prev_positions[sym] = target_qty
 
-                # R14 baseline: 10σ stops
-                stop_sigma = 10.0
+                # M3 FIX: Tighter stops overall — current stops too wide (49.9% DD)
+                if _Cfg:
+                    if _eq_regime == 'severe_bear' or _eq_regime == 'bear':
+                        stop_sigma = getattr(_Cfg, 'STOP_SIGMA_BEAR', 2.0)
+                    elif _eq_regime == 'strong_bull':
+                        stop_sigma = getattr(_Cfg, 'STOP_SIGMA_STRONG_TREND', 4.0)  # M3: tightened from 5.0
+                    elif _eq_regime == 'bull':
+                        stop_sigma = getattr(_Cfg, 'STOP_SIGMA_BULL', 2.5)  # M3: tightened from 3.0
+                    else:
+                        stop_sigma = getattr(_Cfg, 'STOP_SIGMA_NEUTRAL', 3.0)  # M3: tightened from 4.0
+                else:
+                    stop_sigma = 3.0  # M3: tightened from 5.0
 
-                # V2: Bull profit-taker — tighter stops in uptrend to book profits
+                # V2: Bull profit-taker — tighter stops in uptrend to book profits (Harvest only)
                 if _HARVEST_PROFIT_TAKER and len(daily_equity) >= 200:
                     _eq_sma = sum(daily_equity[-200:]) / 200.0
                     if equity > _eq_sma * 1.02:  # uptrend
@@ -1371,6 +1947,71 @@ def run_full_backtest(
 
         daily_position_counts.append(active_count)
 
+        # Phase 1: Min-1-position enforcement — avoid 0-position days entirely
+        if active_count == 0 and not allow_short:
+            # Find highest positive-forecast symbol from top_syms with valid price
+            for _m1_sym in _top_syms_list:
+                _m1_fc = _all_combined.get(_m1_sym, 0.0)
+                if _m1_fc <= 0:
+                    continue
+                if _m1_sym not in ohlcv_slice:
+                    continue
+                _m1_c = ohlcv_slice[_m1_sym]["Close"]
+                if hasattr(_m1_c, "squeeze"):
+                    _m1_c = _m1_c.squeeze()
+                _m1_close = _m1_c.dropna()
+                if len(_m1_close) == 0:
+                    continue
+                _m1_price = float(_m1_close.iloc[-1])
+                if not np.isfinite(_m1_price) or _m1_price <= 0:
+                    continue
+                # Force minimum 1-share position
+                prev_positions[_m1_sym] = 1
+                entry_prices[_m1_sym] = _m1_price
+                entry_prices[f'_day_{_m1_sym}'] = _trading_day
+                daily_position_counts[-1] = 1
+                break
+
+        # ── Godmode: Dynamic leverage per regime (uses _eq_regime) ──
+        _dyn_lev = getattr(_Cfg, 'DYNAMIC_LEVERAGE_ENABLED', False) if _Cfg else False
+        _effective_max_lev = max_leverage
+        if _dyn_lev:
+            if _eq_regime in ('severe_bear', 'bear'):
+                _effective_max_lev = getattr(_Cfg, 'LEVERAGE_BEAR', 1.0) if _Cfg else 1.0
+            elif _eq_regime == 'strong_bull':
+                _effective_max_lev = getattr(_Cfg, 'LEVERAGE_BULL_CONFIRMED', 2.5) if _Cfg else 2.5
+            elif _eq_regime == 'bull':
+                _effective_max_lev = getattr(_Cfg, 'LEVERAGE_NEUTRAL', 2.0) if _Cfg else 2.0
+            else:
+                _effective_max_lev = getattr(_Cfg, 'LEVERAGE_NEUTRAL', 2.0) if _Cfg else 2.0
+
+        # M7 FIX: VIX-like leverage scaler — realized vol proxy from portfolio
+        # Use cross-sectional 20-day realized vol of top positions as India VIX proxy.
+        # When vol > CAUTION → reduce leverage by VIX_POSITION_SCALE; PANIC → halve again.
+        _vix_scaling = getattr(_Cfg, 'VIX_PIPELINE_SCALING_ENABLED', False) if _Cfg else False
+        if _vix_scaling and len(ohlcv_slice) >= 5:
+            _vix_rets = []
+            for _vs, _vdf in list(ohlcv_slice.items())[:20]:
+                _vc = _vdf["Close"]
+                if hasattr(_vc, "squeeze"):
+                    _vc = _vc.squeeze()
+                if len(_vc) >= 25:
+                    _vr = _vc.pct_change().dropna().iloc[-20:]
+                    if len(_vr) >= 15:
+                        _vix_rets.append(float(_vr.std()) * 16.0 * 100)  # annualized vol %
+            if _vix_rets:
+                _realized_vix = float(np.median(_vix_rets))  # median across stocks
+                _caution = getattr(_Cfg, 'VIX_CAUTION_THRESHOLD', 20.0) if _Cfg else 20.0
+                _panic = getattr(_Cfg, 'VIX_PANIC_THRESHOLD', 30.0) if _Cfg else 30.0
+                _kill = getattr(_Cfg, 'KILL_SWITCH_VIX_THRESHOLD', 40.0) if _Cfg else 40.0
+                _vix_scale = getattr(_Cfg, 'VIX_POSITION_SCALE', 0.5) if _Cfg else 0.5
+                if _realized_vix >= _kill:
+                    _effective_max_lev = 1.0  # kill switch: delever to 1×
+                elif _realized_vix >= _panic:
+                    _effective_max_lev *= _vix_scale * 0.5  # severe scale-down
+                elif _realized_vix >= _caution:
+                    _effective_max_lev *= _vix_scale  # cautious scale-down
+
         # FIX-LEV: Portfolio-wide leverage cap enforcement
         # Sum of all |position × price| must not exceed equity × max_leverage
         total_exposure = 0.0
@@ -1382,24 +2023,83 @@ def run_full_backtest(
                 c = c.squeeze()
             p = float(c.dropna().iloc[-1]) if len(c.dropna()) > 0 else 0
             total_exposure += abs(qty) * p
-        max_total_exposure = max(equity, capital * 0.10) * max_leverage
+        max_total_exposure = max(equity, capital * 0.10) * _effective_max_lev
         if total_exposure > max_total_exposure and total_exposure > 0:
             scale_down = max_total_exposure / total_exposure
             for sym in list(prev_positions.keys()):
                 if prev_positions[sym] != 0:
                     prev_positions[sym] = round(prev_positions[sym] * scale_down)
 
+        # M6 FIX: Multi-asset allocation cap — non-equity assets capped at 15%
+        if _multi_asset_on:
+            _ma_cap = getattr(_Cfg, 'MULTI_ASSET_MAX_ALLOCATION', 0.15) if _Cfg else 0.15
+            _ma_set = set(getattr(_Cfg, 'MULTI_ASSET_TICKERS_IND', []) if _Cfg else [])
+            if _ma_set:
+                _ma_exposure = 0.0
+                for sym, qty in prev_positions.items():
+                    if qty == 0 or sym not in _ma_set or sym not in ohlcv_slice:
+                        continue
+                    c = ohlcv_slice[sym]["Close"]
+                    if hasattr(c, "squeeze"):
+                        c = c.squeeze()
+                    _ma_exposure += abs(qty) * float(c.dropna().iloc[-1]) if len(c.dropna()) > 0 else 0
+                _ma_max = max(equity, capital * 0.10) * _ma_cap
+                if _ma_exposure > _ma_max and _ma_exposure > 0:
+                    _ma_scale = _ma_max / _ma_exposure
+                    for sym in list(prev_positions.keys()):
+                        if sym in _ma_set and prev_positions[sym] != 0:
+                            prev_positions[sym] = round(prev_positions[sym] * _ma_scale)
+
         # ── 4. Update equity ───────────────────────────────────
         if not np.isfinite(day_pnl):
             day_pnl = 0.0  # NaN guard: skip corrupted days
         equity += day_pnl
-        daily_returns.append(day_pnl / max(daily_equity[-1], 1))
+        _day_ret = day_pnl / max(daily_equity[-1], 1)
+        daily_returns.append(_day_ret)
         daily_equity.append(equity)
+
+        # PBO-FIX: Attribute daily return to signals by forecast weight share
+        # For each signal, its daily attributed return = day_ret × (signal's avg
+        # weighted forecast contribution across all held symbols / total combined).
+        # If a signal disagreed with the final position direction, its contribution
+        # is effectively negative — faithful to actual portfolio construction.
+        try:
+            _day_fc_contribs: Dict[str, float] = defaultdict(float)
+            _day_fc_total = 0.0
+            for _sym, _fc_dict in all_forecasts.items():
+                if not _fc_dict or _sym not in _all_combined:
+                    continue
+                _comb = _all_combined[_sym]
+                if abs(_comb) < 1e-9:
+                    continue
+                _pos = prev_positions.get(_sym, 0)
+                if _pos == 0:
+                    continue
+                # Weight each signal's contribution by its normalized share
+                for _fw in active_weights:
+                    _src_fc = _fc_dict.get(_fw.name, 0.0)
+                    _weighted = _src_fc * _fw.weight
+                    _day_fc_contribs[_fw.name] += _weighted
+                    _day_fc_total += abs(_weighted)
+            if _day_fc_total > 1e-9 and abs(_day_ret) > 0:
+                for _src_name, _src_contrib in _day_fc_contribs.items():
+                    _frac = _src_contrib / _day_fc_total
+                    source_daily_returns[_src_name].append(_day_ret * _frac)
+                # Fill 0 for signals that didn't contribute today
+                for _fw in active_weights:
+                    if _fw.name not in _day_fc_contribs:
+                        source_daily_returns[_fw.name].append(0.0)
+            else:
+                for _fw in active_weights:
+                    source_daily_returns[_fw.name].append(0.0)
+        except Exception:
+            pass
 
         _consecutive_day_errors = 0  # reset on successful day
 
-        # Print progress every 50 days
-        if verbose and (day_idx - min_history) % 50 == 0:
+        # Print progress every N days (L1: configurable checkpoint)
+        _ckpt_interval = getattr(_Cfg, 'CHECKPOINT_INTERVAL_DAYS', 50) if _Cfg else 50
+        if verbose and (day_idx - min_history) % _ckpt_interval == 0:
             d = day_idx - min_history
             total_d = n_days - min_history
             ret_so_far = (equity / capital - 1) * 100
@@ -1424,12 +2124,16 @@ def run_full_backtest(
                     'source_total': dict(source_total),
                     'daily_position_counts': list(daily_position_counts),
                     'peak_equity': peak_equity,
+                    'true_peak_equity': _true_peak_equity,  # H1: persist true peak
                     'dd_deep_days': dd_deep_days,
                     'cached_forecasts': {s: dict(f) for s, f in _cached_forecasts.items()},
                     'cached_idm': _cached_idm,
                     'trade_pnls': list(trade_pnls),
                     'entry_prices': dict(entry_prices),
+                    'source_daily_returns': {k: list(v) for k, v in source_daily_returns.items()},
                 }
+                if _SAVE_FORECASTS_MODE:
+                    _ckpt_data['forecast_log'] = list(_forecast_log)
                 with open(_checkpoint_path, 'wb') as _ckf:
                     pickle.dump(_ckpt_data, _ckf, protocol=pickle.HIGHEST_PROTOCOL)
             except Exception:
@@ -1457,12 +2161,16 @@ def run_full_backtest(
                     'source_total': dict(source_total),
                     'daily_position_counts': list(daily_position_counts),
                     'peak_equity': peak_equity,
+                    'true_peak_equity': _true_peak_equity,  # H1
                     'dd_deep_days': dd_deep_days,
                     'cached_forecasts': {s: dict(f) for s, f in _cached_forecasts.items()},
                     'cached_idm': _cached_idm,
                     'trade_pnls': list(trade_pnls),
                     'entry_prices': dict(entry_prices),
+                    'source_daily_returns': {k: list(v) for k, v in source_daily_returns.items()},
                 }
+                if _SAVE_FORECASTS_MODE:
+                    _ckpt_data['forecast_log'] = list(_forecast_log)
                 with open(_checkpoint_path, 'wb') as _ckf:
                     pickle.dump(_ckpt_data, _ckf, protocol=pickle.HIGHEST_PROTOCOL)
                 if verbose:
@@ -1506,11 +2214,13 @@ def run_full_backtest(
                     'source_total': dict(source_total),
                     'daily_position_counts': list(daily_position_counts),
                     'peak_equity': peak_equity,
+                    'true_peak_equity': _true_peak_equity,  # H1
                     'dd_deep_days': dd_deep_days,
                     'cached_forecasts': {s: dict(f) for s, f in _cached_forecasts.items()},
                     'cached_idm': _cached_idm,
                     'trade_pnls': list(trade_pnls),
                     'entry_prices': dict(entry_prices),
+                    'source_daily_returns': {k: list(v) for k, v in source_daily_returns.items()},
                 }
                 with open(_checkpoint_path, 'wb') as _ckf:
                     pickle.dump(_ckpt_data, _ckf, protocol=pickle.HIGHEST_PROTOCOL)
@@ -1519,11 +2229,20 @@ def run_full_backtest(
             break
 
     # Restore original signal handlers
-    signal.signal(signal.SIGINT, _prev_sigint)
-    signal.signal(signal.SIGTERM, _prev_sigterm)
+    try:
+        if _prev_sigint is not None:
+            signal.signal(signal.SIGINT, _prev_sigint)
+        if _prev_sigterm is not None:
+            signal.signal(signal.SIGTERM, _prev_sigterm)
+    except ValueError:
+        pass  # Not on main thread
 
-    # Clean up checkpoint on successful completion
-    if os.path.exists(_checkpoint_path):
+    # Cancel deadline timer if still running
+    if _deadline_timer is not None:
+        _deadline_timer.cancel()
+
+    # Clean up checkpoint on successful completion (only if NOT interrupted)
+    if not _graceful_exit_requested and os.path.exists(_checkpoint_path):
         os.remove(_checkpoint_path)
 
     if verbose:
@@ -1595,10 +2314,15 @@ def run_full_backtest(
         result.profit_factor = round(_gross_profit / _gross_loss, 2) if _gross_loss > 0 else 99.99
 
     # ── 5b. Aronson EBTA enrichment metrics ─────────────────
+    # C1 FIX: PBO/CSCV computation
+    # C2 FIX: Alpha-beta separation
+    _alpha_beta_result = {}
+    _pbo_result = {}
     try:
         from services.aronson_validator import (
             detrend_returns, trimmed_sharpe as _trimmed_sharpe,
             compute_signal_tstat, estimate_data_mining_bias,
+            compute_pbo, compute_alpha_beta,
         )
         _ret_series = pd.Series(daily_returns)
 
@@ -1613,6 +2337,71 @@ def run_full_backtest(
 
         # Trimmed Sharpe (5% winsorized)
         result.trimmed_sharpe = round(_trimmed_sharpe(ret_arr, trim_pct=0.05), 3)
+
+        # C2 FIX: Alpha-Beta Separation — measure true alpha vs market beta
+        # Download NIFTY50 benchmark for IND market
+        try:
+            _nifty_ticker = getattr(_Cfg, 'NIFTY_BENCHMARK_TICKER', '^NSEI') if _Cfg else '^NSEI'
+            if market == "IND":
+                import yfinance as yf
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    _bench_df = yf.download(_nifty_ticker, start=start_date,
+                                            end=end_date or None,
+                                            auto_adjust=True, progress=False)
+                if _bench_df is not None and len(_bench_df) > 100:
+                    _bench_close = _bench_df["Close"]
+                    if hasattr(_bench_close, "squeeze"):
+                        _bench_close = _bench_close.squeeze()
+                    _bench_rets = _bench_close.pct_change().dropna().values
+                    _alpha_beta_result = compute_alpha_beta(
+                        np.array(daily_returns), _bench_rets,
+                    )
+        except Exception as _ab_err:
+            logger.debug("Alpha-beta computation failed: %s", _ab_err)
+
+        # C1 FIX: PBO/CSCV — Probability of Backtest Overfitting
+        # PBO-FIX: Use actual per-signal daily return attribution (not data availability)
+        try:
+            _sdr_signals = [src for src in sorted(source_daily_returns.keys())
+                            if len(source_daily_returns[src]) >= 60]
+            if len(_sdr_signals) >= 4:
+                _min_len = min(len(source_daily_returns[s]) for s in _sdr_signals)
+                _returns_matrix = np.array([
+                    source_daily_returns[s][:_min_len] for s in _sdr_signals
+                ])
+                _pbo_result = compute_pbo(_returns_matrix, n_partitions=10)
+                if verbose:
+                    logger.info("PBO computed from %d signals × %d days: %.1f%% (%s)",
+                                len(_sdr_signals), _min_len,
+                                _pbo_result.get('pbo_pct', 0),
+                                _pbo_result.get('interpretation', 'N/A'))
+            elif source_total and len(source_total) >= 4:
+                # Fallback: old method (data-availability-based) if per-signal returns unavailable
+                _n_sigs = len(source_total)
+                _T = len(daily_returns)
+                _strat_returns = []
+                _strat_names = []
+                for src in sorted(source_total.keys()):
+                    total = source_total[src]
+                    hits = source_hits.get(src, 0)
+                    if total > 10:
+                        _hit_rate = hits / total if total > 0 else 0.5
+                        rng_pbo = np.random.RandomState(hash(src) % (2**31))
+                        _syn_rets = np.where(
+                            rng_pbo.random(_T) < _hit_rate,
+                            abs(np.mean(daily_returns)) if daily_returns else 0.001,
+                            -abs(np.mean(daily_returns)) if daily_returns else -0.001,
+                        )
+                        _strat_returns.append(_syn_rets)
+                        _strat_names.append(src)
+                if len(_strat_returns) >= 4:
+                    _returns_matrix = np.array(_strat_returns)
+                    _pbo_result = compute_pbo(_returns_matrix, n_partitions=10)
+                    _pbo_result['method'] = 'data_availability_fallback'
+        except Exception as _pbo_err:
+            logger.debug("PBO computation failed: %s", _pbo_err)
 
         # Per-signal t-statistics (from source_daily_returns if available)
         if source_total:
@@ -1636,13 +2425,21 @@ def run_full_backtest(
                     estimate_data_mining_bias(n_sigs, best_std) * 100, 2  # as percentage
                 )
 
-        # Bootstrap CI for Sharpe (quick: 1000 resamples)
+        # Bootstrap CI for Sharpe (circular block bootstrap — preserves autocorrelation)
         if len(ret_arr) > 30:
             rng = np.random.RandomState(42)
             boot_sharpes = []
+            _block_len = getattr(_Cfg, 'BOOTSTRAP_BLOCK_LENGTH', 20) if _Cfg else 20
+            _n_ret = len(ret_arr)
             for _ in range(1000):
-                idx = rng.randint(0, len(ret_arr), size=len(ret_arr))
-                _b = ret_arr[idx]
+                # Circular block bootstrap: draw blocks of _block_len, wrap around
+                _n_blocks = int(np.ceil(_n_ret / _block_len))
+                _starts = rng.randint(0, _n_ret, size=_n_blocks)
+                _boot_idx = []
+                for _st in _starts:
+                    _boot_idx.extend([(_st + j) % _n_ret for j in range(_block_len)])
+                _boot_idx = _boot_idx[:_n_ret]
+                _b = ret_arr[_boot_idx]
                 _bm = float(np.mean(_b))
                 _bs = float(np.std(_b, ddof=1))
                 if _bs > 0:
@@ -1652,6 +2449,23 @@ def run_full_backtest(
                     round(float(np.percentile(boot_sharpes, 5)), 3),
                     round(float(np.percentile(boot_sharpes, 95)), 3),
                 )
+
+            # L5 FIX: Turnover-penalized bootstrap Sharpe
+            # Penalize bootstrap resamples by estimated turnover drag
+            _tp_lambda = getattr(_Cfg, 'TURNOVER_PENALTY_LAMBDA', 0.005) if _Cfg else 0.005
+            if _tp_lambda > 0 and trades_count > 0 and n_days > min_history:
+                _days_traded = n_days - min_history
+                _daily_turnover = trades_count / _days_traded  # avg trades/day
+                _tp_drag = _tp_lambda * _daily_turnover  # daily penalty
+                tp_boot_sharpes = []
+                for _bs_val in boot_sharpes:
+                    # Subtract turnover drag from annualized Sharpe
+                    tp_boot_sharpes.append(_bs_val - _tp_drag * 16.0)
+                if tp_boot_sharpes:
+                    result.turnover_penalized_ci = (
+                        round(float(np.percentile(tp_boot_sharpes, 5)), 3),
+                        round(float(np.percentile(tp_boot_sharpes, 95)), 3),
+                    )
     except Exception as _aronson_exc:
         logger.debug("Aronson enrichment skipped: %s", _aronson_exc)
 
@@ -1736,7 +2550,7 @@ def run_full_backtest(
                         break
                 lines.append(f"    Day {_ev[0]:4d} ({_ev[1]}){_infused_tag}")
 
-    # Aronson EBTA enrichment
+    # Aronson EBTA enrichment + C1 PBO + C2 Alpha-Beta
     if result.detrended_sharpe or result.trimmed_sharpe:
         lines.append(f"")
         lines.append(f"  {'─'*40}")
@@ -1748,6 +2562,28 @@ def run_full_backtest(
             lines.append(f"  Sharpe 90% CI:     [{result.bootstrap_ci_sharpe[0]:.3f}, {result.bootstrap_ci_sharpe[1]:.3f}]")
         if result.per_signal_tstats:
             lines.append(f"  Signals t≥2.0:     {sum(1 for t in result.per_signal_tstats.values() if abs(t) >= 2.0)}/{len(result.per_signal_tstats)}")
+        # C1: PBO/CSCV results
+        if _pbo_result:
+            _pbo_method = _pbo_result.get('method', 'per_signal_daily_pnl')
+            lines.append(f"")
+            lines.append(f"  {'─'*40}")
+            lines.append(f"  C1: Probability of Backtest Overfitting (CSCV):")
+            lines.append(f"  PBO:               {_pbo_result.get('pbo_pct', 0):.1f}%")
+            lines.append(f"  CSCV Combinations: {_pbo_result.get('n_combinations', 0)}")
+            lines.append(f"  Median Logit:      {_pbo_result.get('median_logit', 0):.3f}")
+            lines.append(f"  Method:            {_pbo_method}")
+            lines.append(f"  Interpretation:    {_pbo_result.get('interpretation', 'N/A')}")
+        # C2: Alpha-Beta decomposition
+        if _alpha_beta_result:
+            lines.append(f"")
+            lines.append(f"  {'─'*40}")
+            lines.append(f"  C2: Alpha-Beta Decomposition (vs {getattr(_Cfg, 'NIFTY_BENCHMARK_TICKER', '^NSEI') if _Cfg else '^NSEI'}):")
+            lines.append(f"  Beta:              {_alpha_beta_result.get('beta', 0):.3f}")
+            lines.append(f"  Alpha (ann. %):    {_alpha_beta_result.get('alpha_annual_pct', 0):.3f}%")
+            lines.append(f"  Alpha Sharpe:      {_alpha_beta_result.get('alpha_sharpe', 0):.3f}")
+            lines.append(f"  R-squared:         {_alpha_beta_result.get('r_squared', 0):.3f}")
+            lines.append(f"  Info Ratio:        {_alpha_beta_result.get('information_ratio', 0):.3f}")
+            lines.append(f"  Beta Contrib (%):  {_alpha_beta_result.get('beta_contribution_pct', 0):.1f}%")
 
     lines.append(f"{'='*70}\n")
 
@@ -1778,6 +2614,10 @@ def run_full_backtest(
         "per_signal_tstats": result.per_signal_tstats,
         "dm_bias_estimate": result.dm_bias_estimate,
         "bootstrap_ci_sharpe": result.bootstrap_ci_sharpe,
+        # C1: PBO/CSCV results
+        "pbo": _pbo_result if _pbo_result else None,
+        # C2: Alpha-beta decomposition
+        "alpha_beta": _alpha_beta_result if _alpha_beta_result else None,
         # V4: Capital rotation
         "capital_rotation": {
             "total_injected": _cr_total_injected,

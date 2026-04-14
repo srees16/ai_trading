@@ -11,6 +11,8 @@ on:
     - cron: "0 9 * * 1-5"
     # EOD snapshot: 3:35 PM IST = 10:05 AM UTC
     - cron: "5 10 * * 1-5"
+    # Saturday weekly checkpoint: 7:30 AM IST = 2:00 AM UTC
+    - cron: "0 2 * * 6"
   workflow_dispatch:
     inputs:
       reason:
