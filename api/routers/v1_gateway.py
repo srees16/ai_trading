@@ -1397,7 +1397,14 @@ async def kite_holdings():
         holdings = await asyncio.to_thread(kite.holdings)
         return holdings
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Retry once on transient connection errors (RemoteDisconnected, ConnectionError)
+        import time
+        time.sleep(1)
+        try:
+            holdings = await asyncio.to_thread(kite.holdings)
+            return holdings
+        except Exception as e2:
+            raise HTTPException(status_code=500, detail=str(e2))
 
 
 @router.get("/kite/positions")
@@ -1410,7 +1417,14 @@ async def kite_positions():
         positions = await asyncio.to_thread(kite.positions)
         return positions.get("net", [])
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        # Retry once on transient connection errors
+        import time
+        time.sleep(1)
+        try:
+            positions = await asyncio.to_thread(kite.positions)
+            return positions.get("net", [])
+        except Exception as e2:
+            raise HTTPException(status_code=500, detail=str(e2))
 
 
 @router.get("/kite/portfolio/pnl")
@@ -2508,7 +2522,7 @@ async def market_ticker_prices(symbols: str, market: str = "US"):
                 interval="1d",
                 group_by="ticker",
                 progress=False,
-                threads=True,
+                threads=False,  # Fix: threads=True causes 'dict changed size during iteration'
             )
             results = []
             multi = len(yf_syms) > 1

@@ -479,8 +479,8 @@ def run_full_backtest(
         "fii_flow", "decision_engine", "oi_signal", "cross_momentum",
         "pairs_arb", "event_driven", "penfold_trend", "ehlers_dsp",
         "intermarket", "acceleration", "carver_value", "skew_signal",
-        "sentiment", "breakout", "order_flow",
-    }  # 24 sources — full parity with live pipeline
+        "sentiment", "breakout", "order_flow", "sector_rotation",
+    }  # 25 sources — full parity with live pipeline (incl. sector_rotation)
     if not include_carry:
         available_sources.discard("carry")
     if not include_pairs:
@@ -508,6 +508,9 @@ def run_full_backtest(
         if omitted:
             print(f"  Omitted (live-only): {', '.join(omitted)}")
         print()
+
+    # Set of signal names with non-zero weight — skip computing 0-weight signals
+    _active_signal_names = {fw.name for fw in active_weights if fw.weight > 0}
 
     # ── Transaction costs ──────────────────────────────────────
     # Phase 2: Per-symbol Zerodha delivery costs (replaces flat cost_pct)
@@ -979,7 +982,9 @@ def run_full_backtest(
                 logger.debug("Momentum failed at day %d: %s", day_idx, e)
 
             # 2c. Mean reversion (SLOW signal — skip if cached on non-slow days)
-            if _recompute_slow or not any('mean_reversion' in fc for fc in all_forecasts.values() if fc):
+            if "mean_reversion" not in _active_signal_names:
+                pass  # KILLED: 0% weight, skip computation
+            elif _recompute_slow or not any('mean_reversion' in fc for fc in all_forecasts.values() if fc):
               try:
                 mr_forecasts = compute_mean_reversion_batch(ohlcv_slice)
                 for sym, fc in mr_forecasts.items():
@@ -1013,7 +1018,8 @@ def run_full_backtest(
                     logger.debug("Carry failed at day %d: %s", day_idx, e)
 
             # 2e. OI signal (volume proxy — bare symbols for FNO lookup)
-            try:
+            if "oi_signal" in _active_signal_names:
+              try:
                 oi_data = _build_oi_proxy(ohlcv_slice)
                 oi_forecasts = compute_oi_signals_batch(oi_data)
                 # Map bare symbols back to .NS if needed
@@ -1021,7 +1027,7 @@ def run_full_backtest(
                     bare = sym.replace('.NS', '').replace('.BO', '')
                     if bare in oi_forecasts and sym in all_forecasts:
                         all_forecasts[sym]["oi_signal"] = oi_forecasts[bare]
-            except Exception as e:
+              except Exception as e:
                 logger.debug("OI signal failed at day %d: %s", day_idx, e)
 
             # 2f. Breakout signal (20-day high/low channel)
@@ -1056,8 +1062,9 @@ def run_full_backtest(
             # 2h. Cross-sectional momentum (long top, short bottom)
             # M1 FIX: Percentile-scaled forecasts instead of fixed ±8
             # H5 FIX: Bottom tercile = 0 in long-only mode (can't short anyway)
-            xmom_returns = {}
-            for sym, df in ohlcv_slice.items():
+            if "cross_momentum" in _active_signal_names:
+              xmom_returns = {}
+              for sym, df in ohlcv_slice.items():
                 if sym not in all_forecasts:
                     continue
                 c = df["Close"]
@@ -1067,7 +1074,7 @@ def run_full_backtest(
                     ret = float(c.iloc[-1] / c.iloc[-126] - 1)
                     if np.isfinite(ret):
                         xmom_returns[sym] = ret
-            if len(xmom_returns) >= 6:
+              if len(xmom_returns) >= 6:
                 sorted_syms = sorted(xmom_returns.keys(), key=lambda s: xmom_returns[s])
                 _n_xmom = len(sorted_syms)
                 for _rank_i, sym in enumerate(sorted_syms):
@@ -1101,12 +1108,13 @@ def run_full_backtest(
                 logger.debug("Ehlers DSP failed at day %d: %s", day_idx, e)
 
             # ── 2k. Ruggiero Cybernetic (intermarket + seasonal + multi-TF) ──
-            try:
+            if "intermarket" in _active_signal_names:
+              try:
                 intermarket_fc = compute_cybernetic_forecast_batch(ohlcv_slice)
                 for sym, fc in intermarket_fc.items():
                     if sym in all_forecasts:
                         all_forecasts[sym]["intermarket"] = fc
-            except Exception as e:
+              except Exception as e:
                 logger.debug("Intermarket failed at day %d: %s", day_idx, e)
 
             # ── 2l. Acceleration (AFTS S23: rate-of-change of EWMAC) ──
@@ -1128,12 +1136,13 @@ def run_full_backtest(
                 logger.debug("Carver value failed at day %d: %s", day_idx, e)
 
             # ── 2n. Skew Signal (AFTS S24: realized skew risk premium) ──
-            try:
+            if "skew_signal" in _active_signal_names:
+              try:
                 skew_fc = compute_skew_batch(ohlcv_slice)
                 for sym, fc in skew_fc.items():
                     if sym in all_forecasts:
                         all_forecasts[sym]["skew_signal"] = fc
-            except Exception as e:
+              except Exception as e:
                 logger.debug("Skew signal failed at day %d: %s", day_idx, e)
 
             # ── 2o-2r. DEAD SIGNALS SKIPPED (M4 FIX) ──────────
@@ -1144,47 +1153,51 @@ def run_full_backtest(
             # ── NEW ALPHA SOURCES (6 uncorrelated) ──────────────
 
             # ── 2o-new. Calendar Effects (month-end, expiry, budget, Diwali) ──
-            try:
+            if "calendar_effects" in _active_signal_names:
+              try:
                 from strategies.calendar_effects import compute_calendar_forecast_batch
                 cal_fc = compute_calendar_forecast_batch(ohlcv_slice)
                 for sym, fc in cal_fc.items():
                     if sym in all_forecasts:
                         all_forecasts[sym]["calendar_effects"] = fc
-            except Exception as e:
+              except Exception as e:
                 logger.debug("Calendar effects failed at day %d: %s", day_idx, e)
 
             # ── 2p-new. Fundamental Momentum (52w-high proximity + 3m momentum) ──
-            try:
+            if "fundamental_momentum" in _active_signal_names:
+              try:
                 from strategies.fundamental_momentum import compute_fundamental_momentum_batch
                 fmom_fc = compute_fundamental_momentum_batch(ohlcv_slice)
                 for sym, fc in fmom_fc.items():
                     if sym in all_forecasts:
                         all_forecasts[sym]["fundamental_momentum"] = fc
-            except Exception as e:
+              except Exception as e:
                 logger.debug("Fundamental momentum failed at day %d: %s", day_idx, e)
 
             # ── 2q-new. Insider Activity (volume surge + directional proxy) ──
-            try:
+            if "insider_activity" in _active_signal_names:
+              try:
                 from strategies.insider_activity import compute_insider_activity_batch
                 insider_fc = compute_insider_activity_batch(ohlcv_slice)
                 for sym, fc in insider_fc.items():
                     if sym in all_forecasts:
                         all_forecasts[sym]["insider_activity"] = fc
-            except Exception as e:
+              except Exception as e:
                 logger.debug("Insider activity failed at day %d: %s", day_idx, e)
 
             # ── 2r-new. Dispersion Trading (constituent vol vs portfolio vol) ──
-            try:
+            if "dispersion" in _active_signal_names:
+              try:
                 from strategies.dispersion_trading import compute_dispersion_forecast_batch
                 disp_fc = compute_dispersion_forecast_batch(ohlcv_slice)
                 for sym, fc in disp_fc.items():
                     if sym in all_forecasts:
                         all_forecasts[sym]["dispersion"] = fc
-            except Exception as e:
+              except Exception as e:
                 logger.debug("Dispersion trading failed at day %d: %s", day_idx, e)
 
             # ── 2s-new. Gold-Equity Rotation (GOLDBEES relative strength) ──
-            if _multi_asset_on or _SAVE_FORECASTS_MODE:
+            if "gold_equity_rotation" in _active_signal_names and (_multi_asset_on or _SAVE_FORECASTS_MODE):
                 try:
                     from strategies.gold_equity_rotation import compute_gold_equity_rotation_batch
                     gold_fc = compute_gold_equity_rotation_batch(ohlcv_slice)
@@ -1195,13 +1208,14 @@ def run_full_backtest(
                     logger.debug("Gold-equity rotation failed at day %d: %s", day_idx, e)
 
             # ── 2t-new. Crypto Correlation (BTC as risk-on indicator) ──
-            try:
+            if "crypto_correlation" in _active_signal_names:
+              try:
                 from strategies.crypto_correlation import compute_crypto_correlation_batch
                 crypto_fc = compute_crypto_correlation_batch(ohlcv_slice)
                 for sym, fc in crypto_fc.items():
                     if sym in all_forecasts:
                         all_forecasts[sym]["crypto_correlation"] = fc
-            except Exception as e:
+              except Exception as e:
                 logger.debug("Crypto correlation failed at day %d: %s", day_idx, e)
 
             # ── 2u-new. Sector Rotation Signal (macro sector momentum overlay) ──
@@ -1246,13 +1260,14 @@ def run_full_backtest(
                     all_forecasts[sym]["decision_engine"] = de_fc
 
             # ── 2t. Order flow (OBV + CVD + MFI microstructure) — T3-2 ──
-            try:
+            if "order_flow" in _active_signal_names:
+              try:
                 from strategies.order_flow import compute_order_flow_forecasts_batch
                 of_fc = compute_order_flow_forecasts_batch(ohlcv_slice)
                 for sym, fc in of_fc.items():
                     if sym in all_forecasts:
                         all_forecasts[sym]["order_flow"] = fc
-            except Exception as e:
+              except Exception as e:
                 logger.debug("Order flow failed at day %d: %s", day_idx, e)
 
             # ── 2u. Multi-timeframe EWMAC blending (Godmode Phase 2) ──
@@ -1334,19 +1349,13 @@ def run_full_backtest(
         # R13: NO DD SCALING — replaced with dynamic vol target (Fix C)
         dd_scale = 1.0
 
-        # REVERTED: Use current_dd (decaying peak) for vol tier decisions.
-        # _true_dd from non-decaying peak caused permanent halt — system went
-        # to 0 positions at day ~100 and NEVER recovered (true peak never decays).
-        if current_dd < 0.15:
-            annual_vol_target = 0.50   # Full risk — no DD
-        elif current_dd < 0.25:
-            annual_vol_target = 0.45   # Mild pullback
-        elif current_dd < 0.30:
-            annual_vol_target = 0.35   # Moderate DD
-        elif current_dd < 0.35:
-            annual_vol_target = 0.20   # Severe DD
-        else:
-            annual_vol_target = 0.05   # Near-halt (NOT zero — allow slow recovery)
+        # Phase B FIX: Remove DD-based vol target scaling entirely.
+        # The tiered DD scaling (50% → 45% → 35% → 20% → 5%) creates a
+        # death spiral: losses → tiny positions → can't recover → more losses.
+        # Combined with severe_bear floor (×0.10) + dynamic leverage (1.0×)
+        # + VIX scaling, effective exposure dropped to <0.5% → permanent trap.
+        # Keep constant vol target; stops and position limits provide protection.
+        annual_vol_target = 0.40
 
         # FIX-FLOOR: Use actual equity for daily target
         sizing_equity = max(equity, capital * 0.10)  # 10% ruin floor
@@ -1370,11 +1379,11 @@ def run_full_backtest(
         else:
             _eq_sma200 = equity  # not enough data
 
-        # C1: BEAR regime → floor at 10% of normal exposure (was 0.0 — positions=0 trap)
-        _SEVERE_BEAR_FLOOR = getattr(_Cfg, 'SEVERE_BEAR_EXPOSURE_FLOOR', 0.10) if _Cfg else 0.10
+        # C1: BEAR regime → floor at 50% of normal exposure (Phase B fix: was 10% → death spiral)
+        _SEVERE_BEAR_FLOOR = getattr(_Cfg, 'SEVERE_BEAR_EXPOSURE_FLOOR', 0.50) if _Cfg else 0.50
         if _eq_regime == 'severe_bear':
             dynamic_daily_target = max(dynamic_daily_target * _SEVERE_BEAR_FLOOR,
-                                       sizing_equity * 0.05 / 16.0)  # absolute min: 5% vol target
+                                       sizing_equity * 0.15 / 16.0)  # absolute min: 15% vol target
         elif _R21A_REGIME_VOL and len(daily_equity) >= 200:
             _use_smooth = getattr(_Cfg, 'SMOOTH_BEAR_DEFENSE', False) if _Cfg else False
             if _use_smooth:

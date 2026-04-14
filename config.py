@@ -104,7 +104,7 @@ class Config:
     SLIPPAGE_MODEL_US_BPS: float = 5.0     # 5 bps for US large-cap
 
     # Live Viability: Backtest realism controls
-    SEVERE_BEAR_EXPOSURE_FLOOR: float = 0.10  # Phase 1: 10% of normal in severe_bear (not 0%)
+    SEVERE_BEAR_EXPOSURE_FLOOR: float = 0.50  # Phase B fix: 10% caused death spiral  # Phase 1: 10% of normal in severe_bear (not 0%)
     EXECUTION_GAP_ENABLED: bool = True         # Phase 4: T+1 open fill gap penalty
     EXECUTION_GAP_BPS: float = 0.0050          # Phase 4: 50 bps penalty on new entries/exits
     PIT_UNIVERSE_ENABLED: bool = True          # Phase B: Point-in-time NIFTY500 (survivorship bias fix)
@@ -167,9 +167,9 @@ class Config:
     TIME_EXIT_ENABLED: bool = True
 
     # Tiered signal recompute frequency (trading days)
-    RECOMPUTE_FREQ_FAST: int = 1            # ewmac_8_32, breakout (daily)
-    RECOMPUTE_FREQ_MEDIUM: int = 3          # momentum, ehlers_dsp, acceleration, penfold_trend
-    RECOMPUTE_FREQ_SLOW: int = 5            # carver_value, ewmac_64_256, mean_reversion
+    RECOMPUTE_FREQ_FAST: int = 5            # ewmac_8_32, breakout (every 5 days for Kaggle speed)
+    RECOMPUTE_FREQ_MEDIUM: int = 10         # momentum, ehlers_dsp, acceleration, penfold_trend
+    RECOMPUTE_FREQ_SLOW: int = 20           # carver_value, ewmac_64_256, mean_reversion
 
     # Forecast-proportional position sizing (replaces flat 1/N)
     FORECAST_PROPORTIONAL_SIZING: bool = True
