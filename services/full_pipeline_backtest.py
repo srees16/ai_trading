@@ -481,6 +481,15 @@ def run_full_backtest(
         "intermarket", "acceleration", "carver_value", "skew_signal",
         "sentiment", "breakout", "order_flow", "sector_rotation",
     }  # 25 sources — full parity with live pipeline (incl. sector_rotation)
+
+    # Extraction mode: add experimental signals so optimizer can evaluate them
+    if _SAVE_FORECASTS_MODE:
+        available_sources.update({
+            "mean_reversion", "calendar_effects", "fundamental_momentum",
+            "insider_activity", "dispersion", "gold_equity_rotation",
+            "crypto_correlation",
+        })
+
     if not include_carry:
         available_sources.discard("carry")
     if not include_pairs:
@@ -511,6 +520,13 @@ def run_full_backtest(
 
     # Set of signal names with non-zero weight — skip computing 0-weight signals
     _active_signal_names = {fw.name for fw in active_weights if fw.weight > 0}
+
+    # Extraction mode: compute ALL signals (not just non-zero weight)
+    # so the optimizer can test every candidate. Exclude truly dead signals
+    # that need external APIs unavailable in backtest (0% hit rate, 0 data).
+    if _SAVE_FORECASTS_MODE:
+        _DEAD_SIGNALS = {"pead", "fii_flow", "event_driven", "sentiment"}
+        _active_signal_names = {fw.name for fw in active_weights} - _DEAD_SIGNALS
 
     # ── Transaction costs ──────────────────────────────────────
     # Phase 2: Per-symbol Zerodha delivery costs (replaces flat cost_pct)
@@ -661,7 +677,7 @@ def run_full_backtest(
 
     # Phase 4: Execution gap model — penalty for close→open gap on new entries/exits
     _EXECUTION_GAP_ENABLED = getattr(_Cfg, 'EXECUTION_GAP_ENABLED', True) if _Cfg else True
-    _EXECUTION_GAP_BPS = getattr(_Cfg, 'EXECUTION_GAP_BPS', 0.0050) if _Cfg else 0.0050  # 50 bps
+    _EXECUTION_GAP_BPS = getattr(_Cfg, 'EXECUTION_GAP_BPS', 0.0010) if _Cfg else 0.0010  # 10 bps
 
     # ── Checkpoint save/resume ─────────────────────────────────
     import pickle, os, signal, traceback
@@ -784,6 +800,7 @@ def run_full_backtest(
     for day_idx in range(_start_day_idx, n_days):
       try:
         day_pnl = 0.0
+        _day_trades_count = 0  # V5: track trades per day for turnover cap
 
         # Build OHLCV slices up to current day (views, not copies)
         ohlcv_slice: Dict[str, pd.DataFrame] = {}
@@ -882,7 +899,11 @@ def run_full_backtest(
                         prev_positions[sym] = 0
                         peak_prices.pop(sym, None)
                         stop_levels.pop(sym, None)
-                        stop_cooldown[sym] = 2  # Phase C: reduced from 5 → 2 days
+                        # V6 FIX: Removed stop cooldown (was 2 days).
+                        # With only 3-5 positive-forecast stocks and 2σ stops,
+                        # cooldown creates a position lockout trap:
+                        # stop fires → 2-day lockout → re-entry delayed →
+                        # fewer positions → more concentration → more stops.
                         continue
                 elif prev_qty < 0:
                     high_col = ohlcv_slice[sym]["High"]
@@ -901,7 +922,6 @@ def run_full_backtest(
                         prev_positions[sym] = 0
                         peak_prices.pop(sym, None)
                         stop_levels.pop(sym, None)
-                        stop_cooldown[sym] = 2  # Phase C: reduced from 5 → 2 days
                         continue
 
             # Normal MTM
@@ -955,8 +975,10 @@ def run_full_backtest(
                 if hasattr(c, "squeeze"):
                     c = c.squeeze()
                 close = c.dropna()
-                if len(close) < 270:
-                    continue
+                # V6 FIX: Removed blanket 270-bar guard. Per-variation
+                # check (len < slow+10) already handles each EWMAC.
+                # The 270 guard blocked ALL EWMAC on Day 0-7 when
+                # warmup=262, killing 31% of signal weight.
                 price = float(close.iloc[-1])
                 dpv = daily_price_volatility(close)
                 if dpv <= 0:
@@ -1583,6 +1605,16 @@ def run_full_backtest(
                 _gated_combined[_gs] = 0.0  # Zero forecast = no new position
         _all_combined = _gated_combined
 
+        # ── V9: Equity Risk Premium bias for long-only mode ──────────
+        # Zero-mean signals (EWMAC, momentum, etc.) produce ~50% negative forecasts.
+        # In long-only mode, negatives are zeroed → only 3-5 positions → concentration death.
+        # The equity risk premium (+6% annualized ≈ +2.0 on ±20 forecast scale) is a
+        # structural prior, not a fitted parameter.  This shifts ~15-20 stocks from
+        # slightly-negative to slightly-positive, giving natural diversification.
+        _ERP_BIAS = 2.0
+        if not allow_short:
+            _all_combined = {s: f + _ERP_BIAS for s, f in _all_combined.items()}
+
         # ── M8 FIX: Distribution shift detector — scale down in regime breaks ──
         _dist_shift_on = getattr(_Cfg, 'DISTRIBUTION_SHIFT_ENABLED', True) if _Cfg else True
         if _dist_shift_on and len(daily_returns) >= 90:
@@ -1709,7 +1741,16 @@ def run_full_backtest(
 
         # R8 CRITICAL FIX: Dynamic weight_per_sym based on ACTUAL investable count
         # Phase C: Lowered threshold from 2.0 → 1.0 to fill more position slots
-        _investable = [s for s in _top_syms if abs(_all_combined.get(s, 0)) > 1.0]
+        # V6 FIX: In long-only mode, only count POSITIVE-forecast stocks.
+        # Previously counted all |forecast|>1.0 (including negative), which
+        # divided risk budget by 15 even when only 3 stocks were positive,
+        # leaving 80% of capital idle.
+        if not allow_short:
+            _investable = [s for s in _top_syms if _all_combined.get(s, 0) > 1.0]
+        else:
+            _investable = [s for s in _top_syms if abs(_all_combined.get(s, 0)) > 1.0]
+        # V9: With ERP bias, 15-20 stocks have positive forecasts → no need for V8's
+        # inflated floor.  Floor at 5 avoids over-dilution when few genuine signals exist.
         n_investable = max(5, min(len(_investable), MAX_POSITIONS))
 
         # ── Godmode: Forecast-proportional sizing (replaces flat 1/N) ──
@@ -1855,6 +1896,12 @@ def run_full_backtest(
                 prev_qty = prev_positions.get(sym, 0)
                 delta = abs(target_qty - prev_qty)
                 if delta > 0:
+                    # V5 FIX: Daily trade budget — limit to 3 trades/day to cap turnover
+                    _max_daily_trades = getattr(_Cfg, 'MAX_DAILY_TRADES', 3) if _Cfg else 3
+                    if _day_trades_count >= _max_daily_trades and abs(prev_qty) > 0:
+                        target_qty = prev_qty  # skip rebalance — budget exhausted
+                        delta = 0
+                if delta > 0:
                     # Godmode: Cost-aware inertia — only trade if expected alpha > N × cost
                     _cost_aware = getattr(_Cfg, 'COST_AWARE_INERTIA', False) if _Cfg else False
                     if _cost_aware and abs(prev_qty) > 0:
@@ -1878,15 +1925,17 @@ def run_full_backtest(
                             cost = delta * price * _sym_cost_map.get(sym, cost_pct)
                             day_pnl -= cost
                             trades_count += 1
+                            _day_trades_count += 1
                     else:
-                        # Legacy: fixed 20% inertia threshold
-                        _inertia_pct = 0.20
+                        # Legacy: fixed 40% inertia threshold (v5: widened from 20%)
+                        _inertia_pct = 0.40
                         if abs(prev_qty) > 0 and delta / abs(prev_qty) < _inertia_pct:
                             target_qty = prev_qty
                         else:
                             cost = delta * price * _sym_cost_map.get(sym, cost_pct)
                             day_pnl -= cost
                             trades_count += 1
+                            _day_trades_count += 1
 
                 # ── Per-trade tracking (round-trip PnL) ───────
                 if prev_qty == 0 and target_qty != 0:
@@ -1956,30 +2005,36 @@ def run_full_backtest(
 
         daily_position_counts.append(active_count)
 
-        # Phase 1: Min-1-position enforcement — avoid 0-position days entirely
-        if active_count == 0 and not allow_short:
-            # Find highest positive-forecast symbol from top_syms with valid price
-            for _m1_sym in _top_syms_list:
-                _m1_fc = _all_combined.get(_m1_sym, 0.0)
-                if _m1_fc <= 0:
+        # V9: Force-fill REMOVED.  ERP bias (+2.0) naturally produces 15-20 positive
+        # forecast stocks in long-only mode, eliminating the need for artificial fills.
+        # V7/V8 force-fills bought into negative-signal stocks → constant losses.
+
+        # ── V9: Severe-bear exposure cap — limit total notional to 80% of equity ──
+        # When equity-curve regime is severe_bear, cap gross notional at 80% of
+        # equity.  This is Direction 1's guardrail — prevents the ERP bias from
+        # keeping full exposure during crashes.
+        _SEVERE_BEAR_MAX_EXPOSURE = 0.80
+        if not allow_short and _eq_regime == 'severe_bear' and equity > 0:
+            _gross_notional = 0.0
+            for _cap_sym, _cap_qty in prev_positions.items():
+                if _cap_qty == 0:
                     continue
-                if _m1_sym not in ohlcv_slice:
-                    continue
-                _m1_c = ohlcv_slice[_m1_sym]["Close"]
-                if hasattr(_m1_c, "squeeze"):
-                    _m1_c = _m1_c.squeeze()
-                _m1_close = _m1_c.dropna()
-                if len(_m1_close) == 0:
-                    continue
-                _m1_price = float(_m1_close.iloc[-1])
-                if not np.isfinite(_m1_price) or _m1_price <= 0:
-                    continue
-                # Force minimum 1-share position
-                prev_positions[_m1_sym] = 1
-                entry_prices[_m1_sym] = _m1_price
-                entry_prices[f'_day_{_m1_sym}'] = _trading_day
-                daily_position_counts[-1] = 1
-                break
+                if _cap_sym in ohlcv_slice:
+                    _cap_c = ohlcv_slice[_cap_sym]["Close"]
+                    if hasattr(_cap_c, "squeeze"):
+                        _cap_c = _cap_c.squeeze()
+                    _cap_price = float(_cap_c.iloc[-1])
+                    if np.isfinite(_cap_price) and _cap_price > 0:
+                        _gross_notional += abs(_cap_qty) * _cap_price
+            _max_notional = equity * _SEVERE_BEAR_MAX_EXPOSURE
+            if _gross_notional > _max_notional and _gross_notional > 0:
+                _scale_factor = _max_notional / _gross_notional
+                for _cap_sym in list(prev_positions.keys()):
+                    if prev_positions[_cap_sym] != 0:
+                        _new_qty = round(prev_positions[_cap_sym] * _scale_factor)
+                        if _new_qty == 0 and prev_positions[_cap_sym] > 0:
+                            _new_qty = 1  # keep at least 1 share
+                        prev_positions[_cap_sym] = _new_qty
 
         # ── Godmode: Dynamic leverage per regime (uses _eq_regime) ──
         _dyn_lev = getattr(_Cfg, 'DYNAMIC_LEVERAGE_ENABLED', False) if _Cfg else False

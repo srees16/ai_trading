@@ -62,17 +62,25 @@ _TICKER_LIST_PATH = os.path.join(_DATA_DIR, "nifty500_ticker_list.json")
 
 
 def _restore_from_input(filename: str):
-    """Restore file from Kaggle input dataset (read-only)."""
+    """Restore file from Kaggle input dataset (read-only).
+    Searches kernel self-reference output first, then code dataset."""
     dst = os.path.join(_DATA_DIR, filename)
     if os.path.exists(dst):
         return
-    if not _INPUT_DATA:
-        return
-    candidates = [
-        os.path.join(_INPUT_DATA, "centurion_core", "data", filename),
-        os.path.join(_INPUT_DATA, "data", filename),
-        os.path.join(_INPUT_DATA, filename),
-    ]
+
+    # Search order: kernel's own previous output > code dataset
+    _PREV_OUTPUT = "/kaggle/input/nifty500-extract-all-signals"
+    search_roots = [_PREV_OUTPUT]
+    if _INPUT_DATA:
+        search_roots.append(_INPUT_DATA)
+
+    candidates = []
+    for root in search_roots:
+        candidates.extend([
+            os.path.join(root, "centurion_core", "data", filename),
+            os.path.join(root, "data", filename),
+            os.path.join(root, filename),
+        ])
     for src in candidates:
         if os.path.exists(src):
             if os.path.isdir(src):
@@ -112,7 +120,14 @@ def main():
         _restore_from_input(f)
     _restore_from_input("bhavcopy_cache")
     # Restore checkpoint + ticker list from previous session
-    _restore_from_input("backtest_checkpoint_nifty500_extract.pkl")
+    # V14: CENTURION_FRESH_START env var skips checkpoint (notebook sets it when old code was wrong)
+    if os.environ.get("CENTURION_FRESH_START") == "1":
+        print("  FRESH START: skipping checkpoint restore (CENTURION_FRESH_START=1)")
+        if os.path.exists(_CHECKPOINT_PATH):
+            os.remove(_CHECKPOINT_PATH)
+            print(f"  Deleted stale checkpoint: {_CHECKPOINT_PATH}")
+    else:
+        _restore_from_input("backtest_checkpoint_nifty500_extract.pkl")
     _restore_from_input("nifty500_ticker_list.json")
 
     # ── Configure extraction ──

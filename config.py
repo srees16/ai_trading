@@ -106,7 +106,7 @@ class Config:
     # Live Viability: Backtest realism controls
     SEVERE_BEAR_EXPOSURE_FLOOR: float = 0.50  # Phase B fix: 10% caused death spiral  # Phase 1: 10% of normal in severe_bear (not 0%)
     EXECUTION_GAP_ENABLED: bool = True         # Phase 4: T+1 open fill gap penalty
-    EXECUTION_GAP_BPS: float = 0.0050          # Phase 4: 50 bps penalty on new entries/exits
+    EXECUTION_GAP_BPS: float = 0.0010          # Phase 4: 10 bps (realistic for liquid NIFTY500 stocks)
     PIT_UNIVERSE_ENABLED: bool = True          # Phase B: Point-in-time NIFTY500 (survivorship bias fix)
 
     # =================================================================
