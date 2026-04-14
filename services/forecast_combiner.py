@@ -76,7 +76,7 @@ DEFAULT_FORECAST_WEIGHTS: List[ForecastWeight] = [
     ForecastWeight("screener", 0.018),       # RESTORED from 0.016
     ForecastWeight("momentum", 0.112),       # RESTORED from 0.100
     ForecastWeight("pead", 0.00),            # DEAD: 0% hit rate
-    ForecastWeight("mean_reversion", 0.027), # RESTORED: original 2.7% (7% was untested)
+    ForecastWeight("mean_reversion", 0.00),  # KILLED: Sharpe=-0.039, harmful (was 2.7%)
     ForecastWeight("fii_flow", 0.00),        # DEAD: 0% hit rate
     ForecastWeight("decision_engine", 0.00), # zeroed — circular dependency
     ForecastWeight("oi_signal", 0.00),       # HARMFUL: t-stat = -69.8
@@ -99,6 +99,7 @@ DEFAULT_FORECAST_WEIGHTS: List[ForecastWeight] = [
     ForecastWeight("dispersion", 0.00),
     ForecastWeight("gold_equity_rotation", 0.00),
     ForecastWeight("crypto_correlation", 0.00),
+    ForecastWeight("sector_rotation", 0.03),   # Phase D: sector momentum overlay (3%)
     # Total: 1.00 exact — R21A original 11 active signals
     # R21a OOS validated: Sharpe=2.09, CAGR=74.1%, MaxDD=25.2%, Calmar=2.94
     # vs R19c baseline:  Sharpe=1.02, CAGR=48.8%, MaxDD=67.4%, Calmar=0.71

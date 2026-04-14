@@ -95,13 +95,19 @@ class Config:
     # =================================================================
     # Transaction Costs (round-trip, as fraction)
     # =================================================================
-    TRANSACTION_COST_IND: float = 0.0013   # 13 bps NSE (STT + exchange + stamp + GST)
+    TRANSACTION_COST_IND: float = 0.0022   # 22 bps NSE Zerodha delivery (STT + exchange + stamp + GST + SEBI)
     TRANSACTION_COST_US: float = 0.001     # 10 bps US equities
     SLIPPAGE_MODEL_IND_BPS: float = 20.0   # 20 bps assumed slippage for NSE mid-caps
     SLIPPAGE_IND_LARGECAP_BPS: float = 5.0  # NIFTY50 — very liquid
     SLIPPAGE_IND_MIDCAP_BPS: float = 20.0   # NIFTY_NEXT50 / upper mid-cap
     SLIPPAGE_IND_SMALLCAP_BPS: float = 50.0  # everything else
     SLIPPAGE_MODEL_US_BPS: float = 5.0     # 5 bps for US large-cap
+
+    # Live Viability: Backtest realism controls
+    SEVERE_BEAR_EXPOSURE_FLOOR: float = 0.10  # Phase 1: 10% of normal in severe_bear (not 0%)
+    EXECUTION_GAP_ENABLED: bool = True         # Phase 4: T+1 open fill gap penalty
+    EXECUTION_GAP_BPS: float = 0.0050          # Phase 4: 50 bps penalty on new entries/exits
+    PIT_UNIVERSE_ENABLED: bool = True          # Phase B: Point-in-time NIFTY500 (survivorship bias fix)
 
     # =================================================================
     # Paper Trading Mode

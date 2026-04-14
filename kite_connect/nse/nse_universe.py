@@ -18,6 +18,7 @@ Falls back to Kite instruments or hardcoded lists when downloads fail.
 
 import io
 import logging
+import os
 import time
 from typing import Dict, List, Optional, Tuple
 
@@ -412,3 +413,94 @@ def get_nse_universe(kite=None, tier: Optional[str] = None) -> List[str]:
         if syms:
             return syms
         return get_nse_default_tickers()
+
+
+# ── Point-in-Time (PIT) NIFTY500 Universe ─────────────────────
+# Phase B: Eliminate survivorship bias by using historical constituent lists.
+# Data source: Wayback Machine snapshots → nifty500_historical_constituents.json
+
+_PIT_DATA: Optional[Dict[str, List[str]]] = None  # lazy-loaded cache
+
+
+def _load_pit_data() -> Dict[str, List[str]]:
+    """Load the historical constituents JSON (lazy, cached)."""
+    global _PIT_DATA
+    if _PIT_DATA is not None:
+        return _PIT_DATA
+    import json
+    _pit_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), '..', '..', 'data',
+        'nifty500_historical_constituents.json',
+    )
+    try:
+        with open(_pit_path) as f:
+            _PIT_DATA = json.load(f)
+        logger.info("PIT universe loaded: %d periods", len(_PIT_DATA))
+    except FileNotFoundError:
+        logger.warning("PIT universe file not found at %s", _pit_path)
+        _PIT_DATA = {}
+    return _PIT_DATA
+
+
+def get_nse_universe_pit(as_of_date) -> List[str]:
+    """
+    Return the NIFTY500 constituent list as it existed on *as_of_date*.
+
+    Looks up the closest semi-annual period (YYYY-03 or YYYY-09) that is
+    <= as_of_date.  Falls back to the earliest available period if the date
+    is before all snapshots.
+
+    Parameters
+    ----------
+    as_of_date : datetime.date | str
+        The simulation date (YYYY-MM-DD or date object).
+
+    Returns
+    -------
+    list[str]  — Plain NSE symbols (no .NS suffix).
+    """
+    import datetime
+    pit = _load_pit_data()
+    if not pit:
+        return []
+
+    if isinstance(as_of_date, str):
+        as_of_date = datetime.date.fromisoformat(as_of_date)
+    elif hasattr(as_of_date, 'date'):
+        as_of_date = as_of_date.date()
+
+    # Build period key: closest semi-annual <= as_of_date
+    y, m = as_of_date.year, as_of_date.month
+    if m >= 9:
+        period = f"{y}-09"
+    elif m >= 3:
+        period = f"{y}-03"
+    else:
+        period = f"{y - 1}-09"
+
+    # Walk backwards to find the nearest available period
+    sorted_periods = sorted(pit.keys())
+    best = None
+    for p in sorted_periods:
+        if p <= period:
+            best = p
+    if best is None:
+        best = sorted_periods[0] if sorted_periods else None
+
+    if best is None:
+        return []
+    return list(pit[best])
+
+
+def get_nse_universe_pit_union() -> List[str]:
+    """
+    Return the UNION of all historical NIFTY500 constituents across all periods.
+    Used for pre-downloading OHLCV data in backtest mode.
+    """
+    pit = _load_pit_data()
+    if not pit:
+        return []
+    all_syms: set = set()
+    for syms in pit.values():
+        all_syms.update(syms)
+    return sorted(all_syms)

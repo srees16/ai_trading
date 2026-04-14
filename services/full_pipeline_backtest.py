@@ -168,6 +168,29 @@ def _download(sym: str, period: str, market: str,
     return None
 
 
+def _annual_yield_at(sym: str, date, div_history: Dict[str, pd.Series],
+                     price: float) -> float:
+    """Compute trailing-12-month dividend yield at a given date (point-in-time).
+
+    Sums all dividend payments in [date - 365d, date] and divides by current price.
+    Returns 0.0 if no dividends found or price is invalid.
+    """
+    if price <= 0 or not np.isfinite(price):
+        return 0.0
+    divs = div_history.get(sym)
+    if divs is None or len(divs) == 0:
+        return 0.0
+    # Convert date to Timestamp for comparison
+    if not isinstance(date, pd.Timestamp):
+        date = pd.Timestamp(date)
+    start = date - pd.Timedelta(days=365)
+    mask = (divs.index >= start) & (divs.index <= date)
+    trailing_divs = divs.loc[mask]
+    if len(trailing_divs) == 0:
+        return 0.0
+    return float(trailing_divs.sum()) / price
+
+
 def _build_oi_proxy(ohlcv_slice: Dict[str, pd.DataFrame]) -> Dict[str, Dict]:
     """Build OI proxy from volume changes (same as carver_pipeline.py).
     Strips .NS suffix so FNO_LOT_SIZES lookup works for IND stocks.
@@ -314,6 +337,9 @@ def run_full_backtest(
     from services.event_strategy import generate_event_forecasts
     from services.sentiment_forecast import compute_sentiment_batch
 
+    # Phase B: Point-in-time universe flag (read once, used in ticker loading + sim loop)
+    _pit_universe_on = getattr(_Cfg, 'PIT_UNIVERSE_ENABLED', False) if _Cfg else False
+
     # ── Default tickers ────────────────────────────────────────
     if tickers is None:
         if market == "US":
@@ -326,16 +352,29 @@ def run_full_backtest(
             # FIX (v29): Respect Config.NSE_UNIVERSE_TIER instead of
             # always using get_nse_default_tickers (95 stocks).
             # Tiers: DEFAULT=~100, NIFTY500=~500, BROAD=~800-1200
+            # Phase B: If PIT_UNIVERSE_ENABLED, download the union of ALL historical
+            # NIFTY500 constituents (~800 unique tickers). The sim loop will filter
+            # to the correct ~500 at each point in time.
             try:
                 from kite_connect.nse.nse_universe import get_nse_universe
-                _tier = getattr(_Cfg, 'NSE_UNIVERSE_TIER', 'DEFAULT') if _Cfg else 'DEFAULT'
-                raw_syms = get_nse_universe(tier=_tier)
-                if raw_syms and len(raw_syms) >= 10:
-                    tickers = [f"{s}.NS" for s in raw_syms]
-                    if verbose:
-                        print(f"  NSE universe: {len(tickers)} tickers (tier={_tier})")
+                if _pit_universe_on:
+                    from kite_connect.nse.nse_universe import get_nse_universe_pit_union
+                    raw_syms = get_nse_universe_pit_union()
+                    if raw_syms and len(raw_syms) >= 10:
+                        tickers = [f"{s}.NS" for s in raw_syms]
+                        if verbose:
+                            print(f"  NSE universe: {len(tickers)} tickers (PIT union)")
+                    else:
+                        raise ValueError("PIT union returned too few symbols")
                 else:
-                    raise ValueError(f"NSE universe ({_tier}) returned too few symbols")
+                    _tier = getattr(_Cfg, 'NSE_UNIVERSE_TIER', 'DEFAULT') if _Cfg else 'DEFAULT'
+                    raw_syms = get_nse_universe(tier=_tier)
+                    if raw_syms and len(raw_syms) >= 10:
+                        tickers = [f"{s}.NS" for s in raw_syms]
+                        if verbose:
+                            print(f"  NSE universe: {len(tickers)} tickers (tier={_tier})")
+                    else:
+                        raise ValueError(f"NSE universe ({_tier}) returned too few symbols")
             except Exception as exc:
                 logger.warning("NSE universe fetch failed (%s), using fallback", exc)
                 # Fallback: hardcoded NIFTY50+NEXT50 core names
@@ -436,7 +475,7 @@ def run_full_backtest(
     # T3-2: Match live 24-source parity for realistic backtest
     available_sources = {
         "ewmac_8_32", "ewmac_16_64", "ewmac_32_128", "ewmac_64_256",
-        "carry", "screener", "momentum", "pead", "mean_reversion",
+        "carry", "screener", "momentum", "pead",
         "fii_flow", "decision_engine", "oi_signal", "cross_momentum",
         "pairs_arb", "event_driven", "penfold_trend", "ehlers_dsp",
         "intermarket", "acceleration", "carver_value", "skew_signal",
@@ -471,18 +510,42 @@ def run_full_backtest(
         print()
 
     # ── Transaction costs ──────────────────────────────────────
-    # T3-3: Realistic transaction costs (NSE delivery: STT+brokerage+GST+slippage)
-    # P2a: Size-adaptive costs (was flat 33bps for all IND)
-    # NIFTY50 = 18bps (tight spreads), NEXT50 = 33bps, rest = 63bps
-    _nifty50_cost = 0.0018
-    _next50_cost  = 0.0033
-    _smallcap_cost = 0.0063
-    # H2 FIX: Slippage model — 5 bps entry + 2 bps spread on top of costs
-    _slippage_bps = 0.0007  # 7 bps total slippage (realistic for NSE delivery)
+    # Phase 2: Per-symbol Zerodha delivery costs (replaces flat cost_pct)
+    # Zerodha equity delivery: ₹0 brokerage. Costs = STT + exchange txn + GST + stamp + SEBI
+    # Buy-side: ~0.059% (stamp 0.015% + exchange 0.00345% + GST 0.000621% + SEBI 0.0001%)
+    # Sell-side: ~0.159% (STT 0.1% + exchange 0.00345% + GST 0.000621% + SEBI 0.0001%)
+    # Round-trip statutory: ~0.218% ≈ 22 bps
+    _statutory_rt_cost = 0.0022  # 22 bps round-trip (Zerodha equity delivery)
+    # Tiered slippage by market-cap tier
+    _slip_nifty50 = 0.0005   # 5 bps — NIFTY50 very liquid
+    _slip_next50  = 0.0020   # 20 bps — mid-cap
+    _slip_small   = 0.0050   # 50 bps — smallcap / illiquid
+    _nifty50_cost = _statutory_rt_cost + _slip_nifty50  # 27 bps
+    _next50_cost  = _statutory_rt_cost + _slip_next50   # 42 bps
+    _smallcap_cost = _statutory_rt_cost + _slip_small   # 72 bps
+    # H2 FIX: kept for backward compat in report line
+    _slippage_bps = 0.0020  # default mid-cap slippage
     if market == "IND":
-        cost_pct = _next50_cost + _slippage_bps   # default with slippage
+        cost_pct = _next50_cost   # default fallback (mid-cap)
+        # Build per-symbol cost lookup from INDEX_CONSTITUENTS
+        try:
+            from kite_connect.core.config import INDEX_CONSTITUENTS as _IDX
+            _n50_set = set(_IDX.get("NIFTY50", []))
+            _nn50_set = set(_IDX.get("NIFTY_NEXT50", []))
+        except ImportError:
+            _n50_set, _nn50_set = set(), set()
+        _sym_cost_map: Dict[str, float] = {}
+        for sym in symbols:
+            _bare = sym.replace('.NS', '').replace('.BO', '')
+            if _bare in _n50_set:
+                _sym_cost_map[sym] = _nifty50_cost
+            elif _bare in _nn50_set:
+                _sym_cost_map[sym] = _next50_cost
+            else:
+                _sym_cost_map[sym] = _smallcap_cost
     else:
         cost_pct = 0.0015 + 0.0003   # 15 bps cost + 3 bps slippage (US)
+        _sym_cost_map = {sym: cost_pct for sym in symbols}
 
     # ── VolatilityTarget ───────────────────────────────────────
     vol_target = VolatilityTarget(VolatilityTargetConfig(
@@ -539,9 +602,11 @@ def run_full_backtest(
     # R11 (return-based) and R12 (vol-based) both destroyed equity via whipsaw.
     # R13 uses dynamic vol target (Fix C) instead — continuous, no churn.
 
-    # ── Pre-fetch dividend yields for carry (one-time) ─────────
-    # Suppress yfinance stdout/stderr to prevent HTML 502 error dumps
-    dividend_yields: Dict[str, float] = {}
+    # ── Pre-fetch historical dividend series for carry (point-in-time) ────
+    # Phase 3: Use historical dividend payments instead of current yield (look-ahead fix)
+    # Stores full dividend payment series per symbol → compute trailing-12m yield at any date
+    dividend_yields: Dict[str, float] = {}  # backward compat: stores latest yield as fallback
+    _dividend_history: Dict[str, pd.Series] = {}  # sym → DatetimeIndex Series of dividend payments
     if include_carry:
         try:
             import yfinance as yf
@@ -554,19 +619,25 @@ def run_full_backtest(
                         dividend_yields[sym] = 0.0
                         continue
                     try:
+                        suffix = ".NS" if market == "IND" and not any(c in sym for c in '.-=^') else ""
+                        _tk = f"{sym}{suffix}"
                         with contextlib.redirect_stdout(io.StringIO()), \
                              contextlib.redirect_stderr(io.StringIO()):
-                            info = yf.Ticker(sym).info
-                        dy = info.get("dividendYield") or info.get("trailingAnnualDividendYield")
-                        if dy and dy > 0:
-                            dividend_yields[sym] = float(dy)
+                            _divs = yf.Ticker(_tk).dividends
+                        if _divs is not None and len(_divs) > 0:
+                            # Ensure timezone-naive index for comparison with simulation dates
+                            if _divs.index.tz is not None:
+                                _divs.index = _divs.index.tz_localize(None)
+                            _dividend_history[sym] = _divs
+                            # Also store latest trailing yield as fallback
+                            dividend_yields[sym] = 0.01  # placeholder — real yield computed point-in-time
                         else:
                             dividend_yields[sym] = 0.0
                     except Exception:
                         dividend_yields[sym] = 0.0  # store 0 to prevent per-day re-fetch
             if verbose:
-                _actual = sum(1 for v in dividend_yields.values() if v > 0)
-                print(f"  Dividend yields fetched: {_actual}/{n_symbols}")
+                _actual = sum(1 for v in _dividend_history.values() if len(v) > 0)
+                print(f"  Dividend history fetched: {_actual}/{n_symbols} symbols with dividends")
         except ImportError:
             pass
 
@@ -584,6 +655,10 @@ def run_full_backtest(
     except Exception:
         max_leverage = 2.0
     allow_short = False  # FIX-SHORT: disabled — short Sharpe ≈ -0.01, bleeds in secular bull
+
+    # Phase 4: Execution gap model — penalty for close→open gap on new entries/exits
+    _EXECUTION_GAP_ENABLED = getattr(_Cfg, 'EXECUTION_GAP_ENABLED', True) if _Cfg else True
+    _EXECUTION_GAP_BPS = getattr(_Cfg, 'EXECUTION_GAP_BPS', 0.0050) if _Cfg else 0.0050  # 50 bps
 
     # ── Checkpoint save/resume ─────────────────────────────────
     import pickle, os, signal, traceback
@@ -689,6 +764,20 @@ def run_full_backtest(
     _consecutive_day_errors = 0
     _MAX_CONSECUTIVE_ERRORS = 10  # abort if 10+ days crash in a row
 
+    # ── Phase B: Point-in-Time universe state ──────────────────
+    # Tracks which subset of downloaded symbols are valid NIFTY500 constituents
+    # at the current simulation date.  Updated at semi-annual boundaries.
+    _pit_active_set: Optional[set] = None   # set of ".NS" tickers currently in-universe
+    _pit_last_period: Optional[str] = None  # "YYYY-MM" of last universe reload
+    if _pit_universe_on and market == "IND":
+        from kite_connect.nse.nse_universe import get_nse_universe_pit
+        # Initialize with earliest period
+        _pit_syms = get_nse_universe_pit("2012-01-01")
+        _pit_active_set = {f"{s}.NS" for s in _pit_syms}
+        _pit_last_period = "2012-03"
+        if verbose:
+            print(f"  PIT Universe: initialized with {len(_pit_active_set)} symbols (2012-03)")
+
     for day_idx in range(_start_day_idx, n_days):
       try:
         day_pnl = 0.0
@@ -699,7 +788,54 @@ def run_full_backtest(
         current_date = master_index[day_idx]
         if hasattr(current_date, 'date'):
             current_date = current_date.date()
+
+        # ── Phase B: PIT universe rotation at semi-annual boundaries ──
+        if _pit_active_set is not None:
+            import datetime as _dt
+            _cd = current_date if isinstance(current_date, _dt.date) else _dt.date.fromisoformat(str(current_date))
+            _m = _cd.month
+            if _m >= 9:
+                _cur_period = f"{_cd.year}-09"
+            elif _m >= 3:
+                _cur_period = f"{_cd.year}-03"
+            else:
+                _cur_period = f"{_cd.year - 1}-09"
+            if _cur_period != _pit_last_period:
+                _pit_syms_new = get_nse_universe_pit(_cd)
+                _pit_new_set = {f"{s}.NS" for s in _pit_syms_new}
+                _removed = _pit_active_set - _pit_new_set
+                _added = _pit_new_set - _pit_active_set
+                # Force-sell positions in removed tickers (delisted / dropped from index)
+                for _rsym in _removed:
+                    _rqty = prev_positions.get(_rsym, 0)
+                    if _rqty != 0 and _rsym in ohlcv_full:
+                        _rc = ohlcv_full[_rsym]["Close"]
+                        if hasattr(_rc, "squeeze"):
+                            _rc = _rc.squeeze()
+                        _ridx = day_idx - sym_start.get(_rsym, 0)
+                        if 0 < _ridx < len(_rc):
+                            _rpx = float(_rc.iloc[_ridx])
+                            if np.isfinite(_rpx) and _rpx > 0:
+                                day_pnl -= abs(_rqty) * _rpx * _sym_cost_map.get(_rsym, cost_pct)
+                                trades_count += 1
+                                if _rsym in entry_prices and entry_prices[_rsym] > 0:
+                                    _ep = entry_prices.pop(_rsym)
+                                    if _rqty > 0:
+                                        trade_pnls.append((_rpx - _ep) / _ep * 100)
+                                    else:
+                                        trade_pnls.append((_ep - _rpx) / _ep * 100)
+                        prev_positions[_rsym] = 0
+                        peak_prices.pop(_rsym, None)
+                        stop_levels.pop(_rsym, None)
+                _pit_active_set = _pit_new_set
+                _pit_last_period = _cur_period
+                if verbose and (_removed or _added):
+                    print(f"  PIT Rebalance {_cur_period}: +{len(_added)} / -{len(_removed)} → {len(_pit_active_set)} symbols", flush=True)
+
         for sym, df in ohlcv_full.items():
+            # Phase B: Skip symbols not in current PIT universe
+            if _pit_active_set is not None and sym not in _pit_active_set:
+                continue
             # Compute how many bars this symbol has up to current master day_idx
             local_len = day_idx - sym_start.get(sym, 0) + 1
             actual_len = len(df)
@@ -735,7 +871,7 @@ def run_full_backtest(
                         exit_price = stop_levels[sym]
                         daily_ret = (exit_price - prev_price) / prev_price
                         day_pnl += prev_qty * prev_price * daily_ret
-                        day_pnl -= abs(prev_qty) * exit_price * cost_pct
+                        day_pnl -= abs(prev_qty) * exit_price * _sym_cost_map.get(sym, cost_pct)
                         trades_count += 1
                         if sym in entry_prices and entry_prices[sym] > 0:
                             trade_pnls.append((exit_price - entry_prices[sym]) / entry_prices[sym] * 100)
@@ -743,7 +879,7 @@ def run_full_backtest(
                         prev_positions[sym] = 0
                         peak_prices.pop(sym, None)
                         stop_levels.pop(sym, None)
-                        stop_cooldown[sym] = 5
+                        stop_cooldown[sym] = 2  # Phase C: reduced from 5 → 2 days
                         continue
                 elif prev_qty < 0:
                     high_col = ohlcv_slice[sym]["High"]
@@ -754,7 +890,7 @@ def run_full_backtest(
                         exit_price = stop_levels[sym]
                         daily_ret = (prev_price - exit_price) / prev_price
                         day_pnl += abs(prev_qty) * prev_price * daily_ret
-                        day_pnl -= abs(prev_qty) * exit_price * cost_pct
+                        day_pnl -= abs(prev_qty) * exit_price * _sym_cost_map.get(sym, cost_pct)
                         trades_count += 1
                         if sym in entry_prices and entry_prices[sym] > 0:
                             trade_pnls.append((entry_prices[sym] - exit_price) / entry_prices[sym] * 100)
@@ -762,7 +898,7 @@ def run_full_backtest(
                         prev_positions[sym] = 0
                         peak_prices.pop(sym, None)
                         stop_levels.pop(sym, None)
-                        stop_cooldown[sym] = 5
+                        stop_cooldown[sym] = 2  # Phase C: reduced from 5 → 2 days
                         continue
 
             # Normal MTM
@@ -855,8 +991,20 @@ def run_full_backtest(
             # 2d. Carry (SLOW signal — skip if cached on non-slow days)
             if include_carry and (_recompute_slow or not any('carry' in fc for fc in all_forecasts.values() if fc)):
                 try:
+                    # Phase 3: Compute point-in-time dividend yields for this date
+                    _pit_yields: Dict[str, float] = {}
+                    for _csym, _cdf in ohlcv_slice.items():
+                        if _csym in _dividend_history:
+                            _cc = _cdf["Close"]
+                            if hasattr(_cc, "squeeze"):
+                                _cc = _cc.squeeze()
+                            _cpx = float(_cc.dropna().iloc[-1]) if len(_cc.dropna()) > 0 else 0.0
+                            _pit_yields[_csym] = _annual_yield_at(
+                                _csym, current_date, _dividend_history, _cpx)
+                        else:
+                            _pit_yields[_csym] = dividend_yields.get(_csym, 0.0)
                     carry_results = compute_carry_batch(
-                        ohlcv_slice, dividend_yields=dividend_yields,
+                        ohlcv_slice, dividend_yields=_pit_yields,
                     )
                     for sym, cf in carry_results.items():
                         if sym in all_forecasts:
@@ -1056,6 +1204,17 @@ def run_full_backtest(
             except Exception as e:
                 logger.debug("Crypto correlation failed at day %d: %s", day_idx, e)
 
+            # ── 2u-new. Sector Rotation Signal (macro sector momentum overlay) ──
+            if _recompute_slow or not any('sector_rotation' in fc for fc in all_forecasts.values() if fc):
+                try:
+                    from strategies.sector_rotation_signal import compute_sector_rotation_forecast_batch
+                    sr_fc = compute_sector_rotation_forecast_batch(ohlcv_slice)
+                    for sym, fc in sr_fc.items():
+                        if sym in all_forecasts:
+                            all_forecasts[sym]["sector_rotation"] = fc
+                except Exception as e:
+                    logger.debug("Sector rotation signal failed at day %d: %s", day_idx, e)
+
             # ── 2s. Screener + Decision Engine (composite technical/fundamental) ──
             # In backtest mode these use simplified technical proxies
             # (the live pipeline uses NSEScreener + IntegratedScorer which need real-time data)
@@ -1211,9 +1370,11 @@ def run_full_backtest(
         else:
             _eq_sma200 = equity  # not enough data
 
-        # C1: BEAR regime → 0× exposure when equity < SMA200×0.95
+        # C1: BEAR regime → floor at 10% of normal exposure (was 0.0 — positions=0 trap)
+        _SEVERE_BEAR_FLOOR = getattr(_Cfg, 'SEVERE_BEAR_EXPOSURE_FLOOR', 0.10) if _Cfg else 0.10
         if _eq_regime == 'severe_bear':
-            dynamic_daily_target = 0.0  # ZERO risk — go to cash
+            dynamic_daily_target = max(dynamic_daily_target * _SEVERE_BEAR_FLOOR,
+                                       sizing_equity * 0.05 / 16.0)  # absolute min: 5% vol target
         elif _R21A_REGIME_VOL and len(daily_equity) >= 200:
             _use_smooth = getattr(_Cfg, 'SMOOTH_BEAR_DEFENSE', False) if _Cfg else False
             if _use_smooth:
@@ -1465,7 +1626,7 @@ def run_full_backtest(
                             if hasattr(_exit_c, "squeeze"):
                                 _exit_c = _exit_c.squeeze()
                             _exit_price = float(_exit_c.iloc[-1])
-                            day_pnl -= abs(prev_positions[sym]) * _exit_price * cost_pct
+                            day_pnl -= abs(prev_positions[sym]) * _exit_price * _sym_cost_map.get(sym, cost_pct)
                             trades_count += 1
                             if sym in entry_prices and entry_prices[sym] > 0:
                                 ep = entry_prices.pop(sym)
@@ -1499,17 +1660,20 @@ def run_full_backtest(
         # Adaptive position count based on top-15 average forecast strength
         _ranked_for_count = sorted(_all_combined.values(), key=lambda x: abs(x), reverse=True)
         _top15_avg = np.mean([abs(f) for f in _ranked_for_count[:15]]) if _ranked_for_count else 0.0
-        # RESTORED: Fixed MAX_POSITIONS = 10 (dynamic 5/8/10 was too restrictive)
-        MAX_POSITIONS = 10
+        # Phase C: Increased from 10 → 15 for broader signal capture on NIFTY500
+        MAX_POSITIONS = 15
 
         MAX_HOLD_GRACE = MAX_POSITIONS + 7  # Grace zone scales with positions
         # Rank by conviction: in long-only mode, positive forecasts first (descending),
         # then negative by abs (for grace-zone exits). Prevents bearish stocks from
         # filling top slots and getting zeroed by long-only guard → zero-position trap.
         if not allow_short:
-            _ranked = sorted(_all_combined.items(),
-                             key=lambda x: (x[1] > 0, x[1] if x[1] > 0 else -abs(x[1])),
-                             reverse=True)
+            # Phase 1 fix: split positive and negative — only positive can fill top slots
+            _positive_ranked = sorted([(s, f) for s, f in _all_combined.items() if f > 0],
+                                      key=lambda x: x[1], reverse=True)
+            _negative_ranked = sorted([(s, f) for s, f in _all_combined.items() if f <= 0],
+                                      key=lambda x: -abs(x[1]))
+            _ranked = _positive_ranked + _negative_ranked
         else:
             _ranked = sorted(_all_combined.items(), key=lambda x: abs(x[1]), reverse=True)
         _top_syms_list = [s for s, _ in _ranked[:MAX_POSITIONS]]    # ordered list for min-1-share
@@ -1535,7 +1699,8 @@ def run_full_backtest(
             _top_syms = set(_top_syms_list)
 
         # R8 CRITICAL FIX: Dynamic weight_per_sym based on ACTUAL investable count
-        _investable = [s for s in _top_syms if abs(_all_combined.get(s, 0)) > 2.0]
+        # Phase C: Lowered threshold from 2.0 → 1.0 to fill more position slots
+        _investable = [s for s in _top_syms if abs(_all_combined.get(s, 0)) > 1.0]
         n_investable = max(5, min(len(_investable), MAX_POSITIONS))
 
         # ── Godmode: Forecast-proportional sizing (replaces flat 1/N) ──
@@ -1614,7 +1779,7 @@ def run_full_backtest(
                             _exit_c = _exit_c.squeeze()
                         _exit_price = float(_exit_c.iloc[-1])
                         _exit_qty = prev_positions[sym]
-                        day_pnl -= abs(_exit_qty) * _exit_price * cost_pct
+                        day_pnl -= abs(_exit_qty) * _exit_price * _sym_cost_map.get(sym, cost_pct)
                         trades_count += 1
                     prev_positions[sym] = 0
                     peak_prices.pop(sym, None)
@@ -1693,7 +1858,7 @@ def run_full_backtest(
                             _alpha_cost_ratio = 1.5  # H5: permissive in bull
                         else:
                             _alpha_cost_ratio = 2.5  # H5: moderate in neutral/sideways
-                        _expected_cost = delta * price * cost_pct
+                        _expected_cost = delta * price * _sym_cost_map.get(sym, cost_pct)
                         # H3 FIX: Correct alpha estimate — forecast-implied daily PnL
                         # alpha = |forecast/10| × vol_target_weight × daily_vol_target
                         _w = _sym_weights.get(sym, weight_per_sym) if _fc_prop_sizing else weight_per_sym
@@ -1701,7 +1866,7 @@ def run_full_backtest(
                         if _expected_alpha < _alpha_cost_ratio * _expected_cost:
                             target_qty = prev_qty  # cost exceeds alpha — skip trade
                         else:
-                            cost = delta * price * cost_pct
+                            cost = delta * price * _sym_cost_map.get(sym, cost_pct)
                             day_pnl -= cost
                             trades_count += 1
                     else:
@@ -1710,7 +1875,7 @@ def run_full_backtest(
                         if abs(prev_qty) > 0 and delta / abs(prev_qty) < _inertia_pct:
                             target_qty = prev_qty
                         else:
-                            cost = delta * price * cost_pct
+                            cost = delta * price * _sym_cost_map.get(sym, cost_pct)
                             day_pnl -= cost
                             trades_count += 1
 
@@ -1719,6 +1884,10 @@ def run_full_backtest(
                     # New position opened — record entry price + day
                     entry_prices[sym] = price
                     entry_prices[f'_day_{sym}'] = _trading_day  # M5: track holding period
+                    # Phase 4: Execution gap penalty — new entry fills at next-day open (approx 50bps penalty)
+                    if _EXECUTION_GAP_ENABLED:
+                        _gap_penalty = abs(target_qty) * price * _EXECUTION_GAP_BPS
+                        day_pnl -= _gap_penalty
                 elif prev_qty != 0 and target_qty == 0:
                     # Position fully closed — log round-trip PnL
                     if sym in entry_prices and entry_prices[sym] > 0:
@@ -1727,6 +1896,10 @@ def run_full_backtest(
                             trade_pnls.append((price - ep) / ep * 100)
                         else:
                             trade_pnls.append((ep - price) / ep * 100)
+                    # Phase 4: Execution gap penalty on full exits too
+                    if _EXECUTION_GAP_ENABLED:
+                        _gap_penalty = abs(prev_qty) * price * _EXECUTION_GAP_BPS
+                        day_pnl -= _gap_penalty
                 elif prev_qty != 0 and target_qty != 0 and abs(target_qty) != abs(prev_qty):
                     # Position resized — update VWAP entry
                     if sym in entry_prices and abs(target_qty) > abs(prev_qty):
@@ -1773,6 +1946,31 @@ def run_full_backtest(
                     stop_levels.pop(sym, None)
 
         daily_position_counts.append(active_count)
+
+        # Phase 1: Min-1-position enforcement — avoid 0-position days entirely
+        if active_count == 0 and not allow_short:
+            # Find highest positive-forecast symbol from top_syms with valid price
+            for _m1_sym in _top_syms_list:
+                _m1_fc = _all_combined.get(_m1_sym, 0.0)
+                if _m1_fc <= 0:
+                    continue
+                if _m1_sym not in ohlcv_slice:
+                    continue
+                _m1_c = ohlcv_slice[_m1_sym]["Close"]
+                if hasattr(_m1_c, "squeeze"):
+                    _m1_c = _m1_c.squeeze()
+                _m1_close = _m1_c.dropna()
+                if len(_m1_close) == 0:
+                    continue
+                _m1_price = float(_m1_close.iloc[-1])
+                if not np.isfinite(_m1_price) or _m1_price <= 0:
+                    continue
+                # Force minimum 1-share position
+                prev_positions[_m1_sym] = 1
+                entry_prices[_m1_sym] = _m1_price
+                entry_prices[f'_day_{_m1_sym}'] = _trading_day
+                daily_position_counts[-1] = 1
+                break
 
         # ── Godmode: Dynamic leverage per regime (uses _eq_regime) ──
         _dyn_lev = getattr(_Cfg, 'DYNAMIC_LEVERAGE_ENABLED', False) if _Cfg else False
