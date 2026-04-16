@@ -700,24 +700,41 @@ def run_full_backtest(
     _EXECUTION_GAP_BPS = getattr(_Cfg, 'EXECUTION_GAP_BPS', 0.0010) if _Cfg else 0.0010  # 10 bps
 
     # ── Checkpoint save/resume ─────────────────────────────────
-    import pickle, os, signal, traceback
+    import pickle, os, signal, traceback, hashlib
     _checkpoint_path = os.environ.get(
         "CENTURION_BT_CHECKPOINT",
         os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'backtest_checkpoint.pkl'),
     )
     _start_day_idx = min_history  # default: start from beginning
 
-    # R24v8-RCA: DISABLE checkpoint resume — stale checkpoints were the root cause
-    # of permanent 3-position deadlock. Code version changes invalidate all checkpoint
-    # state (equity, positions, cached_forecasts, stops, etc.) but validation only
-    # checks n_symbols/capital/n_days. Every "fresh" run since R24v3 was actually
-    # resuming from a previous bad run's state.
+    # Code version hash: auto-invalidate checkpoint when pipeline code changes.
+    # Hashes this file + run_backtest_production.py so any code change = fresh start.
+    def _compute_code_version():
+        _h = hashlib.sha256()
+        for _fname in [__file__,
+                       os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'run_backtest_production.py')]:
+            try:
+                with open(_fname, 'rb') as _fh:
+                    _h.update(_fh.read())
+            except FileNotFoundError:
+                pass
+        return _h.hexdigest()[:16]
+    _CODE_VERSION = _compute_code_version()
+
+    # R24v8-RCA: Default DISABLED for local runs (stale checkpoints caused deadlock).
+    # For Kaggle multi-session: set CENTURION_NO_CHECKPOINT=0 to enable.
     _CHECKPOINT_DISABLED = os.environ.get("CENTURION_NO_CHECKPOINT", "1") == "1"
     if not _CHECKPOINT_DISABLED and os.path.exists(_checkpoint_path):
         try:
             with open(_checkpoint_path, 'rb') as _ckf:
                 _ckpt = pickle.load(_ckf)
-            # Validate checkpoint matches current run config
+            # Validate checkpoint matches current run config + code version
+            _ckpt_code_ver = _ckpt.get('code_version', '')
+            if _ckpt_code_ver and _ckpt_code_ver != _CODE_VERSION:
+                if verbose:
+                    print(f"\n  Checkpoint code version mismatch ({_ckpt_code_ver} vs {_CODE_VERSION}) — starting fresh", flush=True)
+                os.remove(_checkpoint_path)
+                raise ValueError("code version mismatch")
             # In extraction mode, allow n_symbols drift (NIFTY500 may vary ±5% across sessions)
             _ckpt_n_sym = _ckpt.get('n_symbols', 0)
             if _SAVE_FORECASTS_MODE:
@@ -2266,6 +2283,7 @@ def run_full_backtest(
             if not _CHECKPOINT_DISABLED:
               try:
                 _ckpt_data = {
+                    'code_version': _CODE_VERSION,
                     'day_idx': day_idx,
                     'n_symbols': n_symbols, 'capital': capital, 'n_days': n_days,
                     'equity': equity,
@@ -2304,6 +2322,7 @@ def run_full_backtest(
             if not _CHECKPOINT_DISABLED:
               try:
                 _ckpt_data = {
+                    'code_version': _CODE_VERSION,
                     'day_idx': day_idx,
                     'n_symbols': n_symbols, 'capital': capital, 'n_days': n_days,
                     'equity': equity,

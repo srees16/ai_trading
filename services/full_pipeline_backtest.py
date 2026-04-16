@@ -534,14 +534,18 @@ def run_full_backtest(
     # Buy-side: ~0.059% (stamp 0.015% + exchange 0.00345% + GST 0.000621% + SEBI 0.0001%)
     # Sell-side: ~0.159% (STT 0.1% + exchange 0.00345% + GST 0.000621% + SEBI 0.0001%)
     # Round-trip statutory: ~0.218% ≈ 22 bps
-    _statutory_rt_cost = 0.0022  # 22 bps round-trip (Zerodha equity delivery)
-    # Tiered slippage by market-cap tier
-    _slip_nifty50 = 0.0005   # 5 bps — NIFTY50 very liquid
-    _slip_next50  = 0.0020   # 20 bps — mid-cap
-    _slip_small   = 0.0050   # 50 bps — smallcap / illiquid
-    _nifty50_cost = _statutory_rt_cost + _slip_nifty50  # 27 bps
-    _next50_cost  = _statutory_rt_cost + _slip_next50   # 42 bps
-    _smallcap_cost = _statutory_rt_cost + _slip_small   # 72 bps
+    _statutory_rt_cost = 0.0011  # R24-RCA FIX: 11 bps PER-LEG (was 22 bps round-trip applied per-leg = double-count)
+    # R24v5-RCA: 4-tier slippage model (was 3-tier; NIFTY200 stocks were misclassified as smallcap)
+    # NIFTY500 rank 101-200 stocks have reasonable liquidity (~10-15bps impact).
+    # Only true smallcap (rank 300+) should pay high slippage.
+    _slip_nifty50  = 0.0005   # 5 bps — NIFTY50 very liquid
+    _slip_next50   = 0.0015   # 15 bps — NIFTY NEXT50
+    _slip_nifty200 = 0.0025   # 25 bps — NIFTY 101-200 (mid-cap, decent liquidity)
+    _slip_small    = 0.0040   # 40 bps — smallcap/illiquid (was 50bps — too punitive for NIFTY500 tail)
+    _nifty50_cost  = _statutory_rt_cost + _slip_nifty50   # 16 bps per-leg
+    _next50_cost   = _statutory_rt_cost + _slip_next50    # 26 bps per-leg
+    _nifty200_cost = _statutory_rt_cost + _slip_nifty200  # 36 bps per-leg
+    _smallcap_cost = _statutory_rt_cost + _slip_small     # 51 bps per-leg
     # H2 FIX: kept for backward compat in report line
     _slippage_bps = 0.0020  # default mid-cap slippage
     if market == "IND":
@@ -553,6 +557,18 @@ def run_full_backtest(
             _nn50_set = set(_IDX.get("NIFTY_NEXT50", []))
         except ImportError:
             _n50_set, _nn50_set = set(), set()
+        # R24v5-RCA: Build NIFTY200 set for 4-tier cost model
+        # Stocks ranked 101-200 are mid-cap with decent liquidity, NOT smallcap.
+        _n200_set = set()
+        try:
+            # Try fetching NIFTY200 from nse_universe (may fail on Kaggle)
+            from kite_connect.nse.nse_universe import fetch_nse_symbols_nifty500
+            _n200_raw = fetch_nse_symbols_nifty500()  # ~500 stocks
+            if _n200_raw and len(_n200_raw) >= 100:
+                # NIFTY200 ≈ first 200 of NIFTY500 by market cap
+                _n200_set = set(_n200_raw[:200]) - _n50_set - _nn50_set
+        except Exception:
+            pass
         _sym_cost_map: Dict[str, float] = {}
         for sym in symbols:
             _bare = sym.replace('.NS', '').replace('.BO', '')
@@ -560,6 +576,8 @@ def run_full_backtest(
                 _sym_cost_map[sym] = _nifty50_cost
             elif _bare in _nn50_set:
                 _sym_cost_map[sym] = _next50_cost
+            elif _bare in _n200_set:
+                _sym_cost_map[sym] = _nifty200_cost
             else:
                 _sym_cost_map[sym] = _smallcap_cost
     else:
@@ -677,22 +695,46 @@ def run_full_backtest(
 
     # Phase 4: Execution gap model — penalty for close→open gap on new entries/exits
     # R24v10-RCA: DISABLED — this feature was added AFTER R21A (not in commit c9044b5).
+    # The 10bps-per-leg gap penalty adds phantom cost drag that R21A never had.
     _EXECUTION_GAP_ENABLED = False
     _EXECUTION_GAP_BPS = getattr(_Cfg, 'EXECUTION_GAP_BPS', 0.0010) if _Cfg else 0.0010  # 10 bps
 
     # ── Checkpoint save/resume ─────────────────────────────────
-    import pickle, os, signal, traceback
+    import pickle, os, signal, traceback, hashlib
     _checkpoint_path = os.environ.get(
         "CENTURION_BT_CHECKPOINT",
         os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data', 'backtest_checkpoint.pkl'),
     )
     _start_day_idx = min_history  # default: start from beginning
 
-    if os.path.exists(_checkpoint_path):
+    # Code version hash: auto-invalidate checkpoint when pipeline code changes.
+    # Hashes this file + run_backtest_production.py so any code change = fresh start.
+    def _compute_code_version():
+        _h = hashlib.sha256()
+        for _fname in [__file__,
+                       os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'run_backtest_production.py')]:
+            try:
+                with open(_fname, 'rb') as _fh:
+                    _h.update(_fh.read())
+            except FileNotFoundError:
+                pass
+        return _h.hexdigest()[:16]
+    _CODE_VERSION = _compute_code_version()
+
+    # R24v8-RCA: Default DISABLED for local runs (stale checkpoints caused deadlock).
+    # For Kaggle multi-session: set CENTURION_NO_CHECKPOINT=0 to enable.
+    _CHECKPOINT_DISABLED = os.environ.get("CENTURION_NO_CHECKPOINT", "1") == "1"
+    if not _CHECKPOINT_DISABLED and os.path.exists(_checkpoint_path):
         try:
             with open(_checkpoint_path, 'rb') as _ckf:
                 _ckpt = pickle.load(_ckf)
-            # Validate checkpoint matches current run config
+            # Validate checkpoint matches current run config + code version
+            _ckpt_code_ver = _ckpt.get('code_version', '')
+            if _ckpt_code_ver and _ckpt_code_ver != _CODE_VERSION:
+                if verbose:
+                    print(f"\n  Checkpoint code version mismatch ({_ckpt_code_ver} vs {_CODE_VERSION}) — starting fresh", flush=True)
+                os.remove(_checkpoint_path)
+                raise ValueError("code version mismatch")
             # In extraction mode, allow n_symbols drift (NIFTY500 may vary ±5% across sessions)
             _ckpt_n_sym = _ckpt.get('n_symbols', 0)
             if _SAVE_FORECASTS_MODE:
@@ -751,15 +793,16 @@ def run_full_backtest(
         nonlocal _graceful_exit_requested
         _graceful_exit_requested = True
         if verbose:
-            print(f"\n  Signal {signum} received — will save checkpoint and exit after current day", flush=True)
+            print(f"\n  Signal {signum} received — will exit after current day (checkpoint DISABLED)", flush=True)
 
     _prev_sigint = None
     _prev_sigterm = None
-    try:
-        _prev_sigint = signal.signal(signal.SIGINT, _graceful_shutdown)
-        _prev_sigterm = signal.signal(signal.SIGTERM, _graceful_shutdown)
-    except ValueError:
-        pass  # Not on main thread (e.g. FastAPI asyncio.to_thread) — skip signal handling
+    if not _CHECKPOINT_DISABLED:
+        try:
+            _prev_sigint = signal.signal(signal.SIGINT, _graceful_shutdown)
+            _prev_sigterm = signal.signal(signal.SIGTERM, _graceful_shutdown)
+        except ValueError:
+            pass  # Not on main thread (e.g. FastAPI asyncio.to_thread) — skip signal handling
 
     # ── Timer-based graceful exit for cloud environments (Kaggle 12h limit) ──
     # If CENTURION_MAX_RUNTIME_SECS is set, schedule a graceful exit before the
@@ -900,11 +943,10 @@ def run_full_backtest(
                         prev_positions[sym] = 0
                         peak_prices.pop(sym, None)
                         stop_levels.pop(sym, None)
-                        # V6 FIX: Removed stop cooldown (was 2 days).
-                        # With only 3-5 positive-forecast stocks and 2σ stops,
-                        # cooldown creates a position lockout trap:
-                        # stop fires → 2-day lockout → re-entry delayed →
-                        # fewer positions → more concentration → more stops.
+                        # R24v6-RCA: NO stop cooldown — matches R21A V6 fix.
+                        # V6 removed cooldown because it creates position lockout trap:
+                        # stop fires → N-day lockout → fewer positions → concentration → more stops.
+                        # The R24-RCA attempt to re-add it (5 days) made things WORSE.
                         continue
                 elif prev_qty < 0:
                     high_col = ohlcv_slice[sym]["High"]
@@ -923,6 +965,7 @@ def run_full_backtest(
                         prev_positions[sym] = 0
                         peak_prices.pop(sym, None)
                         stop_levels.pop(sym, None)
+                        # R24v6: No cooldown for short stops either
                         continue
 
             # Normal MTM
@@ -1357,6 +1400,13 @@ def run_full_backtest(
         # H1/H2 FIX: True drawdown from absolute peak for halt decisions
         _true_dd = (_true_peak_equity - equity) / _true_peak_equity if _true_peak_equity > 0 else 0.0
 
+        # R24v3: DD halt REMOVED — the oscillation trap (liquidate→re-enter→liquidate
+        # every other day) destroyed more equity than the drawdown itself.
+        # With 72bps smallcap costs, each cycle burns ~₹7K in costs alone.
+        # Defense is now handled by: (1) regime vol scaling (severe_bear → 50% floor),
+        # (2) trailing stops, (3) time exits, (4) peak_equity decay.
+        # _true_dd is kept for REPORTING only.
+
         # R14: Gradual peak decay — prevents unreachable peak trapping vol target
         # at low levels forever, but does NOT snap DD to zero (which re-enabled
         # full risk into a continuing crash every 30 days in R13).
@@ -1388,8 +1438,10 @@ def run_full_backtest(
         else:
             annual_vol_target = 0.40   # Extreme DD — floor
 
-        # FIX-FLOOR: Use actual equity for daily target
-        sizing_equity = max(equity, capital * 0.10)  # 10% ruin floor
+        # R24v6-RCA: RESTORE R21A 10% ruin floor.
+        # At 2%, equity at ₹100K → sizing_equity = ₹10K → positions of 1-2 shares.
+        # At 10%, sizing_equity = ₹50K → still meaningful positions for recovery.
+        sizing_equity = max(equity, capital * 0.10)
         dynamic_daily_target = sizing_equity * annual_vol_target / 16.0
 
         # R21a: Regime-adaptive vol target
@@ -1558,6 +1610,26 @@ def run_full_backtest(
         
         # Pre-compute combined forecasts for ALL symbols, then rank
         _all_combined: Dict[str, float] = {}
+
+        # R24: Compute per-symbol vol-regime multiplier (S13)
+        # Calm vol → amplify forecast (signal clearer), noisy vol → dampen
+        _vrm_cache: Dict[str, float] = {}
+        if _recompute:
+            for _vrm_sym in all_forecasts:
+                if _vrm_sym in ohlcv_slice and len(ohlcv_slice[_vrm_sym].get("Close", [])) >= 252:
+                    try:
+                        _vrm_closes = ohlcv_slice[_vrm_sym]["Close"]
+                        if hasattr(_vrm_closes, "pct_change"):
+                            _vrm_rets = _vrm_closes.pct_change().dropna()
+                            _vrm_roll = _vrm_rets.rolling(20).std().dropna()
+                            if len(_vrm_roll) >= 60:
+                                _vrm_med = float(_vrm_roll.median())
+                                _vrm_cur = float(_vrm_roll.iloc[-1])
+                                if _vrm_cur > 1e-8:
+                                    _vrm_cache[_vrm_sym] = max(0.5, min(1.5, _vrm_med / _vrm_cur))
+                    except Exception:
+                        pass
+
         for sym, fc_dict in all_forecasts.items():
             if not fc_dict:
                 continue
@@ -1575,11 +1647,14 @@ def run_full_backtest(
             # The _eq_regime (severe_bear/bear/bull) reflects STRATEGY performance
             # (equity vs its own sma200), not MARKET conditions. Passing it to the
             # combiner zeroes trend signals during drawdowns — precisely when the
-            # strategy needs them to recover. Use "" to keep base signal weights.
+            # strategy needs them to recover. This + the severe_bear vol floor
+            # created a permanent doom loop: 81% of days in severe_bear, trend
+            # signals zeroed, -74% loss. Use "" to keep base signal weights.
             combined = combine_forecasts(
                 sym, fc_dict, active_weights,
                 forecast_history=_fh_for_sym,
                 regime="",  # R24v9: equity regime must NOT tilt signal weights
+                vol_regime_multiplier=None,  # R24v7: S13 VRM removed (not in R21A)
             )
             fc_val = combined.combined_forecast
             _all_combined[sym] = fc_val
@@ -1627,7 +1702,10 @@ def run_full_backtest(
         _ERP_BIAS = 0.0
 
         # ── M8 FIX: Distribution shift detector — scale down in regime breaks ──
-        # R24v10-RCA: DISABLED — not in R21A. Creates doom loop on own portfolio returns.
+        # R24v10-RCA: DISABLED — this feature was added AFTER R21A (not in commit
+        # c9044b5). It compares PORTFOLIO returns (not market), creating a doom loop:
+        #   losses → 'regime_break' → forecasts halved → reduced exposure → can't
+        #   recover → worse returns → permanent regime_break.
         _dist_shift_on = False
         if _dist_shift_on and len(daily_returns) >= 90:
             try:
@@ -1637,10 +1715,8 @@ def run_full_backtest(
                 if len(_baseline_rets) >= 30:
                     _shift = detect_distribution_shift(_baseline_rets, _recent_rets)
                     if _shift.get('verdict') == 'regime_break':
-                        # Severe shift — halve all forecasts
                         _all_combined = {s: f * 0.50 for s, f in _all_combined.items()}
                     elif _shift.get('verdict') == 'drifting':
-                        # Moderate shift — reduce by 25%
                         _all_combined = {s: f * 0.75 for s, f in _all_combined.items()}
             except Exception:
                 pass
@@ -1663,16 +1739,36 @@ def run_full_backtest(
         if _time_exit_on:
             _max_hold = 15  # default
             try:
-                _max_hold = _Cfg.get_regime_hold_days(_eq_regime) if _Cfg else 15
+                # R24 FIX: Map backtest regime names to get_regime_hold_days keys
+                _REGIME_MAP = {
+                    'severe_bear': 'crisis',
+                    'bear': 'trending_bear',
+                    'neutral': 'range_bound',
+                    'bull': 'trending_bull',
+                    'strong_bull': 'trending_bull',
+                }
+                _mapped_regime = _REGIME_MAP.get(_eq_regime, _eq_regime)
+                _max_hold = _Cfg.get_regime_hold_days(_mapped_regime) if _Cfg else 15
             except Exception:
                 pass
             for sym in list(prev_positions.keys()):
                 if prev_positions.get(sym, 0) == 0:
                     continue
+                # R24-RCA FIX: Skip time-exit if sym is in stop_cooldown (already exited recently)
+                if sym in stop_cooldown:
+                    continue
+                # R24v3: Scale hold days by cost tier — smallcap (72bps) gets 3× longer
+                # holds to avoid churn. Time-exit cost drag was ~22.7% annual on NIFTY500.
+                _sym_cost = _sym_cost_map.get(sym, cost_pct)
+                _adj_max_hold = _max_hold
+                if _sym_cost >= 0.006:       # ≥60bps (smallcap)
+                    _adj_max_hold = _max_hold * 3
+                elif _sym_cost >= 0.004:     # ≥40bps (midcap)
+                    _adj_max_hold = _max_hold * 2
                 if sym in entry_prices:
                     # entry_day tracked via day_idx offset
                     _held_days = _trading_day - entry_prices.get(f'_day_{sym}', _trading_day)
-                    if _held_days >= _max_hold:
+                    if _held_days >= _adj_max_hold:
                         # Force exit stale position
                         if sym in ohlcv_slice:
                             _exit_c = ohlcv_slice[sym]["Close"]
@@ -1690,6 +1786,7 @@ def run_full_backtest(
                         prev_positions[sym] = 0
                         peak_prices.pop(sym, None)
                         stop_levels.pop(sym, None)
+                        # R24v6: No cooldown after time-exit (matches R21A behavior)
 
         # R21a: Save per-source forecasts + close prices for weight optimization
         if _SAVE_FORECASTS_MODE:
@@ -1911,7 +2008,9 @@ def run_full_backtest(
                 prev_qty = prev_positions.get(sym, 0)
                 delta = abs(target_qty - prev_qty)
                 if delta > 0:
-                    # V5 FIX: Daily trade budget — limit to 3 trades/day to cap turnover
+                    # V5 FIX: Daily trade budget — limit rebalancing turnover
+                    # R24v7: RESTORE R21A limit of 3 (was raised to 8 which enabled
+                    # 2.7× more churn, bleeding costs in bear markets).
                     _max_daily_trades = getattr(_Cfg, 'MAX_DAILY_TRADES', 3) if _Cfg else 3
                     if _day_trades_count >= _max_daily_trades and abs(prev_qty) > 0:
                         target_qty = prev_qty  # skip rebalance — budget exhausted
@@ -1981,8 +2080,12 @@ def run_full_backtest(
 
                 prev_positions[sym] = target_qty
 
-                # R24v11-RCA: RESTORE R21A stop sigma values (8.0σ default).
-                # M3 tightened to 2-4σ = constant whipsaw destroying all gains.
+                # R24v11-RCA: RESTORE R21A stop sigma values.
+                # The M3 "tightened" stops (2.0-4.0σ) were 3-5× tighter than R21A
+                # original (8.0-10.0σ at commit c9044b5). Tight stops cause constant
+                # whipsaw: stop-out → re-entry → costs → loss → more stops → doom loop.
+                # A 2σ stop on a 2% daily vol stock = only 4% from peak = noise.
+                # R21A used 8σ = 16% from peak = genuine trend reversal.
                 stop_sigma = 8.0  # R21A default
 
                 # V2: Bull profit-taker — tighter stops in uptrend to book profits (Harvest only)
@@ -2176,9 +2279,11 @@ def run_full_backtest(
             _line = f"  Day {d:4d}/{total_d}  equity={equity:,.0f}  ret={ret_so_far:+.1f}%  positions={active_count}"
             print(_line, flush=True)
 
-            # Save checkpoint every 50-day block
-            try:
+            # Save checkpoint every 50-day block (disabled by default for RCA)
+            if not _CHECKPOINT_DISABLED:
+              try:
                 _ckpt_data = {
+                    'code_version': _CODE_VERSION,
                     'day_idx': day_idx,
                     'n_symbols': n_symbols, 'capital': capital, 'n_days': n_days,
                     'equity': equity,
@@ -2206,16 +2311,18 @@ def run_full_backtest(
                     _ckpt_data['forecast_log'] = list(_forecast_log)
                 with open(_checkpoint_path, 'wb') as _ckf:
                     pickle.dump(_ckpt_data, _ckf, protocol=pickle.HIGHEST_PROTOCOL)
-            except Exception:
+              except Exception:
                 pass  # non-fatal — checkpoint save failure shouldn't stop simulation
 
         # ── Graceful exit: save checkpoint and break ───────────
         if _graceful_exit_requested:
             if verbose:
                 d = day_idx - min_history
-                print(f"\n  Graceful exit at Day {d}/{n_days - min_history} — saving checkpoint...", flush=True)
-            try:
+                print(f"\n  Graceful exit at Day {d}/{n_days - min_history} (checkpoint {'DISABLED' if _CHECKPOINT_DISABLED else 'saving'})", flush=True)
+            if not _CHECKPOINT_DISABLED:
+              try:
                 _ckpt_data = {
+                    'code_version': _CODE_VERSION,
                     'day_idx': day_idx,
                     'n_symbols': n_symbols, 'capital': capital, 'n_days': n_days,
                     'equity': equity,
@@ -2245,7 +2352,7 @@ def run_full_backtest(
                     pickle.dump(_ckpt_data, _ckf, protocol=pickle.HIGHEST_PROTOCOL)
                 if verbose:
                     print(f"  Checkpoint saved. Re-run to resume from Day {d+1}.", flush=True)
-            except Exception as _save_err:
+              except Exception as _save_err:
                 if verbose:
                     print(f"  WARNING: checkpoint save failed on exit: {_save_err}", flush=True)
             break
@@ -2267,7 +2374,8 @@ def run_full_backtest(
             if verbose:
                 print(f"\n  FATAL: {_MAX_CONSECUTIVE_ERRORS} consecutive day errors — aborting simulation", flush=True)
             # Save emergency checkpoint before aborting
-            try:
+            if not _CHECKPOINT_DISABLED:
+              try:
                 _ckpt_data = {
                     'day_idx': day_idx,
                     'n_symbols': n_symbols, 'capital': capital, 'n_days': n_days,
@@ -2294,7 +2402,7 @@ def run_full_backtest(
                 }
                 with open(_checkpoint_path, 'wb') as _ckf:
                     pickle.dump(_ckpt_data, _ckf, protocol=pickle.HIGHEST_PROTOCOL)
-            except Exception:
+              except Exception:
                 pass
             break
 
@@ -2312,7 +2420,7 @@ def run_full_backtest(
         _deadline_timer.cancel()
 
     # Clean up checkpoint on successful completion (only if NOT interrupted)
-    if not _graceful_exit_requested and os.path.exists(_checkpoint_path):
+    if not _CHECKPOINT_DISABLED and not _graceful_exit_requested and os.path.exists(_checkpoint_path):
         os.remove(_checkpoint_path)
 
     if verbose:
