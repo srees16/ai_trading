@@ -1,0 +1,15 @@
+{
+  "id": "srees16/centurion-bhavcopy-download",
+  "title": "centurion-bhavcopy-download",
+  "code_file": "notebook_bhavcopy_download.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_internet": true,
+  "dataset_sources": [
+    "srees16/centurion-core"
+  ],
+  "competition_sources": [],
+  "kernel_sources": []
+}
