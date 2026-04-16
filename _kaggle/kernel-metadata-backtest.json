@@ -1,0 +1,15 @@
+{
+  "id": "srees16/centurion-backtest-phase-b",
+  "title": "centurion-backtest-phase-b",
+  "code_file": "notebook_backtest_phase_b.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": true,
+  "enable_gpu": false,
+  "enable_internet": true,
+  "dataset_sources": [
+    "srees16/centurion-core"
+  ],
+  "competition_sources": [],
+  "kernel_sources": ["srees16/centurion-backtest-phase-b"]
+}
