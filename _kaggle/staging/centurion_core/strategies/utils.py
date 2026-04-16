@@ -1,0 +1,347 @@
+"""
+Strategy Utilities Module.
+
+Provides utility functions for:
+- Converting matplotlib figures to base64 strings
+- Converting plotly figures to JSON
+- Converting DataFrames to JSON-serializable tables
+- Creating standardized metrics summaries
+"""
+
+import base64
+import io
+import json
+from typing import Any, Optional
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+
+
+def matplotlib_to_base64(
+    fig,
+    format: str = "png",
+    dpi: int = 100,
+    transparent: bool = False,
+    close_fig: bool = True
+) -> str:
+    """
+    Convert a matplotlib figure to a base64-encoded string.
+    
+    This function captures the figure as an image and encodes it
+    to base64 for embedding in web UIs without saving to disk.
+    
+    Args:
+        fig: matplotlib.figure.Figure object
+        format: Image format ('png', 'jpg', 'svg')
+        dpi: Dots per inch for image quality
+        transparent: Whether to use transparent background
+        close_fig: Whether to close the figure after conversion
+    
+    Returns:
+        Base64-encoded string of the image
+    
+    Example:
+        ```python
+        import matplotlib.pyplot as plt
+        
+        fig, ax = plt.subplots()
+        ax.plot([1, 2, 3], [1, 4, 9])
+        
+        base64_str = matplotlib_to_base64(fig)
+        ```
+    """
+    # Create buffer
+    buffer = io.BytesIO()
+    
+    # Save figure to buffer
+    fig.savefig(
+        buffer,
+        format=format,
+        dpi=dpi,
+        transparent=transparent,
+        bbox_inches='tight',
+        pad_inches=0.1
+    )
+    
+    # Get buffer value and encode
+    buffer.seek(0)
+    image_bytes = buffer.getvalue()
+    base64_str = base64.b64encode(image_bytes).decode('utf-8')
+    
+    # Close buffer
+    buffer.close()
+    
+    # Optionally close figure to free memory
+    if close_fig:
+        plt.close(fig)
+    
+    # Return with data URI prefix for direct embedding
+    mime_types = {
+        'png': 'image/png',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'svg': 'image/svg+xml'
+    }
+    mime_type = mime_types.get(format.lower(), 'image/png')
+    
+    return f"data:{mime_type};base64,{base64_str}"
+
+
+def plotly_to_json(fig) -> dict:
+    """
+    Convert a plotly figure to JSON-serializable dictionary.
+    
+    Args:
+        fig: plotly.graph_objects.Figure object
+    
+    Returns:
+        JSON-serializable dictionary representation of the figure
+    
+    Example:
+        ```python
+        import plotly.graph_objects as go
+        
+        fig = go.Figure(data=go.Scatter(x=[1, 2, 3], y=[1, 4, 9]))
+        json_data = plotly_to_json(fig)
+        ```
+    """
+    try:
+        # Use plotly's built-in JSON serialization
+        return json.loads(fig.to_json())
+    except Exception:
+        # Fallback: convert to dict manually
+        return {
+            'data': [trace.to_plotly_json() for trace in fig.data],
+            'layout': fig.layout.to_plotly_json()
+        }
+
+
+def dataframe_to_table(
+    df: pd.DataFrame,
+    title: str = "Data Table",
+    description: str = "",
+    max_rows: Optional[int] = None,
+    round_decimals: int = 4,
+    date_format: str = "%Y-%m-%d"
+) -> dict:
+    """
+    Convert a pandas DataFrame to a JSON-serializable table structure.
+    
+    Args:
+        df: pandas DataFrame to convert
+        title: Title for the table
+        description: Description of the table contents
+        max_rows: Maximum rows to include (None for all)
+        round_decimals: Number of decimal places for floats
+        date_format: Format string for datetime columns
+    
+    Returns:
+        Dictionary with 'title', 'data', 'columns', 'description'
+    
+    Example:
+        ```python
+        df = pd.DataFrame({'A': [1, 2], 'B': [3.1415, 2.718]})
+        table = dataframe_to_table(df, title="My Data")
+        ```
+    """
+    # Make a copy to avoid modifying original
+    df_copy = df.copy()
+    
+    # Truncate if needed
+    if max_rows is not None and len(df_copy) > max_rows:
+        df_copy = df_copy.head(max_rows)
+    
+    # Process columns
+    for col in df_copy.columns:
+        # Handle datetime columns
+        if pd.api.types.is_datetime64_any_dtype(df_copy[col]):
+            df_copy[col] = df_copy[col].dt.strftime(date_format)
+        
+        # Handle float columns
+        elif pd.api.types.is_float_dtype(df_copy[col]):
+            df_copy[col] = df_copy[col].round(round_decimals)
+        
+        # Handle NaN/Inf values
+        if df_copy[col].dtype in ['float64', 'float32']:
+            df_copy[col] = df_copy[col].replace([np.inf, -np.inf], np.nan)
+            df_copy[col] = df_copy[col].fillna(0)
+    
+    # Reset index if it's meaningful
+    if df_copy.index.name or not isinstance(df_copy.index, pd.RangeIndex):
+        df_copy = df_copy.reset_index()
+    
+    return {
+        "title": title,
+        "data": df_copy.to_dict(orient="records"),
+        "columns": list(df_copy.columns),
+        "description": description
+    }
+
+
+def create_metrics_summary(
+    metrics: dict[str, Any],
+    title: str = "Performance Metrics"
+) -> dict:
+    """
+    Create a formatted metrics summary table.
+    
+    Args:
+        metrics: Dictionary of metric names to values
+        title: Title for the metrics table
+    
+    Returns:
+        Table-structured dictionary for metrics display
+    """
+    # Format metrics for display
+    formatted = []
+    
+    metric_formatters = {
+        'total_return': lambda v: f"{v:.2f}%",
+        'mean_return': lambda v: f"{v:.4f}%",
+        'std_return': lambda v: f"{v:.4f}%",
+        'max_return': lambda v: f"{v:.4f}%",
+        'min_return': lambda v: f"{v:.4f}%",
+        'sharpe_ratio': lambda v: f"{v:.2f}",
+        'sortino_ratio': lambda v: f"{v:.2f}",
+        'max_drawdown': lambda v: f"{v:.2f}%",
+        'win_rate': lambda v: f"{v:.2f}%",
+        'total_trades': lambda v: f"{int(v)}",
+        'final_value': lambda v: f"${v:,.2f}",
+        'initial_capital': lambda v: f"${v:,.2f}",
+    }
+    
+    # Human-readable names
+    metric_names = {
+        'total_return': 'Total Return',
+        'mean_return': 'Mean Daily Return',
+        'std_return': 'Return Std Dev',
+        'max_return': 'Best Daily Return',
+        'min_return': 'Worst Daily Return',
+        'sharpe_ratio': 'Sharpe Ratio',
+        'sortino_ratio': 'Sortino Ratio',
+        'max_drawdown': 'Maximum Drawdown',
+        'win_rate': 'Win Rate',
+        'total_trades': 'Total Trades',
+        'final_value': 'Final Portfolio Value',
+        'initial_capital': 'Initial Capital',
+    }
+    
+    for key, value in metrics.items():
+        if value is None or (isinstance(value, float) and (np.isnan(value) or np.isinf(value))):
+            continue
+        
+        display_name = metric_names.get(key, key.replace('_', ' ').title())
+        formatter = metric_formatters.get(key, lambda v: str(v))
+        
+        try:
+            formatted_value = formatter(value)
+        except (TypeError, ValueError):
+            formatted_value = str(value)
+        
+        formatted.append({
+            "metric": display_name,
+            "value": formatted_value
+        })
+    
+    return {
+        "title": title,
+        "data": formatted,
+        "columns": ["metric", "value"],
+        "description": "Summary of key performance metrics"
+    }
+
+
+def calculate_rsi(prices: pd.Series, period: int = 14) -> pd.Series:
+    """
+    Calculate Relative Strength Index using Wilder's smoothed method (EWM).
+    
+    Shared implementation used by DataService and RSI strategy to avoid
+    duplicate RSI calculation logic.
+    
+    Args:
+        prices: Price series (typically Close prices)
+        period: RSI lookback period (default: 14)
+    
+    Returns:
+        RSI values as pandas Series (0-100 scale, NaN filled with 50)
+    """
+    delta = prices.diff()
+    
+    gains = delta.where(delta > 0, 0)
+    losses = (-delta).where(delta < 0, 0)
+    
+    avg_gains = gains.ewm(com=period - 1, min_periods=period).mean()
+    avg_losses = losses.ewm(com=period - 1, min_periods=period).mean()
+    
+    rs = avg_gains / avg_losses
+    rs = rs.replace([np.inf, -np.inf], 0)
+    rsi = 100 - (100 / (1 + rs))
+    
+    return rsi.fillna(50)
+
+
+def calculate_max_drawdown(values: pd.Series) -> float:
+    """
+    Calculate maximum drawdown percentage from a value series.
+    
+    Shared implementation used by BaseStrategy and MetricsCalculator
+    to avoid duplicate drawdown logic.
+    
+    Args:
+        values: Series of portfolio values or prices
+    
+    Returns:
+        Maximum drawdown as a percentage (negative number, e.g. -15.2)
+    """
+    if len(values) < 2:
+        return 0.0
+    
+    peak = values.cummax()
+    drawdown = (values - peak) / peak
+    return float(drawdown.min() * 100)
+
+
+def apply_transaction_costs(
+    portfolio: pd.DataFrame,
+    signals: pd.DataFrame,
+    cost_pct: float = 0.001,
+    signal_col: str = "signal",
+) -> pd.DataFrame:
+    """
+    Deduct transaction costs from a portfolio DataFrame whenever
+    a position change (trade) occurs.
+
+    Args:
+        portfolio: DataFrame with a 'value' column (portfolio values over time).
+        signals: DataFrame with a signal column indicating position changes.
+        cost_pct: Round-trip cost as a fraction (0.001 = 0.1%).
+        signal_col: Name of the column containing trade signals.
+
+    Returns:
+        Portfolio DataFrame with costs deducted in-place.
+    """
+    if portfolio.empty or signals.empty or "value" not in portfolio.columns:
+        return portfolio
+
+    # Ensure value column is float to avoid dtype warnings
+    portfolio["value"] = portfolio["value"].astype(float)
+
+    sig_col = None
+    for c in (signal_col, "signal", "Signal", "position", "Position"):
+        if c in signals.columns:
+            sig_col = c
+            break
+    if sig_col is None:
+        return portfolio
+
+    # Detect position changes (trades)
+    sig = signals[sig_col].reindex(portfolio.index, method="ffill").fillna(0)
+    trades = sig.diff().fillna(0) != 0
+
+    # Deduct cost on each trade
+    cost_multiplier = 1.0 - cost_pct
+    for idx in portfolio.index[trades]:
+        portfolio.loc[idx:, "value"] *= cost_multiplier
+
+    return portfolio

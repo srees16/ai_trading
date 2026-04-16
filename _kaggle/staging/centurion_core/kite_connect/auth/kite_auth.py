@@ -1,0 +1,322 @@
+"""
+Automates the Kite Connect login flow to capture the request token.
+
+How it works:
+1. Starts a local HTTP server on http://127.0.0.1:5000
+2. Opens the Kite Connect login URL in your browser
+3. You log in with your Zerodha credentials (+ TOTP/2FA)
+4. Zerodha redirects back to the local server with the request_token
+5. The script captures it, updates kite_token_store.py, and returns the token
+
+IMPORTANT: Set your Kite Connect app's redirect URL to:
+    http://127.0.0.1:5000
+    (Go to https://developers.kite.trade -> Your App -> Redirect URL)
+"""
+
+import webbrowser
+import subprocess
+import tempfile
+import re
+import os
+import sys
+import time
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.parse import urlparse, parse_qs
+
+# Append kite_connect to path (not insert) to avoid shadowing top-level packages
+_kite_root = os.path.dirname(os.path.dirname(__file__))
+if _kite_root not in sys.path:
+    sys.path.append(_kite_root)
+
+from core.config import (
+    API_KEY, LOGIN_URL, KITE_APP_FILE,
+    ZERODHA_USER_ID, ZERODHA_PASSWORD, ZERODHA_TOTP_SECRET,
+)
+from core.selenium_service import get_driver, show_driver
+
+captured_token = None
+
+
+class CallbackHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        global captured_token
+        parsed = urlparse(self.path)
+        query = parse_qs(parsed.query)
+
+        if 'request_token' in query:
+            captured_token = query['request_token'][0]
+            status = query.get('status', ['unknown'])[0]
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html')
+            self.end_headers()
+            html = "<html><body><script>window.close();</script></body></html>"
+            self.wfile.write(html.encode())
+        else:
+            self.send_response(400)
+            self.send_header('Content-Type', 'text/html')
+            self.end_headers()
+            self.wfile.write(b"<html><body><h2>Error: No request_token found.</h2></body></html>")
+
+    def log_message(self, format, *args):
+        # Suppress default request logging
+        pass
+
+
+def update_kite_app(token):
+    """Update the request_token value in kite_token_store.py."""
+    try:
+        with open(KITE_APP_FILE, 'r') as f:
+            content = f.read()
+
+        updated = re.sub(
+            r"(request_token\s*=\s*')[^']*(')",
+            rf"\g<1>{token}\g<2>",
+            content
+        )
+
+        with open(KITE_APP_FILE, 'w') as f:
+            f.write(updated)
+
+        print(f"  [OK] Updated request_token in kite_token_store.py")
+    except Exception as e:
+        print(f"  [ERROR] Could not update kite_token_store.py: {e}")
+
+
+def fetch_request_token():
+    """
+    Launch the Kite login flow, capture the request_token via local
+    HTTP redirect, update kite_token_store.py, and return the new token.
+
+    Uses Selenium to auto-fill user ID and password if available.
+    The user only needs to complete TOTP/2FA manually.
+
+    Can be called from other modules:
+        from kite_auth import fetch_request_token
+        token = fetch_request_token()
+    """
+    global captured_token
+    captured_token = None  # reset for re-entry
+
+    server_address = ('127.0.0.1', 5000)
+    httpd = HTTPServer(server_address, CallbackHandler)
+
+    print("=" * 60)
+    print("  Kite Connect - Request Token Generator")
+    print("=" * 60)
+    print(f"\n  Local callback server started on http://127.0.0.1:5000")
+
+    # Try Selenium-based auto-fill login first
+    selenium_driver = None
+    try:
+        from selenium.webdriver.common.by import By
+        from selenium.webdriver.support.ui import WebDriverWait
+        from selenium.webdriver.support import expected_conditions as EC
+
+        print("  Launching browser with auto-fill via Selenium...\n")
+
+        driver = get_driver(hidden=True)
+        selenium_driver = driver
+
+        # Navigate to login page
+        driver.get(LOGIN_URL)
+
+        # Wait for the user ID input field and fill credentials
+        wait = WebDriverWait(driver, 15)
+        user_id_field = wait.until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, 'input[type="text"]'))
+        )
+        password_field = driver.find_element(By.CSS_SELECTOR, 'input[type="password"]')
+
+        user_id_field.clear()
+        user_id_field.send_keys(ZERODHA_USER_ID)
+        password_field.clear()
+        password_field.send_keys(ZERODHA_PASSWORD)
+
+        print(f"  [OK] Auto-filled User ID and Password")
+
+        # Click the login/submit button
+        try:
+            submit_btn = driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]')
+            submit_btn.click()
+            print("  [OK] Clicked Login button")
+        except Exception:
+            print("  [!] Could not auto-click Login button - please click it manually")
+
+        # Wait for the TOTP / 2FA input to appear
+        # First wait for the login form's password field to go stale (page transition)
+        totp_field = None
+        try:
+            WebDriverWait(driver, 10).until(EC.staleness_of(password_field))
+            # Now wait for the new TOTP input to appear on the 2FA page
+            totp_field = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR,
+                    'input[type="text"], input[type="number"], input[type="tel"]'))
+            )
+            print("  [OK] 2FA / TOTP screen detected")
+        except Exception:
+            print("  [!] Could not detect TOTP field - showing browser anyway")
+
+        # Auto-fill TOTP if secret is configured, otherwise show browser
+        totp_auto_filled = False
+        if ZERODHA_TOTP_SECRET and totp_field is not None:
+            try:
+                import pyotp
+                totp_code = pyotp.TOTP(ZERODHA_TOTP_SECRET).now()
+                totp_field.clear()
+                totp_field.send_keys(totp_code)
+                print(f"  [OK] Auto-filled TOTP code")
+
+                # Submit TOTP via JavaScript to avoid blocking on click().
+                # The redirect happens instantly after TOTP submit, sending
+                # the browser to 127.0.0.1:5000 — if we use click() it
+                # blocks waiting for a Selenium response that never comes
+                # because the page navigates away.
+                try:
+                    totp_submit = driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]')
+                    driver.execute_script("arguments[0].click();", totp_submit)
+                except Exception:
+                    try:
+                        from selenium.webdriver.common.keys import Keys
+                        totp_field.send_keys(Keys.RETURN)
+                    except Exception:
+                        pass  # redirect may already be in progress
+
+                totp_auto_filled = True
+                print("  [OK] TOTP submitted — waiting for redirect...\n")
+            except ImportError:
+                print("  [!] pyotp not installed — falling back to manual TOTP entry")
+                print("  [!] Install it with: pip install pyotp")
+            except Exception as totp_err:
+                print(f"  [!] Auto-TOTP failed ({totp_err}) — showing browser for manual entry")
+
+        if not totp_auto_filled:
+            # Headless browser can't be shown — restart visible for manual TOTP
+            try:
+                driver.quit()
+            except Exception:
+                pass
+            selenium_driver = None
+
+            print("  [!] Restarting browser in visible mode for manual TOTP…\n")
+            driver = get_driver(hidden=False)
+            selenium_driver = driver
+            driver.get(LOGIN_URL)
+
+            # Re-fill credentials in the visible browser
+            wait2 = WebDriverWait(driver, 15)
+            uid2 = wait2.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, 'input[type="text"]'))
+            )
+            pwd2 = driver.find_element(By.CSS_SELECTOR, 'input[type="password"]')
+            uid2.clear(); uid2.send_keys(ZERODHA_USER_ID)
+            pwd2.clear(); pwd2.send_keys(ZERODHA_PASSWORD)
+            try:
+                driver.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
+            except Exception:
+                pass
+            print("  Please complete TOTP/2FA in the browser window…\n")
+
+        print("  Waiting for login redirect... (Ctrl+C to cancel)\n")
+
+        while captured_token is None:
+            httpd.handle_request()
+
+        httpd.server_close()
+
+    except ImportError:
+        print("  [!] Selenium not installed. Falling back to manual browser login.")
+        print("  [!] Install it with: pip install selenium\n")
+        print(f"  Opening Kite login page in your browser...\n")
+
+        # Fallback: open browser without auto-fill
+        browser_proc = None
+        temp_profile = None
+        if sys.platform == 'win32':
+            local = os.environ.get('LOCALAPPDATA', '')
+            program_files = os.environ.get('PROGRAMFILES', 'C:\\Program Files')
+            program_files_x86 = os.environ.get('PROGRAMFILES(X86)', 'C:\\Program Files (x86)')
+
+            browser_paths = [
+                os.path.join(local, r'BraveSoftware\Brave-Browser\Application\brave.exe'),
+                os.path.join(program_files, r'BraveSoftware\Brave-Browser\Application\brave.exe'),
+                os.path.join(program_files, r'Google\Chrome\Application\chrome.exe'),
+                os.path.join(program_files_x86, r'Google\Chrome\Application\chrome.exe'),
+                os.path.join(local, r'Google\Chrome\Application\chrome.exe'),
+                os.path.join(program_files, r'Microsoft\Edge\Application\msedge.exe'),
+                os.path.join(program_files_x86, r'Microsoft\Edge\Application\msedge.exe'),
+                os.path.join(program_files, r'Mozilla Firefox\firefox.exe'),
+                os.path.join(program_files_x86, r'Mozilla Firefox\firefox.exe'),
+            ]
+
+            for browser_path in browser_paths:
+                if os.path.isfile(browser_path):
+                    try:
+                        temp_profile = tempfile.mkdtemp(prefix='kite_login_')
+                        browser_proc = subprocess.Popen(
+                            [browser_path, f'--user-data-dir={temp_profile}',
+                             '--no-first-run', '--no-default-browser-check',
+                             LOGIN_URL]
+                        )
+                        print(f"  Using: {os.path.basename(browser_path)}")
+                        break
+                    except Exception:
+                        continue
+        if browser_proc is None:
+            webbrowser.open(LOGIN_URL)
+
+        print("  Waiting for login redirect... (Ctrl+C to cancel)\n")
+
+        while captured_token is None:
+            httpd.handle_request()
+
+        httpd.server_close()
+
+        # Close the fallback browser
+        if browser_proc is not None:
+            try:
+                browser_proc.kill()
+                browser_proc.wait(timeout=5)
+            except Exception:
+                pass
+            if temp_profile and os.path.isdir(temp_profile):
+                try:
+                    import shutil
+                    shutil.rmtree(temp_profile, ignore_errors=True)
+                except Exception:
+                    pass
+
+    except Exception as e:
+        print(f"  [!] Selenium auto-fill failed: {e}")
+        print("  [!] Falling back to manual browser login.\n")
+
+        # Fallback on any Selenium error
+        webbrowser.open(LOGIN_URL)
+        print("  Waiting for login redirect... (Ctrl+C to cancel)\n")
+
+        while captured_token is None:
+            httpd.handle_request()
+
+        httpd.server_close()
+
+    finally:
+        # Close Selenium browser immediately after token is captured
+        if selenium_driver is not None:
+            try:
+                selenium_driver.quit()
+            except Exception:
+                pass
+
+    print("=" * 60)
+    print(f"  Request Token: {captured_token}")
+    print("=" * 60)
+
+    update_kite_app(captured_token)
+
+    print("\n  Done!")
+
+    return captured_token
+
+
+if __name__ == '__main__':
+    fetch_request_token()

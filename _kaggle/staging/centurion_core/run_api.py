@@ -1,0 +1,72 @@
+"""
+Entry point for the Centurion Capital FastAPI server.
+
+Usage:
+    python run_api.py
+    python run_api.py --port 9001 --reload
+"""
+
+import argparse
+import logging
+import sys
+from pathlib import Path
+
+# Ensure project root is importable
+_ROOT = str(Path(__file__).resolve().parent)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+# Load .env BEFORE any other module reads os.getenv()
+from dotenv import load_dotenv
+load_dotenv(Path(_ROOT) / ".env", override=False)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Centurion Capital LLC API")
+    parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=9001, help="Port (default: 9001)")
+    parser.add_argument("--reload", action="store_true", help="Enable auto-reload for development")
+    parser.add_argument("--workers", type=int, default=1, help="Number of workers (default: 1)")
+    args = parser.parse_args()
+
+    import uvicorn
+
+    # Suppress noisy uvicorn/reloader chatter; keep only app-level logs
+    logging.getLogger("watchfiles").setLevel(logging.WARNING)
+
+    log_config = uvicorn.config.LOGGING_CONFIG.copy()
+    log_config["loggers"]["uvicorn"]["level"] = "WARNING"
+    log_config["loggers"]["uvicorn.access"]["level"] = "WARNING"
+
+    uvicorn.run(
+        "api.main:app",
+        host=args.host,
+        port=args.port,
+        reload=args.reload,
+        reload_includes=["*.py"] if args.reload else None,
+        reload_excludes=[
+            "kite_connect/auth/*",
+            "data/*",
+            "_test_*",
+            "__pycache__/*",
+            "chroma_store/*",
+            "financial_ML/_cache/*",
+            "financial_ML/_output/*",
+            "*.json",
+            "*.csv",
+            "*.log",
+        ] if args.reload else None,
+        workers=args.workers,
+        log_config=log_config,
+        timeout_keep_alive=300,
+    )
+
+
+if __name__ == "__main__":
+    main()
