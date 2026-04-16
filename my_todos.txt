@@ -336,6 +336,120 @@
 │  5. After 30 days: evaluate, decide on live deployment              │
 └──────────────────────────────────────────────────────────────────────┘
 
+┌──────────────────────────────────────────────────────────────────────┐
+│  R24 BACKTEST FIX CAMPAIGN — STATUS (16 Apr 2026)                   │
+│  Branch: c.core/iterative | Commit: f35e7a5                        │
+│  Local backtest: 100 DEFAULT tickers, 3861 trading days             │
+│  Kaggle backtest: PIT NIFTY500 (~797 tickers), v18 pushed          │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ROOT CAUSES FOUND & FIXED (v3→v15c):                               │
+│    #1 EMPTY SECTOR MAP (v8): All stocks→'Unknown'→3 positions       │
+│    #2 STALE CHECKPOINT: Disabled via _CHECKPOINT_DISABLED flag      │
+│    #3 SEVERE BEAR DOOM LOOP (v9): 50% vol floor + trend zeroing    │
+│    #4 POST-R21A FEATURES (v10): Distribution shift + exec gap      │
+│    #5 TIGHT STOPS (v11): 2-4σ restored to R21A 8.0σ flat           │
+│    #6 FLAT VOL TARGET (v12): Restored DD-adaptive 0.75→0.40        │
+│    #7 MAX_LEVERAGE 2.0x (v13): Restored to R21A 4.0× [PRIMARY]    │
+│    #8 8+ CONFIG OVERRIDES (v14): COST_AWARE_INERTIA,               │
+│       SMOOTH_BEAR_DEFENSE, TIME_EXIT, META_LABELING,               │
+│       FORECAST_PROPORTIONAL_SIZING, DYNAMIC_LEVERAGE,              │
+│       VIX_PIPELINE_SCALING — ALL disabled (none in R21A)           │
+│    #9 ERP_BIAS (v15): Removed artificial +2.0 forecast inflation   │
+│    #10 DISCRETE POSITIONS (v15c): Replaced 4-tier (5/8/12/15)     │
+│        with continuous signal-driven count (3-20)                   │
+│                                                                      │
+│  CURRENT CONFIG (R24v15c):                                          │
+│    ERP_BIAS = 0.0 (no artificial forecast inflation)                │
+│    MAX_POSITIONS = continuous (3-20, based on forecast > 2.0)       │
+│    Ranking: positive-first in long-only, abs() in short-allowed    │
+│    Leverage: 4.0× (CARVER_MAX_LEVERAGE + LEVERAGE_MAX)             │
+│    Inertia: 10% (was 40% + COST_AWARE overriding it)              │
+│    Vol target: DD-adaptive (0.75/0.65/0.55/0.45/0.40)             │
+│    Stops: flat 8.0σ                                                 │
+│    All post-R21A Config features: DISABLED                         │
+│                                                                      │
+│  LOCAL BACKTEST PROGRESS (R24v15c, 100 tickers):                    │
+│    Day 0:   -0.8%   positions=20                                    │
+│    Day 50:  -23.0%  positions=20                                    │
+│    Day 150: -12.6%  positions=17  ← adaptive working               │
+│    Day 300: +76.4%  positions=20                                    │
+│    Day 400: +337.3% positions=20                                    │
+│    Day 500: +540.8% positions=20                                    │
+│    Day 550: +483.7% positions=12  ← conviction drop                │
+│    Day 650: +426.0% positions=12                                    │
+│    Day 700: +418.4% positions=20  ← recovery                       │
+│    Terminal ID: 33e1295c (still running, ~3861 total days)          │
+│                                                                      │
+│  KAGGLE PUSH (16 Apr 2026):                                        │
+│    Dataset: srees16/centurion-core — R24v15c code uploaded          │
+│    Kernel: srees16/centurion-backtest-phase-b v18 — pushed         │
+│    URL: kaggle.com/code/srees16/centurion-backtest-phase-b         │
+│    Note: nifty500-extract not pushed (backtest is standalone)      │
+│                                                                      │
+│  COMPARISON (at Day 500):                                           │
+│    v10 (broken):  -62%     | positions=15 (locked)                  │
+│    v14 (pre-ERP): +483.5%  | positions=15 (locked)                  │
+│    v15b (hybrid): +520.8%  | positions=12-20 (adaptive)            │
+│    v15c (contin): +540.8%  | positions=12-20 (signal-driven)       │
+│                                                                      │
+│  AWAITING: Full 3861-day run for final Sharpe/CAGR/MaxDD metrics   │
+└──────────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────┐
+│  RESUMING ON NEW LAPTOP — QUICK START GUIDE                         │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  1. CLONE REPO:                                                      │
+│     git clone -b c.core/iterative \                                  │
+│       https://github.com/srees16/centurion_core.git                 │
+│     cd centurion_core                                                │
+│                                                                      │
+│  2. SETUP PYTHON ENV:                                                │
+│     python -m venv myenv                                             │
+│     myenv\Scripts\activate  (Windows)                                │
+│     pip install -r requirements.txt                                  │
+│                                                                      │
+│  3. RUN LOCAL BACKTEST (100 tickers, ~40 min):                      │
+│     cd _kaggle/staging/centurion_core                                │
+│     python run_backtest_production.py                                │
+│     → Uses DEFAULT 100 tickers, 2012-2025, ₹500K capital           │
+│     → All R24v15c fixes are in the committed code                   │
+│                                                                      │
+│  4. PUSH CODE TO KAGGLE DATASET:                                    │
+│     cd _kaggle/staging                                               │
+│     kaggle datasets version -m "description" --dir-mode zip         │
+│     → Uploads centurion_core folder to srees16/centurion-core      │
+│                                                                      │
+│  5. PUSH NOTEBOOK TO KAGGLE KERNEL:                                  │
+│     # Set encoding (Windows PowerShell):                             │
+│     $env:PYTHONUTF8 = "1"                                           │
+│     [System.Console]::OutputEncoding = [System.Text.Encoding]::UTF8 │
+│     cd _kaggle/backtest_push                                         │
+│     kaggle kernels push                                              │
+│     → Runs PIT NIFTY500 backtest on Kaggle (12hr limit)            │
+│     → Check: kaggle.com/code/srees16/centurion-backtest-phase-b    │
+│                                                                      │
+│  6. KAGGLE CREDENTIALS:                                              │
+│     Place kaggle.json in ~/.kaggle/ (or %USERPROFILE%\.kaggle\)     │
+│     Get from: kaggle.com → Settings → API → Create New Token       │
+│                                                                      │
+│  KEY FILES IN REPO:                                                  │
+│    services/full_pipeline_backtest.py — main backtest engine        │
+│    config.py — all Config parameters (leverage, vol, features)      │
+│    run_backtest_production.py — local backtest runner                │
+│    _kaggle/staging/ — code pushed to Kaggle dataset                 │
+│    _kaggle/backtest_push/ — notebook + metadata for Kaggle kernel   │
+│    _kaggle/nifty500_state/ — ticker list for nifty500 extraction    │
+│    _kaggle/*.json — Kaggle kernel/dataset metadata configs          │
+│    _kaggle/*.ipynb — backtest + nifty500 extract notebooks          │
+│                                                                      │
+│  R21A REFERENCE: git show c9044b5 (original working commit)        │
+│  REMAINING DIVERGENCES FROM R21A (not yet addressed):               │
+│    - Cost model: R21A flat 33bps RT vs staging 4-tier (16-51 bps)  │
+│    - R21A used allow_short + abs() ranking (N/A for long-only)     │
+└──────────────────────────────────────────────────────────────────────┘
+
 ================================================================================
 
 refer for applicable improvements: https://github.com/paperswithbacktest/awesome-systematic-trading
