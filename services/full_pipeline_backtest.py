@@ -676,7 +676,8 @@ def run_full_backtest(
     allow_short = False  # FIX-SHORT: disabled — short Sharpe ≈ -0.01, bleeds in secular bull
 
     # Phase 4: Execution gap model — penalty for close→open gap on new entries/exits
-    _EXECUTION_GAP_ENABLED = getattr(_Cfg, 'EXECUTION_GAP_ENABLED', True) if _Cfg else True
+    # R24v10-RCA: DISABLED — this feature was added AFTER R21A (not in commit c9044b5).
+    _EXECUTION_GAP_ENABLED = False
     _EXECUTION_GAP_BPS = getattr(_Cfg, 'EXECUTION_GAP_BPS', 0.0010) if _Cfg else 0.0010  # 10 bps
 
     # ── Checkpoint save/resume ─────────────────────────────────
@@ -1371,13 +1372,21 @@ def run_full_backtest(
         # R13: NO DD SCALING — replaced with dynamic vol target (Fix C)
         dd_scale = 1.0
 
-        # Phase B FIX: Remove DD-based vol target scaling entirely.
-        # The tiered DD scaling (50% → 45% → 35% → 20% → 5%) creates a
-        # death spiral: losses → tiny positions → can't recover → more losses.
-        # Combined with severe_bear floor (×0.10) + dynamic leverage (1.0×)
-        # + VIX scaling, effective exposure dropped to <0.5% → permanent trap.
-        # Keep constant vol target; stops and position limits provide protection.
-        annual_vol_target = 0.40
+        # R24v12-RCA: RESTORE R21A R14 DD-adaptive vol target.
+        # R24v6's flat 0.40 was WRONG — R21A (c9044b5) used 5-tier DD-adaptive:
+        #   Bull (DD<10%): 0.75 × 1.25 boost = 0.9375
+        #   Staging flat:  0.40 × 1.25 boost = 0.50 → positions 1.875× SMALLER
+        # All R19/R20 mode flags were False in R21A → R14 baseline was active.
+        if current_dd < 0.10:
+            annual_vol_target = 0.75   # Full risk — no DD
+        elif current_dd < 0.20:
+            annual_vol_target = 0.65   # Mild pullback
+        elif current_dd < 0.30:
+            annual_vol_target = 0.55   # Moderate DD
+        elif current_dd < 0.40:
+            annual_vol_target = 0.45   # Severe DD
+        else:
+            annual_vol_target = 0.40   # Extreme DD — floor
 
         # FIX-FLOOR: Use actual equity for daily target
         sizing_equity = max(equity, capital * 0.10)  # 10% ruin floor
@@ -1401,12 +1410,13 @@ def run_full_backtest(
         else:
             _eq_sma200 = equity  # not enough data
 
-        # C1: BEAR regime → floor at 50% of normal exposure (Phase B fix: was 10% → death spiral)
-        _SEVERE_BEAR_FLOOR = getattr(_Cfg, 'SEVERE_BEAR_EXPOSURE_FLOOR', 0.50) if _Cfg else 0.50
-        if _eq_regime == 'severe_bear':
-            dynamic_daily_target = max(dynamic_daily_target * _SEVERE_BEAR_FLOOR,
-                                       sizing_equity * 0.15 / 16.0)  # absolute min: 15% vol target
-        elif _R21A_REGIME_VOL and len(daily_equity) >= 200:
+        # R24v9-RCA: REMOVED severe_bear special-case vol floor.
+        # The 50% floor + forecast combiner zeroing ALL trend signals in bear
+        # created a self-reinforcing doom loop:
+        #   losses → severe_bear → halved exposure + zeroed trends → can't recover
+        #   → equity stays below sma200*0.95 → permanent severe_bear → -74% loss.
+        # Now severe_bear gets the same R21A defend (0.55×) as regular bear.
+        if _R21A_REGIME_VOL and len(daily_equity) >= 200:
             _use_smooth = getattr(_Cfg, 'SMOOTH_BEAR_DEFENSE', False) if _Cfg else False
             if _use_smooth:
                 from services.volatility_target import smooth_regime_scale
@@ -1561,10 +1571,15 @@ def run_full_backtest(
                 }
                 if len(_fh_for_sym) < 3:
                     _fh_for_sym = None  # not enough history yet
+            # R24v9-RCA: Do NOT pass equity-curve regime to forecast combiner.
+            # The _eq_regime (severe_bear/bear/bull) reflects STRATEGY performance
+            # (equity vs its own sma200), not MARKET conditions. Passing it to the
+            # combiner zeroes trend signals during drawdowns — precisely when the
+            # strategy needs them to recover. Use "" to keep base signal weights.
             combined = combine_forecasts(
                 sym, fc_dict, active_weights,
                 forecast_history=_fh_for_sym,
-                regime=_eq_regime,
+                regime="",  # R24v9: equity regime must NOT tilt signal weights
             )
             fc_val = combined.combined_forecast
             _all_combined[sym] = fc_val
@@ -1606,17 +1621,14 @@ def run_full_backtest(
         _all_combined = _gated_combined
 
         # ── V9: Equity Risk Premium bias for long-only mode ──────────
-        # Zero-mean signals (EWMAC, momentum, etc.) produce ~50% negative forecasts.
-        # In long-only mode, negatives are zeroed → only 3-5 positions → concentration death.
-        # The equity risk premium (+6% annualized ≈ +2.0 on ±20 forecast scale) is a
-        # structural prior, not a fitted parameter.  This shifts ~15-20 stocks from
-        # slightly-negative to slightly-positive, giving natural diversification.
-        _ERP_BIAS = 2.0
-        if not allow_short:
-            _all_combined = {s: f + _ERP_BIAS for s, f in _all_combined.items()}
+        # R24v15-RCA: DISABLED — R21A (c9044b5) had NO ERP_BIAS.
+        # With ERP_BIAS=+2.0, ALL stocks pass investable threshold → always 15 positions,
+        # defeating the adaptive MAX_POSITIONS logic (5/8/12/15 tiers).
+        _ERP_BIAS = 0.0
 
         # ── M8 FIX: Distribution shift detector — scale down in regime breaks ──
-        _dist_shift_on = getattr(_Cfg, 'DISTRIBUTION_SHIFT_ENABLED', True) if _Cfg else True
+        # R24v10-RCA: DISABLED — not in R21A. Creates doom loop on own portfolio returns.
+        _dist_shift_on = False
         if _dist_shift_on and len(daily_returns) >= 90:
             try:
                 from services.distribution_shift import detect_distribution_shift
@@ -1698,18 +1710,24 @@ def run_full_backtest(
                         _vol_snap[sym] = float(_dpv) if np.isfinite(_dpv) else 0.02
             _forecast_log.append((day_idx, str(current_date), _fc_snap, _px_snap, _vol_snap))
 
-        # Adaptive position count based on top-15 average forecast strength
-        _ranked_for_count = sorted(_all_combined.values(), key=lambda x: abs(x), reverse=True)
-        _top15_avg = np.mean([abs(f) for f in _ranked_for_count[:15]]) if _ranked_for_count else 0.0
-        # Phase C: Increased from 10 → 15 for broader signal capture on NIFTY500
-        MAX_POSITIONS = 15
+        # R24v15c: Continuous signal-driven position count
+        # Instead of 4 discrete tiers (5/8/12/15), let the actual number of
+        # stocks with forecast > investable threshold determine positions.
+        # This ensures: 1 strong stock → hold 1, 9 → hold 9, 33 → cap at 20.
+        _INVESTABLE_THRESHOLD = 2.0
+        _MAX_POSITIONS_CAP = 20   # risk ceiling — don't over-dilute
+        _MIN_POSITIONS_FLOOR = 3  # minimum to avoid extreme concentration
+        if not allow_short:
+            _signal_stocks = [(s, f) for s, f in _all_combined.items() if f > _INVESTABLE_THRESHOLD]
+        else:
+            _signal_stocks = [(s, f) for s, f in _all_combined.items() if abs(f) > _INVESTABLE_THRESHOLD]
+        MAX_POSITIONS = max(_MIN_POSITIONS_FLOOR, min(len(_signal_stocks), _MAX_POSITIONS_CAP))
 
         MAX_HOLD_GRACE = MAX_POSITIONS + 7  # Grace zone scales with positions
-        # Rank by conviction: in long-only mode, positive forecasts first (descending),
-        # then negative by abs (for grace-zone exits). Prevents bearish stocks from
-        # filling top slots and getting zeroed by long-only guard → zero-position trap.
+        # R24v15b: In long-only, rank positive forecasts first (descending) so
+        # bullish stocks fill limited slots. abs() ranking lets strong bearish
+        # signals steal top slots that then get zeroed → 0 positions.
         if not allow_short:
-            # Phase 1 fix: split positive and negative — only positive can fill top slots
             _positive_ranked = sorted([(s, f) for s, f in _all_combined.items() if f > 0],
                                       key=lambda x: x[1], reverse=True)
             _negative_ranked = sorted([(s, f) for s, f in _all_combined.items() if f <= 0],
@@ -1719,13 +1737,16 @@ def run_full_backtest(
             _ranked = sorted(_all_combined.items(), key=lambda x: abs(x[1]), reverse=True)
         _top_syms_list = [s for s, _ in _ranked[:MAX_POSITIONS]]    # ordered list for min-1-share
         _top_syms = set(_top_syms_list)                             # set for O(1) membership
-        _grace_syms = set(s for s, _ in _ranked[:MAX_HOLD_GRACE])   # top-30 → held positions stay
+        _grace_syms = set(s for s, _ in _ranked[:MAX_HOLD_GRACE])   # grace zone for held positions
 
         # ── Godmode: Sector enforcement — max N stocks per sector ──
         _sector_enforce = getattr(_Cfg, 'SECTOR_ENFORCEMENT_ENABLED', False) if _Cfg else False
-        if _sector_enforce:
+        _sector_map = getattr(_Cfg, 'NSE_SECTOR_MAP', {}) if _Cfg else {}
+        # R24v8-RCA: Guard against empty sector map. Without a populated
+        # nse_sector_map.json, ALL stocks map to 'Unknown' and only
+        # MAX_STOCKS_PER_SECTOR (3) get selected — capping positions at 3.
+        if _sector_enforce and _sector_map:
             _max_per_sector = getattr(_Cfg, 'MAX_STOCKS_PER_SECTOR', 3) if _Cfg else 3
-            _sector_map = getattr(_Cfg, 'NSE_SECTOR_MAP', {}) if _Cfg else {}
             _sector_counts: Dict[str, int] = defaultdict(int)
             _filtered_top: List[str] = []
             for s, _ in _ranked:
@@ -1740,17 +1761,11 @@ def run_full_backtest(
             _top_syms = set(_top_syms_list)
 
         # R8 CRITICAL FIX: Dynamic weight_per_sym based on ACTUAL investable count
-        # Phase C: Lowered threshold from 2.0 → 1.0 to fill more position slots
-        # V6 FIX: In long-only mode, only count POSITIVE-forecast stocks.
-        # Previously counted all |forecast|>1.0 (including negative), which
-        # divided risk budget by 15 even when only 3 stocks were positive,
-        # leaving 80% of capital idle.
+        # R24v15b: In long-only, only positive forecasts become positions.
         if not allow_short:
-            _investable = [s for s in _top_syms if _all_combined.get(s, 0) > 1.0]
+            _investable = [s for s in _top_syms if _all_combined.get(s, 0) > 2.0]
         else:
-            _investable = [s for s in _top_syms if abs(_all_combined.get(s, 0)) > 1.0]
-        # V9: With ERP bias, 15-20 stocks have positive forecasts → no need for V8's
-        # inflated floor.  Floor at 5 avoids over-dilution when few genuine signals exist.
+            _investable = [s for s in _top_syms if abs(_all_combined.get(s, 0)) > 2.0]
         n_investable = max(5, min(len(_investable), MAX_POSITIONS))
 
         # ── Godmode: Forecast-proportional sizing (replaces flat 1/N) ──
@@ -1927,8 +1942,8 @@ def run_full_backtest(
                             trades_count += 1
                             _day_trades_count += 1
                     else:
-                        # Legacy: fixed 40% inertia threshold (v5: widened from 20%)
-                        _inertia_pct = 0.40
+                        # R24v13-RCA: RESTORE R21A inertia (was 40% from v5 — positions barely rebalanced)
+                        _inertia_pct = 0.10
                         if abs(prev_qty) > 0 and delta / abs(prev_qty) < _inertia_pct:
                             target_qty = prev_qty
                         else:
@@ -1966,18 +1981,9 @@ def run_full_backtest(
 
                 prev_positions[sym] = target_qty
 
-                # M3 FIX: Tighter stops overall — current stops too wide (49.9% DD)
-                if _Cfg:
-                    if _eq_regime == 'severe_bear' or _eq_regime == 'bear':
-                        stop_sigma = getattr(_Cfg, 'STOP_SIGMA_BEAR', 2.0)
-                    elif _eq_regime == 'strong_bull':
-                        stop_sigma = getattr(_Cfg, 'STOP_SIGMA_STRONG_TREND', 4.0)  # M3: tightened from 5.0
-                    elif _eq_regime == 'bull':
-                        stop_sigma = getattr(_Cfg, 'STOP_SIGMA_BULL', 2.5)  # M3: tightened from 3.0
-                    else:
-                        stop_sigma = getattr(_Cfg, 'STOP_SIGMA_NEUTRAL', 3.0)  # M3: tightened from 4.0
-                else:
-                    stop_sigma = 3.0  # M3: tightened from 5.0
+                # R24v11-RCA: RESTORE R21A stop sigma values (8.0σ default).
+                # M3 tightened to 2-4σ = constant whipsaw destroying all gains.
+                stop_sigma = 8.0  # R21A default
 
                 # V2: Bull profit-taker — tighter stops in uptrend to book profits (Harvest only)
                 if _HARVEST_PROFIT_TAKER and len(daily_equity) >= 200:

@@ -137,7 +137,7 @@ class Config:
     CARVER_ANNUAL_VOL_TARGET: float = 0.40  # H2: \u2193 from 50% — lower vol target reduces DD
     CARVER_INITIAL_CAPITAL: float = 500_000.0  # Starting capital (₹)
     CARVER_DEFAULT_IDM: float = 1.3         # P1e: IDM 1.3 — calibrated for NIFTY avg_corr ~0.5; was 2.3
-    CARVER_MAX_LEVERAGE: float = 2.0        # P1b: 2× — was 4×. Bull regime can selectively go to 3×.
+    CARVER_MAX_LEVERAGE: float = 4.0        # R24v13-RCA: RESTORED R21A 4× (was 2× from P1b — halving all positions)
     CARVER_INERTIA_THRESHOLD: float = 0.25  # H5: \u2191 from 20% — wider inertia reduces churn
     CARVER_COST_SPEED_LIMIT: float = 3.0    # SR must exceed 3× cost drag
     CARVER_TRADE_HORIZON: str = "swing"     # "swing" (3σ bear/5σ bull) or "positional"
@@ -154,7 +154,7 @@ class Config:
     # Phase 1 Enhancements — Signal Quality Improvements
     # =================================================================
     # Meta-labeling (AFML Ch.3) — filter false signals via RF meta-classifier
-    META_LABELING_ENABLED: bool = True      # Wire meta-labeling into backtest loop
+    META_LABELING_ENABLED: bool = False      # Wire meta-labeling into backtest loop
     META_LABEL_MIN_PROBABILITY: float = 0.50  # Only trade when meta_prob > this
 
     # Regime-adaptive stops (replaces fixed 5σ) — M3: tightened for better DD control
@@ -164,7 +164,7 @@ class Config:
     STOP_SIGMA_STRONG_TREND: float = 5.0    # RESTORED from 4.0
 
     # Time-based exits — regime-adaptive max hold days
-    TIME_EXIT_ENABLED: bool = True
+    TIME_EXIT_ENABLED: bool = False
 
     # Tiered signal recompute frequency (trading days)
     RECOMPUTE_FREQ_FAST: int = 5            # ewmac_8_32, breakout (every 5 days for Kaggle speed)
@@ -172,14 +172,14 @@ class Config:
     RECOMPUTE_FREQ_SLOW: int = 20           # carver_value, ewmac_64_256, mean_reversion
 
     # Forecast-proportional position sizing (replaces flat 1/N)
-    FORECAST_PROPORTIONAL_SIZING: bool = True
+    FORECAST_PROPORTIONAL_SIZING: bool = False
     FORECAST_SIZING_FLOOR: float = 3.0      # min |forecast| for sizing (prevents tiny positions)
 
     # Empirical FDM toggle
     EMPIRICAL_FDM_ENABLED: bool = True
 
     # Smooth bear defense — sigmoid interpolation (replaces binary threshold)
-    SMOOTH_BEAR_DEFENSE: bool = True
+    SMOOTH_BEAR_DEFENSE: bool = False
     SMOOTH_DEFENSE_STEEPNESS: float = 10.0  # sigmoid steepness parameter
 
     # Sector concentration enforcement in backtest
@@ -187,7 +187,7 @@ class Config:
     SECTOR_ENFORCEMENT_ENABLED: bool = True
 
     # Cost-aware inertia (replaces fixed 20%)
-    COST_AWARE_INERTIA: bool = True
+    COST_AWARE_INERTIA: bool = False
     INERTIA_ALPHA_COST_RATIO: float = 2.0   # Only trade if expected_alpha > N × expected_cost
 
     # Block bootstrap for Sharpe CI
@@ -249,7 +249,7 @@ class Config:
     # =================================================================
     # Phase 3 — Dynamic Leverage & Risk
     # =================================================================
-    DYNAMIC_LEVERAGE_ENABLED: bool = True
+    DYNAMIC_LEVERAGE_ENABLED: bool = False
     LEVERAGE_BULL_CONFIRMED: float = 2.0    # H4: \u2193 from 2.5 — less aggressive to reduce DD
     LEVERAGE_NEUTRAL: float = 1.5           # H4: \u2193 from 2.0 — more conservative
     LEVERAGE_BEAR: float = 0.5              # H4: \u2193 from 1.0 — half leverage in bear
@@ -311,7 +311,7 @@ class Config:
     VIX_CAUTION_THRESHOLD: float = 20.0    # India VIX > 20 → reduce position sizes
     VIX_PANIC_THRESHOLD: float = 30.0      # India VIX > 30 → suppress new BUY signals
     VIX_POSITION_SCALE: float = 0.5        # Scale factor when VIX in caution zone
-    VIX_PIPELINE_SCALING_ENABLED: bool = True  # Enable VIX scaling in Carver pipeline (not just risk_manager)
+    VIX_PIPELINE_SCALING_ENABLED: bool = False  # R24v13-RCA: DISABLED — R21A had no VIX scaling
     NIFTY_BENCHMARK_TICKER: str = "^NSEI"  # NIFTY 50 index ticker for benchmarking
 
     # =================================================================
@@ -524,7 +524,7 @@ class Config:
     # Phase 3 — Leverage via Futures
     # =================================================================
     LEVERAGE_ENABLED: bool = True            # G11: Enabled — regime-adaptive leverage
-    LEVERAGE_MAX: float = 2.0               # P1b: 2× absolute cap (synced with CARVER_MAX_LEVERAGE; was 4×)
+    LEVERAGE_MAX: float = 4.0               # R24v13-RCA: RESTORED R21A 4× absolute cap (synced with CARVER_MAX_LEVERAGE)
     LEVERAGE_BULL_MAX: float = 4.0           # Recal: 4× in strong bull — capture trend with controlled risk
     LEVERAGE_RANGE_MAX: float = 3.0          # Recal: 3× in range-bound — alpha capture with DD layers
     LEVERAGE_BEAR_MAX: float = 1.5           # Recal: 1.5× in bear — defensive, stops+VIX gate provide DD protection
