@@ -2121,3 +2121,15 @@ cd frontend && npm run dev
 ```
 
 Open **http://localhost:3000** and start analysing!
+
+
+Tools:
+
+https://console.neon.tech/app/projects/plain-wind-01067982?database=neondb
+https://dash.cloudflare.com/login
+https://console.upstash.com/auth/sign-in
+https://vercel.com/srees16s-projects/centurion-core-fe/deployments
+https://huggingface.co/spaces/srees16/centurion-core/settings
+https://telemetry.betterstack.com/team/t519104/tail?s=2320424
+https://research-ew.sentry.io/issues/?project=4511104424673360&query=is%3Aunresolved&referrer=issue-stream&statsPeriod=7d
+https://dashboard.uptimerobot.com/login?rt=true
