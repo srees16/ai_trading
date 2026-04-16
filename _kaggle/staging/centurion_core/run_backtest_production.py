@@ -15,11 +15,11 @@ bt_mod._R21A_REGIME_VOL = True
 bt_mod._R21A_REGIME_BOOST = 1.25
 bt_mod._R21A_REGIME_DEFEND = 0.55
 
-# R24v5-RCA: Match R21A EXACTLY — DEFAULT tier (~95 NIFTY50+NEXT50 stocks)
-# R21A achieved Sharpe=1.18, CAGR=32.7% on this universe. NIFTY500/BROAD failed
-# because 80%+ of stocks are classified as smallcap (61bps/leg cost), destroying alpha.
-Config.NSE_UNIVERSE_TIER = "DEFAULT"
-Config.PIT_UNIVERSE_ENABLED = False  # R21A never used PIT universe
+# R24v15c NIFTY500 VALIDATION: Full PIT universe for realistic metrics
+# PIT = point-in-time survivorship-bias-free NIFTY500 (~797 historical constituents)
+# Subset to ~500 active at each date via get_nse_universe_pit()
+Config.NSE_UNIVERSE_TIER = "NIFTY500"
+Config.PIT_UNIVERSE_ENABLED = True
 
 # R24: Load optimized weights if available
 _CORE_DIR = os.path.dirname(os.path.abspath(__file__))
