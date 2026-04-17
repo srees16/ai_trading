@@ -454,6 +454,16 @@
 
 refer for applicable improvements: https://github.com/paperswithbacktest/awesome-systematic-trading
 
+
+is it good idea to stop centurion-backtest-phase-b version 22 since version 23 with bhavcopy is already in progress on kaggle?
+
+position-sizing needs to happen based on regime-adaptive position params and the downstream investable filter (stock selection based on analysis & signal quality).
+Below are some scenarios that need to work in real live Ind stocks trading:
+
+If market regime is bullish and great quality stocks are identified, positions need to contain all those stocks.
+If the market regime is bearish and yet a bunch of great quality stocks are identified, positions need to contain all those stocks
+if the market regime is bullish and yet there are no great quality stocks that are identified, position-sizing need to reflect that
+finally, if the market regime is bearish and yet there are no great quality stocks that are identified, position-sizing need to reflect that
 prompts:
 
 ~~~~~~
