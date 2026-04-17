@@ -1533,19 +1533,85 @@ def run_full_backtest(
         # Aggressive in sustained uptrends, defensive in downtrends
         # Godmode: smooth sigmoid interpolation (replaces binary threshold)
         # C1 FIX: Determine equity-curve regime for sizing, stops, leverage
+        
+        # ── Gap #3: Enhanced Regime Detector v2 ──
+        _gap3_enable = getattr(_Cfg, 'GAP3_REGIME_DETECTOR_V2_ENABLED', False) if _Cfg else False
         _eq_regime = 'neutral'  # default
-        if len(daily_equity) >= 200:
-            _eq_sma200 = sum(daily_equity[-200:]) / 200.0
-            if equity < _eq_sma200 * 0.95:
-                _eq_regime = 'severe_bear'   # C1: go to ZERO exposure
-            elif equity < _eq_sma200 * 0.98:
-                _eq_regime = 'bear'
-            elif equity > _eq_sma200 * 1.05:
-                _eq_regime = 'strong_bull'
-            elif equity > _eq_sma200 * 1.02:
-                _eq_regime = 'bull'
+        
+        if _gap3_enable and len(daily_equity) >= 200:
+            try:
+                from services.regime_detector_v2 import detect_regime_v2, get_regime_position_caps_v2, get_regime_vol_scalar_v2
+                
+                # Prepare price series (NIFTY 50 index for market regime detection)
+                _price_series = pd.Series(nifty_closes) if 'nifty_closes' in locals() else None
+                
+                if _price_series is not None and len(_price_series) > 0:
+                    _eq_series = pd.Series(daily_equity)
+                    _regime_v2, _metrics_v2 = detect_regime_v2(
+                        equity_curve=_eq_series,
+                        prices=_price_series,
+                        lookback_sma=200,
+                        rsi_period=14,
+                        vix_window=20,
+                        prev_regime=_eq_regime,
+                    )
+                    
+                    # Map regime name to lowercase (for consistency with rest of code)
+                    _eq_regime = _regime_v2.lower()
+                    
+                    logger.info(
+                        "[Day %d] Gap #3 Regime v2: %s | SMA=%.0f Price=%.0f RSI=%.1f VIX=%.1f DD=%.1f%%",
+                        day_idx, _eq_regime.upper(),
+                        _metrics_v2.get('sma', 0),
+                        _metrics_v2.get('current_price', 0),
+                        _metrics_v2.get('rsi', 50),
+                        _metrics_v2.get('vix', 20),
+                        _metrics_v2.get('dd', 0) * 100,
+                    )
+                else:
+                    # Fallback to SMA200 if price data unavailable
+                    logger.warning("Gap #3: Price data unavailable, falling back to SMA200 regime")
+                    if len(daily_equity) >= 200:
+                        _eq_sma200 = sum(daily_equity[-200:]) / 200.0
+                        if equity < _eq_sma200 * 0.95:
+                            _eq_regime = 'severe_bear'
+                        elif equity < _eq_sma200 * 0.98:
+                            _eq_regime = 'bear'
+                        elif equity > _eq_sma200 * 1.05:
+                            _eq_regime = 'strong_bull'
+                        elif equity > _eq_sma200 * 1.02:
+                            _eq_regime = 'bull'
+            
+            except Exception as e:
+                logger.warning("Gap #3 regime detector v2 failed (non-fatal), using SMA200: %s", e)
+                # Fallback to original SMA200 logic
+                if len(daily_equity) >= 200:
+                    _eq_sma200 = sum(daily_equity[-200:]) / 200.0
+                    if equity < _eq_sma200 * 0.95:
+                        _eq_regime = 'severe_bear'
+                    elif equity < _eq_sma200 * 0.98:
+                        _eq_regime = 'bear'
+                    elif equity > _eq_sma200 * 1.05:
+                        _eq_regime = 'strong_bull'
+                    elif equity > _eq_sma200 * 1.02:
+                        _eq_regime = 'bull'
+        
         else:
-            _eq_sma200 = equity  # not enough data
+            # Original SMA200-only regime detection (when Gap #3 disabled)
+            if len(daily_equity) >= 200:
+                _eq_sma200 = sum(daily_equity[-200:]) / 200.0
+                if equity < _eq_sma200 * 0.95:
+                    _eq_regime = 'severe_bear'   # C1: go to ZERO exposure
+                elif equity < _eq_sma200 * 0.98:
+                    _eq_regime = 'bear'
+                elif equity > _eq_sma200 * 1.05:
+                    _eq_regime = 'strong_bull'
+                elif equity > _eq_sma200 * 1.02:
+                    _eq_regime = 'bull'
+            else:
+                _eq_sma200 = equity  # not enough data
+
+        # ── End Gap #3 ────────────────────────────────────────────────
 
         # R24v9-RCA: REMOVED severe_bear special-case vol floor.
         # The 50% floor + forecast combiner zeroing ALL trend signals in bear
@@ -1975,6 +2041,32 @@ def run_full_backtest(
         else:
             _investable = [s for s in _top_syms if abs(_all_combined.get(s, 0)) > _INVESTABLE_THRESHOLD]
         n_investable = len(_investable) if _investable else _MIN_POSITIONS  # actual count, not floored
+
+        # ── Gap #2: Correlation Risk Filter (prevents sector concentration) ──
+        # Apply only once we have 6+ positions (correlation matters when many bets on similar themes)
+        _gap2_enable = getattr(_Cfg, 'GAP2_CORRELATION_FILTER_ENABLED', False) if _Cfg else False
+        _gap2_max_corr = getattr(_Cfg, 'GAP2_MAX_CORRELATION', 0.70) if _Cfg else 0.70
+        if _gap2_enable and n_investable >= 6:
+            try:
+                from services.correlation_filter import filter_correlated_positions
+                _positions_with_forecast = {
+                    s: (_all_combined.get(s, 0), 1) for s in _investable
+                }
+                _filtered = filter_correlated_positions(
+                    _positions_with_forecast,
+                    daily_prices,
+                    max_correlation=_gap2_max_corr,
+                    lookback_days=60,
+                )
+                _investable = list(_filtered.keys())
+                n_investable = len(_investable)
+                logger.info(
+                    "[Day %d] Gap #2 correlation filter: %d → %d positions (max_corr=%.2f)",
+                    day_idx, len(_positions_with_forecast), n_investable, _gap2_max_corr
+                )
+            except Exception as e:
+                logger.warning("Gap #2 correlation filter failed (non-fatal): %s", e)
+                # Continue without filter if it fails
 
         # ── Godmode: Forecast-proportional sizing (replaces flat 1/N) ──
         _fc_prop_sizing = getattr(_Cfg, 'FORECAST_PROPORTIONAL_SIZING', False) if _Cfg else False

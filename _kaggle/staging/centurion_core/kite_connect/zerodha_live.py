@@ -1052,6 +1052,28 @@ def _render_dashboard():
                 )
                 if result["success"]:
                     st.success(f"Order placed — ID: **{result['order_id']}**")
+                    
+                    # ── Gap #1: Auto-place profit target for BUY orders ──
+                    if o_txn == "BUY" and o_type == "MARKET" and result.get("fill_price"):
+                        try:
+                            from trading.order_service import place_profit_target
+                            fill_price = result.get("fill_price", o_price)
+                            pt_result = place_profit_target(
+                                kite=kite,
+                                symbol=o_symbol,
+                                entry_qty=int(o_qty),
+                                entry_price=fill_price,
+                                entry_order_id=str(result.get("order_id")),
+                                target_pct=0.025,  # 2.5% default profit target
+                                exchange=o_exchange,
+                                product=o_product,
+                            )
+                            if pt_result.get("success"):
+                                st.info(f"Profit target placed — ID: **{pt_result['order_id']}** @ ₹{pt_result.get('target_price', 0):.2f}")
+                            else:
+                                st.warning(f"Profit target placement failed: {pt_result.get('error', 'unknown')}")
+                        except Exception as exc:
+                            logger.warning("Gap #1 profit target auto-place failed (non-fatal): %s", exc)
                 else:
                     st.error(f"{result['error']}")
 

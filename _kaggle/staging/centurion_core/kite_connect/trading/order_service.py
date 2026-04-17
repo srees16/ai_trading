@@ -352,6 +352,99 @@ def modify_order(kite, order_id, trigger_price=None, price=None, variety="regula
         return {"success": False, "error": str(e)}
 
 
+# ── Gap #1: Automatic Profit Target Execution ───────────────────
+
+def place_profit_target(kite, symbol, entry_qty, entry_price, entry_order_id=None,
+                        target_pct=0.025, exchange="NSE", product="CNC"):
+    """
+    Auto-place LIMIT order for profit taking at target price.
+    
+    This closes the execution gap: backtest assumes auto-exit at +2.5% target,
+    but live required manual closes → -8–12% CAGR leakage.
+    
+    Parameters
+    ----------
+    kite : KiteConnect
+        Authenticated Kite instance.
+    symbol : str
+        Trading symbol (e.g. "RELIANCE").
+    entry_qty : int
+        Quantity to sell (from entry).
+    entry_price : float
+        Entry price (cost basis).
+    entry_order_id : str | None
+        Order ID of the entry for tracking. Used in tag for linkage.
+    target_pct : float
+        Profit target percentage (default 2.5% = 0.025).
+    exchange : str
+        "NSE" or "BSE".
+    product : str
+        "CNC" (delivery) or "MIS".
+    
+    Returns
+    -------
+    dict
+        {"success": True, "pt_order_id": "...", "target_price": 123.45}
+        or {"success": False, "error": "..."}
+    
+    Examples
+    --------
+    >>> # Entry filled at 100, want to exit at 102.5 (+2.5%)
+    >>> place_profit_target(kite, "RELIANCE", 10, 100.0, 
+    ...                     entry_order_id="123456", target_pct=0.025)
+    {"success": True, "pt_order_id": "789012", "target_price": 102.5}
+    """
+    
+    # Calculate target price
+    target_price = entry_price * (1.0 + target_pct)
+    
+    # Generate unique tag linking to entry order
+    # Format: "PT_{entry_order_id}"[:20] (Kite max tag length)
+    if entry_order_id:
+        pt_tag = f"PT_{entry_order_id}"[:20]
+    else:
+        # Fallback: use symbol + timestamp hash
+        tag_seed = f"PT_{symbol}_{int(time.time()//60)}"
+        pt_tag = hashlib.sha256(tag_seed.encode()).hexdigest()[:20]
+    
+    logger.info(
+        "Placing profit target: symbol=%s entry=%.2f target=%.2f (+%.1f%%) qty=%d tag=%s",
+        symbol, entry_price, target_price, target_pct * 100, entry_qty, pt_tag
+    )
+    
+    # Place SELL LIMIT order at target price
+    result = place_order(
+        kite=kite,
+        symbol=symbol,
+        exchange=exchange,
+        transaction_type="SELL",
+        quantity=entry_qty,
+        order_type="LIMIT",
+        product=product,
+        price=target_price,
+        tag=pt_tag,
+    )
+    
+    # Augment result with target price info
+    if result.get("success"):
+        result["target_price"] = target_price
+        result["target_pct"] = target_pct
+        result["entry_order_id"] = entry_order_id
+        logger.info(
+            "Profit target placed: pt_order_id=%s symbol=%s target_price=%.2f",
+            result.get("order_id"), symbol, target_price
+        )
+    else:
+        logger.warning(
+            "Profit target placement failed: symbol=%s target_price=%.2f error=%s",
+            symbol, target_price, result.get("error", "unknown")
+        )
+    
+    return result
+
+
+# ── End Gap #1 ────────────────────────────────────────────────────
+
 def get_circuit_breaker_status() -> dict:
     """Return current state of the Kite API circuit breaker."""
     if not _order_circuit:
