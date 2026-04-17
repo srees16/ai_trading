@@ -1897,30 +1897,36 @@ def run_full_backtest(
         # lower cap → concentrate on highest-conviction stocks.
         # Bull markets → broader deployment into more positions.
         #
-        # Regime params: (investable_threshold, max_positions_cap)
-        #   severe_bear → only strongest signals, very few positions
-        #   bear        → above-average signals, moderate concentration
-        #   neutral     → baseline deployment
-        #   bull        → broad deployment
-        #   strong_bull → widest deployment (risk-on)
+        # CRITICAL R24v24: Signal-quality-driven sizing (not floor-driven).
+        # Four scenarios all work correctly:
+        #   1. Bull + many great stocks  → hold all (up to cap of 25)
+        #   2. Bear + many great stocks  → hold all (up to cap of 12)
+        #   3. Bull + few great stocks   → hold exactly those (no artificial floor)
+        #   4. Bear + few great stocks   → hold exactly those (no artificial floor)
         #
-        # Safety: floor=3 prevents extreme concentration.
-        # Stacks with regime vol-targeting (0.55× in bear) which already
-        # sizes each position smaller — fewer + smaller = genuinely defensive.
+        # Regime params: (investable_threshold, max_positions_cap, min_positions)
+        #   severe_bear → (5.0, 8,  1)   only strongest signals, 1+ positions
+        #   bear        → (4.0, 12, 1)   above-average signals, 1+ positions
+        #   neutral     → (3.0, 15, 1)   baseline, 1+ positions
+        #   bull        → (2.5, 20, 1)   broad deployment, 1+ positions
+        #   strong_bull → (2.0, 25, 1)   widest, 1+ positions
+        #
+        # min_positions=1 ensures we always trade something if ANY signal > threshold.
+        # No artificial floor=3 forcing bad entries. Stacks with regime vol-targeting
+        # (0.55× in bear) which already sizes each position smaller.
         _REGIME_POSITION_PARAMS = {
-            'severe_bear': (5.0, 8),
-            'bear':        (4.0, 12),
-            'neutral':     (3.0, 15),
-            'bull':        (2.5, 20),
-            'strong_bull': (2.0, 25),
+            'severe_bear': (5.0, 8,  1),
+            'bear':        (4.0, 12, 1),
+            'neutral':     (3.0, 15, 1),
+            'bull':        (2.5, 20, 1),
+            'strong_bull': (2.0, 25, 1),
         }
-        _INVESTABLE_THRESHOLD, _MAX_POSITIONS_CAP = _REGIME_POSITION_PARAMS.get(_eq_regime, (3.0, 15))
-        _MIN_POSITIONS_FLOOR = 3
+        _INVESTABLE_THRESHOLD, _MAX_POSITIONS_CAP, _MIN_POSITIONS = _REGIME_POSITION_PARAMS.get(_eq_regime, (3.0, 15, 1))
         if not allow_short:
             _signal_stocks = [(s, f) for s, f in _all_combined.items() if f > _INVESTABLE_THRESHOLD]
         else:
             _signal_stocks = [(s, f) for s, f in _all_combined.items() if abs(f) > _INVESTABLE_THRESHOLD]
-        MAX_POSITIONS = max(_MIN_POSITIONS_FLOOR, min(len(_signal_stocks), _MAX_POSITIONS_CAP))
+        MAX_POSITIONS = max(_MIN_POSITIONS, min(len(_signal_stocks), _MAX_POSITIONS_CAP))
 
         MAX_HOLD_GRACE = MAX_POSITIONS + 7  # Grace zone scales with positions
         # R24v15b: In long-only, rank positive forecasts first (descending) so
@@ -1962,11 +1968,13 @@ def run_full_backtest(
         # R8 CRITICAL FIX: Dynamic weight_per_sym based on ACTUAL investable count
         # R24v15b: In long-only, only positive forecasts become positions.
         # R24v23: Use regime-adaptive threshold (not fixed 2.0)
+        # R24v24: NO artificial floor — let n_investable reflect actual signal quality.
+        #         If 2 stocks pass threshold in bear market, size for exactly 2 (not 5).
         if not allow_short:
             _investable = [s for s in _top_syms if _all_combined.get(s, 0) > _INVESTABLE_THRESHOLD]
         else:
             _investable = [s for s in _top_syms if abs(_all_combined.get(s, 0)) > _INVESTABLE_THRESHOLD]
-        n_investable = max(5, min(len(_investable), MAX_POSITIONS))
+        n_investable = len(_investable) if _investable else _MIN_POSITIONS  # actual count, not floored
 
         # ── Godmode: Forecast-proportional sizing (replaces flat 1/N) ──
         _fc_prop_sizing = getattr(_Cfg, 'FORECAST_PROPORTIONAL_SIZING', False) if _Cfg else False
