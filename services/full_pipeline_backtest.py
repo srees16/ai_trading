@@ -137,6 +137,70 @@ class BacktestResult:
 
 
 
+# ── Bhavcopy parquet loader (cached; loaded once per process) ─
+
+_BHAVCOPY_PARQUET: Optional[pd.DataFrame] = None
+_BHAVCOPY_TICKERS: set = set()
+
+
+def _load_bhavcopy_parquet() -> Optional[pd.DataFrame]:
+    """Load the pre-built NIFTY500 bhavcopy OHLCV parquet (lazy, cached).
+
+    The file contains ~2M rows across ~793 tickers with columns:
+        Date, Ticker, Open, High, Low, Close, Volume
+    Corporate actions (splits/bonuses) are already backward-adjusted.
+    """
+    global _BHAVCOPY_PARQUET, _BHAVCOPY_TICKERS
+    if _BHAVCOPY_PARQUET is not None:
+        return _BHAVCOPY_PARQUET
+
+    from pathlib import Path
+    candidates = [
+        Path(__file__).resolve().parent.parent / "data" / "bhavcopy_collated" / "nifty500_ohlcv.parquet",
+        Path("/kaggle/input/centurion-core/centurion_core/data/bhavcopy_collated/nifty500_ohlcv.parquet"),
+        Path("/kaggle/working/centurion_core/data/bhavcopy_collated/nifty500_ohlcv.parquet"),
+    ]
+    for p in candidates:
+        if p.exists():
+            try:
+                df = pd.read_parquet(p)
+                df["Date"] = pd.to_datetime(df["Date"])
+                _BHAVCOPY_PARQUET = df
+                _BHAVCOPY_TICKERS = set(df["Ticker"].unique())
+                logger.info("Bhavcopy parquet loaded: %d rows, %d tickers from %s",
+                            len(df), len(_BHAVCOPY_TICKERS), p)
+                return df
+            except Exception as exc:
+                logger.warning("Failed to load bhavcopy parquet %s: %s", p, exc)
+    return None
+
+
+def _bhavcopy_lookup(sym: str) -> Optional[pd.DataFrame]:
+    """Extract a single ticker's OHLCV from the bhavcopy parquet.
+
+    Returns a DataFrame with DatetimeIndex and columns matching yfinance
+    format: Open, High, Low, Close, Volume.  Returns None if ticker not found.
+    """
+    pq = _load_bhavcopy_parquet()
+    if pq is None:
+        return None
+
+    # Strip .NS/.BO suffix to match bhavcopy Ticker column (plain NSE symbols)
+    raw = sym.upper()
+    for sfx in (".NS", ".BO"):
+        if raw.endswith(sfx):
+            raw = raw[: -len(sfx)]
+            break
+
+    if raw not in _BHAVCOPY_TICKERS:
+        return None
+
+    chunk = pq.loc[pq["Ticker"] == raw, ["Date", "Open", "High", "Low", "Close", "Volume"]].copy()
+    chunk.set_index("Date", inplace=True)
+    chunk.sort_index(inplace=True)
+    return chunk if len(chunk) >= 120 else None
+
+
 # ── Helpers ───────────────────────────────────────────────────
 
 def _download(sym: str, period: str, market: str,
@@ -416,13 +480,34 @@ def run_full_backtest(
         print("Downloading OHLCV data...")
 
     ohlcv_full: Dict[str, pd.DataFrame] = {}
+    _bhav_hits = 0
+    _yf_hits = 0
+    # Pre-load bhavcopy parquet for IND market (one-time, cached)
+    if market == "IND":
+        _load_bhavcopy_parquet()
+        if _BHAVCOPY_PARQUET is not None and verbose:
+            print(f"  Bhavcopy parquet: {len(_BHAVCOPY_TICKERS)} tickers loaded")
+
     for sym in tickers:
-        df = _download(sym, period, market, start=start_date, end=end_date)
+        df = None
+        # 1. Try bhavcopy parquet first (instant, no network)
+        if market == "IND":
+            df = _bhavcopy_lookup(sym)
+            if df is not None:
+                _bhav_hits += 1
+        # 2. Fallback to yfinance
+        if df is None:
+            df = _download(sym, period, market, start=start_date, end=end_date)
+            if df is not None:
+                _yf_hits += 1
         if df is not None:
             ohlcv_full[sym] = df
             if verbose:
                 ret = (float(df["Close"].iloc[-1]) / float(df["Close"].iloc[0]) - 1) * 100
                 print(f"  {sym:20s} {len(df):4d} bars  ret={ret:+.1f}%")
+    if verbose and market == "IND":
+        print(f"\n  Data sources: bhavcopy={_bhav_hits}, yfinance={_yf_hits}, "
+              f"total={len(ohlcv_full)}/{len(tickers)}")
 
     symbols = list(ohlcv_full.keys())
     n_symbols = len(symbols)
