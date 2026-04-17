@@ -1892,13 +1892,30 @@ def run_full_backtest(
                         _vol_snap[sym] = float(_dpv) if np.isfinite(_dpv) else 0.02
             _forecast_log.append((day_idx, str(current_date), _fc_snap, _px_snap, _vol_snap))
 
-        # R24v15c: Continuous signal-driven position count
-        # Instead of 4 discrete tiers (5/8/12/15), let the actual number of
-        # stocks with forecast > investable threshold determine positions.
-        # This ensures: 1 strong stock → hold 1, 9 → hold 9, 33 → cap at 20.
-        _INVESTABLE_THRESHOLD = 2.0
-        _MAX_POSITIONS_CAP = 20   # risk ceiling — don't over-dilute
-        _MIN_POSITIONS_FLOOR = 3  # minimum to avoid extreme concentration
+        # R24v23: Dynamic position cap — varies with equity-curve regime
+        # + signal conviction. Bear markets → higher investable threshold +
+        # lower cap → concentrate on highest-conviction stocks.
+        # Bull markets → broader deployment into more positions.
+        #
+        # Regime params: (investable_threshold, max_positions_cap)
+        #   severe_bear → only strongest signals, very few positions
+        #   bear        → above-average signals, moderate concentration
+        #   neutral     → baseline deployment
+        #   bull        → broad deployment
+        #   strong_bull → widest deployment (risk-on)
+        #
+        # Safety: floor=3 prevents extreme concentration.
+        # Stacks with regime vol-targeting (0.55× in bear) which already
+        # sizes each position smaller — fewer + smaller = genuinely defensive.
+        _REGIME_POSITION_PARAMS = {
+            'severe_bear': (5.0, 8),
+            'bear':        (4.0, 12),
+            'neutral':     (3.0, 15),
+            'bull':        (2.5, 20),
+            'strong_bull': (2.0, 25),
+        }
+        _INVESTABLE_THRESHOLD, _MAX_POSITIONS_CAP = _REGIME_POSITION_PARAMS.get(_eq_regime, (3.0, 15))
+        _MIN_POSITIONS_FLOOR = 3
         if not allow_short:
             _signal_stocks = [(s, f) for s, f in _all_combined.items() if f > _INVESTABLE_THRESHOLD]
         else:
@@ -1944,10 +1961,11 @@ def run_full_backtest(
 
         # R8 CRITICAL FIX: Dynamic weight_per_sym based on ACTUAL investable count
         # R24v15b: In long-only, only positive forecasts become positions.
+        # R24v23: Use regime-adaptive threshold (not fixed 2.0)
         if not allow_short:
-            _investable = [s for s in _top_syms if _all_combined.get(s, 0) > 2.0]
+            _investable = [s for s in _top_syms if _all_combined.get(s, 0) > _INVESTABLE_THRESHOLD]
         else:
-            _investable = [s for s in _top_syms if abs(_all_combined.get(s, 0)) > 2.0]
+            _investable = [s for s in _top_syms if abs(_all_combined.get(s, 0)) > _INVESTABLE_THRESHOLD]
         n_investable = max(5, min(len(_investable), MAX_POSITIONS))
 
         # ── Godmode: Forecast-proportional sizing (replaces flat 1/N) ──
